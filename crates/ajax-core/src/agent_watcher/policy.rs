@@ -246,9 +246,23 @@ fn step_on_completed_settle(state: &mut WatcherState, now_ms: u64, config: &Watc
             reason: WatcherReason::InterventionCap,
         });
     }
+    // Harnesses whose events carry no tool-activity evidence cannot show a
+    // premature stop: without a repeated-signature loop above, a completed
+    // stop is not suspicious by itself, so the judge never runs.
+    if !harness_reports_activity(&state.harness) {
+        return Step::Decision(WatcherDecision::AllowStop);
+    }
     // Ask the judge first; nudge only if it says the work is not done.
     state.pending_checkpoint = Some(PendingCheckpoint::Settle);
     Step::NeedsJudge(state.snapshot(now_ms))
+}
+
+/// True when the harness's hook events carry tool-activity evidence the
+/// policy can use to spot a premature stop. `pi` only emits turn-level
+/// events (`before_agent_start`/`agent_settled`), so its activity rings stay
+/// empty and a first completed stop is not suspicious by itself.
+pub fn harness_reports_activity(harness: &str) -> bool {
+    harness != "pi"
 }
 
 /// Fold a judge verdict (or judge failure) into a decision. Judge failures
@@ -543,6 +557,27 @@ mod regression_tests {
             apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 4, &c),
             WatcherDecision::NoAction
         );
+    }
+
+    #[test]
+    fn pi_first_stop_is_allowed_without_judge_and_claude_still_is_judged() {
+        let (c, mut ids) = (config(), Ids::new());
+        // pi emits only turn-level events: a first completed stop with no
+        // activity evidence must not become a Settle checkpoint, so the
+        // judge never runs.
+        let mut pi = WatcherState::new(&frame(), "task-1", "run-1", "pi");
+        assert!(matches!(
+            step(&mut pi, &settled_completed(&mut ids, 1), 1, &c),
+            Step::Decision(WatcherDecision::AllowStop)
+        ));
+        assert!(pi.pending_checkpoint.is_none());
+        // claude reports activity, so the same first stop is still judged.
+        let mut claude = WatcherState::new(&frame(), "task-2", "run-2", "claude");
+        assert!(matches!(
+            step(&mut claude, &settled_completed(&mut ids, 2), 2, &c),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(claude.pending_checkpoint, Some(PendingCheckpoint::Settle));
     }
 
     #[test]

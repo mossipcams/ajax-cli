@@ -683,7 +683,9 @@ fn activity_fields(canonical: &super::CanonicalAgentEvent) -> (Option<String>, O
 #[test]
 fn activity_signature_is_stable_and_differs_across_commands() {
     let payload_a = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t1", "tool_input": {"command": "cargo test -p ajax-core"}});
-    let payload_a_repeated = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t1", "tool_input": {"command": "cargo test  -p\najax-core"}});
+    // Same call, keys in a different order: the canonical JSON digest must
+    // still be identical (serde_json maps are sorted).
+    let payload_a_repeated = serde_json::json!({"tool_input": {"command": "cargo test -p ajax-core"}, "tool_call_id": "t1", "tool_name": "Bash"});
     let payload_b = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t2", "tool_input": {"command": "cargo build"}});
 
     let (sig_a, succ_a) =
@@ -694,7 +696,7 @@ fn activity_signature_is_stable_and_differs_across_commands() {
     let (sig_b, _) =
         activity_fields(&translate_native_event("claude", "PreToolUse", &payload_b).unwrap());
 
-    // Stable for identical calls (whitespace differences collapse).
+    // Stable for identical calls (canonical JSON, key order irrelevant).
     assert_eq!(sig_a, sig_a2);
     assert_ne!(
         sig_a, sig_b,
@@ -706,6 +708,129 @@ fn activity_signature_is_stable_and_differs_across_commands() {
     assert!(sig[5..].chars().all(|c| c.is_ascii_hexdigit()));
     // Started events never carry success evidence.
     assert_eq!(succ_a, None);
+}
+
+#[test]
+fn activity_signature_digests_whole_tool_input_and_avoids_collisions() {
+    // Three different Edit calls to the same file must not collide: only
+    // file_path used to be digested, so old_string/new_string were ignored.
+    let edits = [
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e1", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "foo", "new_string": "bar"}}),
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e2", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "baz", "new_string": "qux"}}),
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e3", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "foo", "new_string": "baz"}}),
+    ];
+    let edit_sigs = edits
+        .iter()
+        .map(|payload| {
+            activity_fields(&translate_native_event("claude", "PreToolUse", payload).unwrap()).0
+        })
+        .collect::<Vec<_>>();
+    assert_ne!(
+        edit_sigs[0], edit_sigs[1],
+        "different edits to one file must not collide"
+    );
+    assert_ne!(
+        edit_sigs[0], edit_sigs[2],
+        "different edits to one file must not collide"
+    );
+    assert_ne!(
+        edit_sigs[1], edit_sigs[2],
+        "different edits to one file must not collide"
+    );
+
+    // Different TodoWrite items, Task prompts, and WebSearch queries must not
+    // collide either (their inputs carry none of the old five keys).
+    let todo_items = ["a", "b", "c"]
+        .into_iter()
+        .map(|item| {
+            serde_json::json!({"tool_name": "TodoWrite", "tool_call_id": "w1", "tool_input": {"todos": [{"content": item, "status": "pending"}]}})
+        })
+        .collect::<Vec<_>>();
+    let task_prompts = ["p1", "p2"]
+        .into_iter()
+        .map(|prompt| {
+            serde_json::json!({"tool_name": "Task", "tool_call_id": "k1", "tool_input": {"prompt": prompt}})
+        })
+        .collect::<Vec<_>>();
+    let search_queries = ["q1", "q2"]
+        .into_iter()
+        .map(|query| {
+            serde_json::json!({"tool_name": "WebSearch", "tool_call_id": "s1", "tool_input": {"query": query}})
+        })
+        .collect::<Vec<_>>();
+    for group in [todo_items, task_prompts, search_queries] {
+        let sigs = group
+            .iter()
+            .map(|payload| {
+                activity_fields(&translate_native_event("claude", "PreToolUse", payload).unwrap()).0
+            })
+            .collect::<Vec<_>>();
+        for (left, right) in sigs.iter().zip(sigs.iter().skip(1)) {
+            assert_ne!(left, right, "different tool inputs must not collide");
+        }
+    }
+
+    // Long commands differing only after char 256 must produce different
+    // signatures (the old summary truncated at 256 chars).
+    let tail = "x".repeat(300);
+    let long_a = format!("{tail}-A");
+    let long_b = format!("{tail}-B");
+    let long_sig = |command: String| {
+        activity_fields(
+            &translate_native_event(
+                "claude",
+                "PreToolUse",
+                &serde_json::json!({"tool_name": "Bash", "tool_call_id": "t", "tool_input": {"command": command}}),
+            )
+            .unwrap(),
+        )
+        .0
+    };
+    assert_ne!(
+        long_sig(long_a.clone()),
+        long_sig(long_b),
+        "differences after char 256 must survive"
+    );
+
+    // Identical calls still produce identical signatures.
+    assert_eq!(long_sig(long_a.clone()), long_sig(long_a));
+
+    // Payloads without tool_input fall back to the top-level key summary.
+    let fallback_sig = |command: &str| {
+        activity_fields(
+            &translate_native_event(
+                "claude",
+                "PreToolUse",
+                &serde_json::json!({"tool_name": "Bash", "tool_call_id": "t", "command": command}),
+            )
+            .unwrap(),
+        )
+        .0
+    };
+    assert!(fallback_sig("cargo test").is_some());
+    assert_ne!(fallback_sig("cargo test"), fallback_sig("cargo build"));
+}
+
+#[test]
+fn claude_post_tool_use_failure_maps_to_failed_activity_finished() {
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_call_id": "t9",
+        "tool_input": {"command": "cargo test"},
+    });
+    let failure = translate_native_event("claude", "PostToolUseFailure", &payload).unwrap();
+    assert!(matches!(failure.kind, CanonicalEventKind::ActivityFinished));
+    let (failure_sig, failure_success) = activity_fields(&failure);
+    assert_eq!(failure_success, Some(false));
+    // Same signature/id logic as the successful PostToolUse for the same call,
+    // so the started id is closed and the loop checkpoint can fire.
+    let success = translate_native_event("claude", "PostToolUse", &payload).unwrap();
+    assert_eq!(failure_sig, activity_fields(&success).0);
+    let activity_id = |canonical: &super::CanonicalAgentEvent| match &canonical.detail {
+        Some(CanonicalEventDetail::Activity { activity_id, .. }) => activity_id.clone(),
+        _ => panic!("expected Activity detail"),
+    };
+    assert_eq!(activity_id(&failure), activity_id(&success));
 }
 
 #[test]

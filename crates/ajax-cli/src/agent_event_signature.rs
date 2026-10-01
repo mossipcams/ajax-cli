@@ -1,15 +1,20 @@
 //! Signature and success evidence for canonical activity events.
 //!
 //! The signature is a stable, bounded digest of a tool call's input so the
-//! agent watcher can detect repeated calls. Only the tool name and a
-//! normalised, whitespace-collapsed, length-capped summary of the input
-//! fields are digested; raw command text, tool output, and transcripts are
-//! never stored in the event envelope.
+//! agent watcher can detect repeated calls. It is the tool name plus an
+//! FNV-1a-64 digest of the canonical JSON string of the whole `tool_input`
+//! value (serde_json maps are sorted, so the string is canonical),
+//! truncated to its first 4096 bytes on a char boundary before hashing.
+//! Payloads without a `tool_input` fall back to a bounded summary of the
+//! top-level keys. Raw command text, tool output, and transcripts are never
+//! stored in the event envelope.
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const SUMMARY_LIMIT: usize = 256;
 const SUMMARY_KEYS: [&str; 5] = ["command", "file_path", "path", "pattern", "url"];
+/// Maximum canonical-JSON bytes of a tool input that feed the digest.
+const MAX_SIGNATURE_INPUT_BYTES: usize = 4096;
 
 /// 16-hex lowercase FNV-1a-64 digest of `input`.
 pub(crate) fn fnv1a64_hex(input: &str) -> String {
@@ -27,17 +32,33 @@ fn string_at<'a>(value: Option<&'a serde_json::Value>, key: &str) -> Option<&'a 
         .and_then(|item| item.as_str())
 }
 
-/// Normalised bounded summary of the tool's input fields: the string values of
-/// `command`/`file_path`/`path`/`pattern`/`url` (from `tool_input` first, then
-/// top level, in that fixed order), whitespace-collapsed, truncated to the
-/// first 256 chars.
+/// Canonical JSON string of the whole tool input, truncated to the first
+/// 4096 bytes on a char boundary so huge inputs stay bounded.
+fn canonical_tool_input(input: &serde_json::Value) -> String {
+    let text = serde_json::to_string(input).unwrap_or_else(|_| input.to_string());
+    truncate_on_char_boundary(&text, MAX_SIGNATURE_INPUT_BYTES)
+}
+
+/// Truncate `text` to at most `max_bytes`, never splitting a char.
+fn truncate_on_char_boundary(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// Bounded summary of the top-level fields that identify "the same call"
+/// without storing raw tool output: the string values of
+/// `command`/`file_path`/`path`/`pattern`/`url`, whitespace-collapsed,
+/// truncated to the first 256 chars. Used only when the payload has no
+/// `tool_input`.
 pub(crate) fn normalised_summary(payload: &serde_json::Value) -> String {
-    let tool_input = payload.get("tool_input");
     let mut parts: Vec<&str> = Vec::new();
     for key in SUMMARY_KEYS {
-        if let Some(value) = string_at(tool_input, key) {
-            parts.push(value);
-        }
         if let Some(value) = string_at(Some(payload), key) {
             parts.push(value);
         }
@@ -59,16 +80,19 @@ pub(crate) fn tool_name_from_payload(payload: &serde_json::Value) -> Option<Stri
         .map(str::to_string)
 }
 
-/// `<tool_name>:<16-hex FNV-1a-64 of the normalised bounded summary>`.
+/// `<tool_name>:<16-hex FNV-1a-64 of the canonical tool input>`.
 ///
 /// Stable for identical calls and different for different inputs; `None` when
-/// the payload carries no tool name.
+/// the payload carries no tool name. Payloads without a `tool_input` digest
+/// the bounded top-level key summary instead. The raw input is never stored,
+/// only the digest.
 pub(crate) fn activity_signature(payload: &serde_json::Value) -> Option<String> {
     let tool_name = tool_name_from_payload(payload)?;
-    Some(format!(
-        "{tool_name}:{}",
-        fnv1a64_hex(&normalised_summary(payload))
-    ))
+    let digest_source = match payload.get("tool_input") {
+        Some(input) if !input.is_null() => canonical_tool_input(input),
+        _ => normalised_summary(payload),
+    };
+    Some(format!("{tool_name}:{}", fnv1a64_hex(&digest_source)))
 }
 
 /// Success evidence for a finished activity event.

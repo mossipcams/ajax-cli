@@ -41,6 +41,9 @@ fn install_claude_hooks(home: &Path) -> Result<&'static str, CliError> {
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        // Claude only emits PostToolUse for successful calls; failures emit
+        // PostToolUseFailure, which maps to a failed ActivityFinished.
+        "PostToolUseFailure",
         "Stop",
         "StopFailure",
         "SessionStart",
@@ -423,11 +426,12 @@ mod tests {
         ))
     }
 
-    fn claude_events() -> [&'static str; 7] {
+    fn claude_events() -> [&'static str; 8] {
         [
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
+            "PostToolUseFailure",
             "Stop",
             "StopFailure",
             "SessionStart",

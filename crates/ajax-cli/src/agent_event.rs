@@ -145,6 +145,11 @@ pub(crate) fn translate_native_event(
                 Some(activity_finished(payload, false))
             }
         }
+        // Claude only emits PostToolUse for successful calls; failed tool
+        // calls emit PostToolUseFailure. Without this arm a failing retry
+        // loop shows only ActivityStarted events and never reaches the loop
+        // checkpoint, while unmatched started ids pile up in the state.
+        ("claude", "PostToolUseFailure") => Some(activity_finished(payload, true)),
         ("claude", "Notification") => Some(claude_notification(payload)),
         ("claude", "Notification:permission_prompt") => {
             Some(attention_requested(AttentionReason::Permission))
