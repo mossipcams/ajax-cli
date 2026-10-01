@@ -23,6 +23,7 @@ mod transport;
 
 const MIN_CONFIDENCE: f64 = 0.6;
 const BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(10);
 
@@ -130,13 +131,28 @@ fn supervise(
     stop: Arc<AtomicBool>,
 ) {
     let mut id = 0u64;
+    let mut backoff = BACKOFF;
     while !stop.load(Ordering::Acquire) {
+        let mut failure = JudgeError::Unavailable;
+        let mut diagnostics = String::new();
         if let Ok(mut child) = transport::Sidecar::spawn(&command, stop.clone()) {
-            let handshake = child.receive(Instant::now() + STARTUP_TIMEOUT);
-            if handshake
-                .as_ref()
-                .is_ok_and(|value| value.get("type").and_then(Value::as_str) == Some("ready"))
-            {
+            let initialized = loop {
+                match child.receive(Instant::now() + STARTUP_TIMEOUT) {
+                    Ok(value) if value["type"] == "ready" => break true,
+                    Ok(_) => continue,
+                    Err(error) => {
+                        failure = error;
+                        if !child.healthy() || stop.load(Ordering::Acquire) {
+                            break false;
+                        }
+                        if error == JudgeError::Malformed {
+                            continue;
+                        }
+                        retry_delay(&inbox, &stop, &mut backoff, failure, &child.diagnostics());
+                    }
+                }
+            };
+            if initialized {
                 ready.store(true, Ordering::Release);
                 loop {
                     if stop.load(Ordering::Acquire) || !child.idle() {
@@ -145,16 +161,35 @@ fn supervise(
                     match inbox.recv_timeout(POLL) {
                         Ok(request) => {
                             id = id.wrapping_add(1);
-                            let mut verdict = child
-                                .exchange(id, request.snapshot, request.deadline)
-                                .and_then(|value| parse_reply(value, id));
-                            if Instant::now() >= request.deadline {
+                            let mut verdict =
+                                child.exchange(id, request.snapshot, request.deadline);
+                            if Instant::now() >= request.deadline && verdict.is_ok() {
                                 verdict = Err(JudgeError::Timeout);
                             }
-                            let healthy = verdict.is_ok();
-                            ready.store(healthy, Ordering::Release);
-                            if request.reply.send(verdict).is_err() || !healthy {
-                                break;
+                            if let Err(error) = verdict {
+                                failure = error;
+                            }
+                            let succeeded = verdict.is_ok();
+                            ready.store(succeeded, Ordering::Release);
+                            // A caller timing out must never tear down a healthy child.
+                            let _ = request.reply.send(verdict);
+                            if succeeded {
+                                backoff = BACKOFF;
+                            } else {
+                                if !child.healthy() {
+                                    break;
+                                }
+                                retry_delay(
+                                    &inbox,
+                                    &stop,
+                                    &mut backoff,
+                                    failure,
+                                    &child.diagnostics(),
+                                );
+                                if !child.idle() {
+                                    break;
+                                }
+                                ready.store(true, Ordering::Release);
                             }
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -163,17 +198,39 @@ fn supervise(
                 }
             }
             ready.store(false, Ordering::Release);
+            diagnostics = child.diagnostics();
             // Cleanup and joining happen only on this worker, never on evaluate.
         }
-        let retry_at = Instant::now() + BACKOFF;
-        while !stop.load(Ordering::Acquire) && Instant::now() < retry_at {
-            match inbox.recv_timeout(POLL) {
-                Ok(request) => {
-                    let _ = request.reply.send(Err(JudgeError::Unavailable));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
+        retry_delay(&inbox, &stop, &mut backoff, failure, &diagnostics);
+    }
+}
+
+fn retry_delay(
+    inbox: &mpsc::Receiver<Request>,
+    stop: &AtomicBool,
+    backoff: &mut Duration,
+    error: JudgeError,
+    diagnostics: &str,
+) {
+    if stop.load(Ordering::Acquire) {
+        return;
+    }
+    // One warning per retry cycle, combining protocol errors and bounded stderr.
+    tracing::warn!(
+        ?error,
+        retry_after_secs = backoff.as_secs(),
+        diagnostics,
+        "Laya judge unavailable"
+    );
+    let retry_at = Instant::now() + *backoff;
+    *backoff = (*backoff * 2).min(MAX_BACKOFF);
+    while !stop.load(Ordering::Acquire) && Instant::now() < retry_at {
+        match inbox.recv_timeout(POLL) {
+            Ok(request) => {
+                let _ = request.reply.send(Err(JudgeError::Unavailable));
             }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
 }

@@ -13,15 +13,14 @@ pub struct TaskFrame {
 }
 
 /// Watcher phase: the watcher's own opinion of the run. Deliberately
-/// separate from task status — a `SuspectedLoop` task may still be
+/// separate from task status — a `Recovering` task may still be
 /// `Running`, and a `WaitingOnUser` task may be mid-turn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WatcherPhase {
     #[default]
+    #[serde(alias = "suspected_loop", alias = "premature_stop")]
     Healthy,
-    SuspectedLoop,
-    PrematureStop,
     Recovering,
     WaitingOnUser,
     Escalated,
@@ -33,14 +32,12 @@ pub enum WatcherPhase {
 pub enum WatcherReason {
     /// Turn settled as completed with no meaningful activity since the
     /// previous intervention or turn start.
+    #[serde(alias = "suspicious_completion")]
     PrematureStop,
-    /// A repeated identical activity signature with no meaningful change.
-    RepeatedSignature,
-    /// Judge reviewed a suspicious completion and found the work not done.
-    SuspiciousCompletion,
     /// Second stop after a nudge with no meaningful activity in between.
     StalledAfterNudge,
     /// Judge judged the agent stuck.
+    #[serde(alias = "repeated_signature")]
     Stuck,
     /// Judge judged the agent drifting from the objective.
     OffTrack,

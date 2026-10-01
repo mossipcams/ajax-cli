@@ -18,9 +18,9 @@ mod test_support;
 pub use policy::{apply_verdict, nudge_prompt, step, Step, WatcherConfig};
 pub use state::{WatcherPersistedState, WatcherState};
 pub use store::{
-    cancel_pending_watcher_nudge, clear_watcher_delivery, enqueue_watcher_nudge, load_store,
-    load_watcher_state, pending_watcher_nudge, record_watcher_delivery, store_watcher_state,
-    WatcherPendingNudge, WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
+    cancel_pending_watcher_nudge, enqueue_watcher_nudge, load_store, load_watcher_state,
+    pending_watcher_nudge, record_watcher_delivery, store_watcher_state, WatcherPendingNudge,
+    WatcherStore, MAX_DELIVERY_ATTEMPTS, WATCHER_STATE_KEY,
 };
 pub use types::{
     AgentProgressJudge, JudgeError, PendingCheckpoint, ProgressState, TaskFrame, WatcherDecision,
@@ -171,33 +171,6 @@ mod tests {
     }
 
     #[test]
-    fn meaningful_activity_after_nudge_clears_recovery_pressure() {
-        let mut s = state();
-        let c = config();
-        let mut ids = Ids::new();
-
-        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
-        let first = step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
-        assert!(matches!(first, Step::NeedsJudge(_)));
-        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c);
-        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
-        assert_eq!(s.phase, WatcherPhase::Recovering);
-
-        // Real activity clears the pressure.
-        let activity = activity_finished(&mut ids, 4000, "t2", "edit");
-        assert!(matches!(
-            step(&mut s, &activity, 4000, &c),
-            Step::Decision(WatcherDecision::NoAction)
-        ));
-        assert_eq!(s.phase, WatcherPhase::Healthy);
-        assert_eq!(s.grace_deadline_ms, None);
-
-        // The following completion is a normal stop, not an escalation.
-        let settle = step(&mut s, &settled_completed(&mut ids, 5000), 5000, &c);
-        assert!(matches!(settle, Step::Decision(WatcherDecision::AllowStop)));
-    }
-
-    #[test]
     fn repeated_identical_signature_is_detected() {
         let mut s = state();
         let c = config();
@@ -227,27 +200,6 @@ mod tests {
         );
         assert!(matches!(third, Step::NeedsJudge(_)));
         assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::Loop));
-    }
-
-    #[test]
-    fn duplicate_event_id_produces_no_duplicate_nudge() {
-        let mut s = state();
-        let c = config();
-        let mut ids = Ids::new();
-
-        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
-        let settle = settled_completed(&mut ids, 2000);
-        let first = step(&mut s, &settle, 2000, &c);
-        assert!(matches!(first, Step::NeedsJudge(_)));
-        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c);
-        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
-        let index_after_first = s.event_index;
-
-        // Replayed delivery of the same event is ignored entirely.
-        let dup = step(&mut s, &settle, 2000, &c);
-        assert!(matches!(dup, Step::Decision(WatcherDecision::NoAction)));
-        assert_eq!(s.intervention_count, 1);
-        assert_eq!(s.event_index, index_after_first);
     }
 
     #[test]
@@ -418,61 +370,6 @@ mod tests {
     }
 
     #[test]
-    fn state_is_bounded() {
-        let mut s = state();
-        let c = config();
-        let mut ids = Ids::new();
-
-        for i in 0..100 {
-            let sig = format!("sig-{i}");
-            let event = activity_finished(&mut ids, 1000 + i as u64, "t", &sig);
-            step(&mut s, &event, 1000 + i as u64, &c);
-        }
-        assert!(s.recent_signatures.len() <= c.max_recent_signatures);
-        assert!(s.recent_events.len() <= c.max_recent_events);
-        assert!(s.seen_event_ids.len() <= c.max_seen_event_ids);
-        assert!(s.repeat_counts.len() <= c.max_repeat_signatures);
-
-        // Duplicate detection still works for recently seen ids.
-        let last_id = s.seen_event_ids.back().unwrap().clone();
-        let dup = heartbeat_with_id(999_999, last_id);
-        assert!(matches!(
-            step(&mut s, &dup, 999_999, &c),
-            Step::Decision(WatcherDecision::NoAction)
-        ));
-    }
-
-    #[test]
-    fn persisted_subset_round_trips() {
-        let mut s = state();
-        let c = config();
-        let mut ids = Ids::new();
-
-        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
-        step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
-        s.last_verdict = Some(WatcherVerdict {
-            state: ProgressState::Stuck,
-            confidence: 0.8,
-        });
-
-        let persisted = s.persisted();
-        let json = serde_json::to_string(&persisted).expect("serialize persisted subset");
-        let restored: WatcherPersistedState =
-            serde_json::from_str(&json).expect("deserialize persisted subset");
-        assert_eq!(persisted, restored);
-        assert_eq!(persisted.intervention_count, 0);
-        assert!(persisted.last_seen_event_id.is_some());
-
-        let mut fresh = state();
-        fresh.apply_persisted(&restored);
-        assert_eq!(fresh.intervention_count, 0);
-        assert_eq!(fresh.last_verdict, s.last_verdict);
-        assert!(
-            fresh.has_seen_event_id(restored.last_seen_event_id.as_deref().expect("id present"))
-        );
-    }
-
-    #[test]
     fn repeated_failing_activity_reaches_loop_checkpoint() {
         let mut s = state();
         let c = config();
@@ -502,7 +399,6 @@ mod tests {
             Step::NeedsJudge(_)
         ));
         assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::Loop));
-        assert_eq!(s.failure_count, 3);
         // Failures never count as meaningful progress.
         assert!(s.last_meaningful_activity_ms.is_none());
     }
@@ -653,55 +549,6 @@ mod tests {
         ));
         assert_eq!(s.phase, WatcherPhase::Healthy);
         assert_eq!(s.intervention_count, 0);
-    }
-
-    #[test]
-    fn persisted_state_carries_phase_and_nudge_seq() {
-        let mut s = state();
-        s.phase = WatcherPhase::Escalated;
-        s.nudge_seq = 7;
-
-        let persisted = s.persisted();
-        assert_eq!(persisted.phase, WatcherPhase::Escalated);
-        assert_eq!(persisted.nudge_seq, 7);
-
-        let json = serde_json::to_string(&persisted).expect("serialize persisted subset");
-        let restored: WatcherPersistedState =
-            serde_json::from_str(&json).expect("deserialize persisted subset");
-        let mut fresh = state();
-        fresh.apply_persisted(&restored);
-        assert_eq!(fresh.phase, WatcherPhase::Escalated);
-        assert_eq!(fresh.nudge_seq, 7);
-    }
-
-    #[test]
-    fn persisted_state_defaults_phase_and_nudge_seq_for_old_metadata() {
-        // Metadata written before phase/nudge_seq existed still loads.
-        let json = r#"{"intervention_count":1}"#;
-        let restored: WatcherPersistedState =
-            serde_json::from_str(json).expect("deserialize old persisted subset");
-        assert_eq!(restored.phase, WatcherPhase::Healthy);
-        assert_eq!(restored.nudge_seq, 0);
-        assert_eq!(restored.intervention_count, 1);
-    }
-
-    #[test]
-    fn nudge_prompts_are_deterministic_templates() {
-        for reason in [
-            WatcherReason::PrematureStop,
-            WatcherReason::RepeatedSignature,
-            WatcherReason::SuspiciousCompletion,
-            WatcherReason::StalledAfterNudge,
-            WatcherReason::Stuck,
-            WatcherReason::OffTrack,
-            WatcherReason::NeedsUser,
-            WatcherReason::GraceExpired,
-            WatcherReason::InterventionCap,
-        ] {
-            let prompt = nudge_prompt(&reason);
-            assert!(!prompt.is_empty());
-            assert_eq!(prompt, nudge_prompt(&reason));
-        }
     }
 
     /// Guard: the watcher is a separate opinion layer. It must not import

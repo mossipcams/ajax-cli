@@ -30,9 +30,6 @@ pub struct WatcherState {
     pub recent_signatures: VecDeque<String>,
     /// Timestamp (ms) of the last meaningful activity, if any.
     pub last_meaningful_activity_ms: Option<u64>,
-    /// (signature, repeat count) pairs, least-recent first. Bounded.
-    pub repeat_counts: Vec<(String, u32)>,
-    pub failure_count: u32,
     pub pending_attention: Option<AttentionReason>,
     /// Checkpoint awaiting a judge verdict, if `step` asked for one.
     pub pending_checkpoint: Option<PendingCheckpoint>,
@@ -45,11 +42,9 @@ pub struct WatcherState {
     #[serde(default)]
     pub(super) open_tool_started_at_ms: HashMap<String, u64>,
     pub open_children: u32,
-    pub settle_attempts: u32,
     pub intervention_count: u32,
     pub premature_stop_nudges: u32,
     pub loop_nudges: u32,
-    pub last_intervention_event_index: Option<u64>,
     pub last_intervention_at_ms: Option<u64>,
     pub last_verdict: Option<WatcherVerdict>,
     pub grace_deadline_ms: Option<u64>,
@@ -79,7 +74,6 @@ pub struct WatcherPersistedState {
     /// unique across episode budget resets.
     #[serde(default)]
     pub nudge_seq: u64,
-    pub last_intervention_event_index: Option<u64>,
     pub last_intervention_at_ms: Option<u64>,
     pub grace_deadline_ms: Option<u64>,
     pub last_verdict: Option<WatcherVerdict>,
@@ -97,19 +91,15 @@ impl WatcherState {
             recent_events: VecDeque::new(),
             recent_signatures: VecDeque::new(),
             last_meaningful_activity_ms: None,
-            repeat_counts: Vec::new(),
-            failure_count: 0,
             pending_attention: None,
             pending_checkpoint: None,
             loop_checkpoint_signature: None,
             open_tools: Vec::new(),
             open_tool_started_at_ms: HashMap::new(),
             open_children: 0,
-            settle_attempts: 0,
             intervention_count: 0,
             premature_stop_nudges: 0,
             loop_nudges: 0,
-            last_intervention_event_index: None,
             last_intervention_at_ms: None,
             last_verdict: None,
             grace_deadline_ms: None,
@@ -144,32 +134,6 @@ impl WatcherState {
         while self.recent_signatures.len() > cap {
             self.recent_signatures.pop_front();
         }
-    }
-
-    /// Increment the repeat count for `signature` (LRU order) and return the
-    /// new count. Evicts the least-recent signature when over `cap`.
-    pub fn bump_repeat(&mut self, signature: &str, cap: usize) -> u32 {
-        if let Some(slot) = self
-            .repeat_counts
-            .iter_mut()
-            .find(|(sig, _)| sig == signature)
-        {
-            slot.1 += 1;
-            let count = slot.1;
-            let moved = self.repeat_counts.remove(
-                self.repeat_counts
-                    .iter()
-                    .position(|(sig, _)| sig == signature)
-                    .expect("position of the slot just found"),
-            );
-            self.repeat_counts.push(moved);
-            return count;
-        }
-        if self.repeat_counts.len() >= cap {
-            self.repeat_counts.remove(0);
-        }
-        self.repeat_counts.push((signature.to_string(), 1));
-        1
     }
 
     /// How many of the recent signatures equal `signature`.
@@ -259,7 +223,6 @@ impl WatcherState {
         self.loop_checkpoint_signature = None;
         self.intervention_count += 1;
         self.nudge_seq += 1;
-        self.last_intervention_event_index = Some(self.event_index);
         self.last_intervention_at_ms = Some(now_ms);
         self.phase = WatcherPhase::Recovering;
     }
@@ -305,7 +268,6 @@ impl WatcherState {
             intervention_count: self.intervention_count,
             premature_stop_nudges: self.premature_stop_nudges,
             loop_nudges: self.loop_nudges,
-            last_intervention_event_index: self.last_intervention_event_index,
             last_intervention_at_ms: self.last_intervention_at_ms,
             grace_deadline_ms: self.grace_deadline_ms,
             last_verdict: self.last_verdict.clone(),
@@ -321,7 +283,6 @@ impl WatcherState {
         self.intervention_count = persisted.intervention_count;
         self.premature_stop_nudges = persisted.premature_stop_nudges;
         self.loop_nudges = persisted.loop_nudges;
-        self.last_intervention_event_index = persisted.last_intervention_event_index;
         self.last_intervention_at_ms = persisted.last_intervention_at_ms;
         self.grace_deadline_ms = persisted.grace_deadline_ms;
         self.last_verdict = persisted.last_verdict.clone();
@@ -502,5 +463,75 @@ mod regression_tests {
             ));
             assert_eq!(s.grace_deadline_ms, None);
         }
+    }
+    #[test]
+    fn state_is_bounded() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        for i in 0..100 {
+            let sig = format!("sig-{i}");
+            let event = activity_finished(&mut ids, 1000 + i as u64, "t", &sig);
+            step(&mut s, &event, 1000 + i as u64, &c);
+        }
+        assert!(s.recent_signatures.len() <= c.max_recent_signatures);
+        assert!(s.recent_events.len() <= c.max_recent_events);
+        assert!(s.seen_event_ids.len() <= c.max_seen_event_ids);
+
+        // Duplicate detection still works for recently seen ids.
+        let last_id = s.seen_event_ids.back().unwrap().clone();
+        let dup = heartbeat_with_id(999_999, last_id);
+        assert!(matches!(
+            step(&mut s, &dup, 999_999, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+    }
+
+    #[test]
+    fn meaningful_activity_after_nudge_clears_recovery_pressure() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        let first = step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
+        assert!(matches!(first, Step::NeedsJudge(_)));
+        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c);
+        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
+        assert_eq!(s.phase, WatcherPhase::Recovering);
+
+        // Real activity clears the pressure.
+        let activity = activity_finished(&mut ids, 4000, "t2", "edit");
+        assert!(matches!(
+            step(&mut s, &activity, 4000, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.grace_deadline_ms, None);
+
+        // The following completion is a normal stop, not an escalation.
+        let settle = step(&mut s, &settled_completed(&mut ids, 5000), 5000, &c);
+        assert!(matches!(settle, Step::Decision(WatcherDecision::AllowStop)));
+    }
+    #[test]
+    fn duplicate_event_id_produces_no_duplicate_nudge() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        let settle = settled_completed(&mut ids, 2000);
+        let first = step(&mut s, &settle, 2000, &c);
+        assert!(matches!(first, Step::NeedsJudge(_)));
+        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c);
+        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
+        let index_after_first = s.event_index;
+
+        // Replayed delivery of the same event is ignored entirely.
+        let dup = step(&mut s, &settle, 2000, &c);
+        assert!(matches!(dup, Step::Decision(WatcherDecision::NoAction)));
+        assert_eq!(s.intervention_count, 1);
+        assert_eq!(s.event_index, index_after_first);
     }
 }

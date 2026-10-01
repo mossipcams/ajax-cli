@@ -119,7 +119,6 @@ fn malformed_replies_retire_child() {
     for reply in [
         "not json",
         "{}",
-        r#"{"id":999,"state":"stuck","confidence":0.9}"#,
         r#"{"id":1,"state":"unknown","confidence":0.9}"#,
         r#"{"id":1,"state":"stuck","confidence":1.1}"#,
         r#"{"id":1,"state":"stuck","confidence":-0.1}"#,
@@ -127,7 +126,7 @@ fn malformed_replies_retire_child() {
         r#"{"id":1,"state":"stuck","confidence":"0.9"}"#,
     ] {
         let fixture = Fixture::new(&format!(
-            "print('{{\"type\":\"ready\"}}', flush=True)\nsys.stdin.readline()\nprint({reply:?}, flush=True)\ntime.sleep(30)"
+            "print('{{\"type\":\"ready\"}}', flush=True)\nsys.stdin.readline()\nprint({reply:?}, flush=True)\nprint({reply:?}, flush=True)\ntime.sleep(30)"
         ));
         fixture.ready();
         assert_eq!(
@@ -144,7 +143,7 @@ fn malformed_replies_retire_child() {
 
 #[test]
 fn oversized_or_unterminated_garbage_is_bounded() {
-    let fixture = Fixture::new("print('{\"type\":\"ready\"}', flush=True)\nsys.stdin.readline()\nsys.stdout.write('x' * 10000)\nsys.stdout.flush()\ntime.sleep(30)");
+    let fixture = Fixture::new("print('{\"type\":\"ready\"}', flush=True)\nsys.stdin.readline()\nsys.stdout.write(('x' * 10000 + chr(10)) * 2)\nsys.stdout.flush()\ntime.sleep(30)");
     fixture.ready();
     assert_eq!(
         fixture.judge.evaluate(&snapshot("fix")),
@@ -153,7 +152,7 @@ fn oversized_or_unterminated_garbage_is_bounded() {
 }
 
 #[test]
-fn deadline_retires_unresponsive_child_and_next_call_does_not_hang() {
+fn deadline_bounds_evaluation_and_next_call_during_backoff_does_not_hang() {
     let fixture = Fixture::new("print('{\"type\":\"ready\"}', flush=True)\ntime.sleep(30)");
     fixture.ready();
     let start = Instant::now();
@@ -215,7 +214,7 @@ marker.write_text(str(count))
 print('{"type":"ready"}', flush=True)
 for line in sys.stdin:
     request = json.loads(line)
-    print('garbage' if count == 1 else json.dumps({'id': request['id'], 'state': 'progressing', 'confidence': 1.0}), flush=True)
+    print('garbage\ngarbage' if count == 1 else json.dumps({'id': request['id'], 'state': 'progressing', 'confidence': 1.0}), flush=True)
 "#,
     );
     fixture.ready();
@@ -373,5 +372,158 @@ class Agent:
             .unwrap();
         assert_eq!(verdict.state, ProgressState::Progressing);
         assert_eq!(verdict.confidence, 0.9);
+    }
+}
+
+#[test]
+fn late_reply_does_not_reload_or_poison_next_request() {
+    let fixture = Fixture::new(
+        r#"
+from pathlib import Path
+marker = Path(__file__).with_suffix('.count')
+count = int(marker.read_text()) + 1 if marker.exists() else 1
+marker.write_text(str(count))
+print('{"type":"ready"}', flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    if request['id'] == 1: time.sleep(0.3)
+    print(json.dumps({'id':request['id'], 'state':'progressing', 'confidence':0.9}), flush=True)
+"#,
+    );
+    fixture.ready();
+    assert_eq!(
+        fixture.judge.evaluate(&snapshot("fix")),
+        Err(JudgeError::Timeout)
+    );
+    fixture.ready();
+    assert_eq!(
+        fixture.judge.evaluate(&snapshot("fix")).unwrap().state,
+        ProgressState::Progressing
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("fake sidecar.count")).unwrap(),
+        "1"
+    );
+}
+
+#[test]
+fn startup_error_uses_exponential_backoff() {
+    let fixture = Fixture::new(
+        r#"
+from pathlib import Path
+marker = Path(__file__).with_suffix('.count')
+with marker.open('a') as file: file.write('launch\n')
+print('missing package stderr', file=sys.stderr, flush=True)
+print('{"type":"error","message":"missing laya"}', flush=True)
+sys.exit(1)
+"#,
+    );
+    let marker = fixture.root.join("fake sidecar.count");
+    wait_until(|| marker.exists());
+    thread::sleep(Duration::from_millis(700));
+    assert_eq!(fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    wait_until(|| fs::read_to_string(&marker).unwrap().lines().count() == 2);
+    thread::sleep(Duration::from_millis(1300));
+    assert_eq!(fs::read_to_string(&marker).unwrap().lines().count(), 2);
+}
+
+#[test]
+fn single_malformed_and_wrong_id_replies_are_discarded() {
+    let fixture = Fixture::new(
+        r#"
+print('{"type":"ready"}', flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    print('garbage', flush=True)
+    print(json.dumps({'id':999, 'state':'stuck', 'confidence':1}), flush=True)
+    print(json.dumps({'id':request['id'], 'state':'progressing', 'confidence':0.9}), flush=True)
+"#,
+    );
+    fixture.ready();
+    for _ in 0..2 {
+        assert_eq!(
+            fixture.judge.evaluate(&snapshot("fix")).unwrap().state,
+            ProgressState::Progressing
+        );
+    }
+}
+
+#[test]
+fn python_sidecar_warms_up_before_ready() {
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            r#"
+import io, runpy, sys, types
+module = runpy.run_path(sys.argv[1])
+calls = []
+class Fake:
+    def predict(self, state, questions):
+        calls.append('predict')
+        return {}
+sys.modules['laya'] = types.SimpleNamespace(load=lambda name: Fake())
+sys.stdin = io.StringIO('')
+module['main'].__globals__['emit'] = lambda value: calls.append(value['type'])
+assert module['main']() == 0
+assert calls == ['predict', 'ready'], calls
+"#,
+        ])
+        .arg(sidecar_path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn successful_verdict_resets_retry_backoff() {
+    let fixture = Fixture::new(
+        r#"
+from pathlib import Path
+marker = Path(__file__).with_suffix('.count')
+count = int(marker.read_text()) + 1 if marker.exists() else 1
+marker.write_text(str(count))
+if count < 3: sys.exit(1)
+print('{"type":"ready"}', flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    if request['snapshot']['objective'] == 'fail':
+        print('garbage\ngarbage', flush=True)
+    else:
+        print(json.dumps({'id':request['id'], 'state':'progressing', 'confidence':0.9}), flush=True)
+"#,
+    );
+    fixture.ready();
+    assert!(fixture.judge.evaluate(&snapshot("fix")).is_ok());
+    let start = Instant::now();
+    assert_eq!(
+        fixture.judge.evaluate(&snapshot("fail")),
+        Err(JudgeError::Malformed)
+    );
+    fixture.ready();
+    assert!(start.elapsed() < Duration::from_millis(1800));
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("fake sidecar.count")).unwrap(),
+        "4"
+    );
+}
+
+#[test]
+fn retry_backoff_caps_at_sixty_seconds() {
+    let (sender, inbox) = mpsc::sync_channel(1);
+    drop(sender); // Exercise the delay calculation without wall-clock waiting.
+    let mut backoff = BACKOFF;
+    for seconds in [2, 4, 8, 16, 32, 60, 60] {
+        retry_delay(
+            &inbox,
+            &AtomicBool::new(false),
+            &mut backoff,
+            JudgeError::Unavailable,
+            "test",
+        );
+        assert_eq!(backoff, Duration::from_secs(seconds));
     }
 }

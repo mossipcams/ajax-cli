@@ -22,7 +22,6 @@ pub struct WatcherConfig {
     pub max_recent_events: usize,
     pub max_recent_signatures: usize,
     pub max_seen_event_ids: usize,
-    pub max_repeat_signatures: usize,
     /// Identical signatures within the recent window that count as a loop.
     pub repeat_threshold: u32,
     pub max_premature_stop_nudges: u32,
@@ -38,7 +37,6 @@ impl Default for WatcherConfig {
             max_recent_events: 64,
             max_recent_signatures: 32,
             max_seen_event_ids: 512,
-            max_repeat_signatures: 32,
             repeat_threshold: 3,
             max_premature_stop_nudges: 1,
             max_loop_nudges: 1,
@@ -145,15 +143,11 @@ pub fn step(
             if let Some(id) = activity_id {
                 state.close_tool(&id);
             }
-            if success == Some(false) {
-                state.failure_count += 1;
-            }
             if let Some(sig) = signature {
                 if state.recent_signatures.back() != Some(&sig) {
                     state.loop_checkpoint_signature = None;
                 }
                 state.push_signature(&sig, config.max_recent_signatures);
-                state.bump_repeat(&sig, config.max_repeat_signatures);
                 if state.recent_signature_hits(&sig) >= config.repeat_threshold {
                     // Repeated identical signature: loop checkpoint. A loop
                     // is never meaningful activity, so a nudged loop that
@@ -182,15 +176,10 @@ pub fn step(
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::TurnSettled => {
-            state.settle_attempts += 1;
             let outcome = match &event.detail {
                 WatcherEventDetail::TurnSettled { outcome } => outcome.clone(),
                 _ => TurnOutcome::Unknown,
             };
-            if matches!(outcome, TurnOutcome::Failed) {
-                state.failure_count += 1;
-                return Step::Decision(WatcherDecision::NoAction);
-            }
             if !matches!(outcome, TurnOutcome::Completed) {
                 return Step::Decision(WatcherDecision::NoAction);
             }
@@ -420,36 +409,26 @@ pub fn nudge_prompt(reason: &WatcherReason) -> &'static str {
         WatcherReason::PrematureStop => {
             "The turn settled without observable progress. Continue the objective or state precisely why it is complete."
         }
-        WatcherReason::RepeatedSignature => {
-            "You are repeating the same action. Change approach or explain why the repetition is required."
-        }
-        WatcherReason::SuspiciousCompletion => {
-            "The completion does not match the objective. Finish the remaining work or point to the concrete evidence that it is done."
-        }
-        WatcherReason::StalledAfterNudge => {
-            "The run stopped again after a nudge with no progress. Escalating to the operator."
-        }
+
         WatcherReason::Stuck => {
             "You appear stuck. Try a different approach or surface the exact blocker."
         }
         WatcherReason::OffTrack => {
             "You appear to be drifting from the objective. Re-read the objective and realign."
         }
-        WatcherReason::NeedsUser => {
-            "The run needs the operator. Escalating to the user."
-        }
         WatcherReason::GraceExpired => {
             "No progress since the last nudge. Continue the objective or state the blocker."
         }
-        WatcherReason::InterventionCap => {
-            "The watcher has exhausted its intervention budget. Escalating to the operator."
-        }
+        // These are operator decisions, never agent nudges.
+        WatcherReason::StalledAfterNudge | WatcherReason::NeedsUser | WatcherReason::InterventionCap => "",
     }
 }
 
 #[cfg(test)]
 mod journal_regression_tests {
-    use crate::agent_watcher::{step, test_support::*, Step, WatcherEventKind};
+    use crate::agent_watcher::{
+        nudge_prompt, step, test_support::*, Step, WatcherEventKind, WatcherReason,
+    };
 
     #[test]
     fn session_close_clears_open_work_without_resetting_caps() {
@@ -515,5 +494,18 @@ mod journal_regression_tests {
             Step::NeedsJudge(_)
         ));
         assert!(s.open_tools.is_empty());
+    }
+    #[test]
+    fn nudge_prompts_are_deterministic_templates() {
+        for reason in [
+            WatcherReason::PrematureStop,
+            WatcherReason::Stuck,
+            WatcherReason::OffTrack,
+            WatcherReason::GraceExpired,
+        ] {
+            let prompt = nudge_prompt(&reason);
+            assert!(!prompt.is_empty());
+            assert_eq!(prompt, nudge_prompt(&reason));
+        }
     }
 }

@@ -100,17 +100,7 @@ pub fn record_delivery(
     if crate::agent_watcher::pending_watcher_nudge(task)
         .is_some_and(|pending| pending.id() == delivery.notification_id)
     {
-        if !crate::agent_watcher::record_watcher_delivery(task, delivery) {
-            return false;
-        }
-        // The nudge is now the most recent delivery: drop the older CI
-        // delivery so `delivery_for_task` reports the newest one.
-        let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
-        if state.delivery.is_some() {
-            state.delivery = None;
-            return crate::runtime_refresh::ci_monitor::store_state(task, &state);
-        }
-        return true;
+        return crate::agent_watcher::record_watcher_delivery(task, delivery);
     }
     let mut state = crate::runtime_refresh::ci_monitor::load_state(task);
     if state.delivery.as_ref() == Some(&delivery) {
@@ -123,13 +113,7 @@ pub fn record_delivery(
         state.last_notified_failure = Some(delivery.notification_id.clone());
     }
     state.delivery = Some(delivery);
-    let stored = crate::runtime_refresh::ci_monitor::store_state(task, &state);
-    if stored {
-        // The CI notification is now the most recent delivery: drop the
-        // older watcher delivery so `delivery_for_task` reports the newest.
-        crate::agent_watcher::clear_watcher_delivery(task);
-    }
-    stored
+    crate::runtime_refresh::ci_monitor::store_state(task, &state)
 }
 
 pub fn pending_for_task(task: &crate::models::Task) -> Option<AgentNotification> {
@@ -137,21 +121,14 @@ pub fn pending_for_task(task: &crate::models::Task) -> Option<AgentNotification>
         .or_else(|| crate::agent_watcher::pending_watcher_nudge(task))
 }
 
-/// The delivery belonging to the most recent notification. Recording a
-/// delivery on one side invalidates the other side's older delivery, so at
-/// most one store holds a current delivery; if both are present (legacy or
-/// hand-set state), a still-pending watcher nudge is the newest.
+/// Last CI delivery, projected by the cockpit as a CI agent notification.
 pub fn delivery_for_task(task: &crate::models::Task) -> Option<AgentNotificationDelivery> {
-    let ci_delivery = crate::runtime_refresh::ci_monitor::load_state(task).delivery;
-    let watcher_delivery = crate::agent_watcher::load_store(task).delivery;
-    match (ci_delivery, watcher_delivery) {
-        (Some(ci), Some(watcher)) => {
-            let watcher_current = crate::agent_watcher::pending_watcher_nudge(task)
-                .is_some_and(|pending| pending.id() == watcher.notification_id);
-            Some(if watcher_current { watcher } else { ci })
-        }
-        (ci, watcher) => ci.or(watcher),
-    }
+    crate::runtime_refresh::ci_monitor::load_state(task).delivery
+}
+
+/// Last watcher delivery, independent of CI notification bookkeeping.
+pub fn watcher_delivery_for_task(task: &crate::models::Task) -> Option<AgentNotificationDelivery> {
+    crate::agent_watcher::load_store(task).delivery
 }
 
 #[cfg(test)]
@@ -244,40 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn delivery_for_task_prefers_the_most_recent_notification() {
-        // A CI failure is notified and delivered.
-        let mut task = task();
-        let ci = ci_notification();
-        assert!(record_delivery(
-            &mut task,
-            delivery(ci.id(), AgentNotificationDeliveryStatus::Accepted)
-        ));
-        assert_eq!(
-            delivery_for_task(&task).as_ref(),
-            Some(&delivery(
-                ci.id(),
-                AgentNotificationDeliveryStatus::Accepted
-            ))
-        );
-
-        // A later watcher nudge is pending: its delivery is the most recent
-        // and must win over the older CI delivery.
-        enqueue_watcher_nudge(&mut task, "watcher-nudge:task-1:1", WatcherReason::Stuck);
-        let nudge = nudge_notification();
-        assert!(record_delivery(
-            &mut task,
-            delivery(nudge.id(), AgentNotificationDeliveryStatus::Queued)
-        ));
-        assert_eq!(
-            delivery_for_task(&task).as_ref(),
-            Some(&delivery(
-                nudge.id(),
-                AgentNotificationDeliveryStatus::Queued
-            ))
-        );
-    }
-
-    #[test]
     fn ci_record_delivery_is_unchanged_without_watcher_pending() {
         let mut task = task();
         let ci = ci_notification();
@@ -318,12 +261,34 @@ mod tests {
             store.delivery.expect("watcher delivery").status,
             AgentNotificationDeliveryStatus::Accepted
         );
+        assert_eq!(delivery_for_task(&task), None);
         assert_eq!(
-            delivery_for_task(&task).as_ref(),
+            watcher_delivery_for_task(&task).as_ref(),
             Some(&delivery(
                 nudge.id(),
                 AgentNotificationDeliveryStatus::Accepted
             ))
         );
+    }
+    #[test]
+    fn watcher_delivery_never_appears_as_ci_delivery() {
+        let mut task = task();
+        enqueue_watcher_nudge(&mut task, "nudge", WatcherReason::Stuck);
+        record_delivery(
+            &mut task,
+            delivery("nudge", AgentNotificationDeliveryStatus::Accepted),
+        );
+        assert_eq!(delivery_for_task(&task), None);
+        let watcher = delivery("nudge", AgentNotificationDeliveryStatus::Accepted);
+        assert_eq!(watcher_delivery_for_task(&task), Some(watcher.clone()));
+        let ci = delivery("ci", AgentNotificationDeliveryStatus::Accepted);
+        record_delivery(&mut task, ci.clone());
+        assert_eq!(watcher_delivery_for_task(&task), Some(watcher));
+        enqueue_watcher_nudge(&mut task, "next-nudge", WatcherReason::Stuck);
+        record_delivery(
+            &mut task,
+            delivery("next-nudge", AgentNotificationDeliveryStatus::Error),
+        );
+        assert_eq!(delivery_for_task(&task), Some(ci));
     }
 }

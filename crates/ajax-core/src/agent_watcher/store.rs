@@ -73,17 +73,6 @@ pub fn store_watcher_state(task: &mut Task, state: &WatcherPersistedState) -> bo
     persist(task, &store)
 }
 
-/// Clear the recorded nudge delivery, e.g. when a newer CI delivery
-/// supersedes it. Returns whether the task changed.
-pub fn clear_watcher_delivery(task: &mut Task) -> bool {
-    let mut store = load_store(task);
-    if store.delivery.is_none() {
-        return false;
-    }
-    store.delivery = None;
-    persist(task, &store)
-}
-
 /// The pending watcher nudge as a transport-neutral notification, if any.
 pub fn pending_watcher_nudge(task: &Task) -> Option<AgentNotification> {
     load_store(task)
@@ -110,6 +99,9 @@ pub fn cancel_pending_watcher_nudge(task: &mut Task) -> bool {
 /// re-enqueueing an id that was already delivered, is a no-op so duplicate
 /// watcher events cannot double-nudge.
 pub fn enqueue_watcher_nudge(task: &mut Task, id: &str, reason: WatcherReason) -> bool {
+    if crate::agent_watcher::nudge_prompt(&reason).is_empty() {
+        return false;
+    }
     let mut store = load_store(task);
     if store.pending_nudge.is_some() {
         return false;
@@ -156,6 +148,7 @@ pub fn record_watcher_delivery(task: &mut Task, delivery: AgentNotificationDeliv
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_watcher::{test_support::*, *};
     use crate::models::{AgentClient, TaskId};
 
     fn task() -> Task {
@@ -180,7 +173,6 @@ mod tests {
             loop_nudges: 0,
             phase: Default::default(),
             nudge_seq: 0,
-            last_intervention_event_index: None,
             last_intervention_at_ms: None,
             grace_deadline_ms: None,
             last_verdict: None,
@@ -320,5 +312,104 @@ mod tests {
         assert_eq!(after.state, before.state);
         assert_eq!(after.delivery, before.delivery);
         assert!(!cancel_pending_watcher_nudge(&mut task));
+    }
+    #[test]
+    fn persisted_subset_round_trips() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
+        s.last_verdict = Some(WatcherVerdict {
+            state: ProgressState::Stuck,
+            confidence: 0.8,
+        });
+
+        let persisted = s.persisted();
+        let json = serde_json::to_string(&persisted).expect("serialize persisted subset");
+        let restored: WatcherPersistedState =
+            serde_json::from_str(&json).expect("deserialize persisted subset");
+        assert_eq!(persisted, restored);
+        assert_eq!(persisted.intervention_count, 0);
+        assert!(persisted.last_seen_event_id.is_some());
+
+        let mut fresh = state();
+        fresh.apply_persisted(&restored);
+        assert_eq!(fresh.intervention_count, 0);
+        assert_eq!(fresh.last_verdict, s.last_verdict);
+        assert!(
+            fresh.has_seen_event_id(restored.last_seen_event_id.as_deref().expect("id present"))
+        );
+    }
+
+    #[test]
+    fn persisted_state_carries_phase_and_nudge_seq() {
+        let mut s = state();
+        s.phase = WatcherPhase::Escalated;
+        s.nudge_seq = 7;
+
+        let persisted = s.persisted();
+        assert_eq!(persisted.phase, WatcherPhase::Escalated);
+        assert_eq!(persisted.nudge_seq, 7);
+
+        let json = serde_json::to_string(&persisted).expect("serialize persisted subset");
+        let restored: WatcherPersistedState =
+            serde_json::from_str(&json).expect("deserialize persisted subset");
+        let mut fresh = state();
+        fresh.apply_persisted(&restored);
+        assert_eq!(fresh.phase, WatcherPhase::Escalated);
+        assert_eq!(fresh.nudge_seq, 7);
+    }
+
+    #[test]
+    fn persisted_state_defaults_phase_and_nudge_seq_for_old_metadata() {
+        // Metadata written before phase/nudge_seq existed still loads.
+        let json = r#"{"intervention_count":1}"#;
+        let restored: WatcherPersistedState =
+            serde_json::from_str(json).expect("deserialize old persisted subset");
+        assert_eq!(restored.phase, WatcherPhase::Healthy);
+        assert_eq!(restored.nudge_seq, 0);
+        assert_eq!(restored.intervention_count, 1);
+    }
+
+    #[test]
+    fn legacy_state_fields_are_ignored_without_losing_live_state() {
+        let mut task = task();
+        task.metadata.insert(
+            WATCHER_STATE_KEY.into(),
+            serde_json::json!({
+                "state": {
+                    "intervention_count": 2, "nudge_seq": 7, "phase": "recovering",
+                    "last_intervention_event_index": 42, "failure_count": 3,
+                    "settle_attempts": 4, "repeat_counts": [["old", 2]],
+                    "grace_deadline_ms": 12345
+                }
+            })
+            .to_string(),
+        );
+        let restored = load_watcher_state(&task).unwrap();
+        assert_eq!(restored.intervention_count, 2);
+        assert_eq!(restored.nudge_seq, 7);
+        assert_eq!(restored.phase, WatcherPhase::Recovering);
+        assert_eq!(restored.grace_deadline_ms, Some(12345));
+        for old_phase in ["suspected_loop", "premature_stop"] {
+            let state: WatcherPersistedState =
+                serde_json::from_value(serde_json::json!({"phase": old_phase})).unwrap();
+            assert_eq!(state.phase, WatcherPhase::Healthy);
+        }
+    }
+
+    #[test]
+    fn operator_decisions_cannot_be_queued_as_nudges() {
+        let mut task = task();
+        for reason in [
+            WatcherReason::NeedsUser,
+            WatcherReason::StalledAfterNudge,
+            WatcherReason::InterventionCap,
+        ] {
+            assert!(!enqueue_watcher_nudge(&mut task, "nudge", reason));
+        }
+        assert!(pending_watcher_nudge(&task).is_none());
     }
 }

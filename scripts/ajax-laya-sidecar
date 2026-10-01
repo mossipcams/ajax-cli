@@ -55,6 +55,7 @@ def main():
         with contextlib.redirect_stdout(sys.stderr):
             import laya
             agent = laya.load("convaiinnovations/laya")
+            predict(agent, {"objective": "warm up", "checkpoint": "grace_expiry"})
     except Exception as error:
         emit({"type": "error", "message": f"Laya unavailable: {error}"})
         return 1
