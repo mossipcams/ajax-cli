@@ -7,6 +7,7 @@
 //! lifecycle, or registry truth. Hosts (watcher runtime) own event
 //! transport and judge execution; everything here is pure and testable.
 
+mod checkpoints;
 mod policy;
 mod state;
 mod store;

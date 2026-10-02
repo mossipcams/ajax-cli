@@ -48,6 +48,15 @@ pub fn turn_started(ids: &mut Ids, at: u64) -> WatcherEvent {
     }
 }
 
+pub fn session_opened(ids: &mut Ids, at: u64) -> WatcherEvent {
+    WatcherEvent {
+        kind: WatcherEventKind::SessionOpened,
+        detail: WatcherEventDetail::None,
+        occurred_at_ms: at,
+        event_id: ids.next(),
+    }
+}
+
 pub fn activity_finished(
     ids: &mut Ids,
     at: u64,

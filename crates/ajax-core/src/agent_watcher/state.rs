@@ -34,6 +34,7 @@ impl WatcherState {
             open_children: 0,
             child_started_at_ms: VecDeque::new(),
             settled_in_grace: false,
+            turn_meaningful_activity: false,
             intervention_count: 0,
             premature_stop_nudges: 0,
             loop_nudges: 0,
@@ -74,16 +75,9 @@ impl WatcherState {
         }
     }
 
-    /// How many of the recent signatures equal `signature`.
-    pub fn recent_signature_hits(&self, signature: &str) -> u32 {
-        self.recent_signatures
-            .iter()
-            .filter(|sig| *sig == signature)
-            .count() as u32
-    }
-
     pub fn record_meaningful_activity(&mut self, at_ms: u64) {
         self.last_meaningful_activity_ms = Some(at_ms);
+        self.turn_meaningful_activity = true;
         self.settled_in_grace = false;
         // New activity makes a pending judge verdict stale.
         self.pending_checkpoint = None;
@@ -265,16 +259,23 @@ mod regression_tests {
         let mut nudges = 0;
         let mut at = 100u64;
         for cycle in 0..20 {
-            // One failing loop repeat: the always-Stuck judge nudges, or
-            // the lifetime cap escalates.
-            let loop_event = activity_finished_with_result(&mut ids, at, "t", "loop", Some(false));
-            at += 100;
-            let decision = match step(&mut s, &loop_event, at, &c) {
-                Step::NeedsJudge(_) => {
-                    apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), at, &c)
-                }
-                Step::Decision(decision) => decision,
-            };
+            // Three consecutive failing repeats of the same signature: under
+            // the trailing-run loop rule this is what raises the loop
+            // checkpoint (a single repeat interleaved with fresh activity no
+            // longer does). The always-Stuck judge nudges, or the lifetime
+            // cap escalates.
+            let mut decision = WatcherDecision::NoAction;
+            for _ in 0..3 {
+                let loop_event =
+                    activity_finished_with_result(&mut ids, at, "t", "loop", Some(false));
+                at += 100;
+                decision = match step(&mut s, &loop_event, at, &c) {
+                    Step::NeedsJudge(_) => {
+                        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), at, &c)
+                    }
+                    Step::Decision(decision) => decision,
+                };
+            }
             if matches!(decision, WatcherDecision::Nudge { .. }) {
                 nudges += 1;
             }

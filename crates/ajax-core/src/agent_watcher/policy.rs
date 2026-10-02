@@ -80,8 +80,10 @@ pub fn step(
                 state.settled_in_grace = false;
             }
             state.clear_attention();
-            // A new turn makes a pending judge verdict stale.
+            // A new turn makes a pending judge verdict stale and starts a
+            // fresh per-turn activity window.
             state.pending_checkpoint = None;
+            state.turn_meaningful_activity = false;
             if state.phase == WatcherPhase::Escalated && !state.grace_is_active(now_ms) {
                 // A fresh user turn after escalation starts a fresh episode:
                 // the intervention budgets no longer carry over.
@@ -137,7 +139,7 @@ pub fn step(
                     state.loop_checkpoint_signature = None;
                 }
                 state.push_signature(&sig, config.max_recent_signatures);
-                if state.recent_signature_hits(&sig) >= config.repeat_threshold {
+                if state.trailing_run_reaches(config.repeat_threshold) {
                     // Repeated identical signature: loop checkpoint. A loop
                     // is never meaningful activity, so a nudged loop that
                     // keeps repeating cannot clear recovery pressure.
@@ -198,15 +200,11 @@ fn step_on_completed_settle(state: &mut WatcherState, now_ms: u64, config: &Watc
     }
     // Suspicious completion: the recent activity is repetitive, so let the
     // judge decide whether the work is actually done.
-    if state
-        .recent_signatures
-        .iter()
-        .any(|sig| state.recent_signature_hits(sig) >= config.repeat_threshold)
-    {
+    if state.trailing_run_reaches(config.repeat_threshold) {
         state.pending_checkpoint = Some(PendingCheckpoint::Settle);
         return Step::NeedsJudge(state.snapshot(now_ms));
     }
-    if state.meaningful_activity_since_intervention() {
+    if state.turn_meaningful_activity && state.meaningful_activity_since_intervention() {
         // Normal completion with progress: stop is fine.
         if state.phase == WatcherPhase::Recovering {
             state.phase = WatcherPhase::Healthy;

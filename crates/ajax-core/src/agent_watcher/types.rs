@@ -230,6 +230,10 @@ pub struct WatcherState {
     /// A completed reply without meaningful progress inside post-nudge grace.
     #[serde(skip)]
     pub settled_in_grace: bool,
+    /// Meaningful activity in the current turn. Not persisted; a genuine
+    /// TurnStarted event starts a fresh window, SessionOpened does not.
+    #[serde(skip)]
+    pub turn_meaningful_activity: bool,
     pub intervention_count: u32,
     pub premature_stop_nudges: u32,
     pub loop_nudges: u32,
