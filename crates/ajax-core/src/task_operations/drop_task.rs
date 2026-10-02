@@ -243,8 +243,12 @@ fn drop_op_command<R: Registry>(
     let tmux = TmuxAdapter::new("tmux");
     let command = match op {
         DropOp::EnsureTmuxSessionAbsent => tmux.kill_session(&task.tmux_session),
-        DropOp::EnsureWorktreeAbsent if force => fast_remove_worktree(&repo_path, task)?,
+        DropOp::EnsureWorktreeAbsent if force => {
+            context.ensure_task_worktree_removable(task)?;
+            fast_remove_worktree(&repo_path, task)?
+        }
         DropOp::EnsureWorktreeAbsent => {
+            context.ensure_task_worktree_removable(task)?;
             git.remove_worktree(&repo_path, &task.worktree_path.display().to_string())
         }
         DropOp::EnsureBranchAbsent => git.delete_branch_substrate(&repo_path, &task.branch, force),
@@ -498,4 +502,109 @@ fn git_error_says_remote_branch_missing(stderr: &str) -> bool {
     stderr.contains("remote ref does not exist")
         || stderr.contains("does not exist")
         || stderr.contains("matches no refs")
+}
+
+#[cfg(test)]
+mod worktree_guard_tests {
+    use super::*;
+    use crate::config::{Config, ManagedRepo};
+    use crate::models::{AgentClient, TaskId};
+    use crate::registry::InMemoryRegistry;
+
+    struct RecordingDropRunner {
+        commands: Vec<CommandSpec>,
+        worktree_list_output: String,
+    }
+
+    impl CommandRunner for RecordingDropRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let is_worktree_list = command.args.iter().any(|arg| arg == "worktree")
+                && command.args.iter().any(|arg| arg == "list");
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: if is_worktree_list {
+                    self.worktree_list_output.clone()
+                } else {
+                    String::new()
+                },
+                stderr: String::new(),
+            })
+        }
+    }
+
+    /// Force-drop with a `worktree_path` pointing at the repository root must be
+    /// blocked by the guard before any trash/remove command is built or run.
+    #[test]
+    fn force_drop_refuses_worktree_path_equal_to_repo_root() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ajax-drop-guard-{}-{nanos}", std::process::id()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+
+        // worktree_path == repo path: an existing directory that is the repo root.
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", repo.display().to_string(), "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            repo.display().to_string(),
+            "ajax-web-fix-login",
+            "task",
+            AgentClient::Codex,
+        );
+        context.registry.create_task(task).unwrap();
+
+        let mut runner = RecordingDropRunner {
+            commands: Vec::new(),
+            worktree_list_output: format!(
+                "worktree {}\nHEAD abc123\nbranch refs/heads/ajax/fix-login\n",
+                repo.display()
+            ),
+        };
+
+        let result = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner);
+        let error = result.expect_err("plan must be blocked for a non-worktree path");
+        assert!(
+            matches!(error, CommandError::PlanBlocked(_)),
+            "expected PlanBlocked, got {error:?}"
+        );
+
+        // No trash rename and no forced worktree removal may have run.
+        let commands = std::mem::take(&mut runner.commands);
+        assert!(
+            !commands.iter().any(|command| command.program == "sh"),
+            "no sh/mv trash command may run, got {:?}",
+            commands
+                .iter()
+                .filter(|command| command.program == "sh")
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !commands.iter().any(|command| {
+                command.program == "git"
+                    && command.args.iter().any(|arg| arg == "worktree")
+                    && (command.args.iter().any(|arg| arg == "remove")
+                        || command.args.iter().any(|arg| arg == "--force")
+                        || command.args.iter().any(|arg| arg == "prune"))
+            }),
+            "no git worktree remove/prune/--force command may run, got {:?}",
+            commands
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
