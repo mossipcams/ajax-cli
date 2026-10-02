@@ -1,3 +1,4 @@
+use super::lookup::{find_task, task_repo_path, update_task_lifecycle};
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
@@ -12,8 +13,6 @@ use std::{
     path::{Path, PathBuf},
     time::SystemTime,
 };
-
-use super::lookup::{find_task, task_repo_path, update_task_lifecycle};
 
 pub fn mark_task_cleanup_step_completed<R: Registry>(
     context: &mut CommandContext<R>,
@@ -374,6 +373,7 @@ fn native_teardown_commands<R: Registry>(
         .as_ref()
         .is_none_or(|status| status.worktree_exists)
     {
+        context.ensure_task_worktree_removable(task)?;
         let worktree_path = task.worktree_path.display().to_string();
         let needs_force = force
             || task.git_status.as_ref().is_some_and(|status| {
@@ -414,6 +414,44 @@ fn native_teardown_commands<R: Registry>(
     Ok(commands)
 }
 
+impl<R: Registry> CommandContext<R> {
+    /// Refuse teardown operations that would move a path which is not a real
+    /// linked worktree (the repo root, an ancestor of it, or a full repository
+    /// with a `.git` directory) into the trash directory.
+    pub(crate) fn ensure_task_worktree_removable(&self, task: &Task) -> Result<(), CommandError> {
+        let repo_path = PathBuf::from(
+            task_repo_path(self, task)
+                .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?,
+        );
+        let worktree_path = task.worktree_path.clone();
+
+        if !worktree_path.exists() {
+            return Ok(());
+        }
+
+        let canonical_worktree =
+            std::fs::canonicalize(&worktree_path).unwrap_or_else(|_| worktree_path.clone());
+        let canonical_repo =
+            std::fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
+
+        if canonical_worktree == canonical_repo || canonical_repo.starts_with(&canonical_worktree) {
+            return Err(CommandError::PlanBlocked(vec![format!(
+                "worktree path {} is the repo root or an ancestor of it; refusing to move it to trash",
+                worktree_path.display()
+            )]));
+        }
+
+        if worktree_path.join(".git").is_dir() {
+            return Err(CommandError::PlanBlocked(vec![format!(
+                "worktree path {} contains a .git directory (full repository, not a linked worktree); refusing to move it to trash",
+                worktree_path.display()
+            )]));
+        }
+
+        Ok(())
+    }
+}
+
 mod drop_observation;
 
 pub use drop_observation::{
@@ -426,3 +464,150 @@ pub use drop_observation::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod worktree_guard_tests {
+    use super::*;
+    use crate::config::{Config, ManagedRepo};
+    use crate::models::{AgentClient, TaskId};
+    use crate::registry::InMemoryRegistry;
+    use std::time::UNIX_EPOCH;
+
+    fn make_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ajax-teardown-guard-{}-{}-{nanos}",
+            std::process::id(),
+            label
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn context_with_worktree(
+        repo_path: &Path,
+        worktree_path: &Path,
+    ) -> CommandContext<InMemoryRegistry> {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new(
+                    "web",
+                    repo_path.display().to_string(),
+                    "main",
+                )],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            worktree_path.display().to_string(),
+            "ajax-web-fix-login",
+            "task",
+            AgentClient::Codex,
+        );
+        context.registry.create_task(task).unwrap();
+        context
+    }
+
+    fn first_task(context: &CommandContext<InMemoryRegistry>) -> Task {
+        context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .next()
+            .expect("task exists")
+            .clone()
+    }
+
+    #[test]
+    fn repo_root_path_is_blocked() {
+        let root = make_temp_dir("repo-root");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let context = context_with_worktree(&repo, &repo);
+        let task = first_task(&context);
+
+        let error = context.ensure_task_worktree_removable(&task).unwrap_err();
+        assert!(
+            matches!(error, CommandError::PlanBlocked(_)),
+            "got {error:?}"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn ancestor_of_repo_is_blocked() {
+        let root = make_temp_dir("ancestor");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let context = context_with_worktree(&repo, &root);
+        let task = first_task(&context);
+
+        let error = context.ensure_task_worktree_removable(&task).unwrap_err();
+        assert!(
+            matches!(error, CommandError::PlanBlocked(_)),
+            "got {error:?}"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dir_with_git_directory_is_blocked() {
+        let root = make_temp_dir("git-dir");
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(worktree.join(".git")).unwrap();
+        let context = context_with_worktree(&repo, &worktree);
+        let task = first_task(&context);
+
+        let error = context.ensure_task_worktree_removable(&task).unwrap_err();
+        assert!(
+            matches!(error, CommandError::PlanBlocked(_)),
+            "got {error:?}"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn linked_worktree_with_git_file_is_allowed() {
+        let root = make_temp_dir("git-file");
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), "gitdir: /repo/.git/worktrees/wt\n").unwrap();
+        let context = context_with_worktree(&repo, &worktree);
+        let task = first_task(&context);
+
+        context.ensure_task_worktree_removable(&task).unwrap();
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn missing_worktree_path_is_allowed() {
+        let root = make_temp_dir("missing");
+        let repo = root.join("repo");
+        let worktree = root.join("does-not-exist");
+        std::fs::create_dir_all(&repo).unwrap();
+        let context = context_with_worktree(&repo, &worktree);
+        let task = first_task(&context);
+
+        context.ensure_task_worktree_removable(&task).unwrap();
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}
