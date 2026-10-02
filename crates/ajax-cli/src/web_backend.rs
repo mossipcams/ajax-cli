@@ -170,6 +170,36 @@ pub(crate) fn serve_mobile_web(
     serve_mobile_web_with_paths(host, port, context, runner, None)
 }
 
+pub(crate) fn start_agent_watcher(
+    context: &mut CommandContext<InMemoryRegistry>,
+) -> Option<std::sync::Arc<crate::agent_watcher_runtime::WatcherRuntime>> {
+    if crate::laya_judge::configured_command(&context.config.watcher).is_none() {
+        if context.config.watcher.enabled {
+            tracing::info!("agent watcher is idle without a judge; configure watcher.laya_command");
+        }
+        return None;
+    }
+    let events_dir = context.runtime_paths.cache_dir.join("agent-events");
+    crate::laya_judge::configured_judge(&context.config.watcher).and_then(|judge| {
+        match crate::agent_watcher_runtime::WatcherRuntime::start_with_checkpoint_timeout(
+            events_dir.clone(),
+            judge,
+            std::time::Duration::from_millis(
+                context.config.watcher.judge_timeout_ms.clamp(200, 10_000),
+            ),
+        ) {
+            Ok(watcher) => {
+                watcher.refresh(context);
+                Some(watcher)
+            }
+            Err(error) => {
+                tracing::warn!(%error, "agent watcher could not start");
+                None
+            }
+        }
+    })
+}
+
 pub(crate) fn serve_mobile_web_with_paths(
     host: &str,
     port: u16,
@@ -179,10 +209,19 @@ pub(crate) fn serve_mobile_web_with_paths(
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
-    let _ = crate::agent_event_notify::start_agent_event_notify_listener(
-        context.runtime_paths.cache_dir.join("agent-events"),
-    );
     ajax_core::logging::init_to_logs_dir(&context.runtime_paths.logs_dir);
+    let events_dir = context.runtime_paths.cache_dir.join("agent-events");
+    let watcher = start_agent_watcher(context);
+    let listener = match &watcher {
+        Some(watcher) => crate::agent_event_notify::start_agent_event_notify_listener_with_sink(
+            events_dir,
+            watcher.sink(),
+        ),
+        None => crate::agent_event_notify::start_agent_event_notify_listener(events_dir),
+    };
+    if let Err(error) = listener {
+        tracing::warn!(%error, "agent event notify listener could not start");
+    }
     let state = runtime::WebAppState::load_or_create(
         context.clone(),
         ProcessCommandRunner,
@@ -190,7 +229,9 @@ pub(crate) fn serve_mobile_web_with_paths(
         state_dir,
     )
     .map_err(cli_error_from_web)?;
-    runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
+    let result = runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web);
+    drop(watcher);
+    result
 }
 
 fn refresh_runtime_context_for_web<C: CommandRunner>(
@@ -236,9 +277,14 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         deliver_notifications: bool,
     ) -> Result<bool, WebError> {
         let reloaded = self.reload_context_if_stale(context)?;
-        let state_changed = refresh_runtime_context_for_web(context, runner, tier)
+        let mut state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
+        if let Some(watcher) = crate::agent_watcher_runtime::WatcherRuntime::for_events_dir(
+            &context.runtime_paths.cache_dir.join("agent-events"),
+        ) {
+            state_changed |= watcher.refresh(context);
+        }
         // Attention delivery is owned by ajax-web declarative push.
         // CLI must not take_attention_transition or it would stamp without pushing.
         let _ = deliver_notifications;
@@ -373,7 +419,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
 }
 
 impl CliRuntimeBridge {
-    fn for_context(
+    pub(crate) fn for_context(
         paths: Option<&CliContextPaths>,
         context: &CommandContext<InMemoryRegistry>,
     ) -> Result<Self, CliError> {

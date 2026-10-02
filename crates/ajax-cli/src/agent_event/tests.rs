@@ -262,6 +262,8 @@ fn cursor_post_tool_use_failure_finishes_activity() {
         Some(CanonicalEventDetail::Activity {
             activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
             activity_id: Some("t1".to_string()),
+            signature: None,
+            success: Some(false),
         })
     );
 
@@ -667,4 +669,343 @@ fn cursor_without_index_still_noops() {
     assert!(!events_dir.join(format!("{stem}.jsonl")).exists());
 
     fs::remove_dir_all(ajax_home).unwrap();
+}
+
+fn activity_fields(canonical: &super::CanonicalAgentEvent) -> (Option<String>, Option<bool>) {
+    match &canonical.detail {
+        Some(CanonicalEventDetail::Activity {
+            signature, success, ..
+        }) => (signature.clone(), *success),
+        _ => panic!("expected Activity detail"),
+    }
+}
+
+#[test]
+fn activity_signature_is_stable_and_differs_across_commands() {
+    let payload_a = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t1", "tool_input": {"command": "cargo test -p ajax-core"}});
+    // Same call, keys in a different order: the canonical JSON digest must
+    // still be identical (serde_json maps are sorted).
+    let payload_a_repeated = serde_json::json!({"tool_input": {"command": "cargo test -p ajax-core"}, "tool_call_id": "t1", "tool_name": "Bash"});
+    let payload_b = serde_json::json!({"tool_name": "Bash", "tool_call_id": "t2", "tool_input": {"command": "cargo build"}});
+
+    let (sig_a, succ_a) =
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload_a).unwrap());
+    let (sig_a2, _) = activity_fields(
+        &translate_native_event("claude", "PreToolUse", &payload_a_repeated).unwrap(),
+    );
+    let (sig_b, _) =
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload_b).unwrap());
+
+    // Stable for identical calls (canonical JSON, key order irrelevant).
+    assert_eq!(sig_a, sig_a2);
+    assert_ne!(
+        sig_a, sig_b,
+        "different commands must produce different signatures"
+    );
+    let sig = sig_a.expect("signature for a named tool");
+    assert!(sig.starts_with("Bash:"));
+    assert_eq!(sig.len(), "Bash:".len() + 16, "digest must be 16 hex chars");
+    assert!(sig[5..].chars().all(|c| c.is_ascii_hexdigit()));
+    // Started events never carry success evidence.
+    assert_eq!(succ_a, None);
+}
+
+#[test]
+fn activity_signature_digests_full_large_tool_input() {
+    // Two ~5 KB Write payloads differing only at byte 5000 must not collapse
+    // to the same signature: the old digest truncated at byte 4096.
+    let prefix = "x".repeat(5000);
+    let write_sig = |content: String| {
+        let payload = serde_json::json!({"tool_name": "Write", "tool_call_id": "w1", "tool_input": {"file_path": "/tmp/big.txt", "content": content}});
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload).unwrap()).0
+    };
+    let sig_a = write_sig(format!("{prefix}-A"));
+    let sig_b = write_sig(format!("{prefix}-B"));
+    assert_ne!(
+        sig_a, sig_b,
+        "differences after byte 4096 must change the signature"
+    );
+    assert_eq!(
+        write_sig(format!("{prefix}-A")),
+        sig_a,
+        "identical inputs must match"
+    );
+}
+
+#[test]
+fn activity_signature_is_independent_of_key_order() {
+    // The canonical digest must sort object keys recursively: reordered keys
+    // (nested too) hash identically; {"a":1} vs ["a",1] must not collide.
+    let sig = |input: serde_json::Value| {
+        let payload =
+            serde_json::json!({"tool_name": "Write", "tool_call_id": "w1", "tool_input": input});
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload).unwrap()).0
+    };
+    let ordered = serde_json::json!({
+        "file_path": "/tmp/a.rs",
+        "outer": {"b": 2, "a": 1, "deep": {"x": "one", "y": [1, 2, {"z": true}]}},
+        "list": ["x", 1, {"k2": "v", "k1": 0}],
+    });
+    let reordered = serde_json::json!({
+        "list": ["x", 1, {"k1": 0, "k2": "v"}],
+        "outer": {"deep": {"y": [1, 2, {"z": true}], "x": "one"}, "a": 1, "b": 2},
+        "file_path": "/tmp/a.rs",
+    });
+    assert_eq!(
+        sig(ordered.clone()),
+        sig(reordered),
+        "key order must not change the signature"
+    );
+    let mut different_value = ordered.clone();
+    different_value["outer"]["b"] = serde_json::json!(3);
+    assert_ne!(
+        sig(ordered.clone()),
+        sig(different_value),
+        "different values must differ"
+    );
+    assert_ne!(
+        sig(serde_json::json!({"a": 1})),
+        sig(serde_json::json!(["a", 1])),
+        "object and array shapes must not collide"
+    );
+}
+
+#[test]
+fn activity_signature_digests_whole_tool_input_and_avoids_collisions() {
+    // Three different Edit calls to the same file must not collide: only
+    // file_path used to be digested, so old_string/new_string were ignored.
+    let edits = [
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e1", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "foo", "new_string": "bar"}}),
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e2", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "baz", "new_string": "qux"}}),
+        serde_json::json!({"tool_name": "Edit", "tool_call_id": "e3", "tool_input": {"file_path": "/tmp/a.rs", "old_string": "foo", "new_string": "baz"}}),
+    ];
+    let edit_sigs = edits
+        .iter()
+        .map(|payload| {
+            activity_fields(&translate_native_event("claude", "PreToolUse", payload).unwrap()).0
+        })
+        .collect::<Vec<_>>();
+    assert_ne!(
+        edit_sigs[0], edit_sigs[1],
+        "different edits to one file must not collide"
+    );
+    assert_ne!(
+        edit_sigs[0], edit_sigs[2],
+        "different edits to one file must not collide"
+    );
+    assert_ne!(
+        edit_sigs[1], edit_sigs[2],
+        "different edits to one file must not collide"
+    );
+
+    // Different TodoWrite items, Task prompts, and WebSearch queries must not
+    // collide either (their inputs carry none of the old five keys).
+    let todo_items = ["a", "b", "c"]
+        .into_iter()
+        .map(|item| {
+            serde_json::json!({"tool_name": "TodoWrite", "tool_call_id": "w1", "tool_input": {"todos": [{"content": item, "status": "pending"}]}})
+        })
+        .collect::<Vec<_>>();
+    let task_prompts = ["p1", "p2"]
+        .into_iter()
+        .map(|prompt| {
+            serde_json::json!({"tool_name": "Task", "tool_call_id": "k1", "tool_input": {"prompt": prompt}})
+        })
+        .collect::<Vec<_>>();
+    let search_queries = ["q1", "q2"]
+        .into_iter()
+        .map(|query| {
+            serde_json::json!({"tool_name": "WebSearch", "tool_call_id": "s1", "tool_input": {"query": query}})
+        })
+        .collect::<Vec<_>>();
+    for group in [todo_items, task_prompts, search_queries] {
+        let sigs = group
+            .iter()
+            .map(|payload| {
+                activity_fields(&translate_native_event("claude", "PreToolUse", payload).unwrap()).0
+            })
+            .collect::<Vec<_>>();
+        for (left, right) in sigs.iter().zip(sigs.iter().skip(1)) {
+            assert_ne!(left, right, "different tool inputs must not collide");
+        }
+    }
+
+    // Long commands differing only after char 256 must produce different
+    // signatures (the old summary truncated at 256 chars).
+    let tail = "x".repeat(300);
+    let long_a = format!("{tail}-A");
+    let long_b = format!("{tail}-B");
+    let long_sig = |command: String| {
+        activity_fields(
+            &translate_native_event(
+                "claude",
+                "PreToolUse",
+                &serde_json::json!({"tool_name": "Bash", "tool_call_id": "t", "tool_input": {"command": command}}),
+            )
+            .unwrap(),
+        )
+        .0
+    };
+    assert_ne!(
+        long_sig(long_a.clone()),
+        long_sig(long_b),
+        "differences after char 256 must survive"
+    );
+
+    // Identical calls still produce identical signatures.
+    assert_eq!(long_sig(long_a.clone()), long_sig(long_a));
+
+    // Payloads without tool_input fall back to the top-level key summary.
+    let fallback_sig = |command: &str| {
+        activity_fields(
+            &translate_native_event(
+                "claude",
+                "PreToolUse",
+                &serde_json::json!({"tool_name": "Bash", "tool_call_id": "t", "command": command}),
+            )
+            .unwrap(),
+        )
+        .0
+    };
+    assert!(fallback_sig("cargo test").is_some());
+    assert_ne!(fallback_sig("cargo test"), fallback_sig("cargo build"));
+}
+
+#[test]
+fn claude_post_tool_use_failure_maps_to_failed_activity_finished() {
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_call_id": "t9",
+        "tool_input": {"command": "cargo test"},
+    });
+    let failure = translate_native_event("claude", "PostToolUseFailure", &payload).unwrap();
+    assert!(matches!(failure.kind, CanonicalEventKind::ActivityFinished));
+    let (failure_sig, failure_success) = activity_fields(&failure);
+    assert_eq!(failure_success, Some(false));
+    // Same signature/id logic as the successful PostToolUse for the same call,
+    // so the started id is closed and the loop checkpoint can fire.
+    let success = translate_native_event("claude", "PostToolUse", &payload).unwrap();
+    assert_eq!(failure_sig, activity_fields(&success).0);
+    let activity_id = |canonical: &super::CanonicalAgentEvent| match &canonical.detail {
+        Some(CanonicalEventDetail::Activity { activity_id, .. }) => activity_id.clone(),
+        _ => panic!("expected Activity detail"),
+    };
+    assert_eq!(activity_id(&failure), activity_id(&success));
+}
+
+#[test]
+fn activity_success_maps_failure_and_response_evidence() {
+    // cursor postToolUseFailure is a failure by construction.
+    let failure = translate_native_event(
+        "cursor",
+        "postToolUseFailure",
+        &serde_json::json!({"tool_call_id": "t1"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&failure).1, Some(false));
+
+    let is_error = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"is_error": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&is_error).1, Some(false));
+
+    let top_level_error = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "error": "boom"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&top_level_error).1, Some(false));
+
+    let response = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"ok": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&response).1, Some(true));
+
+    let result = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "result": "done"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&result).1, Some(true));
+
+    let bare = translate_native_event(
+        "cursor",
+        "postToolUse",
+        &serde_json::json!({"tool_call_id": "t1"}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&bare).1, None);
+
+    let started = translate_native_event(
+        "cursor",
+        "preToolUse",
+        &serde_json::json!({"tool_call_id": "t1", "tool_response": {"is_error": true}}),
+    )
+    .unwrap();
+    assert_eq!(activity_fields(&started).1, None);
+}
+
+#[test]
+fn old_jsonl_envelope_without_new_fields_parses() {
+    let line = r#"{"schema_version":1,"event_id":"e1","task_id":"web/fix-login","run_id":"primary","client":"claude","native_event":"PreToolUse","kind":"activity_started","detail":{"activity":{"activity":"tool","activity_id":"t1"}},"occurred_at_unix_millis":1,"received_at_unix_millis":2}"#;
+    let envelope: ajax_core::canonical_agent_event::ParsedEnvelope =
+        serde_json::from_str(line).unwrap();
+    assert_eq!(
+        envelope.detail,
+        Some(CanonicalEventDetail::Activity {
+            activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+            activity_id: Some("t1".to_string()),
+            signature: None,
+            success: None,
+        })
+    );
+    assert_eq!(envelope.event_id.as_deref(), Some("e1"));
+    assert_eq!(envelope.task_id.as_deref(), Some("web/fix-login"));
+}
+
+#[test]
+fn activity_serialisation_omits_none_signature_and_success() {
+    let bare = CanonicalEventDetail::Activity {
+        activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+        activity_id: Some("t1".to_string()),
+        signature: None,
+        success: None,
+    };
+    let value = serde_json::to_value(&bare).unwrap();
+    let detail = &value["activity"];
+    assert!(detail.get("signature").is_none());
+    assert!(detail.get("success").is_none());
+
+    let full = CanonicalEventDetail::Activity {
+        activity: ajax_core::canonical_agent_event::ActivityKind::Tool,
+        activity_id: Some("t1".to_string()),
+        signature: Some("Bash:0123456789abcdef".to_string()),
+        success: Some(false),
+    };
+    let value = serde_json::to_value(&full).unwrap();
+    assert_eq!(value["activity"]["signature"], "Bash:0123456789abcdef");
+    assert_eq!(value["activity"]["success"], false);
+}
+
+#[test]
+fn serialised_activity_detail_never_contains_raw_command_text() {
+    let payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_call_id": "t1",
+        "tool_input": {"command": "rm -rf /tmp/secret-flag-xyz && curl http://example.com"}
+    });
+    let canonical = translate_native_event("claude", "PreToolUse", &payload).unwrap();
+    let text = serde_json::to_string(&canonical.detail).unwrap();
+    assert!(!text.contains("rm -rf"));
+    assert!(!text.contains("secret-flag-xyz"));
+    assert!(!text.contains("curl"));
+    assert!(text.contains("Bash:"));
 }

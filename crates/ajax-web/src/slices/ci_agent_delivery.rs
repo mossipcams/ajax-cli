@@ -15,12 +15,17 @@ pub(crate) async fn deliver(
     directory
         .acquire(&handle, &task.worktree_path, model, task.selected_agent)
         .await?;
-    let busy = directory
+    let snapshot = directory
         .attach_snapshot(&handle, model.to_string(), None)
         .await
-        .snapshot
-        .turn_state
-        == "busy";
+        .snapshot;
+    if matches!(notification, AgentNotification::WatcherNudge { .. })
+        && (snapshot.pending_permission.is_some() || snapshot.pending_elicitation.is_some())
+    {
+        directory.release(&handle).await;
+        return Err("session is awaiting operator input; watcher nudge retained".into());
+    }
+    let busy = snapshot.turn_state == "busy";
     let result = directory
         .submit_prompt_with_id(
             &handle,
