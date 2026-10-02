@@ -5,6 +5,179 @@ use super::SessionServerEvent;
 use serde_json::json;
 
 #[test]
+fn usage_reset_round_trips_without_payload_fields() {
+    let wire = json!({ "type": "usage_reset" });
+    assert_eq!(
+        serde_json::to_value(SessionServerEvent::UsageReset).unwrap(),
+        wire
+    );
+    assert_eq!(
+        serde_json::from_value::<SessionServerEvent>(wire).unwrap(),
+        SessionServerEvent::UsageReset
+    );
+}
+
+#[test]
+fn context_resets_append_usage_reset_after_the_host_note() {
+    use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
+    use crate::adapters::web_session_acp::with_test_acp_program;
+    use crate::adapters::web_session_store;
+    use ajax_core::models::AgentClient;
+
+    for switch_harness in [false, true] {
+        let dir = scratch_dir("usage-reset");
+        let handle = "web/usage-reset";
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        with_test_acp_program(&fake_acp_fixture(), || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .unwrap();
+            directory.record(
+                handle,
+                SessionServerEvent::Usage {
+                    used: 90,
+                    size: 100,
+                },
+            );
+            let generation = directory.generation(handle);
+            let note = if switch_harness {
+                directory
+                    .runtime_handle()
+                    .block_on(directory.inner().reset_harness_context(
+                        handle,
+                        &dir,
+                        AgentClient::Codex,
+                        "auto",
+                    ))
+                    .unwrap();
+                "Client switched harness. Context reset."
+            } else {
+                directory
+                    .runtime_handle()
+                    .block_on(directory.inner().clear_context(handle, &dir))
+                    .unwrap();
+                "Context cleared."
+            };
+
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            let note_index = stored.events.iter().position(|event| matches!(
+                event, SessionServerEvent::Message { role, text, .. } if role == "note" && text == note
+            )).expect("reset note persisted");
+            assert_eq!(
+                stored.events.get(note_index + 1),
+                Some(&SessionServerEvent::UsageReset)
+            );
+            let outbound = directory.collect_outbound(handle, 0, generation);
+            assert!(outbound
+                .events
+                .iter()
+                .any(|event| event.payload == SessionServerEvent::UsageReset));
+            assert!(!outbound
+                .events
+                .iter()
+                .any(|event| matches!(event.payload, SessionServerEvent::Usage { .. })));
+        });
+        drop(directory);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn attach_replay_keeps_only_usage_after_the_latest_reset_with_absolute_cursors() {
+    use super::protocol::SessionChrome;
+    use super::replay::build_attach;
+    use super::test_support::note;
+    use super::transcript::TranscriptLog;
+
+    let turn_usage = turn_usage_event(
+        parse_turn_usage(&json!({ "inputTokens": 7 })).unwrap(),
+        None,
+    );
+    let events = vec![
+        note("history"),
+        SessionServerEvent::Usage {
+            used: 90,
+            size: 100,
+        },
+        turn_usage.clone(),
+        SessionServerEvent::UsageReset,
+        SessionServerEvent::Usage {
+            used: 80,
+            size: 100,
+        },
+        turn_usage.clone(),
+        note("latest reset"),
+        SessionServerEvent::UsageReset,
+        SessionServerEvent::Usage { used: 5, size: 100 },
+        turn_usage,
+    ];
+    // Exercise full and incremental replay, including a trimmed log's cursor offset.
+    for dropped in [0, 20] {
+        let log = TranscriptLog::from_events(events.clone(), dropped);
+        for client_cursor in [None, Some(dropped + 2), Some(dropped + 8)] {
+            let (snapshot, replayed) = build_attach(
+                &log,
+                "auto".into(),
+                false,
+                client_cursor,
+                SessionChrome::default(),
+            );
+            let expected_indices = [0, 3, 6, 7, 8, 9]
+                .into_iter()
+                .filter(|index| dropped + index >= client_cursor.unwrap_or(0))
+                .collect::<Vec<_>>();
+            assert_eq!(snapshot.cursor, dropped + events.len());
+            assert_eq!(
+                replayed.iter().map(|row| row.cursor).collect::<Vec<_>>(),
+                expected_indices
+                    .iter()
+                    .map(|index| dropped + index)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                replayed
+                    .iter()
+                    .map(|row| row.payload.clone())
+                    .collect::<Vec<_>>(),
+                expected_indices
+                    .iter()
+                    .map(|index| events[*index].clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+#[test]
+fn attach_replay_preserves_usage_without_a_reset() {
+    use super::protocol::SessionChrome;
+    use super::replay::build_attach;
+    use super::transcript::TranscriptLog;
+
+    let events = vec![
+        SessionServerEvent::Usage {
+            used: 90,
+            size: 100,
+        },
+        turn_usage_event(
+            parse_turn_usage(&json!({ "inputTokens": 7 })).unwrap(),
+            None,
+        ),
+    ];
+    let log = TranscriptLog::from_events(events.clone(), 0);
+    let (snapshot, replayed) =
+        build_attach(&log, "auto".into(), false, None, SessionChrome::default());
+    assert_eq!(snapshot.cursor, events.len());
+    assert_eq!(
+        replayed
+            .into_iter()
+            .map(|row| row.payload)
+            .collect::<Vec<_>>(),
+        events
+    );
+}
+
+#[test]
 fn parse_cursor_camel_case_usage_fields() {
     let usage = parse_turn_usage(&json!({
         "inputTokens": 1200,

@@ -62,6 +62,7 @@ export type WebSessionServerEvent =
     }
   | { type: "plan"; entries: { content: string; status: string }[] }
   | { type: "usage"; used: number; size: number }
+  | { type: "usage_reset" }
   | {
       type: "turn_usage";
       requestId?: string;

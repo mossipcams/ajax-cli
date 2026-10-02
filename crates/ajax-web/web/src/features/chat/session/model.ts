@@ -150,6 +150,7 @@ export type ChatSessionEvent =
   | { type: "tool_call"; call: Omit<ToolCall, "startedAt" | "endedAt"> }
   | { type: "plan_update"; entries: PlanEntry[] }
   | { type: "context_usage"; used: number; size: number }
+  | { type: "usage_reset" }
   | { type: "turn_usage"; usage: TurnUsage }
   | { type: "permission_request"; requestId: string; title: string; detail: string }
   | { type: "permission_resolved"; requestId: string }

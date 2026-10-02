@@ -104,6 +104,7 @@ existing paths.
   (`Context cleared.`), and keeps the TaskSession slot, JSONL transcript, and
   WebSocket identity. Prior transcript rows remain visible after the reset
   snapshot and replay.
+- Harness switches and Clear-context append `usage_reset` after the host note, clearing browser context and turn usage; replay omits `usage` and `turn_usage` rows before the latest reset marker.
 - Live prompt content capabilities come from ACP `initialize` `agentCapabilities.promptCapabilities`
   (`image`, `embeddedContext`; never `audio`). The host stores the handshake values and
   exposes them on the snapshot as `promptCapabilities`. Replace on handshake; do not
