@@ -2,6 +2,20 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.59.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.2...ajax-cli-v0.59.0) (2026-10-02)
+
+
+### Features
+
+* **web:** pi context usage ([#1191](https://github.com/mossipcams/ajax-cli/issues/1191)) ([2c4f47c](https://github.com/mossipcams/ajax-cli/commit/2c4f47cbcad480dac0a61113262347e7bcf428c7))
+
+
+### Bug Fixes
+
+* **teardown:** block repo root trash ([#1201](https://github.com/mossipcams/ajax-cli/issues/1201)) ([661e384](https://github.com/mossipcams/ajax-cli/commit/661e3844c409293a87529420fc9d80d30b8d95c9))
+* **web:** clear context usage on harness switch ([#1195](https://github.com/mossipcams/ajax-cli/issues/1195)) ([f27959b](https://github.com/mossipcams/ajax-cli/commit/f27959b46483c35d3870617d963b414eff33ea31))
+* **web:** harness switch turn end ([#1192](https://github.com/mossipcams/ajax-cli/issues/1192)) ([7d991cd](https://github.com/mossipcams/ajax-cli/commit/7d991cd7c515fc1727da18e1da380684489a9b1c))
+
 ## [0.58.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.1...ajax-cli-v0.58.2) (2026-09-17)
 
 
