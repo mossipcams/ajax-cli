@@ -328,11 +328,8 @@ mod tests {
     }
 
     #[test]
-    fn grace_window_suppresses_stop_and_expiry_asks_judge() {
-        let mut s = state();
-        let c = config();
-        let mut ids = Ids::new();
-
+    fn grace_window_suppresses_stop() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
         step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
         let first = step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
         assert!(matches!(first, Step::NeedsJudge(_)));
@@ -342,12 +339,28 @@ mod tests {
         // A stop inside the grace window is left alone.
         let early = step(&mut s, &settled_completed(&mut ids, 10_000), 10_000, &c);
         assert!(matches!(early, Step::Decision(WatcherDecision::NoAction)));
+        let late = step(&mut s, &heartbeat(&mut ids, 130_000), 130_000, &c);
+        assert!(matches!(
+            late,
+            Step::Decision(WatcherDecision::Escalate {
+                reason: WatcherReason::StalledAfterNudge
+            })
+        ));
+        assert_eq!(s.phase, WatcherPhase::Escalated);
+    }
 
+    #[test]
+    fn grace_expiry_without_a_stop_asks_judge() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        let first = step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
+        assert!(matches!(first, Step::NeedsJudge(_)));
+        let nudge = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c);
+        assert!(matches!(nudge, WatcherDecision::Nudge { .. }));
         // Grace expiry with no activity is a judge checkpoint.
         let late = step(&mut s, &heartbeat(&mut ids, 130_000), 130_000, &c);
         assert!(matches!(late, Step::NeedsJudge(_)));
         assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::GraceExpiry));
-
         // Not-done at the expiry checkpoint nudges once with GraceExpired.
         let expiry = apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 131_000, &c);
         assert!(matches!(
@@ -357,7 +370,6 @@ mod tests {
             }
         ));
         assert_eq!(s.intervention_count, 2);
-
         // Budget now exhausted: a later expiry escalates, never nudges.
         step(&mut s, &heartbeat(&mut ids, 260_000), 260_000, &c);
         assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::GraceExpiry));

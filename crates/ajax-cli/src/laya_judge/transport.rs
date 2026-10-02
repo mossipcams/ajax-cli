@@ -31,21 +31,23 @@ pub(super) struct Sidecar {
 }
 
 impl Sidecar {
-    pub(super) fn spawn(command: &LayaCommand, stop: Arc<AtomicBool>) -> Result<Self, JudgeError> {
+    pub(super) fn spawn(command: &LayaCommand, stop: Arc<AtomicBool>) -> io::Result<Self> {
         // Match STT's direct argv spawning, with arrays for paths containing spaces.
         // An absolute script path or a command on PATH works in installed builds.
         let args = match command {
             LayaCommand::String(value) => value.split_whitespace().map(str::to_owned).collect(),
             LayaCommand::Argv(value) => value.clone(),
         };
-        let (program, args) = args.split_first().ok_or(JudgeError::Unavailable)?;
+        let (program, args) = args
+            .split_first()
+            .filter(|(program, _)| !program.trim().is_empty())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty laya_command"))?;
         let child = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| JudgeError::Unavailable)?;
+            .spawn()?;
         let (tx, lines) = mpsc::sync_channel(2);
         let mut sidecar = Self {
             child,
@@ -61,15 +63,27 @@ impl Sidecar {
             retired: false,
             pending_write: Vec::new(),
         };
-        let stdin = sidecar.child.stdin.take().ok_or(JudgeError::Unavailable)?;
-        let stdout = sidecar.child.stdout.take().ok_or(JudgeError::Unavailable)?;
-        let stderr = sidecar.child.stderr.take().ok_or(JudgeError::Unavailable)?;
+        let stdin = sidecar
+            .child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("missing sidecar pipe"))?;
+        let stdout = sidecar
+            .child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("missing sidecar pipe"))?;
+        let stderr = sidecar
+            .child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("missing sidecar pipe"))?;
         for result in [
             fcntl(&stdin, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)),
             fcntl(&stdout, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)),
             fcntl(&stderr, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)),
         ] {
-            result.map_err(|_| JudgeError::Unavailable)?;
+            result.map_err(io::Error::from)?;
         }
         sidecar.stdin = Some(stdin);
         sidecar.stderr = Some(stderr);
@@ -77,8 +91,7 @@ impl Sidecar {
         sidecar.reader = Some(
             thread::Builder::new()
                 .name("ajax-laya-reader".into())
-                .spawn(move || read_lines(stdout, tx, reader_stop))
-                .map_err(|_| JudgeError::Unavailable)?,
+                .spawn(move || read_lines(stdout, tx, reader_stop))?,
         );
         Ok(sidecar)
     }
@@ -341,9 +354,45 @@ impl Drop for Sidecar {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::time::Duration;
+
+    pub(crate) fn capture_warnings(
+        run: impl FnOnce(),
+        messages: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+                *metadata.level() == tracing::Level::WARN
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                struct Fields(String);
+                impl tracing::field::Visit for Fields {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        use std::fmt::Write;
+                        write!(&mut self.0, "{}={value:?} ", field.name()).unwrap();
+                    }
+                }
+                let mut fields = Fields(String::new());
+                event.record(&mut fields);
+                self.0.lock().unwrap().push(fields.0);
+            }
+        }
+        tracing::subscriber::with_default(Capture(messages), run);
+    }
 
     #[test]
     fn diagnostics_include_protocol_error_and_stderr() {

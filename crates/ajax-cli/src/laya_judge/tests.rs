@@ -527,3 +527,56 @@ fn retry_backoff_caps_at_sixty_seconds() {
         assert_eq!(backoff, Duration::from_secs(seconds));
     }
 }
+
+#[test]
+fn spawn_failures_warn_with_cause_and_empty_commands_never_retry() {
+    for command in [
+        LayaCommand::String("/missing/ajax-laya-d3".into()),
+        LayaCommand::String("  \t ".into()),
+        LayaCommand::Argv(vec![]),
+        LayaCommand::Argv(vec!["  ".into()]),
+    ] {
+        let missing = matches!(&command, LayaCommand::String(value) if value.starts_with('/'));
+        let messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = messages.clone();
+        let (requests, inbox) = mpsc::sync_channel(1);
+        let ready = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_ready = ready.clone();
+        let worker_stop = stop.clone();
+        let worker = thread::spawn(move || {
+            transport::tests::capture_warnings(
+                || supervise(command, inbox, worker_ready, worker_stop),
+                captured,
+            )
+        });
+        wait_until(|| !messages.lock().unwrap().is_empty());
+        thread::sleep(BACKOFF + Duration::from_millis(100));
+        let finished = worker.is_finished();
+        stop.store(true, Ordering::Release);
+        worker.join().unwrap();
+        let judge = LayaJudge {
+            requests,
+            ready,
+            stop,
+            timeout: POLL,
+        };
+        assert_eq!(
+            judge.evaluate(&snapshot("fix")),
+            Err(JudgeError::Unavailable)
+        );
+        let messages = messages.lock().unwrap();
+        if missing {
+            let cause = Command::new("/missing/ajax-laya-d3")
+                .spawn()
+                .unwrap_err()
+                .to_string();
+            assert!(messages[0].contains(&cause), "{messages:?}");
+            assert!(messages.len() <= 2, "{messages:?}");
+        } else {
+            assert!(messages[0].contains("empty laya_command"), "{messages:?}");
+            assert_eq!(messages.len(), 1);
+            assert!(finished, "empty command must terminate the spawn loop");
+        }
+    }
+}

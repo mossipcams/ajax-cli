@@ -2,6 +2,7 @@
 //! seam. Everything here is pure data; policy and state live beside it.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 use crate::canonical_agent_event::{AttentionReason, TurnOutcome};
 
@@ -138,6 +139,7 @@ pub struct WatcherSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatcherEventKind {
     TurnStarted,
+    SessionOpened,
     SessionClosed,
     ActivityStarted,
     ActivityFinished,
@@ -183,6 +185,7 @@ impl WatcherEventKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::TurnStarted => "turn_started",
+            Self::SessionOpened => "session_opened",
             Self::SessionClosed => "session_closed",
             Self::ActivityStarted => "activity_started",
             Self::ActivityFinished => "activity_finished",
@@ -192,6 +195,120 @@ impl WatcherEventKind {
             Self::ChildStarted => "child_started",
             Self::ChildSettled => "child_settled",
             Self::Heartbeat => "heartbeat",
+        }
+    }
+}
+
+/// Bounded watcher state for one task/run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WatcherState {
+    pub task_id: String,
+    pub run_id: String,
+    pub harness: String,
+    pub objective: String,
+    pub phase: WatcherPhase,
+    /// Most recent event labels, oldest first. Bounded.
+    pub recent_events: VecDeque<String>,
+    /// Most recent activity signatures, oldest first. Bounded.
+    pub recent_signatures: VecDeque<String>,
+    /// Timestamp (ms) of the last meaningful activity, if any.
+    pub last_meaningful_activity_ms: Option<u64>,
+    pub pending_attention: Option<AttentionReason>,
+    /// Checkpoint awaiting a judge verdict, if `step` asked for one.
+    pub pending_checkpoint: Option<PendingCheckpoint>,
+    /// Signature whose loop edge has already raised a checkpoint.
+    #[serde(default)]
+    pub loop_checkpoint_signature: Option<String>,
+    /// Open tool ids. Bounded; the count is what policy uses.
+    pub open_tools: Vec<String>,
+    /// Start timestamps, bounded by the same open-tool ids.
+    #[serde(default)]
+    pub(super) open_tool_started_at_ms: HashMap<String, u64>,
+    pub open_children: u32,
+    #[serde(skip)]
+    pub(super) child_started_at_ms: VecDeque<u64>,
+    /// A completed reply without meaningful progress inside post-nudge grace.
+    #[serde(skip)]
+    pub settled_in_grace: bool,
+    pub intervention_count: u32,
+    pub premature_stop_nudges: u32,
+    pub loop_nudges: u32,
+    pub last_intervention_at_ms: Option<u64>,
+    pub last_verdict: Option<WatcherVerdict>,
+    pub grace_deadline_ms: Option<u64>,
+    /// Recently seen event ids for dedupe. Bounded; oldest evicted first.
+    pub seen_event_ids: VecDeque<String>,
+    /// Monotonic index of the last applied event.
+    pub event_index: u64,
+    /// Monotonic nudge counter, never reset: nudge ids built from it stay
+    /// unique across episode budget resets.
+    #[serde(default)]
+    pub nudge_seq: u64,
+    /// Nudges ever issued for this run, never reset: the lifetime cap stops
+    /// a loop that refills the per-episode budgets with fresh activity.
+    #[serde(default)]
+    pub lifetime_nudges: u64,
+}
+
+/// The persisted subset of [`WatcherState`], stored in task metadata.
+/// Everything else (rings, counters of the moment) is rebuilt from event
+/// replay or simply starts fresh.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatcherPersistedState {
+    pub intervention_count: u32,
+    pub premature_stop_nudges: u32,
+    pub loop_nudges: u32,
+    /// Watcher phase, so Escalated/WaitingOnUser survive refreshes.
+    #[serde(default)]
+    pub phase: WatcherPhase,
+    /// Monotonic nudge counter, never reset: nudge ids built from it stay
+    /// unique across episode budget resets.
+    #[serde(default)]
+    pub nudge_seq: u64,
+    /// Nudges ever issued for this run, never reset: the lifetime cap stops
+    /// a loop that refills the per-episode budgets with fresh activity.
+    #[serde(default)]
+    pub lifetime_nudges: u64,
+    pub last_intervention_at_ms: Option<u64>,
+    pub grace_deadline_ms: Option<u64>,
+    pub last_verdict: Option<WatcherVerdict>,
+    pub last_seen_event_id: Option<String>,
+}
+
+/// Caps and windows for the watcher. Intervention budgets are per episode:
+/// meaningful non-repeating activity after a nudge, or a fresh user turn
+/// after escalation, resets them. `max_lifetime_nudges` bounds the total
+/// nudges across all episodes and never resets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WatcherConfig {
+    pub max_recent_events: usize,
+    pub max_recent_signatures: usize,
+    pub max_seen_event_ids: usize,
+    /// Identical signatures within the recent window that count as a loop.
+    pub repeat_threshold: u32,
+    pub max_premature_stop_nudges: u32,
+    pub max_loop_nudges: u32,
+    pub max_total_interventions: u32,
+    /// Nudges ever issued before the run escalates, even when fresh
+    /// activity refills the per-episode budgets. Never resets.
+    pub max_lifetime_nudges: u32,
+    /// Window after a nudge in which the agent can still recover.
+    pub grace_period_ms: u64,
+}
+
+impl Default for WatcherConfig {
+    fn default() -> Self {
+        Self {
+            max_recent_events: 64,
+            max_recent_signatures: 32,
+            max_seen_event_ids: 512,
+            repeat_threshold: 3,
+            max_premature_stop_nudges: 1,
+            max_loop_nudges: 1,
+            max_total_interventions: 2,
+            max_lifetime_nudges: 6,
+            grace_period_ms: 120_000,
         }
     }
 }

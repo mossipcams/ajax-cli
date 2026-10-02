@@ -311,3 +311,101 @@ fn cursor_only_registry_flushes_are_coalesced_per_task_for_a_minute() {
     tick(&mut worker, now + 120_002);
     assert!(runtime.refresh_at(&mut fixture.context, now + 120_002));
 }
+
+#[test]
+fn session_open_preserves_escalation_but_user_turn_resets_episode() {
+    let fixture = Fixture::new(NullJudge);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut worker = worker(&fixture, &calls, ProgressState::Stuck);
+    let now = worker.started_at_ms;
+    tick(&mut worker, now);
+    let state = &mut worker.tasks.get_mut("task-1").unwrap().state;
+    state.record_intervention(now);
+    state.phase = WatcherPhase::Escalated;
+    state.premature_stop_nudges = 1;
+    state.loop_nudges = 1;
+    state.pending_attention = Some(ajax_core::canonical_agent_event::AttentionReason::Permission);
+    let before = state.persisted();
+    fixture.append(&at(
+        &line("session", "session_opened", Value::Null),
+        now + 1,
+    ));
+    tick(&mut worker, now + 1);
+    let state = &worker.tasks["task-1"].state;
+    assert_eq!(state.phase, WatcherPhase::Escalated);
+    assert_eq!(state.intervention_count, before.intervention_count);
+    assert_eq!(state.premature_stop_nudges, before.premature_stop_nudges);
+    assert_eq!(state.loop_nudges, before.loop_nudges);
+    assert!(state.pending_attention.is_some());
+    assert_eq!(state.recent_events.back().unwrap(), "session_opened");
+    fixture.append(&at(&line("user", "turn_started", Value::Null), now + 2));
+    tick(&mut worker, now + 2);
+    let state = &worker.tasks["task-1"].state;
+    assert_eq!(state.phase, WatcherPhase::Healthy);
+    assert_eq!(state.intervention_count, 0);
+    assert_eq!(state.premature_stop_nudges, 0);
+    assert_eq!(state.loop_nudges, 0);
+    assert_eq!(state.lifetime_nudges, before.lifetime_nudges);
+    assert!(state.pending_attention.is_none());
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn child_tracking_is_bounded_fifo_and_expires_from_event_time() {
+    let fixture = Fixture::new(NullJudge);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut worker = worker(&fixture, &calls, ProgressState::ProbablyDone);
+    let now = worker.started_at_ms;
+    tick(&mut worker, now);
+    for i in 0..40 {
+        fixture.append(&at(
+            &line(&format!("child-{i}"), "child_started", Value::Null),
+            now + i,
+        ));
+    }
+    tick(&mut worker, now + 40);
+    assert_eq!(worker.tasks["task-1"].state.open_children, 32);
+    fixture.append(&at(
+        &line("finished", "child_settled", Value::Null),
+        now + 41,
+    ));
+    tick(&mut worker, now + 41);
+    assert_eq!(worker.tasks["task-1"].state.open_children, 31);
+    // The oldest remaining start is +9: it survives exactly ten minutes.
+    fixture.append(&at(
+        &line("boundary", "session_opened", Value::Null),
+        now + 600_009,
+    ));
+    tick(&mut worker, now + 600_009);
+    assert_eq!(worker.tasks["task-1"].state.open_children, 31);
+    fixture.append(&at(
+        &line("expired", "session_opened", Value::Null),
+        now + 600_010,
+    ));
+    tick(&mut worker, now + 600_010);
+    assert_eq!(worker.tasks["task-1"].state.open_children, 30);
+    fixture.append(&at(&completed("done"), now + 660_000));
+    tick(&mut worker, now + 660_000);
+    assert_eq!(worker.tasks["task-1"].state.open_children, 0);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn completed_reply_inside_grace_never_requests_a_second_judgment() {
+    let fixture = Fixture::new(NullJudge);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut worker = worker(&fixture, &calls, ProgressState::Stuck);
+    let now = worker.started_at_ms;
+    tick(&mut worker, now);
+    fixture.append(&at(&completed("nudge"), now));
+    tick(&mut worker, now);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    worker.shared.lock().unwrap().outbox.clear();
+    fixture.append(&at(&completed("reply"), now + 30_000));
+    tick(&mut worker, now + 30_000);
+    tick(&mut worker, now + 120_001);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(worker.tasks["task-1"].state.phase, WatcherPhase::Escalated);
+    assert_eq!(worker.tasks["task-1"].state.intervention_count, 1);
+    assert!(worker.shared.lock().unwrap().outbox.is_empty());
+}

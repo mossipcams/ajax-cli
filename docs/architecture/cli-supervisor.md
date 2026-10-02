@@ -84,12 +84,14 @@ special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
 - **Evidence.** The canonical JSONL stays the durable source. `notify.sock` lines
   only wake the watcher to read the journal; the socket is never a second source
   of truth. Canonical activity events carry a bounded `signature` (tool name plus
-  an FNV-1a digest of a short input summary, never raw command text) and a
+  an FNV-1a digest of the canonical JSON of the whole `tool_input` (first 4096
+  bytes), never stored raw) and a
   `success` flag so repeated calls can be recognised.
 - **Policy.** The pure policy lives in `ajax_core::agent_watcher` (see
   `core-subsystems.md`). Hosted state is per task and bounded; the registry is
-  written only through `CliRuntimeBridge::refresh_cockpit`, which also publishes
-  task frames (objective = task title, harness) to the watcher.
+  written through `CliRuntimeBridge::refresh_cockpit`, which also publishes
+  task frames (objective = task title, harness) to the watcher. Cockpit delivery
+  also records the delivery result into the watcher store.
 - **Judge.** Ambiguous checkpoints go to an `AgentProgressJudge`. The optional
   implementation (`laya_judge.rs`) drives a persistent Python sidecar
   (`scripts/ajax-laya-sidecar`) around the local Laya decision model. The host

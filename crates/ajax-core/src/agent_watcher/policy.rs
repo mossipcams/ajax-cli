@@ -14,42 +14,7 @@ use crate::agent_watcher::types::{
 };
 use crate::canonical_agent_event::TurnOutcome;
 
-/// Caps and windows for the watcher. Intervention budgets are per episode:
-/// meaningful non-repeating activity after a nudge, or a fresh user turn
-/// after escalation, resets them. `max_lifetime_nudges` bounds the total
-/// nudges across all episodes and never resets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WatcherConfig {
-    pub max_recent_events: usize,
-    pub max_recent_signatures: usize,
-    pub max_seen_event_ids: usize,
-    /// Identical signatures within the recent window that count as a loop.
-    pub repeat_threshold: u32,
-    pub max_premature_stop_nudges: u32,
-    pub max_loop_nudges: u32,
-    pub max_total_interventions: u32,
-    /// Nudges ever issued before the run escalates, even when fresh
-    /// activity refills the per-episode budgets. Never resets.
-    pub max_lifetime_nudges: u32,
-    /// Window after a nudge in which the agent can still recover.
-    pub grace_period_ms: u64,
-}
-
-impl Default for WatcherConfig {
-    fn default() -> Self {
-        Self {
-            max_recent_events: 64,
-            max_recent_signatures: 32,
-            max_seen_event_ids: 512,
-            repeat_threshold: 3,
-            max_premature_stop_nudges: 1,
-            max_loop_nudges: 1,
-            max_total_interventions: 2,
-            max_lifetime_nudges: 6,
-            grace_period_ms: 120_000,
-        }
-    }
-}
+pub use super::types::WatcherConfig;
 
 /// One policy step's output.
 #[derive(Debug)]
@@ -72,16 +37,19 @@ pub fn step(
     }
     state.note_event_id(&event.event_id, config.max_seen_event_ids);
     state.expire_open_tools(now_ms);
+    state.expire_open_children(event.occurred_at_ms);
     state.event_index += 1;
     if event.kind != WatcherEventKind::Heartbeat {
         state.push_event_label(event.kind.label(), config.max_recent_events);
     }
 
     match event.kind {
+        WatcherEventKind::SessionOpened => Step::Decision(WatcherDecision::NoAction),
         WatcherEventKind::SessionClosed => {
             state.open_tools.clear();
             state.open_tool_started_at_ms.clear();
             state.open_children = 0;
+            state.child_started_at_ms.clear();
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::Heartbeat => {
@@ -89,6 +57,12 @@ pub fn step(
                 && state.grace_has_expired(now_ms)
                 && !state.meaningful_activity_since_intervention()
             {
+                if state.settled_in_grace {
+                    state.escalate();
+                    return Step::Decision(WatcherDecision::Escalate {
+                        reason: WatcherReason::StalledAfterNudge,
+                    });
+                }
                 state.pending_checkpoint = Some(PendingCheckpoint::GraceExpiry);
                 Step::NeedsJudge(state.snapshot(now_ms))
             } else {
@@ -96,6 +70,9 @@ pub fn step(
             }
         }
         WatcherEventKind::TurnStarted => {
+            if !state.grace_is_active(now_ms) {
+                state.settled_in_grace = false;
+            }
             state.clear_attention();
             // A new turn makes a pending judge verdict stale.
             state.pending_checkpoint = None;
@@ -173,11 +150,12 @@ pub fn step(
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::ChildStarted => {
-            state.open_children = state.open_children.saturating_add(1);
+            state.open_child(event.occurred_at_ms);
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::ChildSettled => {
-            state.open_children = state.open_children.saturating_sub(1);
+            state.child_started_at_ms.pop_front();
+            state.open_children = state.child_started_at_ms.len() as u32;
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::TurnSettled => {
@@ -204,6 +182,7 @@ fn step_on_completed_settle(state: &mut WatcherState, now_ms: u64, config: &Watc
     }
     // Inside the post-nudge grace window: give the agent room to recover.
     if state.grace_is_active(now_ms) {
+        state.settled_in_grace = !state.meaningful_activity_since_intervention();
         return Step::Decision(WatcherDecision::NoAction);
     }
     // Already escalated: the run is the user's problem, not the watcher's.
@@ -444,7 +423,8 @@ pub fn nudge_prompt(reason: &WatcherReason) -> &'static str {
 #[cfg(test)]
 mod journal_regression_tests {
     use crate::agent_watcher::{
-        nudge_prompt, step, test_support::*, Step, WatcherEventKind, WatcherReason,
+        apply_verdict, nudge_prompt, step, test_support::*, JudgeError, ProgressState, Step,
+        WatcherDecision, WatcherEventKind, WatcherPhase, WatcherReason,
     };
 
     #[test]
@@ -524,5 +504,90 @@ mod journal_regression_tests {
             assert!(!prompt.is_empty());
             assert_eq!(prompt, nudge_prompt(&reason));
         }
+    }
+    #[test]
+    fn completed_reply_in_grace_escalates_without_another_judge() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        assert!(matches!(
+            apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c),
+            WatcherDecision::Nudge { .. }
+        ));
+        assert!(matches!(
+            step(&mut s, &settled_completed(&mut ids, 30_001), 30_001, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert!(matches!(
+            step(&mut s, &heartbeat(&mut ids, 120_002), 120_002, &c),
+            Step::Decision(WatcherDecision::Escalate {
+                reason: WatcherReason::StalledAfterNudge
+            })
+        ));
+        assert_eq!(s.phase, WatcherPhase::Escalated);
+        assert_eq!(s.intervention_count, 1);
+        assert!(s.pending_checkpoint.is_none());
+        assert!(s.grace_deadline_ms.is_none());
+    }
+
+    #[test]
+    fn real_activity_after_grace_reply_clears_the_stop() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c);
+        step(&mut s, &settled_completed(&mut ids, 30_001), 30_001, &c);
+        step(
+            &mut s,
+            &activity_finished(&mut ids, 40_001, "tool", "edit"),
+            40_001,
+            &c,
+        );
+        assert!(matches!(
+            step(&mut s, &heartbeat(&mut ids, 120_002), 120_002, &c),
+            Step::Decision(WatcherDecision::NoAction)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert!(matches!(
+            step(&mut s, &settled_completed(&mut ids, 120_003), 120_003, &c),
+            Step::Decision(WatcherDecision::AllowStop)
+        ));
+    }
+
+    #[test]
+    fn orphaned_child_expires_and_unblocks_completed_stop() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        step(&mut s, &child_started(&mut ids, 10), 10, &c);
+        step(&mut s, &heartbeat(&mut ids, 600_010), 600_010, &c);
+        assert_eq!(s.open_children, 1);
+        step(&mut s, &heartbeat(&mut ids, 660_010), 660_010, &c);
+        assert_eq!(s.open_children, 0);
+        assert!(matches!(
+            step(&mut s, &settled_completed(&mut ids, 660_011), 660_011, &c),
+            Step::NeedsJudge(_)
+        ));
+    }
+    #[test]
+    fn loop_checkpoint_rearms_after_failed_verdict_change_or_nudge() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        let mut checkpoints = 0;
+        for signature in ["repeat"; 40].into_iter().chain(["different"; 3]) {
+            let event = activity_finished(&mut ids, 1, "tool", signature);
+            if matches!(step(&mut s, &event, 1, &c), Step::NeedsJudge(_)) {
+                checkpoints += 1;
+                apply_verdict(&mut s, Err(JudgeError::Unavailable), 1, &c);
+            }
+        }
+        // A failed (fail-open) verdict re-arms the loop edge, so every
+        // repeat from the threshold onward re-raises the checkpoint: 38
+        // "repeat" fires plus 1 "different" fire.
+        assert_eq!(checkpoints, 39);
+        s.record_intervention(2);
+        assert!(matches!(
+            step(
+                &mut s,
+                &activity_finished(&mut ids, 3, "tool", "different"),
+                3,
+                &c
+            ),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(s.phase, WatcherPhase::Recovering);
     }
 }

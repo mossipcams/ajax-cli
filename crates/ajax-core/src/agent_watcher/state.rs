@@ -6,87 +6,14 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use serde::{Deserialize, Serialize};
-
-use crate::agent_watcher::types::{
-    PendingCheckpoint, TaskFrame, WatcherPhase, WatcherSnapshot, WatcherVerdict,
-};
-use crate::canonical_agent_event::AttentionReason;
+use crate::agent_watcher::types::{TaskFrame, WatcherPhase, WatcherSnapshot};
 
 /// Hard cap on remembered open tool ids.
 const MAX_OPEN_TOOLS: usize = 256;
+const MAX_OPEN_CHILDREN: usize = 32;
+const OPEN_WORK_EXPIRY_MS: u64 = 600_000;
 
-/// Bounded watcher state for one task/run.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WatcherState {
-    pub task_id: String,
-    pub run_id: String,
-    pub harness: String,
-    pub objective: String,
-    pub phase: WatcherPhase,
-    /// Most recent event labels, oldest first. Bounded.
-    pub recent_events: VecDeque<String>,
-    /// Most recent activity signatures, oldest first. Bounded.
-    pub recent_signatures: VecDeque<String>,
-    /// Timestamp (ms) of the last meaningful activity, if any.
-    pub last_meaningful_activity_ms: Option<u64>,
-    pub pending_attention: Option<AttentionReason>,
-    /// Checkpoint awaiting a judge verdict, if `step` asked for one.
-    pub pending_checkpoint: Option<PendingCheckpoint>,
-    /// Signature whose loop edge has already raised a checkpoint.
-    #[serde(default)]
-    pub loop_checkpoint_signature: Option<String>,
-    /// Open tool ids. Bounded; the count is what policy uses.
-    pub open_tools: Vec<String>,
-    /// Start timestamps, bounded by the same open-tool ids.
-    #[serde(default)]
-    pub(super) open_tool_started_at_ms: HashMap<String, u64>,
-    pub open_children: u32,
-    pub intervention_count: u32,
-    pub premature_stop_nudges: u32,
-    pub loop_nudges: u32,
-    pub last_intervention_at_ms: Option<u64>,
-    pub last_verdict: Option<WatcherVerdict>,
-    pub grace_deadline_ms: Option<u64>,
-    /// Recently seen event ids for dedupe. Bounded; oldest evicted first.
-    pub seen_event_ids: VecDeque<String>,
-    /// Monotonic index of the last applied event.
-    pub event_index: u64,
-    /// Monotonic nudge counter, never reset: nudge ids built from it stay
-    /// unique across episode budget resets.
-    #[serde(default)]
-    pub nudge_seq: u64,
-    /// Nudges ever issued for this run, never reset: the lifetime cap stops
-    /// a loop that refills the per-episode budgets with fresh activity.
-    #[serde(default)]
-    pub lifetime_nudges: u64,
-}
-
-/// The persisted subset of [`WatcherState`], stored in task metadata.
-/// Everything else (rings, counters of the moment) is rebuilt from event
-/// replay or simply starts fresh.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WatcherPersistedState {
-    pub intervention_count: u32,
-    pub premature_stop_nudges: u32,
-    pub loop_nudges: u32,
-    /// Watcher phase, so Escalated/WaitingOnUser survive refreshes.
-    #[serde(default)]
-    pub phase: WatcherPhase,
-    /// Monotonic nudge counter, never reset: nudge ids built from it stay
-    /// unique across episode budget resets.
-    #[serde(default)]
-    pub nudge_seq: u64,
-    /// Nudges ever issued for this run, never reset: the lifetime cap stops
-    /// a loop that refills the per-episode budgets with fresh activity.
-    #[serde(default)]
-    pub lifetime_nudges: u64,
-    pub last_intervention_at_ms: Option<u64>,
-    pub grace_deadline_ms: Option<u64>,
-    pub last_verdict: Option<WatcherVerdict>,
-    pub last_seen_event_id: Option<String>,
-}
+pub use super::types::{WatcherPersistedState, WatcherState};
 
 impl WatcherState {
     pub fn new(frame: &TaskFrame, task_id: &str, run_id: &str, harness: &str) -> Self {
@@ -105,6 +32,8 @@ impl WatcherState {
             open_tools: Vec::new(),
             open_tool_started_at_ms: HashMap::new(),
             open_children: 0,
+            child_started_at_ms: VecDeque::new(),
+            settled_in_grace: false,
             intervention_count: 0,
             premature_stop_nudges: 0,
             loop_nudges: 0,
@@ -155,6 +84,7 @@ impl WatcherState {
 
     pub fn record_meaningful_activity(&mut self, at_ms: u64) {
         self.last_meaningful_activity_ms = Some(at_ms);
+        self.settled_in_grace = false;
         // New activity makes a pending judge verdict stale.
         self.pending_checkpoint = None;
         // Meaningful non-repeating activity after a nudge ends the episode:
@@ -196,9 +126,23 @@ impl WatcherState {
 
     pub(super) fn expire_open_tools(&mut self, now_ms: u64) {
         self.open_tool_started_at_ms
-            .retain(|_, at| now_ms.saturating_sub(*at) <= 600_000);
+            .retain(|_, at| now_ms.saturating_sub(*at) <= OPEN_WORK_EXPIRY_MS);
         self.open_tools
             .retain(|id| self.open_tool_started_at_ms.contains_key(id));
+    }
+
+    pub(super) fn open_child(&mut self, at_ms: u64) {
+        self.child_started_at_ms.push_back(at_ms);
+        if self.child_started_at_ms.len() > MAX_OPEN_CHILDREN {
+            self.child_started_at_ms.pop_front();
+        }
+        self.open_children = self.child_started_at_ms.len() as u32;
+    }
+
+    pub(super) fn expire_open_children(&mut self, at_ms: u64) {
+        self.child_started_at_ms
+            .retain(|start| at_ms.saturating_sub(*start) <= OPEN_WORK_EXPIRY_MS);
+        self.open_children = self.child_started_at_ms.len() as u32;
     }
 
     /// True when meaningful activity happened after the last intervention.
@@ -229,6 +173,7 @@ impl WatcherState {
     }
 
     pub fn record_intervention(&mut self, now_ms: u64) {
+        self.settled_in_grace = false;
         self.loop_checkpoint_signature = None;
         self.intervention_count += 1;
         self.nudge_seq += 1;
@@ -320,34 +265,6 @@ mod regression_tests {
     use crate::agent_watcher::test_support::*;
     use crate::agent_watcher::*;
     use crate::canonical_agent_event::AttentionReason;
-
-    #[test]
-    fn loop_checkpoint_rearms_after_failed_verdict_change_or_nudge() {
-        let (mut s, c, mut ids) = (state(), config(), Ids::new());
-        let mut checkpoints = 0;
-        for signature in ["repeat"; 40].into_iter().chain(["different"; 3]) {
-            let event = activity_finished(&mut ids, 1, "tool", signature);
-            if matches!(step(&mut s, &event, 1, &c), Step::NeedsJudge(_)) {
-                checkpoints += 1;
-                apply_verdict(&mut s, Err(JudgeError::Unavailable), 1, &c);
-            }
-        }
-        // A failed (fail-open) verdict re-arms the loop edge, so every
-        // repeat from the threshold onward re-raises the checkpoint: 38
-        // "repeat" fires plus 1 "different" fire.
-        assert_eq!(checkpoints, 39);
-        s.record_intervention(2);
-        assert!(matches!(
-            step(
-                &mut s,
-                &activity_finished(&mut ids, 3, "tool", "different"),
-                3,
-                &c
-            ),
-            Step::NeedsJudge(_)
-        ));
-        assert_eq!(s.phase, WatcherPhase::Recovering);
-    }
 
     #[test]
     fn failed_loop_verdict_rearms_the_edge_for_the_next_repeat() {

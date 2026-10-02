@@ -134,72 +134,81 @@ fn supervise(
     let mut backoff = BACKOFF;
     while !stop.load(Ordering::Acquire) {
         let mut failure = JudgeError::Unavailable;
-        let mut diagnostics = String::new();
-        if let Ok(mut child) = transport::Sidecar::spawn(&command, stop.clone()) {
-            let initialized = loop {
-                match child.receive(Instant::now() + STARTUP_TIMEOUT) {
-                    Ok(value) if value["type"] == "ready" => break true,
-                    Ok(_) => continue,
-                    Err(error) => {
-                        failure = error;
-                        if !child.healthy() || stop.load(Ordering::Acquire) {
-                            break false;
-                        }
-                        if error == JudgeError::Malformed {
-                            continue;
-                        }
-                        retry_delay(&inbox, &stop, &mut backoff, failure, &child.diagnostics());
-                    }
-                }
-            };
-            if initialized {
-                ready.store(true, Ordering::Release);
-                loop {
-                    if stop.load(Ordering::Acquire) || !child.idle() {
-                        break;
-                    }
-                    match inbox.recv_timeout(POLL) {
-                        Ok(request) => {
-                            id = id.wrapping_add(1);
-                            let mut verdict =
-                                child.exchange(id, request.snapshot, request.deadline);
-                            if Instant::now() >= request.deadline && verdict.is_ok() {
-                                verdict = Err(JudgeError::Timeout);
-                            }
-                            if let Err(error) = verdict {
-                                failure = error;
-                            }
-                            let succeeded = verdict.is_ok();
-                            ready.store(succeeded, Ordering::Release);
-                            // A caller timing out must never tear down a healthy child.
-                            let _ = request.reply.send(verdict);
-                            if succeeded {
-                                backoff = BACKOFF;
-                            } else {
-                                if !child.healthy() {
-                                    break;
-                                }
-                                retry_delay(
-                                    &inbox,
-                                    &stop,
-                                    &mut backoff,
-                                    failure,
-                                    &child.diagnostics(),
-                                );
-                                if !child.idle() {
-                                    break;
-                                }
-                                ready.store(true, Ordering::Release);
-                            }
-                        }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                    }
+        let diagnostics;
+        match transport::Sidecar::spawn(&command, stop.clone()) {
+            Err(error) => {
+                diagnostics = error.to_string();
+                if error.kind() == std::io::ErrorKind::InvalidInput {
+                    tracing::warn!(%diagnostics, "Laya judge unavailable: invalid command");
+                    return;
                 }
             }
-            ready.store(false, Ordering::Release);
-            diagnostics = child.diagnostics();
-            // Cleanup and joining happen only on this worker, never on evaluate.
+            Ok(mut child) => {
+                let initialized = loop {
+                    match child.receive(Instant::now() + STARTUP_TIMEOUT) {
+                        Ok(value) if value["type"] == "ready" => break true,
+                        Ok(_) => continue,
+                        Err(error) => {
+                            failure = error;
+                            if !child.healthy() || stop.load(Ordering::Acquire) {
+                                break false;
+                            }
+                            if error == JudgeError::Malformed {
+                                continue;
+                            }
+                            retry_delay(&inbox, &stop, &mut backoff, failure, &child.diagnostics());
+                        }
+                    }
+                };
+                if initialized {
+                    ready.store(true, Ordering::Release);
+                    loop {
+                        if stop.load(Ordering::Acquire) || !child.idle() {
+                            break;
+                        }
+                        match inbox.recv_timeout(POLL) {
+                            Ok(request) => {
+                                id = id.wrapping_add(1);
+                                let mut verdict =
+                                    child.exchange(id, request.snapshot, request.deadline);
+                                if Instant::now() >= request.deadline && verdict.is_ok() {
+                                    verdict = Err(JudgeError::Timeout);
+                                }
+                                if let Err(error) = verdict {
+                                    failure = error;
+                                }
+                                let succeeded = verdict.is_ok();
+                                ready.store(succeeded, Ordering::Release);
+                                // A caller timing out must never tear down a healthy child.
+                                let _ = request.reply.send(verdict);
+                                if succeeded {
+                                    backoff = BACKOFF;
+                                } else {
+                                    if !child.healthy() {
+                                        break;
+                                    }
+                                    retry_delay(
+                                        &inbox,
+                                        &stop,
+                                        &mut backoff,
+                                        failure,
+                                        &child.diagnostics(),
+                                    );
+                                    if !child.idle() {
+                                        break;
+                                    }
+                                    ready.store(true, Ordering::Release);
+                                }
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
+                }
+                ready.store(false, Ordering::Release);
+                diagnostics = child.diagnostics();
+                // Cleanup and joining happen only on this worker, never on evaluate.
+            }
         }
         retry_delay(&inbox, &stop, &mut backoff, failure, &diagnostics);
     }

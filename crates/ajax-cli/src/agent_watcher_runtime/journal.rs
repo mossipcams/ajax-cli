@@ -147,9 +147,8 @@ fn translate(envelope: &Envelope) -> Option<WatcherEvent> {
     let canonical = &envelope.canonical;
     let event_id = canonical.event_id.clone().filter(|id| !id.is_empty())?;
     let kind = match canonical.kind {
-        CanonicalEventKind::TurnStarted | CanonicalEventKind::SessionOpened => {
-            WatcherEventKind::TurnStarted
-        }
+        CanonicalEventKind::TurnStarted => WatcherEventKind::TurnStarted,
+        CanonicalEventKind::SessionOpened => WatcherEventKind::SessionOpened,
         CanonicalEventKind::SessionClosed => WatcherEventKind::SessionClosed,
         CanonicalEventKind::AttentionCleared => WatcherEventKind::AttentionCleared,
         CanonicalEventKind::ActivityStarted => WatcherEventKind::ActivityStarted,
