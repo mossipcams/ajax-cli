@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner, TmuxAdapter},
+    adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, TmuxAdapter},
     commands::{self, CommandContext, CommandError},
     registry::Registry,
 };
@@ -16,7 +16,7 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
 ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
     let mut outputs = Vec::new();
     let mut state_changed = false;
-    for command in commands::sweep_trash_commands(context) {
+    for command in sweep_trash_commands_guarded(context) {
         let output = runner
             .run(&command)
             .map_err(|error| (CommandError::CommandRun(error), state_changed))?;
@@ -127,4 +127,127 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
     }
 
     Ok((outputs, state_changed))
+}
+
+/// Trash sweep commands that are safe to execute.
+///
+/// `commands::sweep_trash_commands` emits one `rm -rf` sweep per `.ajax-trash`
+/// directory. If a trash entry is itself a full repository (its `.git` is a
+/// directory, e.g. a repo root was mistakenly trashed), sweeping the whole
+/// directory would destroy it. In that case sweep each non-repository entry
+/// individually and skip the repository entries entirely. When no entry holds
+/// a repository, the original pinned command is returned unchanged.
+fn sweep_trash_commands_guarded<R: Registry>(context: &CommandContext<R>) -> Vec<CommandSpec> {
+    commands::sweep_trash_commands(context)
+        .into_iter()
+        .flat_map(|command| {
+            let Some(trash_dir) = command.args.last().map(std::path::PathBuf::from) else {
+                return vec![command];
+            };
+            let Ok(entries) = std::fs::read_dir(trash_dir) else {
+                return vec![command];
+            };
+            let mut has_repository_entry = false;
+            let mut plain_entries: Vec<std::path::PathBuf> = Vec::new();
+            for entry in entries.flatten() {
+                if entry.path().is_dir() && entry.path().join(".git").is_dir() {
+                    has_repository_entry = true;
+                } else {
+                    plain_entries.push(entry.path());
+                }
+            }
+            if !has_repository_entry {
+                return vec![command];
+            }
+            plain_entries
+                .into_iter()
+                .map(|entry_path| {
+                    CommandSpec::new(
+                        "sh",
+                        [
+                            "-c",
+                            "if [ -e \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi",
+                            "ajax-trash-sweep",
+                            &entry_path.display().to_string(),
+                        ],
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod trash_sweep_guard_tests {
+    use super::*;
+    use crate::config::{Config, ManagedRepo};
+    use crate::models::{AgentClient, Task, TaskId};
+    use crate::registry::InMemoryRegistry;
+
+    fn context_with_worktree_root(root: &std::path::Path) -> CommandContext<InMemoryRegistry> {
+        let repo = root.join("repo");
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", repo.display().to_string(), "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            root.join("wt").display().to_string(),
+            "ajax-web-fix-login",
+            "task",
+            AgentClient::Codex,
+        );
+        context.registry.create_task(task).unwrap();
+        context
+    }
+
+    #[test]
+    fn sweep_skips_trash_entries_holding_full_repositories() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ajax-sweep-guard-{}-{nanos}", std::process::id()));
+        let trash_dir = root.join(".ajax-trash");
+        // An entry that holds a full repository (`.git` is a directory).
+        std::fs::create_dir_all(trash_dir.join("repo-entry/.git")).unwrap();
+        // A plain trashed worktree entry without a `.git` directory.
+        std::fs::create_dir_all(trash_dir.join("plain-entry")).unwrap();
+
+        let context = context_with_worktree_root(&root);
+        let commands = sweep_trash_commands_guarded(&context);
+
+        assert!(
+            !commands
+                .iter()
+                .any(|command| { command.args.iter().any(|arg| arg.contains("repo-entry")) }),
+            "no sweep command may target a repository entry, got {:?}",
+            commands
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            commands.iter().any(|command| {
+                command.program == "sh"
+                    && command.args.iter().any(|arg| arg.ends_with("plain-entry"))
+            }),
+            "a plain entry must still be swept, got {:?}",
+            commands
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>()
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
