@@ -219,7 +219,7 @@ pub(super) async fn reset_harness_context(
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
 
     let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note])?;
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     web_session_store::save_meta(
         &state.state_dir,
@@ -264,7 +264,7 @@ pub(super) async fn clear_session_context(
     let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
 
     let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note])?;
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     web_session_store::save_meta(
         &state.state_dir,

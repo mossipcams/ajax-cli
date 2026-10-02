@@ -63,6 +63,8 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
       return { type: "plan_update", entries: event.entries as PlanEntry[] };
     case "usage":
       return { type: "context_usage", used: event.used, size: event.size };
+    case "usage_reset":
+      return { type: "usage_reset" };
     case "turn_usage": {
       const usage: TurnUsage = {};
       if (event.requestId !== undefined) usage.requestId = event.requestId;

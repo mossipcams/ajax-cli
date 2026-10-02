@@ -200,6 +200,9 @@ pub enum SessionServerEvent {
     /// Context window pressure, from ACP `usage_update`.
     #[serde(rename = "usage")]
     Usage { used: u64, size: u64 },
+    /// Invalidate usage from the previous ACP session context.
+    #[serde(rename = "usage_reset")]
+    UsageReset,
     /// Per-turn token usage, from ACP `session/prompt` result.usage.
     #[serde(rename = "turn_usage")]
     TurnUsage {

@@ -111,9 +111,14 @@ impl TranscriptLog {
 
     /// Like [`read_from`](Self::read_from), but each row keeps its absolute log
     /// index even when resolved permission requests are filtered out.
+    /// Usage before the latest context reset is omitted from every replay.
     pub(crate) fn read_from_enveloped(&self, cursor: usize) -> (Vec<SessionEventEnvelope>, usize) {
         let next = self.absolute_next_cursor();
         let start = cursor.saturating_sub(self.dropped).min(self.events.len());
+        let usage_reset = self
+            .events
+            .iter()
+            .rposition(|event| matches!(event, SessionServerEvent::UsageReset));
         let resolved: HashSet<String> = self
             .events
             .iter()
@@ -128,6 +133,14 @@ impl TranscriptLog {
             .iter()
             .enumerate()
             .filter_map(|(index, event)| {
+                if usage_reset.is_some_and(|reset| start + index < reset)
+                    && matches!(
+                        event,
+                        SessionServerEvent::Usage { .. } | SessionServerEvent::TurnUsage { .. }
+                    )
+                {
+                    return None;
+                }
                 if matches!(
                     event,
                     SessionServerEvent::PermissionRequest { request_id, .. }

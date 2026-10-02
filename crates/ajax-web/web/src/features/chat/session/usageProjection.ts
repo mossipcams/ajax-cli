@@ -12,6 +12,11 @@ export function applyUsageEvent(
   event: ChatSessionEvent,
 ): ChatSessionReducerState {
   switch (event.type) {
+    case "usage_reset":
+      return bumpRevision({
+        ...state,
+        view: { ...state.view, usage: { context: null, turn: null } },
+      });
     case "context_usage":
       if (event.size <= 0) return state;
       return bumpRevision({
@@ -41,5 +46,5 @@ export function applyUsageEvent(
 }
 
 export function isUsageEvent(event: ChatSessionEvent): boolean {
-  return event.type === "context_usage" || event.type === "turn_usage";
+  return event.type === "context_usage" || event.type === "turn_usage" || event.type === "usage_reset";
 }
