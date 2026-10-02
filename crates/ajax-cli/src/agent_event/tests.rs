@@ -711,6 +711,66 @@ fn activity_signature_is_stable_and_differs_across_commands() {
 }
 
 #[test]
+fn activity_signature_digests_full_large_tool_input() {
+    // Two ~5 KB Write payloads differing only at byte 5000 must not collapse
+    // to the same signature: the old digest truncated at byte 4096.
+    let prefix = "x".repeat(5000);
+    let write_sig = |content: String| {
+        let payload = serde_json::json!({"tool_name": "Write", "tool_call_id": "w1", "tool_input": {"file_path": "/tmp/big.txt", "content": content}});
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload).unwrap()).0
+    };
+    let sig_a = write_sig(format!("{prefix}-A"));
+    let sig_b = write_sig(format!("{prefix}-B"));
+    assert_ne!(
+        sig_a, sig_b,
+        "differences after byte 4096 must change the signature"
+    );
+    assert_eq!(
+        write_sig(format!("{prefix}-A")),
+        sig_a,
+        "identical inputs must match"
+    );
+}
+
+#[test]
+fn activity_signature_is_independent_of_key_order() {
+    // The canonical digest must sort object keys recursively: reordered keys
+    // (nested too) hash identically; {"a":1} vs ["a",1] must not collide.
+    let sig = |input: serde_json::Value| {
+        let payload =
+            serde_json::json!({"tool_name": "Write", "tool_call_id": "w1", "tool_input": input});
+        activity_fields(&translate_native_event("claude", "PreToolUse", &payload).unwrap()).0
+    };
+    let ordered = serde_json::json!({
+        "file_path": "/tmp/a.rs",
+        "outer": {"b": 2, "a": 1, "deep": {"x": "one", "y": [1, 2, {"z": true}]}},
+        "list": ["x", 1, {"k2": "v", "k1": 0}],
+    });
+    let reordered = serde_json::json!({
+        "list": ["x", 1, {"k1": 0, "k2": "v"}],
+        "outer": {"deep": {"y": [1, 2, {"z": true}], "x": "one"}, "a": 1, "b": 2},
+        "file_path": "/tmp/a.rs",
+    });
+    assert_eq!(
+        sig(ordered.clone()),
+        sig(reordered),
+        "key order must not change the signature"
+    );
+    let mut different_value = ordered.clone();
+    different_value["outer"]["b"] = serde_json::json!(3);
+    assert_ne!(
+        sig(ordered.clone()),
+        sig(different_value),
+        "different values must differ"
+    );
+    assert_ne!(
+        sig(serde_json::json!({"a": 1})),
+        sig(serde_json::json!(["a", 1])),
+        "object and array shapes must not collide"
+    );
+}
+
+#[test]
 fn activity_signature_digests_whole_tool_input_and_avoids_collisions() {
     // Three different Edit calls to the same file must not collide: only
     // file_path used to be digested, so old_string/new_string were ignored.

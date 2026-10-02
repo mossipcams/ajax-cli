@@ -2,28 +2,89 @@
 //!
 //! The signature is a stable, bounded digest of a tool call's input so the
 //! agent watcher can detect repeated calls. It is the tool name plus an
-//! FNV-1a-64 digest of the canonical JSON string of the whole `tool_input`
-//! value (serde_json maps are sorted, so the string is canonical),
-//! truncated to its first 4096 bytes on a char boundary before hashing.
-//! Payloads without a `tool_input` fall back to a bounded summary of the
-//! top-level keys. Raw command text, tool output, and transcripts are never
-//! stored in the event envelope.
+//! FNV-1a-64 digest of the canonical form of the whole `tool_input` value:
+//! the value is walked recursively and object entries are fed to the hasher
+//! in sorted key order (arrays in order, type-tagged scalars, unambiguous
+//! separators, and length-prefixed strings), so the digest is independent of
+//! JSON key order and never truncates the input. Payloads without a
+//! `tool_input` fall back to a bounded summary of the top-level keys. Raw
+//! command text, tool output, and transcripts are never stored in the event
+//! envelope.
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const SUMMARY_LIMIT: usize = 256;
 const SUMMARY_KEYS: [&str; 5] = ["command", "file_path", "path", "pattern", "url"];
-/// Maximum canonical-JSON bytes of a tool input that feed the digest.
-const MAX_SIGNATURE_INPUT_BYTES: usize = 4096;
+/// Streaming FNV-1a-64 hasher.
+struct Fnv1a64 {
+    hash: u64,
+}
+
+impl Fnv1a64 {
+    fn new() -> Self {
+        Self {
+            hash: FNV_OFFSET_BASIS,
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.hash ^= u64::from(*byte);
+            self.hash = self.hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+
+    /// 16-hex lowercase digest.
+    fn hex(self) -> String {
+        format!("{:016x}", self.hash)
+    }
+}
 
 /// 16-hex lowercase FNV-1a-64 digest of `input`.
 pub(crate) fn fnv1a64_hex(input: &str) -> String {
-    let mut hash = FNV_OFFSET_BASIS;
-    for byte in input.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
+    let mut hasher = Fnv1a64::new();
+    hasher.update(input.as_bytes());
+    hasher.hex()
+}
+
+/// Feed the canonical form of `value` to `hasher`: objects in sorted key
+/// order, arrays in order, type-tagged scalars, length-prefixed strings.
+fn hash_canonical_value(hasher: &mut Fnv1a64, value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Null => hasher.update(b"n"),
+        serde_json::Value::Bool(flag) => hasher.update(if *flag { b"t" } else { b"f" }),
+        serde_json::Value::Number(number) => {
+            hasher.update(b"d");
+            hasher.update(number.to_string().as_bytes());
+        }
+        serde_json::Value::String(text) => {
+            hasher.update(b"s");
+            hasher.update((text.len() as u64).to_le_bytes().as_slice());
+            hasher.update(text.as_bytes());
+        }
+        serde_json::Value::Array(items) => {
+            hasher.update(b"[");
+            for item in items {
+                hash_canonical_value(hasher, item);
+                hasher.update(b",");
+            }
+            hasher.update(b"]");
+        }
+        serde_json::Value::Object(map) => {
+            hasher.update(b"{");
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                hasher.update(b"s");
+                hasher.update((key.len() as u64).to_le_bytes().as_slice());
+                hasher.update(key.as_bytes());
+                hasher.update(b":");
+                hash_canonical_value(hasher, &map[key]);
+                hasher.update(b",");
+            }
+            hasher.update(b"}");
+        }
     }
-    format!("{hash:016x}")
 }
 
 fn string_at<'a>(value: Option<&'a serde_json::Value>, key: &str) -> Option<&'a str> {
@@ -31,26 +92,6 @@ fn string_at<'a>(value: Option<&'a serde_json::Value>, key: &str) -> Option<&'a 
         .and_then(|item| item.get(key))
         .and_then(|item| item.as_str())
 }
-
-/// Canonical JSON string of the whole tool input, truncated to the first
-/// 4096 bytes on a char boundary so huge inputs stay bounded.
-fn canonical_tool_input(input: &serde_json::Value) -> String {
-    let text = serde_json::to_string(input).unwrap_or_else(|_| input.to_string());
-    truncate_on_char_boundary(&text, MAX_SIGNATURE_INPUT_BYTES)
-}
-
-/// Truncate `text` to at most `max_bytes`, never splitting a char.
-fn truncate_on_char_boundary(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
-}
-
 /// Bounded summary of the top-level fields that identify "the same call"
 /// without storing raw tool output: the string values of
 /// `command`/`file_path`/`path`/`pattern`/`url`, whitespace-collapsed,
@@ -88,11 +129,15 @@ pub(crate) fn tool_name_from_payload(payload: &serde_json::Value) -> Option<Stri
 /// only the digest.
 pub(crate) fn activity_signature(payload: &serde_json::Value) -> Option<String> {
     let tool_name = tool_name_from_payload(payload)?;
-    let digest_source = match payload.get("tool_input") {
-        Some(input) if !input.is_null() => canonical_tool_input(input),
-        _ => normalised_summary(payload),
+    let digest = match payload.get("tool_input") {
+        Some(input) if !input.is_null() => {
+            let mut hasher = Fnv1a64::new();
+            hash_canonical_value(&mut hasher, input);
+            hasher.hex()
+        }
+        _ => fnv1a64_hex(&normalised_summary(payload)),
     };
-    Some(format!("{tool_name}:{}", fnv1a64_hex(&digest_source)))
+    Some(format!("{tool_name}:{digest}"))
 }
 
 /// Success evidence for a finished activity event.
