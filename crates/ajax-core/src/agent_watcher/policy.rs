@@ -14,7 +14,7 @@ use crate::agent_watcher::types::{
 };
 use crate::canonical_agent_event::TurnOutcome;
 
-pub use super::types::WatcherConfig;
+pub use super::types::{nudge_prompt, WatcherConfig};
 
 /// One policy step's output.
 #[derive(Debug)]
@@ -58,6 +58,12 @@ pub fn step(
                 && !state.meaningful_activity_since_intervention()
             {
                 if state.settled_in_grace {
+                    if !state.open_tools.is_empty()
+                        || state.open_children > 0
+                        || state.pending_attention.is_some()
+                    {
+                        return Step::Decision(WatcherDecision::NoAction);
+                    }
                     state.escalate();
                     return Step::Decision(WatcherDecision::Escalate {
                         reason: WatcherReason::StalledAfterNudge,
@@ -102,6 +108,7 @@ pub fn step(
             Step::Decision(WatcherDecision::NoAction)
         }
         WatcherEventKind::ActivityStarted => {
+            state.settled_in_grace = false;
             state.clear_attention();
             if let WatcherEventDetail::Activity {
                 activity_id: Some(id),
@@ -266,12 +273,21 @@ pub fn apply_verdict(
         // A discarded verdict did not judge the loop: re-arm the edge so
         // the next repeat may raise the checkpoint again.
         state.rearm_loop_checkpoint();
-        state.pending_checkpoint = None;
         return WatcherDecision::NoAction;
     }
     let checkpoint = state.pending_checkpoint.take();
-    // Fail-open grace outcomes must wait another window before retrying.
-    if checkpoint == Some(PendingCheckpoint::GraceExpiry) {
+    // Only fail-open grace outcomes retain recovery pressure and wait another window.
+    if checkpoint == Some(PendingCheckpoint::GraceExpiry)
+        && matches!(
+            verdict,
+            Err(_)
+                | Ok(WatcherVerdict {
+                    state: ProgressState::Uncertain,
+                    ..
+                })
+        )
+    {
+        state.phase = WatcherPhase::Recovering;
         state.grace_deadline_ms = Some(now_ms.saturating_add(config.grace_period_ms));
     }
     let verdict = match verdict {
@@ -287,17 +303,14 @@ pub fn apply_verdict(
     state.last_verdict = Some(verdict);
     match progress {
         ProgressState::Uncertain => WatcherDecision::NoAction,
-        ProgressState::ProbablyDone => {
+        ProgressState::ProbablyDone | ProgressState::Progressing => {
             state.phase = WatcherPhase::Healthy;
             state.grace_deadline_ms = None;
-            WatcherDecision::AllowStop
-        }
-        ProgressState::Progressing => {
-            state.phase = WatcherPhase::Healthy;
-            if checkpoint != Some(PendingCheckpoint::GraceExpiry) {
-                state.grace_deadline_ms = None;
+            if progress == ProgressState::ProbablyDone {
+                WatcherDecision::AllowStop
+            } else {
+                WatcherDecision::NoAction
             }
-            WatcherDecision::NoAction
         }
         ProgressState::NeedsUser => {
             state.phase = WatcherPhase::WaitingOnUser;
@@ -312,15 +325,11 @@ pub fn apply_verdict(
                 _ => return WatcherDecision::NoAction,
             };
             match checkpoint {
-                // Suspicious completion and the judge says not done: the
-                // completion was premature. Counts against the
-                // premature-stop budget.
+                // Settle nudges use the premature-stop budget; all others use loop budgets.
                 Some(PendingCheckpoint::Settle) => nudge_premature_stop(state, now_ms, config),
-                // Grace after a nudge expired with no activity. Counts
-                // against the loop-nudge budget; escalates per caps.
-                Some(PendingCheckpoint::GraceExpiry) => nudge_grace_expired(state, now_ms, config),
-                // Loop checkpoint, or no checkpoint recorded: judge-style
-                // nudge keyed by the verdict.
+                Some(PendingCheckpoint::GraceExpiry) => {
+                    nudge_for_verdict(state, WatcherReason::GraceExpired, now_ms, config)
+                }
                 Some(PendingCheckpoint::Loop) | None => {
                     nudge_for_verdict(state, reason, now_ms, config)
                 }
@@ -353,30 +362,6 @@ fn nudge_premature_stop(
     }
 }
 
-/// A not-done verdict at a grace-expiry checkpoint: no activity since the
-/// last nudge. Counts against the loop-nudge budget; escalates per caps.
-fn nudge_grace_expired(
-    state: &mut WatcherState,
-    now_ms: u64,
-    config: &WatcherConfig,
-) -> WatcherDecision {
-    if state.intervention_count >= config.max_total_interventions
-        || state.loop_nudges >= config.max_loop_nudges
-        || state.lifetime_nudges >= u64::from(config.max_lifetime_nudges)
-    {
-        state.escalate();
-        return WatcherDecision::Escalate {
-            reason: WatcherReason::InterventionCap,
-        };
-    }
-    state.loop_nudges += 1;
-    state.record_intervention(now_ms);
-    state.grace_deadline_ms = Some(now_ms.saturating_add(config.grace_period_ms));
-    WatcherDecision::Nudge {
-        reason: WatcherReason::GraceExpired,
-    }
-}
-
 fn nudge_for_verdict(
     state: &mut WatcherState,
     reason: WatcherReason,
@@ -396,28 +381,6 @@ fn nudge_for_verdict(
     state.record_intervention(now_ms);
     state.grace_deadline_ms = Some(now_ms.saturating_add(config.grace_period_ms));
     WatcherDecision::Nudge { reason }
-}
-
-/// Short deterministic nudge template per reason. The judge never authors
-/// nudge text.
-pub fn nudge_prompt(reason: &WatcherReason) -> &'static str {
-    match reason {
-        WatcherReason::PrematureStop => {
-            "The turn settled without observable progress. Continue the objective or state precisely why it is complete."
-        }
-
-        WatcherReason::Stuck => {
-            "You appear stuck. Try a different approach or surface the exact blocker."
-        }
-        WatcherReason::OffTrack => {
-            "You appear to be drifting from the objective. Re-read the objective and realign."
-        }
-        WatcherReason::GraceExpired => {
-            "No progress since the last nudge. Continue the objective or state the blocker."
-        }
-        // These are operator decisions, never agent nudges.
-        WatcherReason::StalledAfterNudge | WatcherReason::NeedsUser | WatcherReason::InterventionCap => "",
-    }
 }
 
 #[cfg(test)]
@@ -589,5 +552,50 @@ mod journal_regression_tests {
             Step::NeedsJudge(_)
         ));
         assert_eq!(s.phase, WatcherPhase::Recovering);
+    }
+    #[test]
+    fn e1_settled_grace_waits_for_open_work_and_attention() {
+        for guard in 0..3 {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            s.record_intervention(0);
+            s.grace_deadline_ms = Some(1);
+            s.settled_in_grace = true;
+            match guard {
+                0 => s.open_tool("tool", 1),
+                1 => s.open_child(1),
+                _ => {
+                    s.pending_attention =
+                        Some(crate::canonical_agent_event::AttentionReason::Permission)
+                }
+            }
+            assert!(matches!(
+                step(&mut s, &heartbeat(&mut ids, 2), 2, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+            assert!(s.settled_in_grace);
+            s.close_tool("tool");
+            s.child_started_at_ms.clear();
+            s.pending_attention = None;
+            assert!(matches!(
+                step(&mut s, &heartbeat(&mut ids, 3), 3, &c),
+                Step::Decision(WatcherDecision::Escalate { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn e1_activity_start_clears_settled_grace_even_without_tool_id() {
+        for identified in [false, true] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            s.record_intervention(0);
+            s.grace_deadline_ms = Some(100);
+            s.settled_in_grace = true;
+            let mut event = activity_started(&mut ids, 1, "tool");
+            if !identified {
+                event.detail = crate::agent_watcher::WatcherEventDetail::None;
+            }
+            step(&mut s, &event, 1, &c);
+            assert!(!s.settled_in_grace);
+        }
     }
 }

@@ -347,10 +347,11 @@ impl Worker {
     }
 
     fn step(&mut self, state: &mut WatcherState, event: &WatcherEvent, now: u64, replay: bool) {
-        if let Step::NeedsJudge(_) = step(state, event, now, &self.config) {
-            if replay {
-                state.pending_checkpoint = None;
-            }
+        let before = state.phase;
+        match step(state, event, now, &self.config) {
+            Step::NeedsJudge(_) if replay => state.pending_checkpoint = None,
+            Step::Decision(decision) if !replay => warn_transition(before, state, &decision),
+            _ => {}
         }
     }
 
@@ -407,14 +408,9 @@ impl Worker {
             verdict = Err(JudgeError::Unavailable);
         }
         let state = &mut task.state;
-        // A checkpoint that skipped the judge (cooldown, open work,
-        // pending outbox, user-input guards, or stale evidence) must not
-        // consume the loop edge: re-arm it so the next repeat can be
-        // judged again.
-        if verdict.is_err() {
-            state.rearm_loop_checkpoint();
-        }
+        let before = state.phase;
         let decision = apply_verdict(state, verdict, now, &self.config);
+        warn_transition(before, state, &decision);
         if let WatcherDecision::Nudge { reason } = decision {
             if let Ok(mut shared) = self.shared.lock() {
                 // Publish the intervention and its cursor atomically: refresh
@@ -481,6 +477,24 @@ impl Worker {
         );
         rx.recv_timeout(self.timeout)
             .unwrap_or(Err(JudgeError::Timeout))
+    }
+}
+
+fn warn_transition(before: WatcherPhase, state: &WatcherState, decision: &WatcherDecision) {
+    if before != state.phase
+        && matches!(
+            state.phase,
+            WatcherPhase::Escalated | WatcherPhase::WaitingOnUser
+        )
+    {
+        let reason = match decision {
+            WatcherDecision::Escalate { reason } | WatcherDecision::NeedsUser { reason } => {
+                Some(reason)
+            }
+            _ => None,
+        };
+        tracing::warn!(task_id = state.task_id, phase = ?state.phase, ?reason,
+            lifetime_nudges = state.lifetime_nudges, "agent watcher needs operator attention");
     }
 }
 

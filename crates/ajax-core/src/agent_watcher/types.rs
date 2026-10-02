@@ -312,3 +312,78 @@ impl Default for WatcherConfig {
         }
     }
 }
+
+impl WatcherState {
+    /// Compact, bounded view for a judge.
+    pub fn snapshot(&self, now_ms: u64) -> WatcherSnapshot {
+        WatcherSnapshot {
+            objective: self.objective.clone(),
+            task_id: self.task_id.clone(),
+            run_id: self.run_id.clone(),
+            harness: self.harness.clone(),
+            phase: self.phase,
+            recent_signatures: self.recent_signatures.iter().cloned().collect(),
+            recent_events: self.recent_events.iter().cloned().collect(),
+            pending_attention: self.pending_attention.clone(),
+            open_children: self.open_children,
+            intervention_count: self.intervention_count,
+            last_verdict: self.last_verdict.clone(),
+            ms_since_meaningful_activity: self.ms_since_meaningful_activity(now_ms),
+        }
+    }
+
+    /// The persisted subset, for task metadata storage.
+    pub fn persisted(&self) -> WatcherPersistedState {
+        WatcherPersistedState {
+            intervention_count: self.intervention_count,
+            premature_stop_nudges: self.premature_stop_nudges,
+            loop_nudges: self.loop_nudges,
+            last_intervention_at_ms: self.last_intervention_at_ms,
+            grace_deadline_ms: self.grace_deadline_ms,
+            last_verdict: self.last_verdict.clone(),
+            last_seen_event_id: self.seen_event_ids.back().cloned(),
+            phase: self.phase,
+            nudge_seq: self.nudge_seq,
+            lifetime_nudges: self.lifetime_nudges,
+        }
+    }
+
+    /// Fold a persisted subset back into the state. Rings and transient
+    /// counters stay as they are; the caller replays events for those.
+    pub fn apply_persisted(&mut self, persisted: &WatcherPersistedState) {
+        self.intervention_count = persisted.intervention_count;
+        self.premature_stop_nudges = persisted.premature_stop_nudges;
+        self.loop_nudges = persisted.loop_nudges;
+        self.last_intervention_at_ms = persisted.last_intervention_at_ms;
+        self.grace_deadline_ms = persisted.grace_deadline_ms;
+        self.last_verdict = persisted.last_verdict.clone();
+        self.phase = persisted.phase;
+        self.nudge_seq = persisted.nudge_seq;
+        self.lifetime_nudges = persisted.lifetime_nudges;
+        if let Some(id) = &persisted.last_seen_event_id {
+            self.note_event_id(id, 512);
+        }
+    }
+}
+
+/// Short deterministic nudge template per reason. The judge never authors
+/// nudge text.
+pub fn nudge_prompt(reason: &WatcherReason) -> &'static str {
+    match reason {
+        WatcherReason::PrematureStop => {
+            "The turn settled without observable progress. Continue the objective or state precisely why it is complete."
+        }
+
+        WatcherReason::Stuck => {
+            "You appear stuck. Try a different approach or surface the exact blocker."
+        }
+        WatcherReason::OffTrack => {
+            "You appear to be drifting from the objective. Re-read the objective and realign."
+        }
+        WatcherReason::GraceExpired => {
+            "No progress since the last nudge. Continue the objective or state the blocker."
+        }
+        // These are operator decisions, never agent nudges.
+        WatcherReason::StalledAfterNudge | WatcherReason::NeedsUser | WatcherReason::InterventionCap => "",
+    }
+}

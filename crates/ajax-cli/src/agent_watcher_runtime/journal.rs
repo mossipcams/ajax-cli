@@ -42,6 +42,7 @@ impl Worker {
         let mut reader = BufReader::new(file);
         reader.seek(SeekFrom::Start(task.offset))?;
         let mut line = Vec::new();
+        let mut replaying = replaced || task.initial_read || task.restoring.is_some();
         loop {
             line.clear();
             let bytes = reader.read_until(b'\n', &mut line)?;
@@ -83,6 +84,10 @@ impl Worker {
                 || task.initial_read
                 || task.restoring.is_some()
                 || event.occurred_at_ms < self.started_at_ms;
+            if replaying && !replay {
+                task.state.rearm_loop_checkpoint();
+            }
+            replaying = replay;
             let fresh = !task.state.has_seen_event_id(&event.event_id);
             if fresh {
                 task.newest_event_at_ms = Some(event.occurred_at_ms);
@@ -116,6 +121,11 @@ impl Worker {
                         .retain(|nudge| nudge.task_id != task.state.task_id);
                 }
             }
+        }
+        // Replay rebuilt the loop evidence without judging it. The next live
+        // repeat must be able to raise its checkpoint, including after restore.
+        if replaying {
+            task.state.rearm_loop_checkpoint();
         }
         task.initial_read = false;
         Ok(replaced)

@@ -20,6 +20,8 @@ use std::{
 #[cfg(test)]
 mod tests;
 mod transport;
+#[cfg(test)]
+pub(crate) use transport::tests::capture_warnings;
 
 const MIN_CONFIDENCE: f64 = 0.6;
 const BACKOFF: Duration = Duration::from_secs(1);
@@ -50,7 +52,7 @@ pub(crate) fn configured_judge(
     if !config.enabled {
         return None;
     }
-    Some(match &config.laya_command {
+    Some(match configured_command(config) {
         Some(command) => {
             let judge = LayaJudge::new(
                 command.clone(),
@@ -60,6 +62,17 @@ pub(crate) fn configured_judge(
         }
         None => Arc::new(|snapshot, _| crate::agent_watcher_runtime::NullJudge.evaluate(snapshot)),
     })
+}
+
+/// Empty commands use the same idle host and null judge as an unset command.
+pub(crate) fn configured_command(config: &WatcherConfig) -> Option<&LayaCommand> {
+    config
+        .laya_command
+        .as_ref()
+        .filter(|command| match command {
+            LayaCommand::String(command) => !command.trim().is_empty(),
+            LayaCommand::Argv(args) => args.iter().any(|arg| !arg.trim().is_empty()),
+        })
 }
 
 impl LayaJudge {

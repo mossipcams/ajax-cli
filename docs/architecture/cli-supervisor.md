@@ -91,7 +91,8 @@ special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
   `core-subsystems.md`). Hosted state is per task and bounded; the registry is
   written through `CliRuntimeBridge::refresh_cockpit`, which also publishes
   task frames (objective = task title, harness) to the watcher. Cockpit delivery
-  also records the delivery result into the watcher store.
+  also records the delivery result into the watcher store. Operators find
+  escalations through the warn log and the persisted `phase` in `ajax_watcher` metadata.
 - **Judge.** Ambiguous checkpoints go to an `AgentProgressJudge`. The optional
   implementation (`laya_judge.rs`) drives a persistent Python sidecar
   (`scripts/ajax-laya-sidecar`) around the local Laya decision model. The host
@@ -101,7 +102,7 @@ special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
   handoff states suppress judgment. Evidence older than five minutes cannot
   justify a judgment or nudge; refresh ticks do not refresh that evidence.
 - **Config.** Optional `[watcher]` table: `enabled` (default true), `laya_command`
-  (required to start the watcher), `judge_timeout_ms` (default 2000, clamped
+  (a nonblank command is required to start the watcher), `judge_timeout_ms` (default 2000, clamped
   200..=10000). When enabled without a judge command, the host logs once that
   the watcher is idle and uses the plain notification drain listener. No
   watcher journals are read or watcher metadata written in that mode.

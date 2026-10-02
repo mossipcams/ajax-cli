@@ -216,3 +216,171 @@ fn enabled_watcher_without_judge_starts_no_runtime_and_writes_no_metadata() {
     assert!(WatcherRuntime::for_events_dir(&fixture.events_dir()).is_none());
     assert!(fixture.task().metadata.is_empty());
 }
+
+#[test]
+fn e1_failing_grace_judge_waits_a_full_window_between_refreshes() {
+    let fixture = Fixture::new(NullJudge);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut worker = worker(&fixture, &calls, ProgressState::Uncertain);
+    let observed = calls.clone();
+    worker.judge = Arc::new(move |_, checkpoint| {
+        assert_eq!(checkpoint, Some(PendingCheckpoint::GraceExpiry));
+        observed.fetch_add(1, Ordering::Relaxed);
+        Err(JudgeError::Unavailable)
+    });
+    let now = now_ms();
+    tick(&mut worker, now);
+    let state = &mut worker.tasks.get_mut("task-1").unwrap().state;
+    state.record_intervention(now - 120_000);
+    state.grace_deadline_ms = Some(now);
+    for index in 0..=60 {
+        tick(&mut worker, now + index * 10_000);
+        if index == 0 {
+            assert_eq!(
+                worker.tasks["task-1"].state.grace_deadline_ms,
+                Some(now + worker.config.grace_period_ms)
+            );
+        }
+    }
+    let count = calls.load(Ordering::Relaxed);
+    assert!((1..=4).contains(&count), "judge invoked {count} times");
+    assert_eq!(worker.tasks["task-1"].state.phase, WatcherPhase::Recovering);
+}
+
+#[test]
+fn e1_replayed_loop_is_judged_on_the_next_live_repeat() {
+    for restored in [false, true] {
+        let fixture = Fixture::new(NullJudge);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut worker = worker(&fixture, &calls, ProgressState::Uncertain);
+        let now = worker.started_at_ms;
+        for index in 1..=3 {
+            fixture.append(&at(&line(&format!("repeat-{index}"), "activity_finished",
+                json!({"activity": {"activity": "tool", "signature": "loop", "success": false}})), now));
+        }
+        if restored {
+            worker
+                .shared
+                .lock()
+                .unwrap()
+                .frames
+                .get_mut("task-1")
+                .unwrap()
+                .persisted = Some(WatcherPersistedState {
+                last_seen_event_id: Some("repeat-3".into()),
+                ..Default::default()
+            });
+        }
+        tick(&mut worker, now);
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+        fixture.append(&at(
+            &line(
+                "repeat-4",
+                "activity_finished",
+                json!({"activity": {"activity": "tool", "signature": "loop", "success": false}}),
+            ),
+            now + 1,
+        ));
+        tick(&mut worker, now + 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[test]
+fn e1_empty_laya_commands_start_no_watcher() {
+    use ajax_core::config::LayaCommand;
+    for command in [
+        LayaCommand::String("".into()),
+        LayaCommand::String("  ".into()),
+        LayaCommand::Argv(vec![]),
+        LayaCommand::Argv(vec![" ".into(), "\t".into()]),
+    ] {
+        let mut fixture = Fixture::new(NullJudge);
+        fixture.context.runtime_paths.cache_dir = fixture.events_dir().join("unconfigured");
+        fixture.context.config.watcher.laya_command = Some(command);
+        assert!(crate::web_backend::start_agent_watcher(&mut fixture.context).is_none());
+        assert!(WatcherRuntime::for_events_dir(&fixture.events_dir()).is_none());
+        assert!(fixture.task().metadata.is_empty());
+    }
+}
+
+#[test]
+fn e1_progressing_grace_verdict_survives_runtime_restore() {
+    for progress in [ProgressState::Progressing, ProgressState::ProbablyDone] {
+        let fixture = Fixture::new(NullJudge);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut worker = worker(&fixture, &calls, progress);
+        let now = now_ms();
+        tick(&mut worker, now);
+        let state = &mut worker.tasks.get_mut("task-1").unwrap().state;
+        state.record_intervention(now - 120_000);
+        state.grace_deadline_ms = Some(now);
+        tick(&mut worker, now);
+        let persisted = worker.tasks["task-1"].state.persisted();
+        let mut restarted = self::worker(&fixture, &calls, progress);
+        restarted
+            .shared
+            .lock()
+            .unwrap()
+            .frames
+            .get_mut("task-1")
+            .unwrap()
+            .persisted = Some(persisted);
+        tick(&mut restarted, now + 120_000);
+        assert_eq!(restarted.tasks["task-1"].state.phase, WatcherPhase::Healthy);
+        assert_eq!(restarted.tasks["task-1"].state.grace_deadline_ms, None);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}
+
+#[test]
+fn e1_operator_handoffs_warn_once_per_phase_transition() {
+    for judged in [false, true] {
+        let fixture = Fixture::new(NullJudge);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut worker = worker(&fixture, &calls, ProgressState::NeedsUser);
+        let now = now_ms();
+        tick(&mut worker, now);
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        crate::laya_judge::capture_warnings(
+            || {
+                for index in 1..=2 {
+                    let event = if judged {
+                        completed(&format!("stop-{index}"))
+                    } else {
+                        line(
+                            &format!("attention-{index}"),
+                            "attention_requested",
+                            json!({"attention": {"attention": "permission"}}),
+                        )
+                    };
+                    fixture.append(&at(&event, now + index));
+                    tick(&mut worker, now + index);
+                }
+                let state = &mut worker.tasks.get_mut("task-1").unwrap().state;
+                state.pending_attention = None;
+                state.record_intervention(now);
+                state.grace_deadline_ms = Some(now + 3);
+                state.settled_in_grace = true;
+                tick(&mut worker, now + 3);
+                tick(&mut worker, now + 4);
+            },
+            messages.clone(),
+        );
+        let messages = messages.lock().unwrap();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        for (message, phase, reason) in [
+            (&messages[0], "WaitingOnUser", "NeedsUser"),
+            (&messages[1], "Escalated", "StalledAfterNudge"),
+        ] {
+            assert!(message.contains("task_id=\"task-1\""), "{message}");
+            assert!(message.contains(&format!("phase={phase}")), "{message}");
+            assert!(message.contains(reason), "{message}");
+            assert!(message.contains("lifetime_nudges="), "{message}");
+        }
+        assert_eq!(
+            worker.shared.lock().unwrap().states["task-1"].phase,
+            WatcherPhase::Escalated
+        );
+    }
+}

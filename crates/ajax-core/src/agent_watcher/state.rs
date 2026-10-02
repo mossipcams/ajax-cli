@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::agent_watcher::types::{TaskFrame, WatcherPhase, WatcherSnapshot};
+use crate::agent_watcher::types::{TaskFrame, WatcherPhase};
 
 /// Hard cap on remembered open tool ids.
 const MAX_OPEN_TOOLS: usize = 256;
@@ -103,6 +103,9 @@ impl WatcherState {
         self.premature_stop_nudges = 0;
         self.loop_nudges = 0;
         self.intervention_count = 0;
+        self.last_intervention_at_ms = None;
+        self.grace_deadline_ms = None;
+        self.settled_in_grace = false;
     }
 
     pub fn open_tool(&mut self, tool_id: &str, now_ms: u64) {
@@ -206,57 +209,6 @@ impl WatcherState {
         self.phase = WatcherPhase::Escalated;
         self.grace_deadline_ms = None;
         self.pending_checkpoint = None;
-    }
-
-    /// Compact, bounded view for a judge.
-    pub fn snapshot(&self, now_ms: u64) -> WatcherSnapshot {
-        WatcherSnapshot {
-            objective: self.objective.clone(),
-            task_id: self.task_id.clone(),
-            run_id: self.run_id.clone(),
-            harness: self.harness.clone(),
-            phase: self.phase,
-            recent_signatures: self.recent_signatures.iter().cloned().collect(),
-            recent_events: self.recent_events.iter().cloned().collect(),
-            pending_attention: self.pending_attention.clone(),
-            open_children: self.open_children,
-            intervention_count: self.intervention_count,
-            last_verdict: self.last_verdict.clone(),
-            ms_since_meaningful_activity: self.ms_since_meaningful_activity(now_ms),
-        }
-    }
-
-    /// The persisted subset, for task metadata storage.
-    pub fn persisted(&self) -> WatcherPersistedState {
-        WatcherPersistedState {
-            intervention_count: self.intervention_count,
-            premature_stop_nudges: self.premature_stop_nudges,
-            loop_nudges: self.loop_nudges,
-            last_intervention_at_ms: self.last_intervention_at_ms,
-            grace_deadline_ms: self.grace_deadline_ms,
-            last_verdict: self.last_verdict.clone(),
-            last_seen_event_id: self.seen_event_ids.back().cloned(),
-            phase: self.phase,
-            nudge_seq: self.nudge_seq,
-            lifetime_nudges: self.lifetime_nudges,
-        }
-    }
-
-    /// Fold a persisted subset back into the state. Rings and transient
-    /// counters stay as they are; the caller replays events for those.
-    pub fn apply_persisted(&mut self, persisted: &WatcherPersistedState) {
-        self.intervention_count = persisted.intervention_count;
-        self.premature_stop_nudges = persisted.premature_stop_nudges;
-        self.loop_nudges = persisted.loop_nudges;
-        self.last_intervention_at_ms = persisted.last_intervention_at_ms;
-        self.grace_deadline_ms = persisted.grace_deadline_ms;
-        self.last_verdict = persisted.last_verdict.clone();
-        self.phase = persisted.phase;
-        self.nudge_seq = persisted.nudge_seq;
-        self.lifetime_nudges = persisted.lifetime_nudges;
-        if let Some(id) = &persisted.last_seen_event_id {
-            self.note_event_id(id, 512);
-        }
     }
 }
 
@@ -386,13 +338,12 @@ mod regression_tests {
     }
 
     #[test]
-    fn grace_expiry_no_action_rearms_deadline_for_uncertain_errors_and_progress() {
+    fn grace_expiry_no_action_rearms_deadline_for_uncertain_and_errors() {
         for result in [
             Err(JudgeError::Unavailable),
             Err(JudgeError::Timeout),
             Err(JudgeError::Malformed),
             Ok(verdict(ProgressState::Uncertain, 0.1)),
-            Ok(verdict(ProgressState::Progressing, 1.0)),
         ] {
             let (mut s, c, mut ids) = (state(), config(), Ids::new());
             s.record_intervention(0);
@@ -593,5 +544,54 @@ mod regression_tests {
         assert!(matches!(dup, Step::Decision(WatcherDecision::NoAction)));
         assert_eq!(s.intervention_count, 1);
         assert_eq!(s.event_index, index_after_first);
+    }
+    #[test]
+    fn e1_fresh_episode_forgets_the_previous_intervention() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c);
+        let at = 1 + c.grace_period_ms;
+        assert!(matches!(
+            step(&mut s, &settled_completed(&mut ids, at), at, &c),
+            Step::Decision(WatcherDecision::Escalate { .. })
+        ));
+        step(&mut s, &turn_started(&mut ids, at + 1), at + 1, &c);
+        assert!(matches!(
+            step(&mut s, &settled_completed(&mut ids, at + 2), at + 2, &c),
+            Step::NeedsJudge(_)
+        ));
+        assert_eq!(s.pending_checkpoint, Some(PendingCheckpoint::Settle));
+        assert_eq!(s.last_intervention_at_ms, None);
+        assert_eq!(s.grace_deadline_ms, None);
+        assert!(!s.settled_in_grace);
+    }
+
+    #[test]
+    fn e1_meaningful_activity_resets_episode_evidence() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), 1, &c);
+        s.settled_in_grace = true;
+        let activity = activity_finished(&mut ids, 2, "tool", "edit");
+        step(&mut s, &activity, 2, &c);
+        assert_eq!(s.last_intervention_at_ms, None);
+        assert_eq!(s.grace_deadline_ms, None);
+        assert!(!s.settled_in_grace);
+        assert_eq!(s.lifetime_nudges, 1);
+    }
+
+    #[test]
+    fn e1_successful_grace_verdict_stays_healthy_after_restore() {
+        for progress in [ProgressState::Progressing, ProgressState::ProbablyDone] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            s.record_intervention(0);
+            s.grace_deadline_ms = Some(1);
+            step(&mut s, &heartbeat(&mut ids, 1), 1, &c);
+            apply_verdict(&mut s, Ok(verdict(progress, 1.0)), 1, &c);
+            let persisted: WatcherPersistedState =
+                serde_json::from_str(&serde_json::to_string(&s.persisted()).unwrap()).unwrap();
+            let mut restored = state();
+            restored.apply_persisted(&persisted);
+            assert_eq!(restored.phase, WatcherPhase::Healthy);
+            assert_eq!(restored.grace_deadline_ms, None);
+        }
     }
 }

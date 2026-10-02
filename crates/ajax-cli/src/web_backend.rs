@@ -173,7 +173,7 @@ pub(crate) fn serve_mobile_web(
 pub(crate) fn start_agent_watcher(
     context: &mut CommandContext<InMemoryRegistry>,
 ) -> Option<std::sync::Arc<crate::agent_watcher_runtime::WatcherRuntime>> {
-    if context.config.watcher.laya_command.is_none() {
+    if crate::laya_judge::configured_command(&context.config.watcher).is_none() {
         if context.config.watcher.enabled {
             tracing::info!("agent watcher is idle without a judge; configure watcher.laya_command");
         }
