@@ -204,6 +204,7 @@ mod tests {
             loop_nudges: 0,
             phase: Default::default(),
             nudge_seq: 0,
+            lifetime_nudges: 0,
             last_intervention_at_ms: None,
             grace_deadline_ms: None,
             last_verdict: None,

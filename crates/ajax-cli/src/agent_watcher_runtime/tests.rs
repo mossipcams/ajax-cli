@@ -506,3 +506,41 @@ fn removed_task_cannot_receive_a_queued_nudge() {
     fixture.runtime.refresh(&mut fixture.context);
     assert!(pending_watcher_nudge(fixture.task()).is_none());
 }
+
+#[test]
+fn failed_open_loop_checkpoint_is_judged_again_after_the_guard_clears() {
+    let fixture = Fixture::new(Judge(stuck));
+    // An open tool makes the first loop checkpoint fail open.
+    fixture.send(&line(
+        "open",
+        "activity_started",
+        json!({"activity": {"activity": "tool", "activity_id": "t1"}}),
+    ));
+    fixture.processed("open");
+    for i in 1..=3 {
+        let id = format!("loop-{i}");
+        fixture.send(&line(
+            &id,
+            "activity_finished",
+            json!({"activity": {"activity": "tool", "activity_id": "t2", "signature": "sig", "success": false}}),
+        ));
+        fixture.processed(&id);
+    }
+    // Closing the tool releases the guard; the next repeat is judged
+    // again because the failed-open checkpoint re-armed the loop edge.
+    fixture.send(&line(
+        "close",
+        "activity_finished",
+        json!({"activity": {"activity": "tool", "activity_id": "t1"}}),
+    ));
+    fixture.processed("close");
+    fixture.send(&line(
+        "loop-4",
+        "activity_finished",
+        json!({"activity": {"activity": "tool", "activity_id": "t2", "signature": "sig", "success": false}}),
+    ));
+    fixture.processed("loop-4");
+    let shared = fixture.runtime.shared.lock().unwrap();
+    assert_eq!(shared.outbox.len(), 1);
+    assert_eq!(shared.outbox[0].reason, WatcherReason::Stuck);
+}

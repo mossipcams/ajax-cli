@@ -56,6 +56,10 @@ pub struct WatcherState {
     /// unique across episode budget resets.
     #[serde(default)]
     pub nudge_seq: u64,
+    /// Nudges ever issued for this run, never reset: the lifetime cap stops
+    /// a loop that refills the per-episode budgets with fresh activity.
+    #[serde(default)]
+    pub lifetime_nudges: u64,
 }
 
 /// The persisted subset of [`WatcherState`], stored in task metadata.
@@ -74,6 +78,10 @@ pub struct WatcherPersistedState {
     /// unique across episode budget resets.
     #[serde(default)]
     pub nudge_seq: u64,
+    /// Nudges ever issued for this run, never reset: the lifetime cap stops
+    /// a loop that refills the per-episode budgets with fresh activity.
+    #[serde(default)]
+    pub lifetime_nudges: u64,
     pub last_intervention_at_ms: Option<u64>,
     pub grace_deadline_ms: Option<u64>,
     pub last_verdict: Option<WatcherVerdict>,
@@ -106,6 +114,7 @@ impl WatcherState {
             seen_event_ids: VecDeque::new(),
             event_index: 0,
             nudge_seq: 0,
+            lifetime_nudges: 0,
         }
     }
 
@@ -223,8 +232,18 @@ impl WatcherState {
         self.loop_checkpoint_signature = None;
         self.intervention_count += 1;
         self.nudge_seq += 1;
+        self.lifetime_nudges += 1;
         self.last_intervention_at_ms = Some(now_ms);
         self.phase = WatcherPhase::Recovering;
+    }
+
+    /// Re-arm the loop checkpoint edge. The edge is only consumed by a
+    /// nudge or a successful judged verdict: a fail-open outcome (judge
+    /// error, skipped evaluation, discarded verdict) must let the next
+    /// repeat raise the checkpoint again.
+    pub fn rearm_loop_checkpoint(&mut self) {
+        self.loop_checkpoint_signature = None;
+        self.pending_checkpoint = None;
     }
 
     pub(super) fn clear_attention(&mut self) {
@@ -274,6 +293,7 @@ impl WatcherState {
             last_seen_event_id: self.seen_event_ids.back().cloned(),
             phase: self.phase,
             nudge_seq: self.nudge_seq,
+            lifetime_nudges: self.lifetime_nudges,
         }
     }
 
@@ -288,6 +308,7 @@ impl WatcherState {
         self.last_verdict = persisted.last_verdict.clone();
         self.phase = persisted.phase;
         self.nudge_seq = persisted.nudge_seq;
+        self.lifetime_nudges = persisted.lifetime_nudges;
         if let Some(id) = &persisted.last_seen_event_id {
             self.note_event_id(id, 512);
         }
@@ -301,7 +322,7 @@ mod regression_tests {
     use crate::canonical_agent_event::AttentionReason;
 
     #[test]
-    fn loop_checkpoint_fires_once_and_rearms_after_change_or_nudge() {
+    fn loop_checkpoint_rearms_after_failed_verdict_change_or_nudge() {
         let (mut s, c, mut ids) = (state(), config(), Ids::new());
         let mut checkpoints = 0;
         for signature in ["repeat"; 40].into_iter().chain(["different"; 3]) {
@@ -311,7 +332,10 @@ mod regression_tests {
                 apply_verdict(&mut s, Err(JudgeError::Unavailable), 1, &c);
             }
         }
-        assert_eq!(checkpoints, 2);
+        // A failed (fail-open) verdict re-arms the loop edge, so every
+        // repeat from the threshold onward re-raises the checkpoint: 38
+        // "repeat" fires plus 1 "different" fire.
+        assert_eq!(checkpoints, 39);
         s.record_intervention(2);
         assert!(matches!(
             step(
@@ -323,6 +347,125 @@ mod regression_tests {
             Step::NeedsJudge(_)
         ));
         assert_eq!(s.phase, WatcherPhase::Recovering);
+    }
+
+    #[test]
+    fn failed_loop_verdict_rearms_the_edge_for_the_next_repeat() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        let mut fires = 0;
+        for at in 1..=4u64 {
+            let event = activity_finished_with_result(&mut ids, at, "t", "sig", Some(false));
+            if matches!(step(&mut s, &event, at, &c), Step::NeedsJudge(_)) {
+                fires += 1;
+                apply_verdict(&mut s, Err(JudgeError::Unavailable), at, &c);
+            }
+        }
+        // The first repeat raised the checkpoint; the failed verdict
+        // re-armed the edge, so the next repeat raises it again.
+        assert_eq!(fires, 2);
+        let event = activity_finished_with_result(&mut ids, 5, "t", "sig", Some(false));
+        assert!(matches!(step(&mut s, &event, 5, &c), Step::NeedsJudge(_)));
+    }
+
+    #[test]
+    fn judged_loop_verdict_keeps_the_edge_consumed() {
+        for progress in [ProgressState::Progressing, ProgressState::Uncertain] {
+            let (mut s, c, mut ids) = (state(), config(), Ids::new());
+            for at in 1..=4u64 {
+                let event = activity_finished_with_result(&mut ids, at, "t", "sig", Some(false));
+                if matches!(step(&mut s, &event, at, &c), Step::NeedsJudge(_)) {
+                    assert_eq!(
+                        apply_verdict(&mut s, Ok(verdict(progress, 0.9)), at, &c),
+                        WatcherDecision::NoAction
+                    );
+                }
+            }
+            // A successful judged verdict consumed the edge: repeats do
+            // not re-fire the checkpoint.
+            let event = activity_finished_with_result(&mut ids, 5, "t", "sig", Some(false));
+            assert!(matches!(
+                step(&mut s, &event, 5, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+    }
+
+    #[test]
+    fn alternating_loop_and_fresh_activity_cannot_nudge_past_the_lifetime_cap() {
+        let (mut s, c, mut ids) = (state(), config(), Ids::new());
+        let mut nudges = 0;
+        let mut at = 100u64;
+        for cycle in 0..20 {
+            // One failing loop repeat: the always-Stuck judge nudges, or
+            // the lifetime cap escalates.
+            let loop_event = activity_finished_with_result(&mut ids, at, "t", "loop", Some(false));
+            at += 100;
+            let decision = match step(&mut s, &loop_event, at, &c) {
+                Step::NeedsJudge(_) => {
+                    apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 1.0)), at, &c)
+                }
+                Step::Decision(decision) => decision,
+            };
+            if matches!(decision, WatcherDecision::Nudge { .. }) {
+                nudges += 1;
+            }
+            if matches!(decision, WatcherDecision::Escalate { .. }) {
+                break;
+            }
+            // One fresh successful read refills the per-episode budgets.
+            // Its signature varies so the read itself is not a loop.
+            let fresh = activity_finished(&mut ids, at, "read", &format!("fresh-read-{cycle}"));
+            at += 100;
+            assert!(matches!(
+                step(&mut s, &fresh, at, &c),
+                Step::Decision(WatcherDecision::NoAction)
+            ));
+        }
+        // The episode budgets refill after every fresh read, but the
+        // lifetime cap stops the nudging and escalates.
+        assert_eq!(nudges, c.max_lifetime_nudges as usize);
+        assert_eq!(s.phase, WatcherPhase::Escalated);
+        assert_eq!(s.lifetime_nudges, c.max_lifetime_nudges as u64);
+    }
+
+    #[test]
+    fn lifetime_nudges_survive_budget_resets_and_persist() {
+        let mut s = state();
+        let c = config();
+        let mut ids = Ids::new();
+
+        // Two nudges separated by real progress: normal runs are
+        // unaffected by the lifetime cap.
+        step(&mut s, &turn_started(&mut ids, 1000), 1000, &c);
+        let first = step(&mut s, &settled_completed(&mut ids, 2000), 2000, &c);
+        assert!(matches!(first, Step::NeedsJudge(_)));
+        assert!(matches!(
+            apply_verdict(&mut s, Ok(verdict(ProgressState::Stuck, 0.8)), 3000, &c),
+            WatcherDecision::Nudge { .. }
+        ));
+        let activity = activity_finished(&mut ids, 4000, "t2", "edit");
+        step(&mut s, &activity, 4000, &c);
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.lifetime_nudges, 1);
+        assert_eq!(s.intervention_count, 0);
+
+        // The Escalated -> Healthy fresh-user-turn reset must not reset
+        // the lifetime counter.
+        s.phase = WatcherPhase::Escalated;
+        s.lifetime_nudges = 5;
+        step(&mut s, &turn_started(&mut ids, 5000), 5000, &c);
+        assert_eq!(s.phase, WatcherPhase::Healthy);
+        assert_eq!(s.lifetime_nudges, 5);
+
+        // The counter persists and survives old metadata without it.
+        let persisted = s.persisted();
+        assert_eq!(persisted.lifetime_nudges, 5);
+        let mut fresh = state();
+        fresh.apply_persisted(&persisted);
+        assert_eq!(fresh.lifetime_nudges, 5);
+        let old: WatcherPersistedState =
+            serde_json::from_str(r#"{"intervention_count":1}"#).expect("old metadata");
+        assert_eq!(old.lifetime_nudges, 0);
     }
 
     #[test]

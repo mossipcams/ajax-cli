@@ -359,7 +359,9 @@ impl Worker {
             .newest_event_at_ms
             .is_none_or(|at| now.saturating_sub(at) > EVENT_FRESHNESS_MS)
         {
-            task.state.pending_checkpoint = None;
+            // Stale evidence skips the judge: re-arm the loop edge so a
+            // fresh repeat can raise the checkpoint again.
+            task.state.rearm_loop_checkpoint();
             return;
         }
         let state = &task.state;
@@ -405,6 +407,13 @@ impl Worker {
             verdict = Err(JudgeError::Unavailable);
         }
         let state = &mut task.state;
+        // A checkpoint that skipped the judge (cooldown, open work,
+        // pending outbox, user-input guards, or stale evidence) must not
+        // consume the loop edge: re-arm it so the next repeat can be
+        // judged again.
+        if verdict.is_err() {
+            state.rearm_loop_checkpoint();
+        }
         let decision = apply_verdict(state, verdict, now, &self.config);
         if let WatcherDecision::Nudge { reason } = decision {
             if let Ok(mut shared) = self.shared.lock() {

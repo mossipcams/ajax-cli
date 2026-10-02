@@ -16,7 +16,8 @@ use crate::canonical_agent_event::TurnOutcome;
 
 /// Caps and windows for the watcher. Intervention budgets are per episode:
 /// meaningful non-repeating activity after a nudge, or a fresh user turn
-/// after escalation, resets them.
+/// after escalation, resets them. `max_lifetime_nudges` bounds the total
+/// nudges across all episodes and never resets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WatcherConfig {
     pub max_recent_events: usize,
@@ -27,6 +28,9 @@ pub struct WatcherConfig {
     pub max_premature_stop_nudges: u32,
     pub max_loop_nudges: u32,
     pub max_total_interventions: u32,
+    /// Nudges ever issued before the run escalates, even when fresh
+    /// activity refills the per-episode budgets. Never resets.
+    pub max_lifetime_nudges: u32,
     /// Window after a nudge in which the agent can still recover.
     pub grace_period_ms: u64,
 }
@@ -41,6 +45,7 @@ impl Default for WatcherConfig {
             max_premature_stop_nudges: 1,
             max_loop_nudges: 1,
             max_total_interventions: 2,
+            max_lifetime_nudges: 6,
             grace_period_ms: 120_000,
         }
     }
@@ -236,6 +241,7 @@ fn step_on_completed_settle(state: &mut WatcherState, now_ms: u64, config: &Watc
     // the budget exhausted there is nothing a nudge could do.
     if state.intervention_count >= config.max_total_interventions
         || state.premature_stop_nudges >= config.max_premature_stop_nudges
+        || state.lifetime_nudges >= u64::from(config.max_lifetime_nudges)
     {
         state.escalate();
         return Step::Decision(WatcherDecision::Escalate {
@@ -278,6 +284,9 @@ pub fn apply_verdict(
         )
         || state.grace_is_active(now_ms)
     {
+        // A discarded verdict did not judge the loop: re-arm the edge so
+        // the next repeat may raise the checkpoint again.
+        state.rearm_loop_checkpoint();
         state.pending_checkpoint = None;
         return WatcherDecision::NoAction;
     }
@@ -288,7 +297,12 @@ pub fn apply_verdict(
     }
     let verdict = match verdict {
         Ok(verdict) => verdict,
-        Err(_) => return WatcherDecision::NoAction,
+        // The judge failed open: the loop edge is not consumed, so the
+        // next repeat may raise the checkpoint again.
+        Err(_) => {
+            state.rearm_loop_checkpoint();
+            return WatcherDecision::NoAction;
+        }
     };
     let progress = verdict.state;
     state.last_verdict = Some(verdict);
@@ -345,6 +359,7 @@ fn nudge_premature_stop(
 ) -> WatcherDecision {
     if state.intervention_count >= config.max_total_interventions
         || state.premature_stop_nudges >= config.max_premature_stop_nudges
+        || state.lifetime_nudges >= u64::from(config.max_lifetime_nudges)
     {
         state.escalate();
         return WatcherDecision::Escalate {
@@ -368,6 +383,7 @@ fn nudge_grace_expired(
 ) -> WatcherDecision {
     if state.intervention_count >= config.max_total_interventions
         || state.loop_nudges >= config.max_loop_nudges
+        || state.lifetime_nudges >= u64::from(config.max_lifetime_nudges)
     {
         state.escalate();
         return WatcherDecision::Escalate {
@@ -390,6 +406,7 @@ fn nudge_for_verdict(
 ) -> WatcherDecision {
     if state.intervention_count >= config.max_total_interventions
         || state.loop_nudges >= config.max_loop_nudges
+        || state.lifetime_nudges >= u64::from(config.max_lifetime_nudges)
     {
         state.escalate();
         return WatcherDecision::Escalate {
