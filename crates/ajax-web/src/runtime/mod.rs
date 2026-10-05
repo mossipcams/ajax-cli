@@ -4,7 +4,7 @@ use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessError, server, tls,
     },
-    slices::{dev_deploy, install, push},
+    slices::{dev_deploy, install, push, training},
     WebError,
 };
 use ajax_core::adapters::CommandRunner;
@@ -100,6 +100,15 @@ where
         )
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
+        .route("/api/training/status", get(axum_training_status::<C, B>))
+        .route("/api/training/models", get(axum_training_models::<C, B>))
+        .route("/api/training/start", post(axum_training_start::<C, B>))
+        .route("/api/training/stop", post(axum_training_stop::<C, B>))
+        .route("/api/training/serve", post(axum_training_serve::<C, B>))
+        .route(
+            "/api/training/models/switch",
+            post(axum_training_switch::<C, B>),
+        )
         .fallback(axum_fallback)
         .layer(from_fn_with_state(
             session_state,
@@ -496,6 +505,93 @@ async fn axum_server_restart() -> AxumResponse {
 
 async fn axum_server_test_in_stable() -> AxumResponse {
     handle_server_test_in_stable().into_axum_response()
+}
+
+/// Runs a blocking ssh training verb on the thread pool so the async runtime
+/// is never blocked; a JoinError maps to the same generic 502 body runner
+/// failures produce.
+async fn axum_training_verb<C, B>(
+    state: &WebAppState<C, B>,
+    body: Bytes,
+    verb: fn(&dyn training::TrainingCommandRunner, &[u8]) -> Response,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let runner = Arc::clone(&state.training_runner);
+    match tokio::task::spawn_blocking(move || verb(runner.as_ref(), &body)).await {
+        Ok(response) => response.into_axum_response(),
+        Err(_) => json_value_response(
+            502,
+            serde_json::json!({ "ok": false, "error": "training host command failed" }),
+        ),
+    }
+}
+async fn axum_training_status<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, Bytes::new(), |runner, _body| {
+        training::status_response(runner)
+    })
+    .await
+}
+
+async fn axum_training_models<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, Bytes::new(), |runner, _body| {
+        training::models_response(runner)
+    })
+    .await
+}
+
+async fn axum_training_start<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, body, training::start_response).await
+}
+
+async fn axum_training_stop<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, body, training::stop_response).await
+}
+
+async fn axum_training_serve<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, body, training::serve_response).await
+}
+
+async fn axum_training_switch<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, body, training::switch_response).await
 }
 
 fn handle_server_restart() -> Response {

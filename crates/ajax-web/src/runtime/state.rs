@@ -12,6 +12,7 @@ use crate::{
     slices::{
         dev_deploy,
         push::PushHub,
+        training::{SshTrainingRunner, TrainingCommandRunner},
         web_session::{owned_session_handles, TaskSessionDirectory},
     },
     WebError,
@@ -59,6 +60,7 @@ pub struct WebAppState<C, B> {
     pub(crate) stt_pause_grace_period_ms: u64,
     pub(crate) stt_language: String,
     pub(crate) task_session_directory: Arc<TaskSessionDirectory>,
+    pub(crate) training_runner: Arc<dyn TrainingCommandRunner>,
 }
 
 pub(crate) struct WebSharedState<C, B> {
@@ -94,6 +96,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             stt_pause_grace_period_ms: self.stt_pause_grace_period_ms,
             stt_language: self.stt_language.clone(),
             task_session_directory: Arc::clone(&self.task_session_directory),
+            training_runner: Arc::clone(&self.training_runner),
         }
     }
 }
@@ -437,6 +440,7 @@ impl<C, B> WebAppState<C, B> {
             stt_pause_grace_period_ms,
             stt_language,
             task_session_directory,
+            training_runner: Arc::new(SshTrainingRunner::from_env()),
         };
         state.wire_session_activity_reporter();
         state
@@ -508,6 +512,7 @@ impl<C, B> WebAppState<C, B> {
             stt_pause_grace_period_ms,
             stt_language,
             task_session_directory,
+            training_runner: Arc::new(SshTrainingRunner::from_env()),
         };
         state.wire_session_activity_reporter();
         Ok(state)
