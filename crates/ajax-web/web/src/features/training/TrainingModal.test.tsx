@@ -144,17 +144,13 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
     openModal();
-    const switchButton = await screen.findByRole("button", { name: "Switch to unsloth" });
-
-    fireEvent.click(switchButton);
-    expect(postCalls).toEqual([]);
-
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm switch to unsloth" }));
+    // tapping a model bubble switches to it directly
+    fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
     await waitFor(() => expect(postCalls).toHaveLength(1));
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
 
-    // starting a job also requires a confirm step
+    // starting a job still requires a confirm step
     fireEvent.click(await screen.findByRole("button", { name: "Unsloth train" }));
     expect(postCalls).toHaveLength(1);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Unsloth train" }));
@@ -167,8 +163,7 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, state: "train:lfm-train" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
     openModal();
-    await screen.findByRole("button", { name: /Switch to/ });
-    expect(screen.getByRole("button", { name: "Switch to unsloth" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: /unsloth/ })).toBeDisabled();
     expect(
       screen.getByText(/Switching is unavailable while (a training job is in progress|state is train:)/),
     ).toBeTruthy();
