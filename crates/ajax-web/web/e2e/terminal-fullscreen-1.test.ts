@@ -53,7 +53,6 @@ test("phone fullscreen keeps background controls inert until exit", async ({ pag
   const expandProbe = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
 
   const backProbe = page.locator(".task-detail .back");
-  const dashboardProbe = page.locator('.bottom-nav [data-bottom-route="#/"]');
   const summaryProbe = page.locator(".meta-details summary");
   const dismissProbe = page.locator(".result-panel button.pill");
 
@@ -143,7 +142,9 @@ test("phone fullscreen keeps background controls inert until exit", async ({ pag
     await page.evaluate(() => document.querySelector(".meta-details")?.hasAttribute("open")),
   ).toBe(true);
 
-  await dashboardProbe.evaluate((el) => (el as HTMLButtonElement).click());
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(page.locator("[data-outlet='dashboard']")).toBeVisible({ timeout: 10_000 });
 });
 

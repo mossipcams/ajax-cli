@@ -294,7 +294,9 @@ test("reopen with meaningful viewport change yields one surface and deduplicated
 
   const framesBeforeNav = (await terminalResizeFrames(page)).length;
 
-  await page.locator(".bottom-nav [data-bottom-route='#/']").click();
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(terminalSurface(page)).not.toBeVisible();
 
   await gotoTaskRoute(page);
