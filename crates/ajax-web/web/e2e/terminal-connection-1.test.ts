@@ -141,7 +141,9 @@ test("navigation away closes the active socket and removes the surface", async (
   await expect(surface).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
-  await page.locator(".bottom-nav [data-bottom-route='#/']").click();
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   await expect(surface).not.toBeVisible();
@@ -184,7 +186,9 @@ test("reopening the task route yields one surface and one active socket", async 
   await expect(surface).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
-  await page.locator(".bottom-nav [data-bottom-route='#/']").click();
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(surface).not.toBeVisible();
 
   await gotoTaskRoute(page);

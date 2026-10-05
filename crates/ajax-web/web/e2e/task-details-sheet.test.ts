@@ -29,7 +29,6 @@ test("phone fullscreen keeps background controls inert until task details sheet 
   const expandProbe = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
 
   const backProbe = page.locator(".task-detail .back");
-  const dashboardProbe = page.locator('.bottom-nav [data-bottom-route="#/"]');
   const detailsProbe = page.getByTestId("task-meta-details-trigger");
   const dismissProbe = page.locator(".result-panel button.pill");
 
@@ -117,7 +116,9 @@ test("phone fullscreen keeps background controls inert until task details sheet 
   await detailsProbe.evaluate((el) => (el as HTMLButtonElement).click());
   await expect(page.getByTestId("task-details-sheet")).toBeVisible();
 
-  await dashboardProbe.evaluate((el) => (el as HTMLButtonElement).click());
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(page.locator("[data-outlet='dashboard']")).toBeVisible({ timeout: 10_000 });
 });
 

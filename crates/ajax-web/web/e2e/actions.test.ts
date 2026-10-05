@@ -58,12 +58,14 @@ test("header Settings link opens the settings route", async ({ page }) => {
   await expect(settings(page)).toBeVisible();
 });
 
-test("bottom-nav Dashboard returns to the dashboard route", async ({ page }) => {
+test("returning from settings reaches the dashboard route", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html#/settings");
   await expect(settings(page)).toBeVisible({ timeout: 10_000 });
 
-  await page.locator(".bottom-nav [data-bottom-route='#/']").click();
+  await page.evaluate(() => {
+    window.location.hash = "#/";
+  });
   await expect(dashboard(page)).toBeVisible();
 });
 
