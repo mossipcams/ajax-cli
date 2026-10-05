@@ -34,8 +34,7 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
-`features/task/public.ts`, `features/settings/public.ts`,
-`features/training/public.ts`). Inside Ajax Chat,
+`features/task/public.ts`, `features/settings/public.ts`). Inside Ajax Chat,
 `ChatSurface.tsx` is the sole composer of top-level capabilities
 (`composer/`, `conversation/`, `scrolling/`, `status/`, `permissions/`,
 `elicitation/`,
@@ -1321,13 +1320,6 @@ allowlists those verbs. Model switching repoints
 `/srv/llm/run/llama-compose.active` at a profile compose file and restarts via
 the GPU lock; it is refused while training. The host-side script lives on the
 VM only and is not yet in this repository (follow-up).
-
-Frontend: `features/training/`, with `public.ts` exporting `TrainingModal`
-only. The bottom-nav **Train** button — which replaced the **Dashboard**
-button — opens it; the dashboard stays reachable through existing Back/dismiss
-routes and the `#/` hash. The modal polls `/api/training/status` every 3s only
-while open and uses select-then-confirm for every mutation. Styles live in
-`styles/settings.css` under the owned-module ledger.
 
 ### `ajax-web::adapters::terminal_pty`
 
