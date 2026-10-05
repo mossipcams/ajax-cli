@@ -113,11 +113,12 @@ pub(crate) mod scan {
 #[cfg(test)]
 mod tests {
     use super::scan::{
-        assert_module_does_not_depend_on, module_sources, source_mentions_dependency,
+        assert_module_does_not_depend_on, forbidden_tokens, module_sources,
+        source_mentions_dependency,
     };
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 10] = [
+    const SLICES: [&str; 11] = [
         "cockpit",
         "dev_deploy",
         "diff_review",
@@ -127,6 +128,7 @@ mod tests {
         "session_models",
         "stt",
         "terminal",
+        "training",
         "web_session",
     ];
     const ADAPTERS: [&str; 12] = [
@@ -248,6 +250,20 @@ mod tests {
 
             assert_module_does_not_depend_on(&module, &forbidden, "slice", slice);
         }
+    }
+
+    #[test]
+    fn training_slice_does_not_depend_on_ajax_core() {
+        // The training slice may use only std, serde/serde_json, the web http
+        // adapter types it already imports, and its own submodules; it must not
+        // reach into ajax-core registry/lifecycle/task types.
+        let forbidden = forbidden_tokens(&["ajax_core", "ajax-core"]);
+        assert_module_does_not_depend_on(
+            "ajax-web::slices::training",
+            &forbidden,
+            "slice",
+            "training",
+        );
     }
 
     #[test]
