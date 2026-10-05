@@ -54,8 +54,9 @@ const defaultModels = {
   running: false,
 };
 
+const onOpenChange = vi.fn();
 function openModal(): void {
-  render(<TrainingModal open onOpenChange={() => {}} />);
+  render(<TrainingModal open onOpenChange={onOpenChange} />);
 }
 
 beforeEach(() => {
@@ -176,7 +177,7 @@ describe("TrainingModal", () => {
   it("polls status while open and stops polling when closed", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     let open = true;
-    const { rerender } = render(<TrainingModal open={open} onOpenChange={() => {}} />);
+    const { rerender } = render(<TrainingModal open={open} onOpenChange={onOpenChange} />);
     await screen.findByTestId("training-state");
 
     await act(async () => {
@@ -186,7 +187,7 @@ describe("TrainingModal", () => {
     expect(whileOpen).toBeGreaterThanOrEqual(2);
 
     open = false;
-    rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+    rerender(<TrainingModal open={open} onOpenChange={onOpenChange} />);
     await act(async () => {
       vi.advanceTimersByTime(9000);
     });
