@@ -32,6 +32,7 @@ import {
   openTaskWorkspaceHash,
   resolveTaskWorkspaceHash,
 } from "@/features/task-workspace/public";
+import { TrainingModal } from "@/features/training/public";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
@@ -169,6 +170,7 @@ function AppContent() {
   const { updateAvailable, checkVersion } = useVersionMonitor();
   const executeOperation = useTaskOperationMutation();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [trainingOpen, setTrainingOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -884,11 +886,10 @@ function AppContent() {
     <nav className="bottom-nav" aria-label="Mobile navigation">
       <button
         type="button"
-        data-bottom-route="#/"
-        aria-current={route.kind === "dashboard" || route.kind === "project" ? "page" : undefined}
-        onClick={() => go(dashboardHash())}
+        data-bottom-action="train"
+        onClick={() => setTrainingOpen(true)}
       >
-        Dashboard
+        Train
       </button>
       <button
         type="button"
@@ -944,6 +945,8 @@ function AppContent() {
           onOpenTask={openTask}
         />
       )}
+
+      <TrainingModal open={trainingOpen} onOpenChange={setTrainingOpen} />
     </AppViewport>
   );
 }

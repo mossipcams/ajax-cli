@@ -31,10 +31,19 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 | **Ajax Chat** | Multi-harness ACP orchestration chat (Cursor native; Codex, Claude, and Pi via their ACP bridges). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
 | **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
 
+**Training modal.** The bottom-nav **Train** button replaced the former
+Dashboard button and opens the Training modal (`features/training`, whose
+`public.ts` exports `TrainingModal` only); the dashboard stays reachable through
+the existing Back/dismiss routes and the `#/` hash. While open, the modal polls
+`/api/training/status` every 3s (and never while closed) and uses
+select-then-confirm for every mutation; its styles live in `styles/settings.css`
+under the owned-module ledger, and it talks to the `/api/training/*` routes whose
+backend slice is documented in backend PR #1205.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
-`features/task/public.ts`, `features/settings/public.ts`). Inside Ajax Chat,
+`features/task/public.ts`, `features/settings/public.ts`,
+`features/training/public.ts`). Inside Ajax Chat,
 `ChatSurface.tsx` is the sole composer of top-level capabilities
 (`composer/`, `conversation/`, `scrolling/`, `status/`, `permissions/`,
 `elicitation/`,
