@@ -133,11 +133,34 @@
 /* Training modal */
 
 .training-modal {
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  max-width: 420px;
   box-sizing: border-box;
   padding: 16px;
+  padding-bottom: calc(48px + env(safe-area-inset-bottom));
   overflow-y: auto;
+  background: var(--paper);
+}
+
+.training-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.training-header h2 {
+  margin: 0;
+}
+
+.training-close {
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.6rem;
+  line-height: 1;
 }
 
 .training-section {
@@ -194,6 +217,12 @@
 }
 
 .training-profile-picker {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
   display: flex;
   align-items: center;
   gap: 8px;
