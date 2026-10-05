@@ -105,23 +105,27 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-All subagent and delegate work goes through the Ajax Model Router: call the
-`model-router` skill, then dispatch via acpx (`scripts/run-delegate`). Never
-spawn native harness subagents (Cursor Task, best-of-n, Claude/Codex/Pi task
-children, or pstack explorers) for any reason, including missing `acpx`. Never
-use Composer 2.5 Fast (`composer-2.5-fast` or any Fast Composer variant) as a
-native Task or subagent model. Missing `acpx` is stop, not a license to Task
-or parent-local writes.
+The local agent does the work; the frontier agent orchestrates. All
+exploration, implementation, testing, diagnosis, and reporting go through the
+Ajax Model Router: call the `model-router` skill, then dispatch via acpx
+(`scripts/run-delegate`). The selected local delegate runs the full loop inside
+the `EXECUTION` scope: explore, implement, test, diagnose failures, and report.
+Never spawn native harness subagents (Cursor Task, best-of-n, Claude/Codex/Pi
+task children, or pstack explorers) for any reason, including missing `acpx`.
+Never use Composer 2.5 Fast (`composer-2.5-fast` or any Fast Composer variant)
+as a native Task or subagent model. Missing `acpx` is stop, not a license to
+Task or parent-local writes.
 
-Always use `model-router` for implementation writes. The orchestrator writes
-plans when required, emits one `EXECUTION` decision, and reviews delegate work.
-It does not explore the tree, implement, commit, push, or open pull requests.
-A Cursor delegate must implement in-process. Do not duplicate model rankings
-or exact model IDs in this file.
+The frontier agent writes plans when required, emits one `EXECUTION` decision,
+and reviews the delegate's delta and report. It does not explore the tree,
+implement, test, diagnose, commit, push, or open pull requests. When the
+delegate fails, re-route through the router; do not take over. Do not
+duplicate model rankings or exact model IDs in this file.
 
-If the user explicitly approved bypassing delegation for this request, the
-active agent may implement, commit, push, and open pull requests in-process.
-That approval is per-request; it does not change the default.
+Only an explicit user approval to bypass delegation for this request lets the
+frontier agent run the loop in-process (explore, implement, test, diagnose,
+report, commit, push, open pull requests). That approval is per-request; it
+does not change the default, and silence or a delegate failure is not approval.
 
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, then always runs `scripts/gh-pr-create` (never raw
@@ -129,7 +133,7 @@ local verification gate, then always runs `scripts/gh-pr-create` (never raw
 derives a CI-valid title from `type/scope/description` branch names, creates or
 reopens the PR, strips Cursor footer / co-author lines from the body, and
 prints the URL; the orchestrator reports that URL after reviewing the delta.
-After an explicit bypass, the active agent follows that same PR path in-process.
+After an explicit bypass, the frontier agent follows that same PR path in-process.
 Delegates must not merge, rebase, force-push, or switch branches unless the user
 explicitly authorizes that behavior.
 
