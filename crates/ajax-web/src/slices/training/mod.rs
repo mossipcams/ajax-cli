@@ -57,6 +57,7 @@ struct HostStatus {
 #[derive(Debug, Deserialize, Serialize)]
 struct HostRun {
     kind: String,
+    #[serde(default)]
     started: String,
     /// Whether the run is still active on the host (false for finished runs);
     /// passed through verbatim.
@@ -70,16 +71,23 @@ struct HostRun {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct HostProgress {
+    #[serde(default)]
     step: u64,
-    total: u64,
+    #[serde(default)]
+    total: Option<u64>,
+    #[serde(default)]
     loss: Option<f64>,
+    #[serde(default)]
     eta_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct HostGeneration {
-    rows: u64,
+    #[serde(default)]
+    rows: Option<u64>,
+    #[serde(default)]
     target: Option<u64>,
+    #[serde(default)]
     running: bool,
 }
 
