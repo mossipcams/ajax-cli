@@ -27,6 +27,7 @@ export interface TrainingRun {
 export interface TrainingGeneration {
   rows: number | null;
   target: number | null;
+  phase: string | null;
   running: boolean;
 }
 
@@ -111,6 +112,7 @@ function parseStatus(payload: unknown): TrainingStatus {
       ? {
           rows: typeof generation.rows === "number" ? generation.rows : null,
           target: typeof generation.target === "number" ? generation.target : null,
+          phase: typeof generation.phase === "string" ? generation.phase : null,
           running: Boolean(generation.running),
         }
       : null,

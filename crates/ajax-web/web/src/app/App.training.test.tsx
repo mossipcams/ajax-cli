@@ -52,7 +52,7 @@ describe("App training modal route coupling", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens the training modal from the bottom-nav Train button", async () => {
+  it("opens the training modal from the bottom-nav Local button", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
@@ -75,7 +75,7 @@ describe("App training modal route coupling", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trainingStatusCalls()).toBe(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Train" }));
+    fireEvent.click(screen.getByRole("button", { name: "Local" }));
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Training")).toBeInTheDocument();

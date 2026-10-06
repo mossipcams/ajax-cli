@@ -421,7 +421,7 @@ describe("App shell", () => {
 
   it("never marks bottom-nav action buttons as the current page", async () => {
     render(<App />);
-    const trainNav = () => screen.getByRole("button", { name: "Train" });
+    const trainNav = () => screen.getByRole("button", { name: "Local" });
 
     expect(trainNav()).not.toHaveAttribute("aria-current");
 
