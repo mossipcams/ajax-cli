@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Forced-command entry for the Ajax web training modal (ssh key restricted to this script).
+
+Verbs: status | start <job> | stop | serve | profile-set <name>. Anything else exits 2.
+"""
+import json, os, re, shlex, signal, subprocess, sys, time
+from pathlib import Path
+
+RUN = Path(os.environ.get("GPU_RUN_DIR", "/srv/llm/run"))
+GPU = "/srv/llm/bin/gpu"
+SAYSO = Path("/srv/llm/sayso")
+PROFILES = SAYSO / "scripts/llm-host/profiles"
+ACTIVE = RUN / "llama-compose.active"
+JOB = RUN / "ajax-job.json"
+CANDIDATES = SAYSO / "training/datasets/candidates"
+GEN_YAML = SAYSO / "training/configs/generation/full_sft_v5.yaml"
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
+# Fixed argv per job; nothing here is caller-controlled.
+JOBS = {
+    "generate": ["./sayso", "generate"],
+    "lfm-train": ["./sayso", "train"],
+    "lfm-eval": ["./sayso", "eval"],
+    "wake-train": [GPU, "train", "wake", "--serve-after", "python", "scripts/wake_livekit_run.py", "run",
+                   "--config", "satellite/models/sayso.yaml", "--work-dir", "/srv/llm/wake/runs/ajax-{ts}"],
+}
+
+
+def die(code, msg):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def state():
+    try:
+        return (RUN / "gpu.state").read_text().split("\n")[0].strip() or "idle"
+    except OSError:
+        return "idle"
+
+
+def job():
+    try:
+        j = json.loads(JOB.read_text())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.killpg(j["pgid"], 0)
+        j["running"] = True
+    except (ProcessLookupError, PermissionError, KeyError):
+        j["running"] = False
+    return j
+
+
+def runtime_up():
+    out = subprocess.run(["docker", "ps", "-q", "--filter", "name=^llama-server$"], capture_output=True, text=True)
+    return bool(out.stdout.strip())
+
+
+def profiles():
+    return sorted(p.stem for p in PROFILES.glob("*.yml")) if PROFILES.is_dir() else []
+
+
+def profile_details():
+    out = {}
+    for n in profiles():
+        meta = dict(re.findall(r"^# (label|model|serving|sampling): (.*)$", (PROFILES / f"{n}.yml").read_text(), re.M))
+        out[n] = meta
+    return out
+
+
+def active():
+    try:
+        return Path(os.readlink(ACTIVE)).stem
+    except OSError:
+        return None
+
+
+def progress(lines):
+    step = total = loss = eta = None
+    for ln in reversed(lines):
+        if step is None:
+            m = re.search(r"(\d+)/(\d+) \[[^\]<]*<(?:(\d+):)?(\d+):(\d+)", ln) or re.search(r"(\d+)/(\d+)", ln)
+            if m and int(m.group(2)) > 0:
+                step, total = int(m.group(1)), int(m.group(2))
+                if m.lastindex and m.lastindex >= 5:
+                    h, mi, s = (int(m.group(3) or 0), int(m.group(4)), int(m.group(5)))
+                    eta = h * 3600 + mi * 60 + s
+        if loss is None:
+            m = re.search(r"loss['\"]?\s*[:=]\s*([0-9.]+)", ln)
+            if m:
+                loss = float(m.group(1))
+        if step is not None and loss is not None:
+            break
+    return None if step is None else {"step": step, "total": total, "loss": loss, "eta_s": eta}
+
+
+def tail(path, n=40):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 16384))
+            data = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    return [l.strip() for l in re.split(r"[\r\n]+", data) if l.strip()][-n:]
+
+
+def host_run():
+    """A run started outside the modal: the GPU lock records `train:<label> <owner> <worker> <epoch>`."""
+    parts = state().split()
+    if not parts or not parts[0].startswith("train:"):
+        return None
+    label = parts[0][len("train:"):]
+    logs = sorted(RUN.glob(f"train-{label}-*.log"), key=lambda p: p.stat().st_mtime)
+    lines = tail(logs[-1]) if logs else []
+    started = time.strftime("%Y%m%dT%H%M%S", time.localtime(int(parts[3]))) if len(parts) > 3 and parts[3].isdigit() else ""
+    return {"kind": f"{label}-train", "started": started, "running": True,
+            "progress": progress(lines), "log_tail": lines[-12:]}
+
+
+def generating():
+    return subprocess.run(["pgrep", "-f", "generators.cli"], capture_output=True).returncode == 0
+
+
+def count_rows(path):
+    """Newline count, resumed from the last poll's offset so a growing multi-GB file is not re-read."""
+    cache = RUN / "ajax-gen-count.json"
+    try:
+        c = json.loads(cache.read_text())
+    except (OSError, ValueError):
+        c = {}
+    size = path.stat().st_size
+    rows, offset = (c["rows"], c["offset"]) if c.get("path") == str(path) and c.get("offset", 0) <= size else (0, 0)
+    with open(path, "rb") as f:
+        f.seek(offset)
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            rows += chunk.count(b"\n")
+    tmp = cache.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"path": str(path), "offset": size, "rows": rows}))
+    os.replace(tmp, cache)
+    return rows
+
+
+def generation(j):
+    running = bool(j and j["running"] and j["kind"] == "generate") or generating()
+    files = sorted(CANDIDATES.glob("*.jsonl"), key=lambda p: p.stat().st_mtime) if CANDIDATES.is_dir() else []
+    files = [f for f in files if not f.name.endswith(".rendered.jsonl")]
+    if not files and not running:
+        return None
+    rows = count_rows(files[-1]) if files else 0
+    m = re.search(r"^count:\s*(\d+)", GEN_YAML.read_text(), re.M) if GEN_YAML.is_file() else None
+    return {"rows": rows, "target": int(m.group(1)) if m else None, "running": running}
+
+
+def status():
+    j = job()
+    run = None
+    if j:
+        lines = tail(j["log"])
+        run = {"kind": j["kind"], "started": j["started"], "running": j["running"],
+               "progress": progress(lines), "log_tail": lines[-12:]}
+    if not (run and run["running"]):
+        run = host_run() or run
+    print(json.dumps({"state": state(), "runtime_up": runtime_up(), "active_profile": active(),
+                      "profiles": profiles(), "profile_details": profile_details(), "run": run, "generation": generation(j)}))
+
+
+def busy():
+    j = job()
+    return state().startswith("train:") or bool(j and j["running"])
+
+
+def start(kind):
+    if kind not in JOBS:
+        die(2, "unknown job")
+    if busy():
+        die(3, "busy")
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    log = RUN / f"ajax-{kind}-{ts}.log"
+    argv = [a.format(ts=ts) for a in JOBS[kind]]
+    with open(log, "wb") as out:
+        p = subprocess.Popen(argv, cwd=SAYSO, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+    tmp = JOB.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"kind": kind, "pgid": p.pid, "log": str(log), "started": ts}))
+    os.replace(tmp, JOB)
+    print(json.dumps({"ok": True}))
+
+
+def stop():
+    j = job()
+    if j and j["running"]:
+        os.killpg(j["pgid"], signal.SIGTERM)
+    else:
+        subprocess.run([GPU, "stop"], check=True)
+    print(json.dumps({"ok": True}))
+
+
+def serve():
+    subprocess.run([GPU, "serve"], check=True)
+    print(json.dumps({"ok": True}))
+
+
+def profile_set(name):
+    if not NAME_RE.match(name) or name not in profiles():
+        die(2, "unknown profile")
+    if busy():
+        die(3, "busy")
+    was_up = runtime_up()
+    tmp = RUN / ".llama-compose.active.new"
+    tmp.unlink(missing_ok=True)
+    os.symlink(PROFILES / f"{name}.yml", tmp)
+    os.replace(tmp, ACTIVE)
+    if was_up:
+        subprocess.run([GPU, "stop"], check=True)
+        subprocess.run([GPU, "serve", "llama"], check=True)
+    print(json.dumps({"ok": True, "active_profile": name}))
+
+
+def main():
+    parts = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", ""))
+    verb, args = (parts[0] if parts else ""), parts[1:]
+    arity = {"status": 0, "stop": 0, "serve": 0, "start": 1, "profile-set": 1}
+    if verb not in arity or len(args) != arity[verb]:
+        die(2, "usage: status | start <job> | stop | serve | profile-set <name>")
+    {"status": status, "stop": stop, "serve": serve, "start": start, "profile-set": profile_set}[verb](*args)
+
+
+if __name__ == "__main__":
+    main()
