@@ -63,6 +63,7 @@ pub(super) async fn acquire(
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.generation = 0;
     state.last_released = None;
     state.acp.acp_alive = false;
@@ -234,7 +235,7 @@ pub(super) async fn reset_harness_context(
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
     state.acp.acp_alive = true;
-    state.stream_normalizer = super::normalize::StreamNormalizer::default();
+    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
         let _ = state.append_to_log(vec![SessionServerEvent::Error {
@@ -277,7 +278,7 @@ pub(super) async fn clear_session_context(
     apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
     state.acp.acp_alive = true;
-    state.stream_normalizer = super::normalize::StreamNormalizer::default();
+    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
         let _ = state.append_to_log(vec![SessionServerEvent::Error {
