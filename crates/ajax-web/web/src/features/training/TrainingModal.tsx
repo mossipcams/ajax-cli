@@ -66,6 +66,10 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
 
   const run = status?.run ?? null;
   const generation = status?.generation ?? null;
+  // The GPU host records a live job only as `train:<label> ...` when it sends no run object.
+  const trainLabel = status?.state.startsWith("train:")
+    ? status.state.slice("train:".length).split(" ")[0]
+    : null;
   const details = status?.profile_details ?? null;
   const activeProfile =
     models?.active_profile ?? status?.active_profile ?? null;
@@ -270,6 +274,17 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                     ))}
                   </ul>
                 ) : null}
+              </div>
+            ) : trainLabel ? (
+              <div data-testid="training-live-state">
+                <p className="training-muted">
+                  Training in progress: {trainLabel}
+                </p>
+                <div
+                  className="training-progress"
+                  role="progressbar"
+                  aria-label="Training in progress"
+                />
               </div>
             ) : status ? (
               <p className="training-muted">No run in progress.</p>
