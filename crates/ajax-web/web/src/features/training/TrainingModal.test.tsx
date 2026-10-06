@@ -140,6 +140,13 @@ describe("TrainingModal", () => {
     expect(await screen.findByTestId("training-generation-rows")).toHaveTextContent("7 rows");
   });
 
+  it("shows a live training job from the host state when no run object is sent", async () => {
+    statusRoute.body = { ...idleStatus, state: "train:lfm 123 456 1700000000", run: null };
+    openModal();
+    expect(await screen.findByTestId("training-live-state")).toHaveTextContent("Training in progress: lfm");
+    expect(screen.queryByText("No run in progress.")).toBeNull();
+  });
+
   it("sends no mutating request without an explicit confirm step", async () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
