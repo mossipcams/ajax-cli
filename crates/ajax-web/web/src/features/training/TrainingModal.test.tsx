@@ -95,7 +95,7 @@ describe("TrainingModal", () => {
     expect(screen.getByText("serving")).toBeTruthy();
     // the descriptive serving string is rendered as text, not as the tag
     expect(screen.getByText("ctx 122880, 2 slots")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Stop atomic" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
   });
 
   it("renders a training run with progress, loss, ETA and log tail", async () => {

@@ -194,6 +194,17 @@
   overflow-wrap: anywhere;
 }
 
+.training-llama-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.training-llama-actions button {
+  min-height: 48px;
+}
+
 .training-profile-list {
   list-style: none;
   margin: 0;
@@ -211,9 +222,14 @@
   min-width: 0;
 }
 
+.training-profile {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+}
+
 .training-profile.is-active {
-  outline: 1px solid var(--ring, #94a3b8);
-  border-radius: 8px;
+  border-color: var(--accent);
 }
 
 .training-profile-picker {
