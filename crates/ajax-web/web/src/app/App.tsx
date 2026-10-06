@@ -889,7 +889,7 @@ function AppContent() {
         data-bottom-action="train"
         onClick={() => setTrainingOpen(true)}
       >
-        Train
+        Local
       </button>
       <button
         type="button"

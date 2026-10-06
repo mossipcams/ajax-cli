@@ -367,7 +367,9 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                     />
                   </div>
                   <p className="training-muted">
-                    {generation.rows ?? 0} / {generation.target} rows
+                    {generation.phase ? `${generation.phase}: ` : ""}
+                    {generation.rows ?? 0} / {generation.target}
+                    {generation.phase ? "" : " rows"}
                     {generation.running ? " · generating" : ""}
                   </p>
                 </>

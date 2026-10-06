@@ -13,6 +13,7 @@ PROFILES = SAYSO / "scripts/llm-host/profiles"
 ACTIVE = RUN / "llama-compose.active"
 JOB = RUN / "ajax-job.json"
 CANDIDATES = SAYSO / "training/datasets/candidates"
+GEN_PROGRESS = RUN / "ajax-gen-progress.json"
 GEN_YAML = SAYSO / "training/configs/generation/full_sft_v5.yaml"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 # Fixed argv per job; nothing here is caller-controlled.
@@ -148,6 +149,12 @@ def generation(j):
         return None
     rows = count_rows(files[-1]) if files else 0
     m = re.search(r"^count:\s*(\d+)", GEN_YAML.read_text(), re.M) if GEN_YAML.is_file() else None
+    try:  # written by the generator: {"phase": str, "done": int, "total": int|null}
+        p = json.loads(GEN_PROGRESS.read_text()) if running else {}
+    except (OSError, ValueError):
+        p = {}
+    if p.get("phase"):
+        return {"rows": p.get("done"), "target": p.get("total"), "phase": p["phase"], "running": running}
     return {"rows": rows, "target": int(m.group(1)) if m else None, "running": running}
 
 
@@ -177,9 +184,10 @@ def start(kind):
     ts = time.strftime("%Y%m%dT%H%M%S")
     log = RUN / f"ajax-{kind}-{ts}.log"
     argv = [a.format(ts=ts) for a in JOBS[kind]]
+    GEN_PROGRESS.unlink(missing_ok=True)
     with open(log, "wb") as out:
         p = subprocess.Popen(argv, cwd=SAYSO, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                             start_new_session=True)
+                             start_new_session=True, env={**os.environ, "AJAX_GEN_PROGRESS": str(GEN_PROGRESS)})
     tmp = JOB.with_suffix(".tmp")
     tmp.write_text(json.dumps({"kind": kind, "pgid": p.pid, "log": str(log), "started": ts}))
     os.replace(tmp, JOB)
