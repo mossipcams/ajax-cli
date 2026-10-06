@@ -247,3 +247,26 @@ impl MessageHelpers for SessionServerEvent {
         }
     }
 }
+
+#[test]
+fn seeded_normalizer_does_not_reuse_item_ids_from_persisted_log() {
+    let message = |item_id: &str| SessionServerEvent::Message {
+        role: "agent".to_string(),
+        text: "old".to_string(),
+        content_blocks: Vec::new(),
+        item_id: item_id.to_string(),
+        message_id: None,
+    };
+    let mut normalizer = StreamNormalizer::seeded_from(&[message("i1"), message("i12")]);
+    let events = normalizer.normalize_batch(vec![SessionServerEvent::Message {
+        role: "agent".to_string(),
+        text: "new".to_string(),
+        content_blocks: Vec::new(),
+        item_id: String::new(),
+        message_id: None,
+    }]);
+    let SessionServerEvent::Message { item_id, .. } = &events[0] else {
+        panic!("expected message");
+    };
+    assert_eq!(item_id, "i13");
+}

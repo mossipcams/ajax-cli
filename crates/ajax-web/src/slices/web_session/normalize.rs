@@ -18,6 +18,27 @@ struct LaneState {
 }
 
 impl StreamNormalizer {
+    /// Continue item ids past those already in `events`. A fresh normalizer
+    /// restarts at `i1`; against a persisted transcript those ids collide, and
+    /// the browser upserts new replies into old rows, leaving only tool calls
+    /// at the tail.
+    pub(crate) fn seeded_from(events: &[SessionServerEvent]) -> Self {
+        let next_id = events
+            .iter()
+            .filter_map(|event| match event {
+                SessionServerEvent::Message { item_id, .. } => {
+                    item_id.strip_prefix('i')?.parse::<u64>().ok()
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        Self {
+            next_id,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn normalize_batch(
         &mut self,
         events: Vec<SessionServerEvent>,
