@@ -134,7 +134,28 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
             className="training-section"
             aria-labelledby="training-models-heading"
           >
-            <h3 id="training-models-heading">Models</h3>
+            <h3 id="training-models-heading">llama.cpp</h3>
+            <p className="training-muted" data-testid="llama-state">
+              {runtimeUp ? "Serving" : "Stopped"}
+              {activeProfile ? ` · ${activeProfile}` : ""}
+            </p>
+            <div className="training-llama-actions">
+              <Button
+                type="button"
+                disabled={busy || runtimeUp || !activeProfile}
+                onClick={() => void execute({ kind: "serve" })}
+              >
+                Start
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy || !runtimeUp}
+                onClick={() => void execute({ kind: "stop" })}
+              >
+                Stop
+              </Button>
+            </div>
             <ul className="training-profile-list">
               {(models?.profiles ?? []).map((name) => {
                 const detail = details?.[name] ?? {};
@@ -183,38 +204,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
               <p className="training-muted">
                 Switching is unavailable while {busyReason}.
               </p>
-            ) : null}
-            {activeProfile ? (
-              runtimeUp ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void execute({ kind: "stop" })}
-                >
-                  {pending?.kind === "stop"
-                    ? `Confirm stop ${activeProfile}`
-                    : `Stop ${activeProfile}`}
-                </Button>
-              ) : pending?.kind === "serve" ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => void execute(pending)}
-                >
-                  Confirm start {activeProfile}
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy}
-                  onClick={() => setPending({ kind: "serve" })}
-                >
-                  Start {activeProfile}
-                </Button>
-              )
             ) : null}
           </section>
 
