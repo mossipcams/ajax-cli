@@ -1327,8 +1327,12 @@ Security assumption: the VM side exposes only a forced-command SSH key
 (`command=…`, `restrict`, `from=` pinned) running `/srv/llm/bin/gpu-ctl`, which
 allowlists those verbs. Model switching repoints
 `/srv/llm/run/llama-compose.active` at a profile compose file and restarts via
-the GPU lock; it is refused while training. The host-side script lives on the
-VM only and is not yet in this repository (follow-up).
+the GPU lock; it is refused while training. The host-side forced-command
+script is `scripts/llm-host/gpu-ctl` (deployed to `/srv/llm/bin/gpu-ctl`). Its
+`status` reports a run for modal-started jobs (`ajax-job.json`) and, when none is
+active, for a job the GPU lock holds as `train:<label>` (progress from the newest
+`train-<label>-*.log`); generation `running` also reads true while a
+`generators.cli` process exists.
 
 ### `ajax-web::adapters::terminal_pty`
 
