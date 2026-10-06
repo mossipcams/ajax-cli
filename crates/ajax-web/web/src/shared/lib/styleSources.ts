@@ -44,10 +44,10 @@ export const BASELINE = {
    * Re-measured after removing side-tab accents from activity cards.
    * Re-measured after inline pi context usage meter in the live head.
    * Re-measured after moving the training modal CSS into settings.css. */
-  sourceStylesCssBytes: 113_340,
-  builtAppCssBytes: 96_869,
-  builtAppCssGzipBytes: 16_190,
-  classSelectorLines: 640,
+  sourceStylesCssBytes: 113_651,
+  builtAppCssBytes: 97_119,
+  builtAppCssGzipBytes: 16_225,
+  classSelectorLines: 643,
   hasSelectors: 18,
 } as const;
 
