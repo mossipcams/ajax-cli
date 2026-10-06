@@ -137,7 +137,7 @@
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
-  padding: 16px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 16px;
   padding-bottom: calc(48px + env(safe-area-inset-bottom));
   overflow-y: auto;
   background: var(--paper);
