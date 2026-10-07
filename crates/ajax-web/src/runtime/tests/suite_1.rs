@@ -37,6 +37,12 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("GET", "/api/tasks/web%2Ffix-login"),
         ("GET", "/api/tasks/web%2Ffix-login/session"),
         ("GET", "/api/tasks/web%2Ffix-login/terminal"),
+        ("GET", "/api/training/status"),
+        ("GET", "/api/training/models"),
+        ("POST", "/api/training/start"),
+        ("POST", "/api/training/stop"),
+        ("POST", "/api/training/serve"),
+        ("POST", "/api/training/models/switch"),
     ] {
         assert_eq!(
             super::api_access_policy(method, path),
@@ -379,6 +385,30 @@ async fn axum_api_routes_require_browser_session_cookie_except_health() {
         get(&app, &session_cookie, "/api/cockpit").await.status(),
         StatusCode::OK
     );
+
+    assert_eq!(
+        get_public(&app, "/api/training/status").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_public(&app, "/api/training/models").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let start = app
+        .clone()
+        .oneshot(
+            AxumRequest::builder()
+                .method("POST")
+                .uri("/api/training/start")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"job":"generate","confirm":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::UNAUTHORIZED);
+    // Authenticated training calls are covered by the slice tests with a fake
+    // runner; here we only verify the auth gate (the production state would ssh).
 }
 
 #[tokio::test]

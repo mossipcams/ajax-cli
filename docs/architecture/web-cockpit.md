@@ -31,10 +31,19 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 | **Ajax Chat** | Multi-harness ACP orchestration chat (Cursor native; Codex, Claude, and Pi via their ACP bridges). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
 | **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
 
+**Training modal.** The bottom-nav **Train** button replaced the former
+Dashboard button and opens the Training modal (`features/training`, whose
+`public.ts` exports `TrainingModal` only); the dashboard stays reachable through
+the existing Back/dismiss routes and the `#/` hash. While open, the modal polls
+`/api/training/status` every 3s (and never while closed) and uses
+select-then-confirm for every mutation; its styles live in `styles/settings.css`
+under the owned-module ledger, and it talks to the `/api/training/*` routes whose
+backend slice is documented in backend PR #1205.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
-`features/task/public.ts`, `features/settings/public.ts`). Inside Ajax Chat,
+`features/task/public.ts`, `features/settings/public.ts`,
+`features/training/public.ts`). Inside Ajax Chat,
 `ChatSurface.tsx` is the sole composer of top-level capabilities
 (`composer/`, `conversation/`, `scrolling/`, `status/`, `permissions/`,
 `elicitation/`,
@@ -1289,6 +1298,41 @@ Frontend ownership:
 Both modules exist and are wired into `TaskTerminal.tsx`, and the
 mobile-WebKit terminal behavior suite, including the repeated same-dimension
 viewport-burst case, passes as of 2026-07-16.
+
+### `ajax-web::slices::training`
+
+Owns the browser Training surface, a browser adapter over a remote GPU host.
+Ajax owns no training truth: the host's `gpu` wrapper, its state file, and
+SaySo records stay authoritative; the slice must not depend on `ajax_core`
+(architecture guard).
+
+Routes: `GET /api/training/status`, `GET /api/training/models`,
+`POST /api/training/start`, `POST /api/training/stop`, `POST /api/training/serve`,
+and `POST /api/training/models/switch`. Each call runs
+`ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <verb> [<arg>]` on
+`spawn_blocking`; the host defaults to `llm-gpu` (override with env
+`AJAX_TRAINING_SSH_HOST`). Verbs are the constants
+`status | start <job> | stop | serve | profile-set <name>`; argv is those
+constants plus at most one argument, a profile name validated against
+`^[a-z0-9][a-z0-9.-]{0,63}$` and the host-reported profile list. The browser
+never supplies argv. ssh stderr is discarded; failures map to generic 502/504
+responses without host detail.
+
+All mutating routes require the same browser-session cookie as other live
+control routes plus a JSON body `{ "confirm": true }` (400 without it). `start`
+and `models/switch` are refused with 409 while a reported state shows a
+`train:` status, a running job, or a running generation.
+
+Security assumption: the VM side exposes only a forced-command SSH key
+(`command=…`, `restrict`, `from=` pinned) running `/srv/llm/bin/gpu-ctl`, which
+allowlists those verbs. Model switching repoints
+`/srv/llm/run/llama-compose.active` at a profile compose file and restarts via
+the GPU lock; it is refused while training. The host-side forced-command
+script is `scripts/llm-host/gpu-ctl` (deployed to `/srv/llm/bin/gpu-ctl`). Its
+`status` reports a run for modal-started jobs (`ajax-job.json`) and, when none is
+active, for a job the GPU lock holds as `train:<label>` (progress from the newest
+`train-<label>-*.log`); generation `running` also reads true while a
+`generators.cli` process exists.
 
 ### `ajax-web::adapters::terminal_pty`
 

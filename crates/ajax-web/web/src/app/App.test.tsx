@@ -419,16 +419,15 @@ describe("App shell", () => {
     await waitFor(() => expect(document.title).toBe("web/fix-login — Ajax"));
   });
 
-  it("marks the dashboard nav button as current", async () => {
+  it("never marks bottom-nav action buttons as the current page", async () => {
     render(<App />);
-    const dashboardNav = () => screen.getByRole("button", { name: "Dashboard" });
+    const trainNav = () => screen.getByRole("button", { name: "Local" });
 
-    expect(dashboardNav()).toHaveAttribute("aria-current", "page");
+    expect(trainNav()).not.toHaveAttribute("aria-current");
 
     setHash("#/settings");
-    await waitFor(() => expect(dashboardNav()).not.toHaveAttribute("aria-current"));
+    await waitFor(() => expect(trainNav()).not.toHaveAttribute("aria-current"));
   });
-
   it("uses opaque paper on cockpit-chrome and bottom-nav without backdrop-filter (#836 black box)", () => {
     const stylesSource = loadStylesSource();
     const cockpitChromeRule =
@@ -679,7 +678,7 @@ describe("App shell", () => {
           return Promise.reject(new Error("network error"));
         }
         return new Promise<Response>((resolve) => {
-          releaseIntervalRetry = () => resolve(jsonResponse(cockpit));
+          releaseIntervalRetry = () => resolve(jsonResponse(cockpit) as Response);
         });
       }
       if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));

@@ -42,11 +42,12 @@ export const BASELINE = {
    * Re-measured after touch momentum scrolling for tool and diff bodies (#1153).
    * Re-measured after explicit ACP restore recovery actions (#1152).
    * Re-measured after removing side-tab accents from activity cards.
-   * Re-measured after inline pi context usage meter in the live head. */
-  sourceStylesCssBytes: 110_626,
-  builtAppCssBytes: 94_678,
-  builtAppCssGzipBytes: 15_765,
-  classSelectorLines: 618,
+   * Re-measured after inline pi context usage meter in the live head.
+   * Re-measured after moving the training modal CSS into settings.css. */
+  sourceStylesCssBytes: 113_651,
+  builtAppCssBytes: 97_119,
+  builtAppCssGzipBytes: 16_225,
+  classSelectorLines: 643,
   hasSelectors: 18,
 } as const;
 
