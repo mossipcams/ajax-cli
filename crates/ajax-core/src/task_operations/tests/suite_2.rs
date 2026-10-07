@@ -804,3 +804,105 @@ fn drop_force_worktree_teardown_succeeds_with_poisoned_repo_config_and_inherited
         output.stderr
     );
 }
+
+#[test]
+fn drop_operation_preserves_main_checkout_and_drops_task_only() {
+    // #1216: dropping a task whose worktree path is the repo's main
+    // checkout must verify the work landed, then remove only registry
+    // state — never trash/remove the checkout or its branches.
+    let root = std::env::temp_dir().join(format!(
+        "ajax-drop-1216-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let repo_path = root.join("web");
+    std::fs::create_dir_all(repo_path.join(".git")).unwrap();
+    let repo_str = repo_path.to_str().unwrap();
+
+    let mut context = CommandContext::new(
+        Config {
+            repos: vec![ManagedRepo::new("web", repo_str, "main")],
+            ..Config::default()
+        },
+        InMemoryRegistry::default(),
+    );
+    let mut task = Task::new(
+        TaskId::new("web/fix-login"),
+        "web",
+        "fix-login",
+        "Fix login",
+        "ajax/fix-login",
+        "main",
+        repo_str,
+        "ajax-web-fix-login",
+        "task",
+        AgentClient::Codex,
+    );
+    task.lifecycle_status = LifecycleStatus::Cleanable;
+    task.git_status = Some(GitStatus {
+        worktree_exists: true,
+        branch_exists: true,
+        current_branch: Some("ajax/fix-login".to_string()),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: true,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    context.registry.create_task(task).unwrap();
+
+    // One output for the task-only-drop verification, then absent drop
+    // observations for execute and completion.
+    let mut outputs = vec![output(0, "", "")];
+    outputs.extend(absent_drop_observation_outputs());
+    outputs.extend(absent_drop_observation_outputs());
+    let mut runner = RecordingQueuedRunner::new(outputs);
+
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let (_outputs, completion) =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+    assert_eq!(completion, DropTaskCompletion::Removed);
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_none());
+
+    // The drop verified the work landed on origin first.
+    assert!(
+        runner.commands.iter().any(|command| {
+            command.program == "sh"
+                && command.args.get(2) == Some(&"ajax-verify-task-only-drop".to_string())
+        }),
+        "expected task-only-drop verification, got {:?}",
+        runner.commands
+    );
+
+    // The checkout and its branches were never touched.
+    for command in runner
+        .commands
+        .iter()
+        .filter(|command| command.program == "sh")
+    {
+        let script = command.args.get(1).cloned().unwrap_or_default();
+        assert!(
+            !script.contains(".ajax-trash"),
+            "checkout moved to trash: {script}"
+        );
+        assert!(
+            !script.contains("worktree remove"),
+            "checkout removed: {script}"
+        );
+        assert!(!script.contains("branch -d"), "branch deleted: {script}");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
