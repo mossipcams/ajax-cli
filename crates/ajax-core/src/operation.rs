@@ -80,8 +80,6 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     if missing_substrate_blocks_operation(task, operation) {
         reasons.push("task has missing substrate".to_string());
     }
-    // Remove must stay allowed on checkout mismatch so Drop can tear down a
-    // drifted worktree; Merge/Clean stay blocked until the checkout matches.
     if matches!(operation, TaskOperation::Merge | TaskOperation::Clean)
         && task.has_checkout_mismatch()
     {

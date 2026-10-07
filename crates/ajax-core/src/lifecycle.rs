@@ -520,8 +520,6 @@ mod tests {
             if path.file_name().and_then(|name| name.to_str()) == Some("lifecycle.rs") {
                 return;
             }
-            // Sibling test modules live under `tests/` (or `tests.rs`) after LOC peels;
-            // they are not production lifecycle writers.
             if path.components().any(|c| c.as_os_str() == "tests")
                 || path.file_name().and_then(|name| name.to_str()) == Some("tests.rs")
             {

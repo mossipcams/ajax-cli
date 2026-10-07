@@ -168,8 +168,6 @@ fn task_from_new_request_sets_skip_bit_for_every_acp_harness() {
     }
 }
 
-// An agent Ajax cannot start over ACP has nothing to drive a provisioned task,
-// so it keeps the tmux send-keys launch even when the flag is set.
 #[test]
 fn task_from_new_request_skips_bit_for_agent_without_acp() {
     let context = context();
@@ -900,7 +898,6 @@ fn new_task_plan_blocks_when_target_branch_already_exists() {
 fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
     use std::path::PathBuf;
 
-    // worktree-path claim
     {
         let mut context = context();
         context
@@ -935,7 +932,6 @@ fn new_task_plan_blocks_when_registry_claims_worktree_path_or_branch() {
         );
     }
 
-    // branch claim
     {
         let mut context = context();
         context

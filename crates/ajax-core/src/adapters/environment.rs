@@ -7,8 +7,6 @@ use std::{
 
 pub const REQUIRED_DOCTOR_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
 
-/// Tools reported by `ajax doctor` beyond the required ones: the ACP adapters
-/// that back browser sessions for Codex, Claude, and Pi.
 pub fn doctor_probe_tools() -> Vec<String> {
     REQUIRED_DOCTOR_TOOLS
         .iter()
@@ -76,10 +74,6 @@ impl DoctorEnvironment {
     }
 }
 
-/// Whether the managed repository at `repo_path` has a local head ref named
-/// `refs/heads/<branch>`. Failures to spawn git, a missing repo path, or any
-/// non-success exit return `false` so callers can pass fresh/temp directories
-/// without spurious preflight blocks.
 pub fn local_branch_exists(repo_path: impl AsRef<Path>, branch: &str) -> bool {
     let Some(repo_path) = repo_path.as_ref().to_str() else {
         return false;
@@ -158,8 +152,6 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
 
-        // Directories that aren't real git repos must never block Start planning,
-        // so the probe returns false rather than erroring.
         assert!(!local_branch_exists(&root, "ajax/fix-login"));
         assert!(!local_branch_exists(&root, "fix-login"));
 

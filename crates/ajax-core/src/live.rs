@@ -1,11 +1,3 @@
-//! Live status reduction and application.
-//!
-//! [`reduce_live_observation`] folds supervisor/application observations against
-//! the task's current live row. The `application` submodule exposes three apply
-//! meanings (ordinary, authoritative, trusted) that all write through
-//! `apply_reduced_observation`. See `live_application` module docs and
-//! `docs/architecture/core-subsystems.md` (Live Status — apply modes).
-
 #[path = "live_application.rs"]
 mod application;
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};

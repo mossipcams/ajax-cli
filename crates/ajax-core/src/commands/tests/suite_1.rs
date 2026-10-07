@@ -244,7 +244,6 @@ fn cockpit_inbox_reincludes_task_after_new_waiting_evidence() {
     mark_task_opened_at(&mut context, "web/fix-login", at).unwrap();
     assert!(cockpit_inbox(&context).items.is_empty());
 
-    // New waiting evidence after the acknowledgment.
     {
         let task = context
             .registry
@@ -652,7 +651,6 @@ fn doctor_and_status_return_basic_health() {
         TestCommand::new("web", "cargo test"),
         TestCommand::new("api", "cargo test"),
     ];
-    // A healthy host also has the ACP adapters that back browser sessions.
     let environment = DoctorEnvironment::from_available_tools([
         "git",
         "tmux",
@@ -670,8 +668,6 @@ fn doctor_and_status_return_basic_health() {
     assert_eq!(status.tasks.len(), 1);
 }
 
-// Sessions for Codex, Claude, and Pi need their Agent Client Protocol adapters;
-// a missing one is an install the operator can do, so name it.
 #[test]
 fn doctor_names_the_missing_acp_adapter_package() {
     let context = context_with_tasks();

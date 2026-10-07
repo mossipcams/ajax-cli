@@ -194,10 +194,6 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         ];
     }
 
-    // A missing worktree is recoverable while the branch still exists — the
-    // repair plan recreates it (see `task_window_repair_plan`). Offer Repair
-    // (plus Drop) instead of collapsing to Drop-only. Shell-only gaps
-    // (tmux / task window) stay Drop-first per existing policy.
     let worktree_repairable = task.has_missing_worktree() && !task.has_missing_branch();
 
     if task_is_known_invalid(task) && !worktree_repairable {
@@ -250,9 +246,10 @@ fn task_is_known_invalid(task: &Task) -> bool {
             .task_window_status
             .as_ref()
             .is_some_and(|status| !status.exists || !status.points_at_expected_path)
-        || task.live_status.as_ref().is_some_and(|live| {
-            // Durable present facts refute stale live *Missing (#788–#790).
-            match live.kind {
+        || task
+            .live_status
+            .as_ref()
+            .is_some_and(|live| match live.kind {
                 LiveStatusKind::TmuxMissing => !task
                     .tmux_status
                     .as_ref()
@@ -266,8 +263,7 @@ fn task_is_known_invalid(task: &Task) -> bool {
                     .as_ref()
                     .is_some_and(|status| status.worktree_exists),
                 _ => false,
-            }
-        })
+            })
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {

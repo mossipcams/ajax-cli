@@ -415,9 +415,6 @@ fn native_teardown_commands<R: Registry>(
 }
 
 impl<R: Registry> CommandContext<R> {
-    /// Refuse teardown operations that would move a path which is not a real
-    /// linked worktree (the repo root, an ancestor of it, or a full repository
-    /// with a `.git` directory) into the trash directory.
     pub(crate) fn ensure_task_worktree_removable(&self, task: &Task) -> Result<(), CommandError> {
         let repo_path = PathBuf::from(
             task_repo_path(self, task)

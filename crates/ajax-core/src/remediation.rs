@@ -1,5 +1,3 @@
-//! Skill-backed remediation options for merge conflicts and CI failures.
-
 use crate::{
     adapters::{CommandOutput, CommandRunner, TmuxAdapter},
     commands::CommandContext,

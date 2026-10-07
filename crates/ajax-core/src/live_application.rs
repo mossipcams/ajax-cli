@@ -1,28 +1,3 @@
-//! Live observation application: three entry meanings, one writer.
-//!
-//! All paths converge on `apply_reduced_observation`, the sole production writer
-//! of `Task.agent_status`, agent side flags, visible live status, and attempt sync.
-//!
-//! ## Apply modes
-//!
-//! - **Ordinary** (`apply_observation` / `apply_observation_at`): runs
-//!   `reduce_live_observation` on the task's current live row, then applies.
-//!   Use for reconciled pane/hook/refresh evidence that may be stale relative to
-//!   the task's stored live status.
-//! - **Authoritative** (`apply_authoritative_observation` /
-//!   `apply_authoritative_observation_at`): skips live-status reduction and
-//!   applies host-first evidence as given. ACP session activity maps host facts
-//!   to `ObservationSource::ProviderLifecycle`, runs [`reduce_agent_status`]
-//!   (`live::apply_provider_lifecycle_observation_at`), then calls this writer.
-//! - **Trusted** (`apply_trusted_observation` / `apply_trusted_observation_at`):
-//!   applies like authoritative, then may advance lifecycle on running-class or
-//!   `Done` evidence. Confirmed wrapper exit uses this path. **ACP must not use
-//!   trusted:** `TurnEnded` → `Done` would mark `Reviewable` between turns of the
-//!   same launch.
-//!
-//! The non-`_at` helpers are thin `observed_now()` wrappers around the timestamped
-//! entry points; the three meanings stay distinct.
-
 use std::time::SystemTime;
 
 use super::{reduce_live_observation, LiveObservation, LiveStatusKind};
@@ -85,23 +60,11 @@ pub fn apply_trusted_observation_at(
     }
 }
 
-/// Acknowledge operator attention on a task without changing lifecycle.
-///
-/// Records the acknowledgment time without erasing runtime evidence or changing
-/// lifecycle. Projection and refresh compare evidence time with this timestamp.
-/// Also silences the current attention episode so opening a task stops push
-/// re-fires until newer actionable evidence appears.
 pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
     crate::attention::silence_notify_episode(task, at);
     task.record_attention_acknowledgment(at);
 }
 
-/// Retract a stale running claim when every agent evidence source is silent.
-///
-/// Unlike applying `LiveStatusKind::Unknown` through `apply_reduced_observation`
-/// (which clears live evidence and returns before assigning `agent_status`),
-/// this path sets `agent_status` to `Unknown` and removes `AgentRunning` without
-/// closing open launch attempts or touching `live_status`.
 pub fn retract_stale_agent_running_at(task: &mut Task, _observed_at: SystemTime) {
     if !task.has_side_flag(SideFlag::AgentRunning)
         && task.agent_status != AgentRuntimeStatus::Running
@@ -112,7 +75,6 @@ pub fn retract_stale_agent_running_at(task: &mut Task, _observed_at: SystemTime)
     if task.agent_status == AgentRuntimeStatus::Running {
         task.agent_status = AgentRuntimeStatus::Unknown;
     }
-    // Do not call `sync_open_attempts`: Unknown must not close launch episodes.
 }
 
 fn apply_reduced_observation(
@@ -150,7 +112,6 @@ fn apply_reduced_observation(
         LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
             task.agent_status = AgentRuntimeStatus::Waiting;
             if crate::agent_status::is_delegated_waiting_summary(&observation.summary) {
-                // Parent is waiting on children, not the operator.
                 task.remove_side_flag(SideFlag::NeedsInput);
             } else {
                 task.add_side_flag(SideFlag::NeedsInput);
@@ -173,10 +134,6 @@ fn apply_reduced_observation(
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::CiPending => {
-            // Remote CI is running; this is a GitHub override, not an assertion
-            // about the local agent process. It clears the remote check result
-            // it supersedes and nothing else — the agent's own flags
-            // (NeedsInput, AgentRunning) belong to the native hook evidence.
             task.remove_side_flag(SideFlag::TestsFailed);
         }
         LiveStatusKind::MergeConflict => {
