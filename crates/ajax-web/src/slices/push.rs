@@ -383,29 +383,28 @@ pub(crate) fn navigation_url(headers: &HeaderMap) -> Result<String, String> {
 
 /// Write through a temp file and rename, so a crash mid-write leaves the
 /// previous file intact instead of a truncated one. The file holds the VAPID
-/// private key or subscription keys: it is owner-only from creation, never
-/// briefly world-readable.
+/// private key or subscription keys, so the temp file is always a new
+/// owner-only file: a leftover or planted one at that path is removed, never
+/// reused, and `create_new` refuses to write through a symlink.
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
     let failed = |error: std::io::Error| format!("write {}: {error}", path.display());
+    match fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed(error)),
+    }
     let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     let mut file = options.open(&tmp).map_err(failed)?;
-    #[cfg(unix)]
-    {
-        // `mode` only applies on create; a temp file left by a crash keeps its own.
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(failed)?;
-    }
     file.write_all(bytes).map_err(failed)?;
     file.sync_all().map_err(failed)?;
     fs::rename(&tmp, path).map_err(failed)
@@ -689,16 +688,18 @@ mod tests {
         let path = dir.join(SUBSCRIPTIONS_FILE);
         fs::write(&path, "not json").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        // A stale temp file from a crash must not lend its mode to the result.
-        let stale = dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp"));
-        fs::write(&stale, "stale").unwrap();
-        fs::set_permissions(&stale, fs::Permissions::from_mode(0o644)).unwrap();
+        // A temp path planted as a symlink must be replaced, not written through.
+        let outside = dir.join("outside");
+        fs::write(&outside, "untouched").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp")))
+            .unwrap();
 
         PushHub::load_or_create(&dir).unwrap();
 
         assert_eq!(mode(&path), 0o600);
         assert_eq!(mode(&path.with_extension("json.corrupt")), 0o600);
         assert_eq!(mode(&dir.join(VAPID_KEY_FILE)), 0o600);
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "untouched");
         let _ = fs::remove_dir_all(dir);
     }
 
