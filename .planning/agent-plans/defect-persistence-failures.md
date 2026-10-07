@@ -54,12 +54,12 @@ same pattern at different stores.
   success. Unreadable metadata at spawn surfaces an error instead of starting
   a fresh ACP context. Interior corruption reaches the snapshot
   `transcriptError`.
-- [ ] **3. Registry snapshot persistence** (#1224, #1225, #1226). Model
+- [x] **3. Registry snapshot persistence** (#1224, #1225, #1226). Model
   change, ACP task-mode promotion, and harness switch return the
   `persist_registry_snapshot` failure instead of reporting success.
-- [ ] **4. Session activity reporter** (#1227). SQLite failure is returned;
+- [x] **4. Session activity reporter** (#1227). SQLite failure is returned;
   in-memory status and revision do not advance past it.
-- [ ] **5. Push subscription store** (#1241). Atomic write before
+- [x] **5. Push subscription store** (#1241). Atomic write before
   acknowledging; a corrupt file is an error, not an empty store.
 
 Each step: one delegate dispatch, one regression test per issue named with
@@ -87,5 +87,25 @@ failing on the pre-fix source.
   Validation: 8 new `issue_12xx` tests pass (the 5 session-level ones fail on
   the pre-fix source); `cargo nextest run --workspace` 2409/2409; clippy
   `--all-targets --all-features -D warnings` clean; `cargo fmt --check` clean.
-- Remaining: steps 3–5. "Identifies the affected range" from #1240 is not
+- 2026-10-07, steps 3+4 (in-process, same bypass). Model change, session
+  activity, and ACP promotion now save the registry snapshot before shared
+  state advances and return the failure; a harness switch whose save fails
+  restores the pre-swap context and does not reset the live session. New
+  `SessionRouteError::PromotionNotSaved` maps to HTTP 500. Deviation: the
+  regression tests needed a failing-save knob on `TestBridge`
+  (`runtime/tests/mod.rs`, additive) and live in the new
+  `runtime/tests/suite_6.rs`. Validation: 4 new tests fail on the pre-fix
+  source; `cargo nextest run --workspace` 2413/2413; clippy and fmt clean.
+- 2026-10-07, step 5 plus push delivery (#1230, #1231) in the same change.
+  The subscription file is written through a temp file and rename; an
+  unparsable file is copied to `web-push-subscriptions.json.corrupt` before
+  the existing wipe. Not changed, by design: handlers still acknowledge
+  before the background flush (module doc: HTTP handlers must not touch push
+  disk paths), and the wipe itself stays (existing test
+  `invalid_legacy_subscriptions_file_is_wiped_not_migrated`). Delivery moved
+  to `slices/push/delivery.rs`: a background thread, two retries (5 s, 30 s),
+  in-process only. Validation: 5 new tests; `cargo nextest run --workspace`
+  2418/2418; clippy and fmt clean; `npm run verify:arch` passes. The #1230 and
+  #1231 tests cover a new module and were not run against the pre-fix source.
+- Checklist complete. "Identifies the affected range" from #1240 is not
   done: the warning carries a row count only.
