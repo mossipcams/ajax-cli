@@ -339,11 +339,6 @@ fn repair_execute_uses_injected_runner() {
         .try_get_matches_from(["ajax", "repair", "web/fix-login", "--execute"])
         .unwrap();
     let (_, subcommand) = matches.subcommand().unwrap();
-    // Inject the open mode explicitly. The `run_with_context_and_runner`
-    // dispatch path resolves it from the ambient `$TMUX` env var, which
-    // makes this assertion non-deterministic across environments (passing
-    // inside tmux, failing in CI). Pin the env-independent `Attach`
-    // default so the full command sequence is asserted deterministically.
     render_task_command(
         TaskCommandKind::Repair,
         subcommand,

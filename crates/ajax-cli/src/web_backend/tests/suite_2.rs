@@ -282,8 +282,6 @@ impl CommandRunner for LiveRefreshRunner {
                 "ajax-web-fix-login\ttask\t/repo/web__worktrees/ajax-fix-login\n"
             }
             [command, ..] if command == "capture-pane" => {
-                // Structured Cursor lifecycle evidence — generic busy chrome
-                // alone no longer projects AgentRunning.
                 "{\"type\":\"thinking\"}\n"
             }
             _ => "",
@@ -345,8 +343,6 @@ fn acknowledge_operator_input_marks_attention_and_persists_across_reload() {
     let dir = scratch_dir("ack-operator-input");
     let paths = CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
     let mut context = reviewable_context();
-    // Make the task waiting & un-acknowledged: live evidence observed after
-    // the last acknowledgment (which is None), so the bridge acknowledges.
     {
         let task = context
             .registry
@@ -378,7 +374,6 @@ fn acknowledge_operator_input_marks_attention_and_persists_across_reload() {
         "in-context task stamped with attention_acknowledged_at"
     );
 
-    // Persisted across reload: the saved state carries the acknowledgment.
     let reloaded = crate::context::load_context(&paths).expect("reload saved state");
     assert!(
         reloaded
@@ -398,8 +393,6 @@ fn acknowledge_operator_input_skips_persist_without_newer_evidence() {
     let dir = scratch_dir("ack-no-newer-evidence");
     let paths = CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
     let mut context = reviewable_context();
-    // Stamp live evidence strictly before the last ack, so needs_ack is
-    // false: the operator has already acknowledged everything newer.
     let earlier = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
     let later = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000);
     {
@@ -432,7 +425,6 @@ fn acknowledge_operator_input_skips_persist_without_newer_evidence() {
         revision_before, revision_after,
         "idempotent call did not persist a new revision"
     );
-    // The in-context acknowledgment is unchanged too.
     assert_eq!(
         context
             .registry

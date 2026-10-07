@@ -43,7 +43,6 @@ impl CommandRunner for LiveRefreshRunner {
                 "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
             }
             [command, ..] if command == "capture-pane" => {
-                // No wait chrome — running reconcile must not invent Waiting.
                 "agent working\nesc to interrupt\n"
             }
             _ => "",
@@ -597,8 +596,6 @@ fn cockpit_snapshot_rebuilds_after_cached_task_is_removed() {
         .get_task_mut(&TaskId::new("task-1"))
         .expect("fixture task should exist");
     task.lifecycle_status = LifecycleStatus::Removed;
-    // Fully dropped ghosts have no remaining git substrate; Removed rows that
-    // still report a worktree/branch stay visible so Drop can finish teardown.
     if let Some(git_status) = task.git_status.as_mut() {
         git_status.worktree_exists = false;
         git_status.branch_exists = false;
