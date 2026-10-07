@@ -363,6 +363,11 @@ pub(crate) fn spawn_task_session(
                 }
             }
         }
+        // Last chance for a report that was deferred while the lane was busy:
+        // nothing retries it once this loop is gone (#1176).
+        state
+            .evidence
+            .retry_pending_activity_report(&state.qualified_handle);
         if close_on_exit {
             state.prompts.queued.clear();
             state.prompts.prompt_ledger.remove_queued();
