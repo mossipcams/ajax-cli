@@ -18,9 +18,6 @@ const OLD_PATHS = [
   "crates/ajax-web/web/src/terminalSurfaceSetting.ts",
   "crates/ajax-web/web/src/terminalSurfaceSetting.test.ts",
   "crates/ajax-web/web/src/terminalGestures.ts",
-  // terminalGeometry.ts/terminalRefit.ts (+tests) were legacy Ghostty-era
-  // names, but the 2026-07 web-architecture-alignment plan reintroduced those
-  // paths as the current geometry/refit owners, so they are no longer legacy.
   "crates/ajax-web/web/src/terminalGeometry.fuzz.test.ts",
   "crates/ajax-web/web/src/terminalOutputPolicy.ts",
   "crates/ajax-web/web/src/terminalOutputPolicy.test.ts",
@@ -119,12 +116,6 @@ describe("legacy terminal removal hygiene", () => {
     expect(violations).toEqual([]);
   });
 
-  // The named-path list above only covers the terminal-era Svelte components, so
-  // other `.svelte` files can reappear without failing anything — during the
-  // 2026-07 cleanup `TaskDetail.svelte` and `TestInDevPanel.svelte` came back
-  // into the working tree and every suite still passed, because nothing imports
-  // them and the toolchain no longer looks at `.svelte` at all. This is the
-  // catch-all: the React migration is complete, so the extension must not exist.
   it("keeps the web source tree free of any Svelte component", () => {
     const webSrc = join(webRoot, "src");
     const found: string[] = [];

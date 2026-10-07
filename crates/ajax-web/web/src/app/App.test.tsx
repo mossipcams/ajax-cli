@@ -28,9 +28,6 @@ function loadStylesSource(): string {
   return readOrderedStylesSource(join(testDir, ".."));
 }
 
-// Hard file-scope stub: late microtasks (detail loads settling between a
-// test's unstubAllGlobals and DOM cleanup) must never reach jsdom's real
-// WebSocket, whose `ws` shim rejects asynchronously outside any test.
 class StubWebSocket {
   readyState = 1;
   close() {}
@@ -56,8 +53,6 @@ describe("App shell", () => {
   beforeEach(() => {
     window.location.hash = "";
     document.title = "";
-    // Tests that fake a hidden document redefine these; unstubAllGlobals does
-    // not undo defineProperty, so reset them here.
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
@@ -135,7 +130,7 @@ describe("App shell", () => {
     expect(screen.getByTestId("app-main")).toBeInTheDocument();
     expect(screen.getByTestId("route-scroll")).toBeInTheDocument();
     expect(appSource).not.toMatch(/initViewport/);
-    expect(appViewportSource).toMatch(/initViewport/);
+    expect(appViewportSource).toMatch(/useViewportBand/);
     expect(appSource).not.toMatch(/ajax-dashboard-open/);
     expect(stylesSource).toMatch(/--app-band-top:\s*var\(--app-top/);
     expect(stylesSource).toMatch(/--app-band-height:\s*var\(--app-height/);
@@ -190,11 +185,9 @@ describe("App shell", () => {
     expect(mobileBlock).toMatch(
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
-    // Closed-keyboard: do not flex-grow the terminal panel (causes tall empty PTY rows).
     expect(mobileBlock).not.toMatch(
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
-    // Keyboard-open still flex-fills the panel under the fixed task-detail band.
     expect(mobileBlock).toMatch(
       /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
@@ -207,8 +200,6 @@ describe("App shell", () => {
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
       )?.[1] ?? "";
 
-    // Header/status stay visible under keyboard-open (flex:none), and must not
-    // share a display:none rule with meta-details the way a loose regex can misread.
     expect(mobileBlock).toMatch(
       /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.detail-header,\s*html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.interact-panel\s*\{[^}]*flex:\s*none/,
     );
@@ -250,8 +241,6 @@ describe("App shell", () => {
         /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
-    // Cockpit chrome (owner of safe-area top) is hidden while keyboard-open; the
-    // fixed task page must carry that inset so back + title + status stay usable.
     expect(taskDetailRule).toMatch(/padding-top:\s*env\(safe-area-inset-top\)/);
   });
 
@@ -345,8 +334,6 @@ describe("App shell", () => {
         /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
       )?.[1] ?? "";
 
-    // Expanded panel owns the band; a fixed overflow parent would become the
-    // containing block on iOS and push the fullscreen terminal under the keyboard.
     expect(mobileBlock).toMatch(
       /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s*\{/,
     );
@@ -553,7 +540,6 @@ describe("App shell", () => {
 
     render(<App />);
 
-    // Dashboard route must never resume.
     await waitFor(() => expect(operations).toHaveLength(0));
 
     setHash("#/t/web%2Ffix-login");
@@ -562,7 +548,6 @@ describe("App shell", () => {
       expect(operations).toEqual([{ task_handle: "web/fix-login", action: "resume", request_id: expect.any(String) }]),
     );
 
-    // Leaving and re-entering a different handle is a fresh open → a fresh resume.
     setHash("#/");
     setHash("#/t/web%2Fother");
     await vi.waitFor(() => expect(operations).toHaveLength(2));
@@ -596,9 +581,7 @@ describe("App shell", () => {
     setHash("#/t/web%2Fother");
     await screen.findByText("Other task");
 
-    // The slow response for the task we left must not clobber the open one.
     resolveFirstDetail(jsonResponse({ ...taskDetail, title: "STALE fix-login" }));
-    // Macrotask boundary: let the whole fetch→parse→assign chain settle.
     await new Promise((resolve) => setTimeout(resolve, 0));
     await waitFor(() => expect(true).toBe(true));
     expect(screen.queryByText("STALE fix-login")).not.toBeInTheDocument();
@@ -630,9 +613,6 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(hitVersion()).toBe(true));
   });
 
-  // iOS launches a home-screen PWA with the document still hidden behind the
-  // splash screen. The mount load must go through anyway; only the repeating
-  // background poll may skip while hidden.
   it("loads the cockpit on mount while hidden, but skips the background poll", async () => {
     vi.useFakeTimers();
     Object.defineProperty(document, "hidden", { configurable: true, value: true });
@@ -653,10 +633,8 @@ describe("App shell", () => {
     const cockpitCalls = () =>
       fetchMock.mock.calls.filter(([path]) => String(path) === "/api/cockpit").length;
 
-    // Mount load is not swallowed by the hidden document.
     await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
 
-    // Hidden interval is 60s; firing it must not add a background fetch.
     await vi.advanceTimersByTimeAsync(120000);
     expect(cockpitCalls()).toBe(1);
   });
@@ -755,7 +733,6 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
 
     await act(async () => {
-      // GET timeout fires at 10s; active cadence is 3s so the next poll lands at 12s.
       await vi.advanceTimersByTimeAsync(13_001);
       await Promise.resolve();
     });
@@ -927,7 +904,6 @@ describe("App shell", () => {
         }
         if (path.startsWith("/api/tasks/")) {
           detailCalls += 1;
-          // First open fails; reopen after leaving the task succeeds.
           if (detailCalls === 1) {
             return Promise.resolve(jsonResponse({ error: "detail unavailable" }, 500));
           }
@@ -944,8 +920,6 @@ describe("App shell", () => {
     releaseCockpit(jsonResponse(cockpit));
     await waitFor(() => expect(true).toBe(true));
 
-    // Flush the dashboard intermediate so the detail effect observes handle=null
-    // before reopening the same task (sync double-hashchange would otherwise batch).
     setHash("#/");
     await waitFor(() => expect(true).toBe(true));
     setHash("#/t/web%2Ffix-login");

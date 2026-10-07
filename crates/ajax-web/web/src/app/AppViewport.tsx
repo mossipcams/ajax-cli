@@ -5,7 +5,6 @@ interface Props {
   children?: ReactNode;
 }
 
-/** Sole consumer of initViewport's --app-top / --app-height on <html>. */
 export default function AppViewport({ children }: Props) {
   useViewportBand();
   return (

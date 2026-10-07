@@ -8,7 +8,6 @@ import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
-// Hard file-scope stub: late microtasks must never reach jsdom's real WebSocket.
 class StubWebSocket {
   readyState = 1;
   close() {}
@@ -217,7 +216,6 @@ describe("App drop shell confirm", () => {
     fireEvent.click(await screen.findByText("Drop"));
     expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
 
-    // Leave during shell confirm (before Confirm) — real phone path to another task.
     setHash("#/");
     expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
     setHash("#/t/web%2Fother");

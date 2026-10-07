@@ -1,10 +1,6 @@
-// Pure drag-to-dismiss math for the bottom sheet. The component owns the touch
-// listeners and the transform; this owns only the threshold decision.
-
-export const SHEET_DISMISS_THRESHOLD = 96; // px downward drag to dismiss
+export const SHEET_DISMISS_THRESHOLD = 96;
 
 export interface SheetDragState {
-  /** Downward translate in px (never negative — the sheet can't drag up). */
   offset: number;
 }
 

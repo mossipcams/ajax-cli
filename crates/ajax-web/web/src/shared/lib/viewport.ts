@@ -1,43 +1,18 @@
 import { SESSION_VIEWPORT_ATTR } from "@/shared/lib/sessionViewport";
 
-/**
- * Keyboard-aware viewport sync for the mobile terminal (iOS Safari first).
- *
- * iOS Safari does not honour `interactive-widget=resizes-content`, so the soft
- * keyboard never shrinks the layout viewport — it only shrinks `visualViewport`.
- * We mirror `visualViewport.height` into the `--app-height` CSS variable so a
- * fixed, full-screen terminal layer can size itself to the truly-visible band
- * above the keyboard, and toggle a `keyboard-open` class for layout that needs
- * it. Ported from the Codeman project's mobile-handlers.js.
- */
 
-// Keyboard show/hide thresholds. The 100px close threshold (vs 50) absorbs iOS
-// address-bar drift and the iOS 26 ~24px visual/layout discrepancy.
 const KEYBOARD_OPEN_DELTA_PX = 150;
 const KEYBOARD_CLOSE_DELTA_PX = 100;
-// iOS momentarily reports an expanded visualViewport mid-typing (keyboard
-// morphs, autocorrect popovers). Tearing down the pinned band instantly for
-// those transients is the "terminal jumps while typing" defect — the close
-// edge only fires after the expansion persists for this window.
 const KEYBOARD_CLOSE_SETTLE_MS = 250;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
 const APP_TOP_VAR = "--app-top";
-// iOS Home Screen PWA splash can report visualViewport.height === 0; pinning
-// that sets --app-height: 0px, so the CSS 100dvh fallback never applies and
-// max-height: 0px clips the shell (#850).
 const MIN_USABLE_HEIGHT_PX = 50;
 
 function isUsableHeight(height: number): boolean {
   return height >= MIN_USABLE_HEIGHT_PX;
 }
 
-/**
- * The single keyboard-open truth. `initViewport` maintains the class with
- * baseline rebasing and open/close hysteresis; every consumer (CSS takeover,
- * the terminal's PTY-lockstep freeze) must read this same state so they can
- * never disagree about whether the keyboard is up.
- */
 export function isKeyboardOpen(): boolean {
   return (
     typeof document !== "undefined" &&
@@ -45,13 +20,6 @@ export function isKeyboardOpen(): boolean {
   );
 }
 
-/**
- * Clear document/window scroll offsets that Safari leaves behind after
- * keyboard or expand snaps, including the App `[data-testid="route-scroll"]`
- * container that owns task-page vertical scroll. Safe in jsdom where
- * `scrollTo` is unimplemented.
- */
-/** Blur the session composer when it owns focus — not the task terminal. */
 export function blurSessionComposerIfFocused(): void {
   if (typeof document === "undefined") return;
   const composer = document.querySelector<HTMLTextAreaElement>(
@@ -66,7 +34,6 @@ export function resetDocumentScroll(): void {
   try {
     window.scrollTo(0, 0);
   } catch {
-    // jsdom throws "Not implemented" for scrollTo.
   }
   document.documentElement.scrollTop = 0;
   document.body.scrollTop = 0;
@@ -77,11 +44,6 @@ export function resetDocumentScroll(): void {
   }
 }
 
-/**
- * Begin syncing `--app-height` / `keyboard-open` from `visualViewport`.
- * No-ops where `visualViewport` is unavailable. Returns a cleanup function
- * that removes every listener and the state it set.
- */
 export function initViewport(): () => void {
   const vv = typeof window !== "undefined" ? window.visualViewport : undefined;
   if (!vv) return () => {};
@@ -108,8 +70,6 @@ export function initViewport(): () => void {
   const resolveViewportHeight = (): number | null => {
     const layoutHeight = window.innerHeight;
     if (isUsableHeight(vv.height)) {
-      // Session chat fills layout/dvh when the keyboard is closed; never pin to a
-      // short visualViewport (tap-dismiss stale band or iOS ~24–34px discrepancy).
       if (!keyboardOpen && isSessionViewportOwned()) {
         return null;
       }
@@ -190,8 +150,6 @@ export function initViewport(): () => void {
     const current = vv.height;
     const currentWidth = window.innerWidth;
 
-    // Splash can keep reporting height 0 after init already fell back to layout
-    // height; a shrink to unusable must not look like a keyboard opening (#850).
     if (!isUsableHeight(current)) {
       syncViewportGeometry();
       if (!keyboardOpen) {
@@ -201,7 +159,6 @@ export function initViewport(): () => void {
     }
 
     if (currentWidth !== baselineWidth) {
-      // Rotation: a real geometry change, close immediately.
       cancelCloseSettle();
       dismissKeyboardOpen();
       setAppHeight(current);
@@ -221,8 +178,6 @@ export function initViewport(): () => void {
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
-      // Hold the pinned band (class AND geometry) until the expansion proves
-      // it is a real keyboard dismissal, not a mid-typing transient.
       if (closeSettleTimer === undefined) {
         closeSettleTimer = setTimeout(() => {
           closeSettleTimer = undefined;
@@ -236,11 +191,8 @@ export function initViewport(): () => void {
       }
       return;
     } else if (keyboardOpen && closeSettleTimer !== undefined) {
-      // Shrank back under the close threshold: the expansion was a transient.
       cancelCloseSettle();
     }
-    // Splash recovery: visualViewport can jump from 0/unusable to full height.
-    // Rebase without treating the expansion as keyboard dismissal/opening.
     if (!isUsableHeight(baselineHeight) && isUsableHeight(current)) {
       cancelCloseSettle();
       dismissKeyboardOpen();
@@ -249,16 +201,12 @@ export function initViewport(): () => void {
       return;
     }
 
-    // Keep --app-height pinned to the visible band. While the keyboard is closed
-    // this also tracks address-bar / orientation changes and re-bases the
-    // threshold so the next keyboard open is measured from the right height.
     syncViewportGeometry();
     if (!keyboardOpen) {
       rebaseBaselineFromResolved();
     }
   };
 
-  // Suppress pinch / double-tap zoom (iOS ignores user-scalable=no since iOS 10).
   const onGesture = (event: Event) => event.preventDefault();
 
   const onTouchMovePinchGuard = (event: TouchEvent) => {
@@ -268,19 +216,12 @@ export function initViewport(): () => void {
     }
   };
 
-  // Two-finger touches have no legitimate page-level use in this app;
-  // preventing the touchstart stops iOS from ever latching the zoom gesture
-  // (the touchmove scale guard alone runs too late on PWA). preventDefault
-  // does NOT stop event delivery, so the terminal host's own pinch handling
-  // still receives the events.
   const onTouchStartPinchGuard = (event: TouchEvent) => {
     if (event.touches && event.touches.length >= 2 && event.cancelable) {
       event.preventDefault();
     }
   };
 
-  // iOS dismisses the soft keyboard on app-switch; if keyboard-open stays
-  // latched, CSS hides .bottom-nav and pins the band short (#836).
   const onForegroundResync = () => {
     cancelCloseSettle();
     const wasKeyboardOpen = keyboardOpen;
@@ -293,7 +234,6 @@ export function initViewport(): () => void {
 
   const onVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
-      // Keyboard is gone once backgrounded; do not wait for visualViewport.
       cancelCloseSettle();
       dismissKeyboardOpen();
       return;

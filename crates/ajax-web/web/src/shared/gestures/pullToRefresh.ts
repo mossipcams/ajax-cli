@@ -1,16 +1,10 @@
-// Pure pull-to-refresh math. The component owns touch listeners and the timer;
-// this module owns only the state transitions so they stay unit-testable.
-
-export const PULL_THRESHOLD = 64; // resisted px at which the gesture arms
-export const PULL_MAX = 96; // resisted px ceiling
-const RESISTANCE = 0.5; // rubber-band factor applied to raw drag
+export const PULL_THRESHOLD = 64;
+export const PULL_MAX = 96;
+const RESISTANCE = 0.5;
 
 export interface PullState {
-  /** Whether the gesture began at the top of the scroll container. */
   active: boolean;
-  /** Resisted, capped pull distance for the indicator. */
   distance: number;
-  /** Past threshold — release will trigger a refresh. */
   armed: boolean;
 }
 

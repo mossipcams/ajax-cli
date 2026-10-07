@@ -69,7 +69,6 @@ import { checkHealth } from "@/shared/lib/api";
 import { reloadCockpitDocument } from "@/shared/lib/reloadCockpitDocument";
 import { setupScreenWakeLock } from "@/shared/lib/screenWakeLock";
 
-/** Coalesce iOS focus/pageshow/visibility resume bursts into one recovery poll. */
 const RESUME_DEBOUNCE_MS = 750;
 
 type ResultState = {
@@ -86,7 +85,6 @@ type PendingConfirmState = {
   interactionId: string;
 };
 
-/** Task surfaces where Drop confirm/dismiss treat the operator as on this handle. */
 function routeStillOnDroppedTask(
   current: ReturnType<typeof parseRoute>,
   handle: string,
@@ -176,10 +174,6 @@ function AppContent() {
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropResolvedRef = useRef(false);
   const dropHandles: DropUndoHandles = { dropTimerRef, dropResolvedRef };
-  // Sticky leave latch: once the operator leaves the dropped task (including
-  // during shell confirm, before Confirm), late Drop success must not go(#/).
-  // Snapshotting location.hash only at API-completion races swipe/Back settle,
-  // which delays the hash change by SWIPE_PAGE_COMMIT_MS.
   const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
   const reloadLatchRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -198,7 +192,6 @@ function AppContent() {
     visibleAt: number;
     resumeToVisibleMs: number | null;
   } | null>(null);
-  // Report what's live first, then the inventory size.
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
     const running = cockpit.data.cards.filter((card) => card.status === "running").length;
@@ -267,8 +260,6 @@ function AppContent() {
     if (!pendingConfirm) return;
     const { action, handle, interactionId } = pendingConfirm;
     dismissPendingConfirm();
-    // Drop's undo timer outlives ActionBar. Dismiss to dashboard only while the
-    // operator is still on the dropped task — leave latch + live hash check.
     const stillOnDroppedTask = () => {
       if (dropLeaveLatchRef.current?.left) return false;
       return routeStillOnDroppedTask(parseRoute(window.location.hash), handle);
@@ -290,8 +281,6 @@ function AppContent() {
         },
         isMounted: stillOnDroppedTask,
         onDismiss: () => {
-          // Re-check at navigate time: API may have resolved before swipe settle
-          // updated the hash, or after the leave latch flipped.
           if (!stillOnDroppedTask()) {
             dropLeaveLatchRef.current = null;
             return;
@@ -325,10 +314,6 @@ function AppContent() {
   function openTask(handle: string, latestCockpit?: BrowserCockpitView) {
     const interactionId = beginInteraction("open_task");
     endTapToFeedback(interactionId, "nav_start");
-    // Yield past this tap's INP next-paint before sync hash→TaskList teardown.
-    // A single rAF still runs before paint and would keep INP ~400–500ms.
-    // Only a provisioned (ACP) task can hold a session; an interactive task
-    // keeps its agent in tmux, so chat would open on a socket the host refuses.
     window.setTimeout(() => {
       const sessionCapable = (latestCockpit ?? cockpitRef.current.data)?.cards?.some(
         (card) => card.qualified_handle === handle && card.session_capable,
@@ -348,9 +333,6 @@ function AppContent() {
     onDistance: setPullDistance,
   });
 
-  // The shell subscription below must mount exactly once, but its handlers need
-  // the latest loadCockpit/checkVersion. Effect events are non-reactive, so they
-  // give us that without making the subscription re-run.
   const onShellMount = useEffectEvent(() => {
     void loadCockpit();
     return whenIdle(() => void checkVersion());
@@ -420,10 +402,8 @@ function AppContent() {
       scheduleShellResume();
     }
   });
-  // Keep the device screen awake while Cockpit is foreground-visible (iOS Safari).
   useEffect(() => setupScreenWakeLock(), []);
 
-  // Shell listeners — mount once; immediate cockpit on mount, debounced recovery on resume.
   useEffect(() => {
     const idleHandle = onShellMount();
     const onResume = () => scheduleShellResume();
@@ -449,9 +429,6 @@ function AppContent() {
     wasListRouteRef.current = isListRoute;
   }, [loadCockpit, route.kind]);
 
-  // Adaptive cockpit / version intervals. Derive the scalar cadences first: an
-  // inline object literal is a new value every render and could never be a
-  // dependency, which is what forced the old suppression here.
   const fleetQuiet =
     cockpit.data !== null &&
     cockpit.data.cards.every((card) => (card.status || "").toLowerCase() === "idle");
@@ -478,8 +455,6 @@ function AppContent() {
     };
   }, [checkVersion, cockpitIntervalMs, hiddenStartupRetry, loadCockpit, versionIntervalMs]);
 
-  // Sheet is a list overlay only — clear on task/diff/settings (and any non-list
-  // route), including a late reopen so swipe-back never remounts it.
   const sheetAllowed = route.kind === "dashboard" || route.kind === "project";
   useEffect(() => {
     if (sheetOpen && !sheetAllowed) {
@@ -487,8 +462,6 @@ function AppContent() {
     }
   }, [sheetAllowed, sheetOpen]);
 
-  // Flip Drop leave latch as soon as React observes a non-dropped route so a
-  // late Drop success cannot go(#/) after the operator has moved on.
   useEffect(() => {
     const latch = dropLeaveLatchRef.current;
     if (!latch) return;
@@ -539,7 +512,6 @@ function AppContent() {
   }, [route, detail.status, detail.data, cockpit.data]);
 
   useEffect(() => {
-    // Always consume: clears leftover enter class on button / bottom-nav navigations.
     setSwipeEnter(consumeSwipeEnterDirection());
   }, [route]);
 
@@ -816,7 +788,6 @@ function AppContent() {
     if (reloadLatchRef.current) return;
     reloadLatchRef.current = true;
     if (!beginCockpitDocumentReload()) {
-      // ponytail: defer release so same-turn multi-taps still coalesce (#1007).
       queueMicrotask(releaseReloadLatchIfNavigationMissed);
     }
   }
@@ -834,7 +805,6 @@ function AppContent() {
         }
         await loadCockpit({ trailing: true });
       } catch {
-        // Stay on the SPA; allow another tap.
       }
       reloadLatchRef.current = false;
     })();
@@ -894,8 +864,6 @@ function AppContent() {
       <button
         type="button"
         data-bottom-action="new-task"
-        // The New task sheet is the creator in both modes: it picks the harness
-        // and its model, and starts provisioned when orchestration chat is on.
         onClick={() => setSheetOpen(true)}
       >
         New
@@ -906,7 +874,6 @@ function AppContent() {
   return (
     <AppViewport>
       <AppShell
-        // Chat omits dashboard chrome; session route-scroll owns safe-area-top.
         chrome={isSessionRoute ? null : chrome}
         nav={nav}
         className={isSessionRoute ? "app-shell--session" : undefined}

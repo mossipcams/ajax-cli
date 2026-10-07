@@ -8,9 +8,7 @@ import {
 import type { BrowserCockpitView, ConnectionState, RemoteResource } from "@/shared/lib/types";
 
 export type LoadCockpitOptions = {
-  /** Schedule a follow-up poll if one is already in flight (Retry). */
   trailing?: boolean;
-  /** Interval poll only — resume/recovery loads must not use this blindly. */
   deferDuringGesture?: boolean;
 };
 
@@ -21,11 +19,6 @@ export type CockpitResource = {
   loadCockpit: (options?: LoadCockpitOptions) => Promise<void>;
   applyCockpit: (next: BrowserCockpitView) => void;
   applyConnectionError: (error: unknown) => void;
-  /**
-   * Mark the connection healthy without touching the cockpit projection.
-   * Non-cockpit successes (a task-detail load) need to clear the error banner
-   * but must not re-apply cockpit data to do it.
-   */
   markConnected: () => void;
 };
 
@@ -126,10 +119,6 @@ export function useCockpitResource(): CockpitResource {
     [commitMutationProjection],
   );
 
-  // No document.hidden guard here: an iOS home-screen PWA mounts while the
-  // splash screen still reports the document hidden, and swallowing the mount
-  // load stranded the app on "checking" until the (60s, hidden) interval fired.
-  // Skipping while hidden is a *background poll* concern — see App.tsx.
   const loadCockpit = useCallback(async (options?: LoadCockpitOptions) => {
     await cockpitPollGuardRef.current.run(
       async () => {

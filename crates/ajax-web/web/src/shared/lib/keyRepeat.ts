@@ -1,6 +1,3 @@
-// ponytail: these five constants are the whole feel knob — tune here, not in
-// callers. Ceiling: one fixed curve for every repeatable key; split per-key
-// curves only if Backspace and arrows need different cadences.
 export const KEY_REPEAT_INITIAL_DELAY_MS = 500;
 export const KEY_REPEAT_INITIAL_INTERVAL_MS = 130;
 export const KEY_REPEAT_MIN_INTERVAL_MS = 60;

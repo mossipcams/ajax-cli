@@ -12,15 +12,10 @@ interface Props {
   output?: string | null;
   isError?: boolean;
   onDismiss?: () => void;
-  /** Cancel a pending pre-commit action (e.g. delayed Drop). */
   onUndo?: () => void;
-  /** Commit a pending pre-commit action when the undo window elapses. */
   onCommit?: () => void;
-  /** Shell confirm: primary proceeds into the mutation path. */
   onConfirm?: () => void;
-  /** Shell confirm: operator cancelled (not timeout). */
   onCancelConfirm?: () => void;
-  /** Shell confirm: timeout fired — parent emits confirm_timeout telemetry. */
   onConfirmTimeout?: () => void;
   confirmTimeoutMs?: number;
 }

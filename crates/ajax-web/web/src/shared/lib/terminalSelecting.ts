@@ -1,8 +1,6 @@
-/** Document flags so page-swipe (capture) can ignore terminal select gestures. */
 const TERMINAL_SELECTING_DATASET = "ajaxTerminalSelecting";
 const TERMINAL_DOUBLE_TAP_PENDING_DATASET = "ajaxTerminalDoubleTapPending";
 
-/** Surfaces that own double-tap / long-press terminal selection. */
 const TERMINAL_TOUCH_SELECTOR = ".terminal-host, .terminal-interaction-wrap, .xterm";
 const PAGE_SWIPE_EXCLUSION_SELECTOR =
   ".session-tool-output, .session-diff-body, .md-block, .md-table-wrap";
@@ -36,7 +34,6 @@ export function isTerminalTouchTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest(TERMINAL_TOUCH_SELECTOR));
 }
 
-/** True when page swipe must not arm or continue for this touch target. */
 export function shouldSuppressPageSwipe(target: EventTarget | null = null): boolean {
   if (target instanceof Element && target.closest(PAGE_SWIPE_EXCLUSION_SELECTOR)) return true;
   if (isTerminalSelecting()) return true;

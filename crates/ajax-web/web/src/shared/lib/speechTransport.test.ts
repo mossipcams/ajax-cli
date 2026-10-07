@@ -511,7 +511,6 @@ describe("speech transport", () => {
 
     socket.bufferedAmount = 0;
     capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
-    // Prior queued frame plus the new frame.
     expect(audioFrameCount(socket.sent)).toBeGreaterThanOrEqual(2);
     expect(socket.sent.length).toBeGreaterThan(controlCount);
     expect(events.onError).not.toHaveBeenCalled();
@@ -646,7 +645,6 @@ describe("speech transport", () => {
     await started;
 
     socket.bufferedAmount = 64_001;
-    // Each emit produces one 4-sample frame after resampling at 16 kHz.
     for (let i = 0; i < 110; i += 1) {
       capture.emit(new Float32Array([0.3, 0.3, 0.3, 0.3]));
       if ((events.onError as ReturnType<typeof vi.fn>).mock.calls.length > 0) break;

@@ -1,13 +1,3 @@
-/**
- * WebSocket lifecycle for the raw task terminal bridge.
- *
- * Mobile Safari drops the socket whenever it backgrounds the tab, and a failed
- * tmux attach closes it too. A dead socket must recover on its own (capped
- * exponential backoff) and immediately on foreground, rather than stranding
- * the user on a frozen pane. This module owns that lifecycle plus frame
- * decoding; the component only reacts through the event callbacks.
- */
-
 import { createTerminalClientId, openTaskTerminalSocket, renewBrowserSession } from "./api";
 
 export type TerminalConnectionStatus =
@@ -17,13 +7,9 @@ export type TerminalConnectionStatus =
   | "unavailable";
 
 export interface TerminalConnectionEvents {
-  /** Decoded PTY output, ready for term.write(). */
   onOutput(text: string): void;
-  /** A structured `error` frame from the bridge (e.g. failed tmux attach). */
   onServerError(message: string): void;
   onStatus(status: TerminalConnectionStatus): void;
-  /** Every successful open; `isReconnect` when a previous socket had opened.
-   * `seeded` = this dial asked the bridge for the history seed; unseeded reconnects must keep the local buffer. */
   onOpen(isReconnect: boolean, seeded: boolean): void;
 }
 
@@ -31,7 +17,6 @@ export interface TerminalConnection {
   isOpen(): boolean;
   sendInput(data: string): void;
   sendResize(cols: number, rows: number): void;
-  /** Manual reconnect: skip the backoff and dial immediately. */
   reconnectNow(): void;
   dispose(): void;
 }
@@ -48,22 +33,16 @@ export function connectTaskTerminal(
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let everOpened = false;
-  // Did *this* dial's socket open? A dial that never opened is a rejected
-  // handshake (possibly 401); an established socket dropping is not.
   let dialOpened = false;
   let dialOpenedAt: number | undefined;
   let unstableOpenFailures = 0;
-  // One session renewal per disconnected episode; reset on every open.
   let sessionRenewTried = false;
   let attachFailed = false;
   let disposed = false;
   let supersedingDial = false;
   let status: TerminalConnectionStatus = "connecting";
   let lastDialSeeded = true;
-  // One id for this controller only (reconnects reuse it; a duplicated tab
-  // mounts a new controller and must not inherit another tab's viewport).
   const clientId = createTerminalClientId();
-  // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
   const outputDecoder = new TextDecoder();
   const inputEncoder = new TextEncoder();
 
@@ -76,7 +55,6 @@ export function connectTaskTerminal(
     if ("arrayBuffer" in blob && typeof blob.arrayBuffer === "function") {
       return blob.arrayBuffer();
     }
-    // jsdom Blob may lack arrayBuffer(); FileReader is what component tests use.
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
@@ -90,7 +68,6 @@ export function connectTaskTerminal(
     if (ArrayBuffer.isView(data)) {
       return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     }
-    // Cross-realm ArrayBuffer (jsdom MessageEvent) may fail instanceof.
     if (
       data != null &&
       typeof data === "object" &&
@@ -113,7 +90,6 @@ export function connectTaskTerminal(
       return false;
     }
     if (payload.type === "output" && payload.data) {
-      // Legacy JSON+base64 output (one-release compat).
       const binary = atob(payload.data);
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
       events.onOutput(outputDecoder.decode(bytes, { stream: true }));
@@ -130,8 +106,6 @@ export function connectTaskTerminal(
   const onSocketMessage = (event: MessageEvent) => {
     const raw = event.data;
 
-    // Text frames must be handled synchronously so an error frame sets attachFailed
-    // before a same-turn close handler runs (delay-0 reconnect would otherwise race).
     if (typeof raw === "string") {
       if (!handleJsonControlFrame(raw)) {
         events.onOutput(raw);
@@ -141,8 +115,7 @@ export function connectTaskTerminal(
 
     const syncBytes = bytesFromBinaryDataSync(raw);
     if (syncBytes) {
-      // binaryType=arraybuffer: decode synchronously so UTF-8 stream order stays intact.
-      if (syncBytes.length > 0 && syncBytes[0] === 0x7b /* { */) {
+      if (syncBytes.length > 0 && syncBytes[0] === 0x7b ) {
         const asText = new TextDecoder().decode(syncBytes);
         if (handleJsonControlFrame(asText)) return;
       }
@@ -151,13 +124,12 @@ export function connectTaskTerminal(
     }
 
     void (async () => {
-      // Blob fallback when binaryType is not arraybuffer (tests / legacy browsers).
       if (!(raw instanceof Blob)) {
         events.onOutput(String(raw));
         return;
       }
       const binaryBytes = await bytesFromBinaryBlob(raw);
-      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
+      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b ) {
         const asText = new TextDecoder().decode(binaryBytes);
         if (handleJsonControlFrame(asText)) return;
       }
@@ -177,7 +149,7 @@ export function connectTaskTerminal(
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
       if (disposed) return;
-      if (document.visibilityState !== "visible") return; // stay reconnecting; visibility handler redials
+      if (document.visibilityState !== "visible") return;
       connect(false);
     }, delay);
   };
@@ -214,8 +186,6 @@ export function connectTaskTerminal(
     }
     dialSocket.addEventListener("open", () => {
       if (socket !== dialSocket) return;
-      // A fresh tmux attach repaints the pane and the resize-on-open makes tmux
-      // redraw at the real size, so no explicit refresh frame is needed.
       const isReconnect = everOpened;
       everOpened = true;
       dialOpened = true;
@@ -226,12 +196,8 @@ export function connectTaskTerminal(
       events.onOpen(isReconnect, lastDialSeeded);
     });
     dialSocket.addEventListener("message", onSocketMessage);
-    // An error is followed by close; let the close handler own reconnect so we
-    // never schedule it twice.
     dialSocket.addEventListener("error", () => {});
     dialSocket.addEventListener("close", () => {
-      // Ignore closes from sockets replaced by a newer dial (async close after
-      // supersedingDial clears, or a late fire in tests).
       if (socket !== dialSocket) return;
       if (supersedingDial) return;
       if (disposed) return;
@@ -253,12 +219,6 @@ export function connectTaskTerminal(
           }
         }
       }
-      // The browser WebSocket API hides the handshake status, so a 401 from a
-      // stale session cookie is indistinguishable from any other failed dial.
-      // The HTTP transport self-heals via /api/session; without the same retry
-      // here the socket burns its attempts and latches to "unavailable"
-      // forever. Only a dial that never opened can be an auth rejection, so a
-      // backgrounded socket dropping never triggers this.
       if (!dialOpened && !sessionRenewTried) {
         sessionRenewTried = true;
         setStatus("reconnecting");
@@ -280,8 +240,6 @@ export function connectTaskTerminal(
     });
   }
 
-  // Reconnect immediately when the tab returns to the foreground instead of
-  // waiting out the backoff (mobile Safari kills the socket on background).
   const onVisibility = () => {
     if (document.visibilityState === "visible" && status === "reconnecting") {
       redialNow(false);

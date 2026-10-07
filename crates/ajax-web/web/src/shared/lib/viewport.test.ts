@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { initViewport, isKeyboardOpen, resetDocumentScroll } from "./viewport";
 
-// Drive a fake visualViewport: capture the handlers it registers and replay
-// them after mutating the height. The keyboard band pin contract that consumes
-// these values is covered separately in `components/keyboardBandPin.test.ts`.
 const vvListeners: Record<string, Array<() => void>> = {};
 let vvHeight = 800;
 let vvOffsetTop = 0;
@@ -26,8 +23,6 @@ function dispatchVisibilityChange() {
   document.dispatchEvent(new Event("visibilitychange"));
 }
 
-// jsdom's window persists across tests, so window/document listeners must be
-// torn down or stale closures from a prior test fire on the next one.
 let disposers: Array<() => void> = [];
 function start(): () => void {
   const dispose = initViewport();
@@ -68,7 +63,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Expansion must persist for the close-settle window before the class drops. */
 function settleClose() {
   vi.advanceTimersByTime(400);
 }
@@ -94,7 +88,7 @@ describe("initViewport", () => {
 
   it("flags keyboard-open and shrinks --app-height when the viewport collapses", () => {
     start();
-    vvHeight = 480; // keyboard ~320px tall
+    vvHeight = 480;
     dispatchVV("resize");
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
@@ -201,16 +195,13 @@ describe("initViewport", () => {
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
 
-    // iOS momentarily reports an expanded viewport mid-typing (keyboard morph,
-    // autocorrect popover). The pinned layout must not tear down for it.
     vvHeight = 800;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
-    // Geometry holds too: a band snap to full height is the same visual jump.
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
 
     vi.advanceTimersByTime(100);
-    vvHeight = 480; // bounced back before the settle window elapsed
+    vvHeight = 480;
     dispatchVV("resize");
     settleClose();
 
@@ -534,8 +525,6 @@ describe("resetDocumentScroll", () => {
 });
 
 describe("isKeyboardOpen", () => {
-  // The one keyboard truth: consumers (the terminal's PTY-lockstep freeze)
-  // must agree with the CSS takeover, which keys off the same class.
   it("reflects the keyboard-open class initViewport maintains", () => {
     start();
     expect(isKeyboardOpen()).toBe(false);
@@ -552,18 +541,16 @@ describe("isKeyboardOpen", () => {
 
   it("applies close hysteresis so address-bar drift cannot flap the state", () => {
     start();
-    vvHeight = 480; // 320px delta: clearly a keyboard
+    vvHeight = 480;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
 
-    // Partial recovery (delta 120px) sits between the 100px close and 150px
-    // open thresholds: the keyboard must stay open, not flap.
     vvHeight = 680;
     dispatchVV("resize");
     settleClose();
     expect(isKeyboardOpen()).toBe(true);
 
-    vvHeight = 790; // delta 10px: settled closed
+    vvHeight = 790;
     dispatchVV("resize");
     settleClose();
     expect(isKeyboardOpen()).toBe(false);
@@ -571,12 +558,10 @@ describe("isKeyboardOpen", () => {
 
   it("rebases the baseline after closed-state drift so the next open is detected", () => {
     start();
-    // Address-bar collapse shrinks the viewport 60px without a keyboard.
     vvHeight = 740;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(false);
 
-    // A real keyboard measured from the drifted baseline (740 - 560 = 180px).
     vvHeight = 560;
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);

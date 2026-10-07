@@ -38,7 +38,6 @@ describe("filterTerminalInputReports", () => {
     expect(filterTerminalInputReports(ESC)).toBe(ESC);
     expect(filterTerminalInputReports(`${ESC}[`)).toBe(`${ESC}[`);
     expect(filterTerminalInputReports(`${ESC}[?`)).toBe(`${ESC}[?`);
-    // Modified F3 — must not be treated as a cursor-position report.
     expect(filterTerminalInputReports(`${ESC}[1;5R`)).toBe(`${ESC}[1;5R`);
     expect(filterTerminalInputReports(`${ESC}[24;80R`)).toBe(`${ESC}[24;80R`);
   });
