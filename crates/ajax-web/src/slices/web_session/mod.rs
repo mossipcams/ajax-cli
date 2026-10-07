@@ -401,6 +401,8 @@ pub enum SessionRouteError {
     TaskNotFound,
     WorktreeMissing,
     NotOrchestrationChat,
+    /// The task was promoted to ACP Chat but the registry could not be saved.
+    PromotionNotSaved,
 }
 
 #[cfg(test)]
@@ -429,6 +431,9 @@ mod task_session_tests;
 
 #[cfg(test)]
 mod task_session_reliability_tests;
+
+#[cfg(test)]
+mod task_session_durability_tests;
 
 #[cfg(test)]
 mod task_session_phase2_tests;

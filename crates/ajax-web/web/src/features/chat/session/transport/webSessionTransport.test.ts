@@ -9,6 +9,7 @@ vi.mock("./contracts", async (importOriginal) => {
 });
 
 import { snapshotJson, eventJson } from "./fixtures";
+import { MAX_QUEUED_PROMPTS } from "./contracts";
 import {
   connectWebSessionTransport,
   parseServerEvent,
@@ -178,6 +179,39 @@ describe("connectWebSessionTransport", () => {
       type: "prompt_accepted",
       clientMessageId: prompt.clientMessageId,
     });
+    transport.dispose();
+  });
+
+  it("#1223 rejects the newest prompt when the outbox is full without dropping queued prompts", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    const prompts = Array.from({ length: MAX_QUEUED_PROMPTS }, (_, index) => {
+      const text = `Queued ${index}`;
+      return { type: "prompt", text, clientMessageId: transport.sendPrompt(text) };
+    });
+    const outboxKey = "ajax.web.session.outbox.web%2Ffix-login";
+    const persisted = sessionStorage.getItem(outboxKey);
+    expect(JSON.parse(persisted ?? "[]")).toHaveLength(MAX_QUEUED_PROMPTS);
+
+    expect(transport.sendPrompt("Overflow before ready")).toBe("");
+    expect(cbs.onEvent).toHaveBeenLastCalledWith({
+      type: "error",
+      message: "The prompt queue is full. Wait for a pending message to be accepted and try again.",
+    });
+    expect(sessionStorage.getItem(outboxKey)).toBe(persisted);
+    expect(socket.sent).toEqual([]);
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson() } as MessageEvent);
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toEqual(prompts);
+    expect(transport.sendPrompt("Overflow after ready")).toBe("");
+    expect(cbs.onEvent).toHaveBeenLastCalledWith({
+      type: "error",
+      message: "The prompt queue is full. Wait for a pending message to be accepted and try again.",
+    });
+    expect(socket.sent.map((payload) => JSON.parse(payload))).toEqual(prompts);
+    expect(sessionStorage.getItem(outboxKey)).toBe(persisted);
     transport.dispose();
   });
 
@@ -434,6 +468,36 @@ describe("connectWebSessionTransport", () => {
       expect.not.stringContaining("cursor="),
     );
     expect(readSessionCursor("web/fix-login")).toBeUndefined();
+  });
+
+  it("#1222 keeps socket-local errors from advancing the replay cursor", () => {
+    const socket = fakeSocket();
+    const cbs = { ...callbacks(), onCursorAdvance: vi.fn() };
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: snapshotJson({ cursor: 1 }) } as MessageEvent);
+
+    const error = { type: "error" as const, message: "prompt queue is full" };
+    socket.emit("message", { data: eventJson(0, error) } as MessageEvent);
+    expect(cbs.onCursorAdvance).not.toHaveBeenCalled();
+    expect(cbs.onEvent).toHaveBeenLastCalledWith(error);
+
+    socket.emit("message", {
+      data: eventJson(0, { type: "message", role: "agent", text: "Replay tail" }),
+    } as MessageEvent);
+    expect(cbs.onCursorAdvance).toHaveBeenLastCalledWith(1);
+    expect(cbs.onEvent).toHaveBeenLastCalledWith({
+      type: "ready", model: "auto", busy: false, reset: false,
+    });
+    socket.emit("message", {
+      data: eventJson(7, { type: "error", message: "Durable turn failure" }),
+    } as MessageEvent);
+    expect(cbs.onCursorAdvance).toHaveBeenLastCalledWith(8);
+
+    socket.emit("message", { data: eventJson(0, error) } as MessageEvent);
+    expect(cbs.onCursorAdvance.mock.calls).toEqual([[1], [8]]);
+    expect(cbs.onEvent).toHaveBeenLastCalledWith(error);
+    transport.dispose();
   });
 
   it("in-page reconnect supplies resume cursor as next-to-read", () => {
