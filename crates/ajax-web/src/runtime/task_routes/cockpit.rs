@@ -12,7 +12,7 @@ use crate::{
 use ajax_core::{
     adapters::CommandRunner,
     agent_notification::{
-        pending_for_task, record_delivery, AgentNotificationDelivery,
+        pending_for_task, record_delivery_for, AgentNotification, AgentNotificationDelivery,
         AgentNotificationDeliveryStatus,
     },
     registry::Registry,
@@ -201,8 +201,19 @@ where
             Err(error) => (AgentNotificationDeliveryStatus::Error, Some(error)),
         };
         if let Some(task) = context.registry.get_task_mut(notification.task_id()) {
-            changed |= record_delivery(
+            if matches!(notification, AgentNotification::WatcherNudge { .. })
+                && status == AgentNotificationDeliveryStatus::Error
+            {
+                tracing::warn!(
+                    task_id = task.id.as_str(),
+                    ?status,
+                    ?detail,
+                    "watcher nudge delivery failed"
+                );
+            }
+            changed |= record_delivery_for(
                 task,
+                &notification,
                 AgentNotificationDelivery {
                     notification_id: notification.id().to_string(),
                     status,

@@ -73,3 +73,45 @@ JSONL under `AJAX_AGENT_EVENTS_DIR`. `run_agent_event` returns typed outcomes:
 IO or clock failures return `AgentEventError` and fail the hook command with a
 non-zero exit — they must not be swallowed as success. Hook installs should treat
 write failures as operator-visible (stderr from `run_agent_event_command`).
+
+## Agent watcher
+
+The agent watcher supervises ordinary tasks: it decides whether an agent is still
+working toward its task or whether Ajax should nudge it. It needs no `/goal`, no
+special mode, and no `ajax supervise`, and it is not part of `ajax-supervisor`.
+`ajax web` hosts it (`agent_watcher_runtime.rs`); there is no new daemon.
+
+- **Evidence.** The canonical JSONL stays the durable source. `notify.sock` lines
+  only wake the watcher to read the journal; the socket is never a second source
+  of truth. Canonical activity events carry a bounded `signature` (tool name plus
+  an FNV-1a digest of the canonical JSON of the whole `tool_input` (first 4096
+  bytes), never stored raw) and a
+  `success` flag so repeated calls can be recognised.
+- **Policy.** The pure policy lives in `ajax_core::agent_watcher` (see
+  `core-subsystems.md`). Hosted state is per task and bounded; the registry is
+  written through `CliRuntimeBridge::refresh_cockpit`, which also publishes
+  task frames (objective = task title, harness) to the watcher. Cockpit delivery
+  also records the delivery result into the watcher store. Operators find
+  escalations through the warn log and the persisted `phase` in `ajax_watcher` metadata.
+- **Judge.** Ambiguous checkpoints go to an `AgentProgressJudge`. The optional
+  implementation (`laya_judge.rs`) drives a persistent Python sidecar
+  (`scripts/ajax-laya-sidecar`) around the local Laya decision model. The host
+  enforces a timeout; an unavailable, slow, malformed or failing judge means no
+  action. Calls are at least 30 seconds apart per task; loop checkpoints fire
+  once per repeated-signature episode. Active grace, attention, and operator
+  handoff states suppress judgment. Evidence older than five minutes cannot
+  justify a judgment or nudge; refresh ticks do not refresh that evidence.
+- **Config.** Optional `[watcher]` table: `enabled` (default true), `laya_command`
+  (a nonblank command is required to start the watcher), `judge_timeout_ms` (default 2000, clamped
+  200..=10000). When enabled without a judge command, the host logs once that
+  the watcher is idle and uses the plain notification drain listener. No
+  watcher journals are read or watcher metadata written in that mode.
+- **Delivery.** A nudge becomes `AgentNotification::WatcherNudge` and travels the
+  existing cockpit delivery path: the validated tmux path for interactive tasks,
+  `TaskSessionDirectory::submit_prompt_with_id` for ACP-backed tasks.
+- **V1 limits.** ACP sessions emit no native hook events, so only interactive runs
+  are observed (ACP nudge delivery is implemented, detection is not). Events
+  in the first journal read rebuild watcher state only, including for a new
+  task that reuses an old journal. Events after a restored cursor stamped before
+  `ajax web` started also replay as state only; replay never requests a judge
+  or queues a nudge.

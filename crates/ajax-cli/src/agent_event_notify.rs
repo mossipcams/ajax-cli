@@ -10,6 +10,19 @@ pub(crate) fn start_agent_event_notify_listener(_events_dir: PathBuf) -> std::io
     Ok(())
 }
 
+pub(crate) fn start_agent_event_notify_listener_with_sink(
+    events_dir: PathBuf,
+    sink: std::sync::mpsc::Sender<String>,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return spawn_notify_listener_with_sink(events_dir, Some(sink));
+    #[cfg(not(unix))]
+    {
+        let _ = (events_dir, sink);
+        Ok(())
+    }
+}
+
 #[cfg(unix)]
 fn spawn_notify_listener_with_sink(
     events_dir: PathBuf,
@@ -29,19 +42,22 @@ fn spawn_notify_listener_with_sink(
     let _ = fs::remove_file(&sock_path);
     let listener = UnixListener::bind(&sock_path)?;
 
-    thread::spawn(move || loop {
-        let Ok((stream, _)) = listener.accept() else {
-            continue;
-        };
-        let mut limited = BufReader::new(stream).take(MAX_NOTIFY_LINE_BYTES);
-        let mut line = String::new();
-        if limited.read_line(&mut line).is_err() {
-            continue;
-        }
-        if let Some(ref tx) = sink {
-            let _ = tx.send(line);
-        }
-    });
+    thread::Builder::new()
+        .name("ajax-agent-notify".into())
+        .spawn(move || loop {
+            let Ok((stream, _)) = listener.accept() else {
+                continue;
+            };
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+            let mut limited = BufReader::new(stream).take(MAX_NOTIFY_LINE_BYTES);
+            let mut line = String::new();
+            if limited.read_line(&mut line).is_err() {
+                continue;
+            }
+            if let Some(ref tx) = sink {
+                let _ = tx.send(line);
+            }
+        })?;
 
     Ok(())
 }

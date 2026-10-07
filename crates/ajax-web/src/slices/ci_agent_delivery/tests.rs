@@ -5,6 +5,7 @@ use super::super::{
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use ajax_core::{
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus, CiFailedCheck},
+    agent_watcher::WatcherReason,
     models::{AgentClient, Task, TaskId},
 };
 use std::time::Duration;
@@ -122,4 +123,125 @@ fn persisted_acp_resume_queues_once_behind_busy_turn() {
         })
     });
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn watcher_nudge_delivers_through_task_session_queue() {
+    let dir = scratch_dir("watcher-nudge");
+    let handle = "web/watcher-nudge";
+    let task = Task::new(
+        TaskId::new("task-1"),
+        "web",
+        "watcher-nudge",
+        "CI",
+        "ajax/watcher",
+        "main",
+        &dir,
+        "web-wt",
+        "task",
+        AgentClient::Cursor,
+    );
+    let nudge = AgentNotification::WatcherNudge {
+        id: "watcher-nudge:task-1:1".to_string(),
+        task_id: task.id.clone(),
+        reason: WatcherReason::Stuck,
+    };
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            let first = BlockingSessionDirectory::new(dir.clone());
+            first
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .unwrap();
+            first.release(handle);
+            first.drop_session(handle);
+
+            let resumed = BlockingSessionDirectory::new(dir.clone());
+            let deliver = || {
+                resumed
+                    .runtime_handle()
+                    .block_on(super::deliver(resumed.inner(), &task, &nudge))
+            };
+            assert_eq!(
+                deliver().unwrap(),
+                AgentNotificationDeliveryStatus::Accepted
+            );
+            assert_eq!(deliver().unwrap(), AgentNotificationDeliveryStatus::Queued);
+            resumed.cancel(handle, true).unwrap();
+            pump_until(&resumed, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(event, SessionServerEvent::Message { role, text, .. }
+                        if role == "user"
+                            && text.contains("You appear stuck. Try a different approach"))
+                })
+            });
+        })
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn watcher_refuses_operator_requests_while_ci_still_queues() {
+    for request in [
+        SessionServerEvent::PermissionRequest {
+            request_id: "permission".into(),
+            title: None,
+            detail: None,
+        },
+        SessionServerEvent::ElicitationRequest {
+            request_id: "question".into(),
+            message: "Choose".into(),
+            schema: serde_json::json!({}),
+        },
+    ] {
+        let dir = scratch_dir("watcher-awaiting-operator");
+        let task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "waiting",
+            "test",
+            "branch",
+            "main",
+            &dir,
+            "tmux",
+            "task",
+            AgentClient::Cursor,
+        );
+        let handle = task.qualified_handle();
+        with_test_acp_program(&fake_acp_fixture(), || {
+            with_test_acp_extra_args(&["--hold-prompt"], || {
+                let directory = BlockingSessionDirectory::new(dir.clone());
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .unwrap();
+                directory.submit_prompt(&handle, "original".into()).unwrap();
+                directory.record(&handle, request.clone());
+                let nudge = AgentNotification::WatcherNudge {
+                    id: "watcher-1".into(),
+                    task_id: task.id.clone(),
+                    reason: WatcherReason::Stuck,
+                };
+                let deliver = |notification: &AgentNotification| {
+                    directory.runtime_handle().block_on(super::deliver(
+                        directory.inner(),
+                        &task,
+                        notification,
+                    ))
+                };
+                assert!(deliver(&nudge).is_err());
+                assert!(!directory.read_from(&handle, 0).0.iter().any(|event| matches!(event, SessionServerEvent::Message { role, text, .. } if role == "user" && text == &nudge.prompt())));
+                assert_eq!(directory.eviction_snapshot(&handle).unwrap().holders, 1);
+                let ci = AgentNotification::CiFailed {
+                    episode_id: "ci-1".into(),
+                    task_id: task.id.clone(),
+                    pr_number: 1,
+                    head_sha: "abc".into(),
+                    failed_checks: Vec::new(),
+                };
+                assert_eq!(deliver(&ci), Ok(AgentNotificationDeliveryStatus::Queued));
+            });
+        });
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

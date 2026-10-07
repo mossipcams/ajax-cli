@@ -1,8 +1,10 @@
 mod agent_event;
 mod agent_event_notify;
+mod agent_event_signature;
 mod agent_hooks;
 mod agent_runtime;
 mod agent_status_cache;
+mod agent_watcher_runtime;
 mod ci_agent_delivery;
 mod cli;
 mod cockpit_actions;
@@ -11,6 +13,7 @@ mod cockpit_snapshot;
 mod context;
 mod dispatch;
 mod execution_dispatch;
+mod laya_judge;
 mod render;
 mod snapshot_dispatch;
 mod supervise;

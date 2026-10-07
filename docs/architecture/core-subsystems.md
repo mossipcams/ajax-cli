@@ -282,3 +282,27 @@ Core remains browser-agnostic. It may expose Cockpit projections, action policy,
 task-operation outcomes, runtime reconciliation, and typed output contracts that
 the browser shell consumes, but it must not own HTTP routes, static web assets,
 service workers, TLS identity files, browser storage, or web server lifecycle.
+
+### Agent watcher policy
+
+`agent_watcher` is pure policy; it never reads or writes task status, lifecycle
+or registry truth. Watcher phase (`Healthy`, `Recovering`, `WaitingOnUser`,
+`Escalated`, ...) is a separate derived opinion from observed run state.
+
+`step` folds one event into bounded `WatcherState` (ring buffers with hard caps,
+duplicate `event_id` ignored) and returns either a decision or `NeedsJudge` at a
+checkpoint (suspicious completed stop, repeated activity signature, expired
+post-nudge grace). Deterministic checks run first: pending permission/question
+means `NeedsUser` and is never overridden; open children mean a stop is not a
+completion; an active grace window means no action. Decisions are `NoAction`,
+`Nudge`, `NeedsUser`, `AllowStop`, `Escalate`. `apply_verdict` folds a judge
+verdict; errors and `Uncertain` fail open. Per-episode budgets: one premature-stop nudge,
+one loop nudge, two total; meaningful recovery or a fresh user turn after
+escalation resets these budgets. `max_lifetime_nudges` (default 6) caps nudges
+across all episodes. A second stop after a nudge without progress escalates,
+including a completed reply during grace once the grace window expires.
+Session-open events preserve phase and budgets; orphaned children expire after
+ten minutes, like orphaned tools.
+Nudge text comes only from deterministic templates (`nudge_prompt`). Minimal
+state (counters, grace deadline, last verdict, last seen event id) persists in the
+task metadata key `ajax_watcher`, with the pending nudge and its delivery record.
