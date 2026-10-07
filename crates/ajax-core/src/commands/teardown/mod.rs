@@ -367,11 +367,15 @@ fn native_teardown_commands<R: Registry>(
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let mut commands = Vec::new();
+    let task_only = context.task_only_drop_verification(task)?;
+    let preserve_checkout = task_only.is_some();
+    commands.extend(task_only);
 
-    if task
-        .git_status
-        .as_ref()
-        .is_none_or(|status| status.worktree_exists)
+    if !preserve_checkout
+        && task
+            .git_status
+            .as_ref()
+            .is_none_or(|status| status.worktree_exists)
     {
         context.ensure_task_worktree_removable(task)?;
         let worktree_path = task.worktree_path.display().to_string();
@@ -390,10 +394,11 @@ fn native_teardown_commands<R: Registry>(
         };
         commands.push(command);
     }
-    if task
-        .git_status
-        .as_ref()
-        .is_none_or(|status| status.branch_exists)
+    if !preserve_checkout
+        && task
+            .git_status
+            .as_ref()
+            .is_none_or(|status| status.branch_exists)
     {
         let needs_force = force
             || task
@@ -415,6 +420,64 @@ fn native_teardown_commands<R: Registry>(
 }
 
 impl<R: Registry> CommandContext<R> {
+    pub(crate) fn task_worktree_is_preserved_checkout(&self, task: &Task) -> bool {
+        let Some(repo_path_str) = task_repo_path(self, task) else {
+            return false;
+        };
+        let repo_path = Path::new(&repo_path_str);
+        if !repo_path.join(".git").is_dir() {
+            return false;
+        }
+
+        let canonical_repo = match std::fs::canonicalize(repo_path) {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        let recorded = Path::new(&task.worktree_path);
+        let normalized_recorded =
+            std::fs::canonicalize(recorded).unwrap_or_else(|_| recorded.to_path_buf());
+
+        canonical_repo == normalized_recorded || canonical_repo.starts_with(&normalized_recorded)
+    }
+
+    pub(crate) fn task_only_drop_verification(
+        &self,
+        task: &Task,
+    ) -> Result<Option<CommandSpec>, CommandError> {
+        let repo_path = task_repo_path(self, task)
+            .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
+        if !self.task_worktree_is_preserved_checkout(task) {
+            return Ok(None);
+        }
+
+        let script = r#"
+fail() {
+    printf 'Cannot verify that branch %s has landed on origin default branch. Push the task branch, merge its commits into origin main (or the origin default branch), then retry ajax drop. Check origin connectivity if already merged. No task resources were removed.\n' "$2" >&2
+    exit 1
+}
+remote=$(git -C "$1" ls-remote --symref origin HEAD) || fail "$@"
+default=$(printf '%s\n' "$remote" | awk '$1 == "ref:" && $3 == "HEAD" { print $2 }')
+tip=$(printf '%s\n' "$remote" | awk '$2 == "HEAD" && $1 != "ref:" { print $1 }')
+case "$default" in refs/heads/*) ;; *) fail "$@" ;; esac
+[ -n "$tip" ] || fail "$@"
+git -C "$1" fetch --no-tags origin "$tip" || fail "$@"
+git -C "$1" merge-base --is-ancestor "refs/heads/$2" "$tip" || fail "$@"
+"#;
+        Ok(Some(
+            CommandSpec::new(
+                "sh",
+                [
+                    "-c",
+                    script,
+                    "ajax-verify-task-only-drop",
+                    &repo_path,
+                    &task.branch,
+                ],
+            )
+            .with_timeout(std::time::Duration::from_secs(60)),
+        ))
+    }
+
     pub(crate) fn ensure_task_worktree_removable(&self, task: &Task) -> Result<(), CommandError> {
         let repo_path = PathBuf::from(
             task_repo_path(self, task)
@@ -432,6 +495,9 @@ impl<R: Registry> CommandContext<R> {
             std::fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
 
         if canonical_worktree == canonical_repo || canonical_repo.starts_with(&canonical_worktree) {
+            if self.task_worktree_is_preserved_checkout(task) {
+                return Ok(());
+            }
             return Err(CommandError::PlanBlocked(vec![format!(
                 "worktree path {} is the repo root or an ancestor of it; refusing to move it to trash",
                 worktree_path.display()
@@ -601,6 +667,32 @@ mod worktree_guard_tests {
         let worktree = root.join("does-not-exist");
         std::fs::create_dir_all(&repo).unwrap();
         let context = context_with_worktree(&repo, &worktree);
+        let task = first_task(&context);
+
+        context.ensure_task_worktree_removable(&task).unwrap();
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn repo_root_checkout_with_git_dir_is_allowed() {
+        let root = make_temp_dir("preserved-root");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let context = context_with_worktree(&repo, &repo);
+        let task = first_task(&context);
+
+        context.ensure_task_worktree_removable(&task).unwrap();
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn ancestor_of_repo_with_git_dir_is_allowed() {
+        let root = make_temp_dir("preserved-ancestor");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let context = context_with_worktree(&repo, &root);
         let task = first_task(&context);
 
         context.ensure_task_worktree_removable(&task).unwrap();

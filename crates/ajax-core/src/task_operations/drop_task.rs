@@ -72,31 +72,38 @@ pub fn complete_drop_task_operation<R: Registry>(
     qualified_handle: &str,
     final_observation: &DropObservation,
 ) -> Result<DropTaskCompletion, CommandError> {
-    let Some(incomplete_step) = commands::plan_drop_from_observation(final_observation)
+    let final_task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == qualified_handle)
+        .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
+    // Issue #1216: a main-checkout drop intentionally preserves the worktree
+    // and branches; do not report those preserved resources as incomplete.
+    let mut final_observation = final_observation.clone();
+    if context.task_worktree_is_preserved_checkout(final_task) {
+        final_observation.worktree = ResourceState::Absent;
+        final_observation.branch = ResourceState::Absent;
+    }
+
+    let Some(incomplete_step) = commands::plan_drop_from_observation(&final_observation)
         .into_iter()
         .next()
     else {
-        let task_id = context
-            .registry
-            .list_tasks()
-            .into_iter()
-            .find(|task| task.qualified_handle() == qualified_handle)
-            .map(|task| task.id.clone())
-            .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
         context
             .registry
-            .delete_task(&task_id)
+            .delete_task(&final_task.id.clone())
             .map_err(CommandError::Registry)?;
         return Ok(DropTaskCompletion::Removed);
     };
 
     commands::mark_task_removing(context, qualified_handle)?;
-    let detail = commands::format_drop_remaining_resources_detail(final_observation);
+    let detail = commands::format_drop_remaining_resources_detail(&final_observation);
     commands::mark_task_teardown_incomplete(
         context,
         qualified_handle,
         incomplete_step,
-        final_observation,
+        &final_observation,
         Some(&detail),
     )?;
     Ok(DropTaskCompletion::TeardownIncomplete {
@@ -121,6 +128,36 @@ pub fn execute_drop_task_operation<R: Registry>(
         return Err(CommandError::ConfirmationRequired);
     }
 
+    // Issue #1216: a main-checkout drop preserves the checkout and its
+    // branches, but only after proving the task's commits landed on origin's
+    // default branch. Run this before any mutation so a verification failure
+    // halts the drop with nothing removed.
+    let preserve_main_checkout = {
+        let task_snapshot = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == qualified_handle)
+            .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?
+            .clone();
+        match context.task_only_drop_verification(&task_snapshot)? {
+            Some(verification) => {
+                let output = runner
+                    .run(&verification)
+                    .map_err(CommandError::CommandRun)?;
+                if output.status_code != 0 {
+                    return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
+                        program: verification.program.clone(),
+                        status_code: output.status_code,
+                        stderr: output.stderr,
+                        cwd: verification.cwd.clone(),
+                    }));
+                }
+                true
+            }
+            None => false,
+        }
+    };
     commands::mark_task_removing(context, qualified_handle)?;
     let force = true;
     record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
@@ -128,6 +165,16 @@ pub fn execute_drop_task_operation<R: Registry>(
     let drop_ops = planned_drop_ops(context, qualified_handle, &operation.observation)?;
 
     for op in drop_ops {
+        // Issue #1216: a main-checkout drop preserves the checkout and its
+        // branches; emit no removal ops or receipts for them.
+        if preserve_main_checkout
+            && matches!(
+                op,
+                DropOp::EnsureWorktreeAbsent | DropOp::EnsureBranchAbsent
+            )
+        {
+            continue;
+        }
         match drop_op_execution_decision(context, qualified_handle, op, force)? {
             DropExecutionDecision::InProcess => {
                 commands::mark_drop_agent_stopped(context, qualified_handle)?;
@@ -178,6 +225,21 @@ pub fn execute_drop_task_operation<R: Registry>(
                     },
                 )?;
             }
+        }
+    }
+
+    // Issue #1216: a task-only drop intentionally preserved the main checkout
+    // and its branches. Record that state so completion observation does not
+    // report the preserved resources as failed.
+    if preserve_main_checkout {
+        let final_task = task(context, qualified_handle)?.clone();
+        if let Some(task) = context.registry.get_task_mut(&final_task.id.clone()) {
+            if let Some(git_status) = task.git_status.as_mut() {
+                git_status.worktree_exists = false;
+                git_status.branch_exists = false;
+            }
+        } else {
+            return Err(CommandError::TaskNotFound(qualified_handle.to_string()));
         }
     }
 
