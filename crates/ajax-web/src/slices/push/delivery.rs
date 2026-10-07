@@ -60,14 +60,20 @@ fn deliver_jobs(
         let mut failed = Vec::new();
         for job in pending {
             // Rebuilt per attempt: the VAPID token is short-lived.
-            let result = build_push_request(
+            let request = match build_push_request(
                 job.subscription.clone(),
                 job.payload.clone(),
                 key_pair,
                 &job.vapid_subject,
-            )
-            .and_then(&deliver);
-            match result {
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    // Not a delivery result: never prune or retry on it.
+                    eprintln!("declarative push build failed: {error}");
+                    continue;
+                }
+            };
+            match deliver(request) {
                 Ok(()) => {}
                 Err(error) if is_gone_endpoint(&error) => {
                     dead.push(job.subscription.endpoint.clone());
@@ -86,11 +92,10 @@ fn deliver_jobs(
     dead
 }
 
+/// Only curl's own HTTP status report counts. A bare "404"/"410" also shows
+/// up in addresses and timings, and a false match deletes a live subscription.
 fn is_gone_endpoint(error: &str) -> bool {
-    error.contains("404")
-        || error.contains("410")
-        || error.contains("HTTP/2 404")
-        || error.contains("HTTP/2 410")
+    error.contains("returned error: 404") || error.contains("returned error: 410")
 }
 
 fn deliver_with_curl_blocking(request: Request<Vec<u8>>) -> Result<(), String> {
@@ -208,6 +213,26 @@ mod tests {
         );
         assert_eq!(dead, vec!["https://fcm.googleapis.com/fcm/send/gone"]);
         assert_eq!(calls.load(Ordering::SeqCst), 1 + DELAYS.len() + 1);
+    }
+
+    #[test]
+    fn transient_errors_that_mention_404_or_410_do_not_prune_the_subscription() {
+        for error in [
+            "push delivery failed with exit status: 28: Failed to connect to 104.16.4.104 port 443 after 4104 ms",
+            "push delivery failed with exit status: 7: connect to 2a00:1450:4100::404 failed",
+        ] {
+            let dead = deliver_jobs(
+                &ES256KeyPair::generate(),
+                vec![job(APPLE)],
+                &[],
+                |_| Err(error.to_string()),
+                |_| {},
+            );
+            assert!(dead.is_empty(), "{error}");
+        }
+        assert!(is_gone_endpoint(
+            "push delivery failed with exit status: 22: curl: (22) The requested URL returned error: 410"
+        ));
     }
 
     #[test]
