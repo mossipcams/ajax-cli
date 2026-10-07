@@ -310,6 +310,13 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
         });
     }
     if !recovery_events.is_empty() {
+        // The ledger is durable proof a turn was in flight. This slot's reporter
+        // starts with no history, so without it the interruption below would not
+        // count as a failed turn and the task would stay on "Agent working".
+        state
+            .evidence
+            .activity_reporter
+            .commit(super::SessionActivity::TurnStarted);
         let _ = state.append_to_log(recovery_events);
     }
     Ok(())

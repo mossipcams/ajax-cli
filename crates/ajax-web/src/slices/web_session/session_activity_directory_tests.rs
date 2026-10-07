@@ -215,3 +215,53 @@ fn issue_1132_deferred_turn_end_retries_on_session_poll_without_later_append() {
         "poll tick must apply deferred turn_end without a later append (#1132)"
     );
 }
+
+// #1176: a turn cut off by a host restart left the task on "Agent working".
+#[test]
+fn issue_1176_turn_interrupted_by_restart_clears_agent_working() {
+    use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger};
+
+    let (handle, context) = provisioned_handle_context();
+    record_session_activity(
+        &mut context.lock().expect("context lock"),
+        &handle,
+        SessionActivity::TurnStarted,
+        SystemTime::now(),
+    )
+    .expect("turn started");
+    assert_eq!(task_status(&context, &handle), TaskStatus::Running);
+
+    let dir = scratch_dir("issue-1176-restart");
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "orphan".into(),
+        "orphan".into(),
+        "orphan".into(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("orphan"));
+    prompt_ledger::persist(&dir, &handle, &ledger).expect("seed ledger");
+
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    wire_report(&directory, &context);
+    crate::adapters::web_session_acp::with_test_acp_program(
+        &super::test_support::fake_acp_fixture(),
+        || {
+            directory
+                .acquire(
+                    &handle,
+                    &dir,
+                    "auto",
+                    ajax_core::models::AgentClient::Cursor,
+                )
+                .expect("acquire");
+        },
+    );
+
+    assert_ne!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "an interrupted turn must not leave the task reported as working"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
