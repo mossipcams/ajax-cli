@@ -557,13 +557,16 @@ impl<C, B> WebAppState<C, B> {
     }
 }
 
-/// Construct the per-attach terminal input acknowledgment sink. The sink
-/// locks shared state, split-borrows `context` and `bridge`, and calls
-/// `bridge.acknowledge_operator_input(context, task_handle)`. On `Ok(true)`
-/// it bumps `revision` (saturating) and clears `cockpit_cache` so the next
-/// cockpit fetch observes the acknowledgment. On `Ok(false)` or error,
-/// revision and cache are left untouched (errors are dropped: the terminal
-/// adapter must not propagate core failures back into the wire loop).
+/// Construct the per-attach terminal input acknowledgment sink.
+///
+/// The shared state lock is held only for a cheap "anything to acknowledge?"
+/// check and for the final commit. The acknowledgment itself persists the
+/// registry, so it runs on a copy with the lock released. If another writer
+/// advanced `revision` meanwhile, the acknowledgment is already durable, so
+/// shared state is reloaded from disk the way `run_optimistic` recovers a
+/// durable write. On commit it bumps `revision` (saturating) and clears
+/// `cockpit_cache`; errors are dropped: the terminal adapter must not
+/// propagate core failures back into the wire loop.
 pub fn operator_input_sink<C, B>(
     state: &WebAppState<C, B>,
     task_handle: String,
@@ -577,19 +580,40 @@ where
         // Typing in the PWA terminal is active presence; refresh the notify
         // suppress TTL even when cockpit polls have stalled.
         state.mark_browser_cockpit_seen();
+        if !{
+            let guard = state.shared();
+            guard
+                .bridge
+                .needs_operator_acknowledgment(&guard.context, &task_handle)
+        } {
+            return;
+        }
+        let (mut context, mut bridge, base_revision) = {
+            let guard = state.shared();
+            (guard.context.clone(), guard.bridge.clone(), guard.revision)
+        };
+        if !bridge
+            .acknowledge_operator_input(&mut context, &task_handle)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let mut guard = state.shared();
-        let acknowledged = {
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.bridge = bridge;
+        } else {
             let WebSharedState {
                 context, bridge, ..
             } = &mut *guard;
-            bridge
-                .acknowledge_operator_input(context, &task_handle)
-                .unwrap_or(false)
-        };
-        if acknowledged {
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
+            // Without a durable copy to reload, leave state alone: the next
+            // keystroke still needs acknowledging and tries again.
+            if !matches!(bridge.reload_registry_from_disk(context), Ok(true)) {
+                return;
+            }
         }
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
     })
 }
 

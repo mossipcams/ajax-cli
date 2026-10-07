@@ -67,6 +67,17 @@ pub trait RuntimeBridge<C: CommandRunner> {
         Ok(false)
     }
 
+    /// Cheap, read-only check run under the shared state lock on every
+    /// keystroke: is there anything for [`Self::acknowledge_operator_input`] to
+    /// do? Defaults to `true` so the acknowledgment itself decides.
+    fn needs_operator_acknowledgment(
+        &self,
+        _context: &CommandContext<InMemoryRegistry>,
+        _task_handle: &str,
+    ) -> bool {
+        true
+    }
+
     /// Persist registry mutations that are not part of operate/start/ack flows
     /// (e.g. Diff Review PR metadata observation). Default is a no-op for tests.
     fn persist_registry_snapshot(

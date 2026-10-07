@@ -312,18 +312,18 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         self.persist_operate(result, context)
     }
 
-    fn acknowledge_operator_input(
-        &mut self,
-        context: &mut CommandContext<InMemoryRegistry>,
+    fn needs_operator_acknowledgment(
+        &self,
+        context: &CommandContext<InMemoryRegistry>,
         qualified_handle: &str,
-    ) -> Result<bool, WebError> {
+    ) -> bool {
         // Coalesce per episode: only acknowledge when there is live waiting
         // evidence observed strictly after the last acknowledgment, so repeat
         // operator typing without newer evidence does not re-persist the
         // registry. (Some(_), None) means the task has live evidence and was
         // never acknowledged; that is actionable. No live evidence yet means
         // there is nothing for the operator to acknowledge.
-        let needs_ack = context
+        context
             .registry
             .list_tasks()
             .into_iter()
@@ -335,9 +335,15 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
                     _ => false,
                 },
             )
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
 
-        if !needs_ack {
+    fn acknowledge_operator_input(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        qualified_handle: &str,
+    ) -> Result<bool, WebError> {
+        if !RuntimeBridge::<C>::needs_operator_acknowledgment(self, context, qualified_handle) {
             return Ok(false);
         }
 

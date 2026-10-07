@@ -96,3 +96,30 @@ fn issue_1227_session_activity_fails_when_registry_is_not_saved() {
     assert_eq!(fix_login(&state), before);
     assert_eq!(state.shared().revision, revision);
 }
+
+// #1232: the acknowledgment persists the registry, and used to do it while
+// holding the shared state lock that every Cockpit request needs.
+#[test]
+fn issue_1232_terminal_input_acknowledgment_runs_without_the_shared_state_lock() {
+    let bridge = TestBridge {
+        acknowledge_result: Ok(true),
+        ..TestBridge::default()
+    };
+    let probe = Arc::clone(&bridge.acknowledge_probe);
+    let state = state_with_bridge_and_task(bridge);
+    let shared = Arc::clone(&state.shared);
+    let lock_was_free = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&lock_was_free);
+    *probe.lock().unwrap() = Some(Box::new(move || {
+        seen.store(shared.try_lock().is_ok(), Ordering::SeqCst);
+    }));
+    let revision = state.shared().revision;
+
+    super::operator_input_sink(&state, "web/fix-login".to_string())();
+
+    assert!(
+        lock_was_free.load(Ordering::SeqCst),
+        "the shared state lock must be free while the acknowledgment persists"
+    );
+    assert_eq!(state.shared().revision, revision + 1);
+}
