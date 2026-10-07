@@ -176,3 +176,69 @@ fn list_persisted_handles_decodes_slashy_handles() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+fn write_rows(dir: &std::path::Path, handle: &str, rows: &[&str]) {
+    let path = session_path(dir, handle);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, rows.join("\n") + "\n").unwrap();
+}
+
+const META_ROW: &str = r#"{"kind":"meta","v":1,"acp_session_id":"sess-abc","model":"auto"}"#;
+const EVENT_ROW: &str = r#"{"kind":"event","event":{"type":"message","role":"agent","text":"x"}}"#;
+
+#[test]
+fn issue_1228_unreadable_file_is_an_error_not_an_empty_session() {
+    let dir = scratch_dir("unreadable-1228");
+    let handle = "web/unreadable";
+    assert!(try_load::<serde_json::Value>(&dir, handle).is_ok());
+
+    // A directory at the transcript path opens but cannot be read.
+    let path = session_path(&dir, handle);
+    std::fs::create_dir_all(&path).unwrap();
+    assert!(try_load::<serde_json::Value>(&dir, handle).is_err());
+    assert!(try_save_meta(&dir, handle, Some("sess-new"), "auto").is_err());
+    assert!(clear_acp_session_id(&dir, handle).is_err());
+    assert!(
+        !path.with_extension("jsonl.tmp").exists(),
+        "a failed load must not start a rewrite"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1240_interior_corrupt_rows_are_counted_and_survive_rewrite() {
+    let dir = scratch_dir("corrupt-1240");
+    let handle = "web/corrupt";
+    write_rows(
+        &dir,
+        handle,
+        &[META_ROW, EVENT_ROW, "{\"kind\":\"event\",\"eve", EVENT_ROW],
+    );
+    let loaded = try_load::<serde_json::Value>(&dir, handle).unwrap();
+    assert_eq!(loaded.events.len(), 2);
+    assert_eq!(loaded.corrupt_lines, 1);
+
+    try_save_meta(&dir, handle, Some("sess-abc"), "auto").unwrap();
+    let rewritten = try_load::<serde_json::Value>(&dir, handle).unwrap();
+    assert_eq!(rewritten.events.len(), 2);
+    assert_eq!(
+        rewritten.corrupt_lines, 1,
+        "the rewrite drops the bad row, so the count must be stored"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1240_truncated_final_row_is_not_corruption() {
+    let dir = scratch_dir("truncated-tail-1240");
+    let handle = "web/truncated-tail";
+    write_rows(
+        &dir,
+        handle,
+        &[META_ROW, EVENT_ROW, "{\"kind\":\"event\",\"eve"],
+    );
+    let loaded = try_load::<serde_json::Value>(&dir, handle).unwrap();
+    assert_eq!(loaded.events.len(), 1);
+    assert_eq!(loaded.corrupt_lines, 0);
+    let _ = std::fs::remove_dir_all(dir);
+}

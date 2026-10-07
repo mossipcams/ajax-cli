@@ -43,6 +43,13 @@ pub(super) fn discard_staged_client(mut client: AcpStdioClient) {
     let _ = client.shutdown();
 }
 
+fn discard_unsaved_client(state: &mut TaskSessionState) {
+    if let Some(client) = state.acp.client.take() {
+        discard_staged_client(client);
+    }
+    state.acp.acp_alive = false;
+}
+
 pub(super) fn finalize_client_metadata(
     state: &mut TaskSessionState,
     session_id: &str,
@@ -50,16 +57,18 @@ pub(super) fn finalize_client_metadata(
     model: &str,
     bump_generation: bool,
 ) -> Result<(), SessionError> {
-    let note = context_reset_note();
-    if context_reset_needed(report.resumed, &state.log) && !already_noted(&state.log, &note) {
-        let _ = state.append_to_log(vec![note]);
-    }
-    web_session_store::save_meta(
+    // The session is only resumable once its id is on disk.
+    web_session_store::try_save_meta(
         &state.state_dir,
         &state.qualified_handle,
         Some(session_id),
         &meta_model_for_persist(report, model),
-    );
+    )
+    .map_err(|error| SessionError::persist(format!("session id could not be saved: {error}")))?;
+    let note = context_reset_note();
+    if context_reset_needed(report.resumed, &state.log) && !already_noted(&state.log, &note) {
+        let _ = state.append_to_log(vec![note]);
+    }
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, report);
@@ -93,7 +102,10 @@ pub(super) fn install_replaced_client(
                 .expect("staged replacement client")
                 .session_id()
                 .to_string();
-            finalize_client_metadata(state, &session_id, report, model, true)?;
+            if let Err(error) = finalize_client_metadata(state, &session_id, report, model, true) {
+                discard_unsaved_client(state);
+                return Err(error);
+            }
             try_dispatch_next_if_idle(state);
             Ok(())
         }
@@ -119,7 +131,10 @@ pub(super) fn finish_first_acquire(
         .expect("acquired client")
         .session_id()
         .to_string();
-    finalize_client_metadata(state, &session_id, report, model, false)?;
+    if let Err(error) = finalize_client_metadata(state, &session_id, report, model, false) {
+        discard_unsaved_client(state);
+        return Err(error);
+    }
     state.reset_holders_to_one();
     try_dispatch_next_if_idle(state);
     debug_assert!(has_healthy_client(state));

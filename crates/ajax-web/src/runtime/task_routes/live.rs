@@ -219,6 +219,12 @@ where
                 serde_json::json!({ "ok": false, "error": "session chat requires a provisioned ACP task" }),
             );
         }
+        Err(crate::slices::web_session::SessionRouteError::PromotionNotSaved) => {
+            return json_value_response(
+                500,
+                serde_json::json!({ "ok": false, "error": "ACP Chat promotion could not be saved" }),
+            );
+        }
     };
 
     let directory = Arc::clone(&state.task_session_directory);
@@ -382,12 +388,17 @@ where
             None,
             "cockpit state changed while the harness swap was running",
             |context, _runner, bridge| {
+                let before_swap = context.clone();
                 let result =
                     crate::slices::operate::swap_task_agent(context, &handle, &request.agent, None);
                 match result {
                     Ok(outcome) => {
+                        // An unsaved swap must not reset the live session (#1226).
+                        if let Err(error) = bridge.persist_registry_snapshot(context) {
+                            *context = before_swap;
+                            return (response_from_web_error(error, None), false);
+                        }
                         reset_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                        let _ = bridge.persist_registry_snapshot(context);
                         let response = match operation_success_response(outcome, context) {
                             Ok(response) => response,
                             Err(error) => response_from_web_error(error, None),
