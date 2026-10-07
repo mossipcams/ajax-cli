@@ -5,9 +5,7 @@ import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 export interface SwipeOptions {
   onOffset?: (offset: number) => void;
   onOpenChange?: (open: boolean) => void;
-  /** Current reveal offset when a touch begins (close-from-open tracking). */
   getInitialOffset?: () => number;
-  /** Ignore touches that start inside this selector (e.g. revealed ActionBar). */
   ignoreSelector?: string;
 }
 

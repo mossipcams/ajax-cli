@@ -1,11 +1,5 @@
-// Browser-facing DTOs. These mirror the Rust serialization in
-// `crates/ajax-web/src/slices/*` exactly. The browser must not derive
-// lifecycle, action validity, or status from these; it renders them.
-
-/** Canonical task status owned by Rust (`TaskStatus` serde lowercase). */
 export type TaskStatus = "running" | "waiting" | "idle" | "error" | "unknown";
 
-/** Connection display states surfaced in the UI. */
 export type ConnectionState =
   | "connected"
   | "checking"
@@ -14,10 +8,8 @@ export type ConnectionState =
   | "backend unreachable"
   | "stale session";
 
-/** Hash-route kinds. */
 export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
 
-/** Read-only Diff Review projection (mirrors ajax-web `diff_review` DTOs). */
 export interface PullRequestView {
   number: number;
   title: string;
@@ -129,7 +121,6 @@ export interface BrowserTaskCard {
   status_explanation?: string | null;
   last_activity_unix_secs: number;
   actions: WebAction[];
-  /** True when the task can hold an ACP session rather than a tmux terminal. */
   session_capable?: boolean;
 }
 
@@ -184,7 +175,6 @@ export interface BrowserTaskDetail {
   created_unix_secs: number;
   last_activity_unix_secs: number;
   agent_attempts: BrowserAgentAttempt[];
-  /** True when the task can hold an ACP session rather than a tmux terminal. */
   session_capable?: boolean;
 }
 
@@ -194,7 +184,6 @@ export interface StartTaskRequest {
   agent: string;
   request_id: string;
   orchestration_chat?: boolean;
-  /** Cursor model id; omitted launches the server default. */
   model?: string;
 }
 
@@ -206,7 +195,6 @@ export interface OperationRequest {
   branch_adoption?: BranchAdoptionPlan;
 }
 
-/** Operation/start envelopes return a refreshed projection on state change. */
 export interface OperationResponse {
   ok?: boolean;
   request_id?: string;
@@ -234,7 +222,6 @@ export interface PushTestSubscription {
     p256dh: string;
     auth: string;
   };
-  /** Server waits this long before delivering so the PWA can be fully quit. */
   delay_ms?: number;
 }
 
@@ -273,10 +260,10 @@ export interface DevDeployResponse {
 export type ApiErrorKind =
   | "network"
   | "http"
-  | "conflict" // 409 — agent moved on
-  | "terminal" // 422 — needs the terminal instead
-  | "rate-limit" // 429 — slow down
-  | "stale-session" // 401 — browser shell session cookie is missing or stale
+  | "conflict"
+  | "terminal"
+  | "rate-limit"
+  | "stale-session"
   | "incompatible";
 
 export class ApiError extends Error {

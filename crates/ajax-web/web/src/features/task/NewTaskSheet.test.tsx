@@ -21,7 +21,6 @@ const CATALOG = {
   default: "gpt-5.6-sol[low]",
 };
 
-// Claude and the other bridges keep the reasoning level in its own option.
 const CATALOG_WITH_REASONING = {
   models: [
     { id: "opus", label: "Opus" },
@@ -48,14 +47,11 @@ function stubCatalog(catalog: unknown = CATALOG) {
 
 const taskForm = () => screen.getByRole("form", { name: "New task" });
 
-/** Step one → step two. Start only exists on the model page. */
 async function goToModelStep() {
   fireEvent.submit(taskForm());
   return screen.findByTestId("new-task-model-page");
 }
 
-// The sheet remembers the last model per harness, so tests must not inherit
-// each other's choices.
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
@@ -108,7 +104,7 @@ describe("NewTaskSheet", () => {
     expect(baseModelPicker).toMatch(/overflow-y:\s*auto/);
     expect(baseModelPicker).toMatch(/overscroll-behavior:\s*contain/);
     expect(baseModelPicker).toMatch(/-webkit-overflow-scrolling:\s*touch/);
-    expect(modelList).not.toMatch(/pointer-events:\s*none/); // #1022
+    expect(modelList).not.toMatch(/pointer-events:\s*none/);
   });
 
   it("offers every supported agent including pi", () => {
@@ -192,7 +188,6 @@ describe("NewTaskSheet", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
     await goToModelStep();
 
-    // The harness's own current level is preselected, not the first option.
     const level = await screen.findByRole("radio", { name: "High" });
     expect(level).toHaveAttribute("aria-checked", "true");
 
@@ -278,8 +273,6 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
-  // Found in dev: an nvm switch left the bridges off the server's PATH and the
-  // page said the harness "lists no models", hiding a fixable install problem.
   it("shows why a harness could not be read instead of an empty list", async () => {
     stubCatalog({
       models: [],
@@ -507,12 +500,11 @@ describe("NewTaskSheet", () => {
 
   it("labels the dialog with a title that actually exists", () => {
     render(<NewTaskSheet repos={repos} />);
-    // Radix wires aria-labelledby to the title; accessible name must resolve.
     expect(screen.getByRole("dialog", { name: "New task" })).toHaveAttribute("aria-modal", "true");
   });
 
   it("keeps the agent picker a single tab stop", () => {
-    localStorage.clear(); // an earlier test in this file persists a remembered agent
+    localStorage.clear();
     render(<NewTaskSheet repos={repos} />);
     expect(screen.getByRole("radio", { name: "Codex" })).toHaveAttribute("tabindex", "0");
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("tabindex", "-1");
@@ -521,12 +513,11 @@ describe("NewTaskSheet", () => {
   });
 
   it("moves selection and focus with arrow keys", () => {
-    localStorage.clear(); // start from Codex regardless of test order
+    localStorage.clear();
     render(<NewTaskSheet repos={repos} />);
     fireEvent.keyDown(screen.getByRole("radio", { name: "Codex" }), { key: "ArrowRight" });
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: "Claude" })).toHaveFocus();
-    // Wraps backwards off the first option.
     fireEvent.keyDown(screen.getByRole("radio", { name: "Claude" }), { key: "ArrowLeft" });
     fireEvent.keyDown(screen.getByRole("radio", { name: "Codex" }), { key: "ArrowLeft" });
     expect(screen.getByRole("radio", { name: "Pi" })).toHaveAttribute("aria-checked", "true");

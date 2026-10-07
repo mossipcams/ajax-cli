@@ -1,8 +1,3 @@
-//! Authenticated STT WebSocket bridge over the Moonshine provider.
-//!
-//! Kept separate from the transport-agnostic provider so the provider module
-//! stays under the Rust LOC gate and free of Axum/WebSocket imports.
-
 use super::{
     MoonshineProvider, MoonshineSession, ProviderError, ProviderEvent, ProviderSessionConfig,
 };
@@ -12,8 +7,6 @@ use std::time::Duration;
 const MAX_STT_CONTROL_BYTES: usize = 8_192;
 const MAX_STT_BINARY_BYTES: usize = 4 + crate::slices::stt::MAX_AUDIO_FRAME_BYTES;
 const STT_EVENT_POLL_MS: u64 = 20;
-/// How long after `stt.start` the sidecar may take to emit `stt.ready`.
-/// Cold model load can be slow; a missing Ready (legacy sidecar) must not hang forever.
 const STT_READY_TIMEOUT_MS: u64 = 60_000;
 
 fn provider_event_to_server(
@@ -25,7 +18,6 @@ fn provider_event_to_server(
         ProviderEvent::Ready => Some(SttServerEvent::Ready {
             version: STT_PROTOCOL_VERSION,
             session_id: session_id.to_string(),
-            // Timing filled by the bridge from host config when forwarding Ready.
             pause_grace_period_ms: 0,
             finalization_timeout_ms: 0,
         }),
@@ -114,7 +106,6 @@ fn drain_provider_events(
                 *grace = pause_grace_period_ms;
                 *timeout = finalization_timeout_ms;
             }
-            // Ready must not be invented by spawn; only sidecar Ready reaches here.
             let _ = STT_PROTOCOL_VERSION;
             events.push(server_event);
         }
@@ -130,7 +121,6 @@ pub(crate) fn readiness_deadline_expired(
     !session_ready && ready_deadline.is_some_and(|deadline| now >= deadline)
 }
 
-/// Authenticated STT WebSocket loop. Separate from the PTY terminal bridge.
 pub async fn bridge_task_stt_socket(
     mut socket: axum::extract::ws::WebSocket,
     provider: Arc<Mutex<MoonshineProvider>>,
@@ -417,8 +407,6 @@ pub async fn bridge_task_stt_socket(
                         ready_deadline = Some(
                             Instant::now() + Duration::from_millis(STT_READY_TIMEOUT_MS.max(1)),
                         );
-                        // stt.ready is forwarded only after the sidecar emits Ready
-                        // (model loaded and audio accepted), not on process spawn.
                     }
                     Err(error) => {
                         let code = match error {

@@ -254,9 +254,6 @@ mod tests {
 
     #[test]
     fn training_slice_does_not_depend_on_ajax_core() {
-        // The training slice may use only std, serde/serde_json, the web http
-        // adapter types it already imports, and its own submodules; it must not
-        // reach into ajax-core registry/lifecycle/task types.
         let forbidden = forbidden_tokens(&["ajax_core", "ajax-core"]);
         assert_module_does_not_depend_on(
             "ajax-web::slices::training",

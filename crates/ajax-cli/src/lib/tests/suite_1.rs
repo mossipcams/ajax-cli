@@ -478,7 +478,6 @@ fn write_agent_status_event(cache_dir: &Path, task_id: &str, value: &str) {
         .unwrap()
         .as_millis();
     let stem = task_file_stem(task_id);
-    // Wrapper runtime snapshot: alive for non-terminal, exited for terminal.
     let state = match value {
         "done" => AgentRuntimeState::ExitedSuccess,
         "failed" => AgentRuntimeState::ExitedFailure,
@@ -497,7 +496,6 @@ fn write_agent_status_event(cache_dir: &Path, task_id: &str, value: &str) {
         serde_json::to_vec(&snapshot).unwrap(),
     )
     .unwrap();
-    // Canonical JSONL envelope for the native lifecycle event.
     let (kind, detail) = match value {
         "ask" => (
             "attention_requested",

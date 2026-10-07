@@ -17,9 +17,7 @@ export type PendingConfirmRequest = {
 interface Props {
   actions: WebAction[];
   handle: string;
-  /** Refreshed cockpit projection returned by a mutation. */
   onCockpit?: (cockpit: BrowserCockpitView) => void;
-  /** Surface the operation result for the result banner. */
   onResult?: (
     message: string,
     output: string | null | undefined,
@@ -30,13 +28,9 @@ interface Props {
       pendingConfirm?: PendingConfirmRequest;
     },
   ) => void;
-  /** Notify the parent a mutation finished (e.g. to refresh detail). */
   onMutated?: () => void;
-  /** The task no longer exists (e.g. after Drop) — leave the detail page. */
   onDismiss?: () => void;
-  /** Shell confirm currently armed (`drop`, etc.). Sibling taps must not POST. */
   pendingConfirmAction?: string | null;
-  /** Cancel that confirm when a different action is chosen. */
   onCancelPendingConfirm?: () => void;
 }
 
@@ -54,7 +48,6 @@ function actionClassName(
   runningAction: string | null,
 ): string {
   const classes = ["action"];
-  // Destructive must never wear the accent primary fill (blue + red label).
   if (index === 0 && !action.destructive) classes.push("primary");
   if (runningAction === action.action) classes.push("is-running");
   if (REMEDIATION.has(action.action)) classes.push("remediation-action");
@@ -75,8 +68,6 @@ export default function ActionBar({
   const mountedRef = useRef(true);
   const interactionRef = useRef<string | null>(null);
   const executeOperation = useTaskOperationMutation();
-  // Sync latch: React `runningAction` / parent `pendingConfirmAction` commit too
-  // late for same-turn double clicks (#799, #815).
   const clickLatchRef = useRef(false);
 
   useEffect(() => {
@@ -127,10 +118,6 @@ export default function ActionBar({
 
   const handleClick = (action: WebAction) => {
     if (runningAction) return;
-    // Confirm toast is non-modal; block sibling ActionBar posts while it is open.
-    // Re-tapping the same armed action keeps the first confirm (no re-arm).
-    // Must run before clickLatchRef: arming Drop leaves the latch set until
-    // pendingConfirm clears, and alternate taps still need to cancel (#796).
     if (pendingConfirmAction !== null) {
       if (action.action !== pendingConfirmAction) onCancelPendingConfirm?.();
       return;

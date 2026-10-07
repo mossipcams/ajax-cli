@@ -1,6 +1,3 @@
-//! ACP session `configOptions` helpers (Agent of Empires contract).
-//! Find advertised options, map operator pins, and build typed set requests.
-
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelect, SessionConfigSelectOptions, SetSessionConfigOptionRequest,
@@ -13,7 +10,6 @@ use ajax_core::adapters::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Wire value for one live `session/set_config_option` change.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum SessionConfigValue {
@@ -21,14 +17,12 @@ pub enum SessionConfigValue {
     Boolean(bool),
 }
 
-/// One in-band `session/set_config_option` change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigApplyStep {
     pub config_id: String,
     pub value: SessionConfigOptionValue,
 }
 
-/// Kept for the stacked UI branch (`config_option_descriptors`); unused on PR #999 alone.
 #[allow(dead_code)]
 pub fn category_name(category: &SessionConfigOptionCategory) -> &str {
     match category {
@@ -41,7 +35,6 @@ pub fn category_name(category: &SessionConfigOptionCategory) -> &str {
     }
 }
 
-/// Find the first option matching `category`, else the first matching `fallback_ids`.
 pub fn find_option_by_category<'a>(
     options: &'a [SessionConfigOption],
     category: SessionConfigOptionCategory,
@@ -62,7 +55,6 @@ pub fn model_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOpt
 }
 
 pub fn thought_level_option(options: &[SessionConfigOption]) -> Option<&SessionConfigOption> {
-    // Cursor advertises `reasoning` then rejects it on set_config_option (#1010). Prefer `effort`.
     if let Some(effort) = options
         .iter()
         .find(|option| option.id.0.as_ref() == "effort")
@@ -145,7 +137,6 @@ pub fn read_boolean_current_value(option: &SessionConfigOption) -> Option<bool> 
     Some(boolean.current_value)
 }
 
-/// Applied model id: the model option's advertised `currentValue` only.
 pub fn read_model_applied(options: Option<&[SessionConfigOption]>) -> Option<String> {
     read_select_current_value(model_option(options?)?)
 }
@@ -189,7 +180,6 @@ pub fn build_set_config_request(
     SetSessionConfigOptionRequest::new(session_id.to_string(), config_id.to_string(), value)
 }
 
-/// Convert the typed browser value without widening the accepted JSON shape.
 pub fn wire_value_to_session_value(value: SessionConfigValue) -> SessionConfigOptionValue {
     match value {
         SessionConfigValue::Select(value) => SessionConfigOptionValue::value_id(value),
@@ -197,7 +187,6 @@ pub fn wire_value_to_session_value(value: SessionConfigValue) -> SessionConfigOp
     }
 }
 
-/// Validate the exact advertised id, kind, and choice before ACP I/O.
 pub fn validate_config_change(
     options: &[SessionConfigOption],
     config_id: &str,
@@ -238,7 +227,6 @@ fn option_is_model_category(options: &[SessionConfigOption], config_id: &str) ->
     })
 }
 
-/// True when a successful apply of `config_id` should persist pipe storage ([#1014]).
 pub fn option_triggers_model_persist(options: &[SessionConfigOption], config_id: &str) -> bool {
     option_is_model_category(options, config_id)
         || thought_level_option(options).is_some_and(|option| option.id.0.as_ref() == config_id)
@@ -246,7 +234,6 @@ pub fn option_triggers_model_persist(options: &[SessionConfigOption], config_id:
             .is_some_and(|option| option.id.0.as_ref() == config_id)
 }
 
-/// Storage pipe for task `session_model` after a successful model-option apply.
 pub fn applied_model_id_for_persist(options: &[SessionConfigOption]) -> Result<String, String> {
     let model_id = read_model_applied(Some(options))
         .ok_or_else(|| "confirmed config options omitted the model value".to_string())?;
@@ -275,7 +262,6 @@ fn model_selection_from_advertised_options(
 ) -> Option<ModelSelection> {
     let model = read_model_applied(Some(options))?;
     let parsed = parse_cursor_model_intent(&model);
-    // Exploded ACP ids collapse to Ajax pipe-form so restart storage stays canonical.
     if let Some(intent) = parsed.as_ref().filter(|intent| intent.effort.is_some()) {
         let mut extras = Vec::new();
         if let Some(effort) = &intent.effort {
@@ -371,7 +357,6 @@ pub(crate) fn step_matches_current(
     }
 }
 
-/// True when every mapped option's `currentValue` matches the operator pin.
 pub fn pin_satisfied(
     options: Option<&[SessionConfigOption]>,
     desired: &str,
@@ -437,8 +422,6 @@ pub fn pin_satisfied(
 }
 
 fn cursor_canonical_pin(raw: &str) -> bool {
-    // ponytail: bare catalog ids parse as model-only selections; require pipe-form
-    // so intent matching stays on Ajax canonical pins, not spawn argv tokens.
     raw.contains('|')
         && parse_model_selection(raw).is_some_and(|selection| {
             !selection.options.is_empty()
@@ -568,7 +551,6 @@ fn split_axis_contract_satisfies(
     true
 }
 
-/// True when the operator did not pin a specific harness model id.
 pub fn is_unspecified_model(raw: Option<&str>) -> bool {
     ajax_core::adapters::is_unspecified_acp_model(raw)
         || matches!(raw.map(str::trim), Some("default" | "default[]"))

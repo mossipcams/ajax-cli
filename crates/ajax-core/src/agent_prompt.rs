@@ -1,23 +1,9 @@
-//! Per-agent parsing of an interactive agent's captured terminal pane into a
-//! structured, confidence-scored operator prompt, plus the reverse mapping from
-//! an operator answer back to the exact tmux keys for that agent.
-//!
-//! Safety contract: an adapter may decline to understand a pane (return `None`,
-//! or a `Low`-confidence prompt), but it must never confidently emit the wrong
-//! key. The free function [`answer_keys`] refuses to act on
-//! anything but a `High`-confidence, answerable approval. This is what lets a
-//! blocked agent be answered from a phone — or from a delayed notification —
-//! without the risk of a misparse landing the wrong keystroke in a live
-//! session.
-
 use crate::models::AgentClient;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptKind {
-    /// The agent is asking the operator to approve or choose an action.
     Approval,
-    /// The agent is at a free-text composer waiting for typed input.
     FreeText,
 }
 
@@ -39,9 +25,7 @@ pub enum ChoiceRole {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct PromptChoice {
     pub label: String,
-    /// Literal tmux keys this choice sends (e.g. `"1"` or `"y"`).
     pub keys: String,
-    /// Whether to append `Enter` after the keys.
     pub submit: bool,
     pub role: ChoiceRole,
 }
@@ -53,13 +37,9 @@ pub struct AgentPrompt {
     pub command: Option<String>,
     pub choices: Vec<PromptChoice>,
     pub confidence: Confidence,
-    /// Stable hash of the prompt-relevant pane lines. The answer path recomputes
-    /// it from a fresh capture and refuses to act on a mismatch (stale answer).
     pub fingerprint: String,
 }
 
-/// An operator's typed intent. The web layer never sees keystrokes; it sends one
-/// of these and the adapter resolves the keys.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "answer", rename_all = "snake_case")]
 pub enum OperatorAnswer {
@@ -76,15 +56,10 @@ pub struct SendKeys {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnswerError {
-    /// The prompt is not a high-confidence approval (e.g. free-text composer or
-    /// a low-confidence parse). The operator must escalate to the terminal.
     NotAnswerable,
-    /// The requested choice has no match in the parsed prompt.
     UnknownChoice,
 }
 
-/// Resolve an operator answer into the keys to send.
-/// Safety floor: only High-confidence Approvals are answerable.
 pub fn answer_keys(prompt: &AgentPrompt, answer: &OperatorAnswer) -> Result<SendKeys, AnswerError> {
     if prompt.confidence != Confidence::High || prompt.kind != PromptKind::Approval {
         return Err(AnswerError::NotAnswerable);
@@ -101,7 +76,6 @@ pub fn answer_keys(prompt: &AgentPrompt, answer: &OperatorAnswer) -> Result<Send
     })
 }
 
-/// Parse a pane for the given agent. Unknown agents never recognize a prompt.
 pub fn parse_prompt(agent: AgentClient, lines: &[String]) -> Option<AgentPrompt> {
     match agent {
         AgentClient::Codex => parse_codex_prompt(lines),
@@ -115,8 +89,6 @@ fn parse_codex_prompt(lines: &[String]) -> Option<AgentPrompt> {
         .or_else(|| parse_composer(lines))
 }
 
-// --- Codex parsing helpers -------------------------------------------------
-
 const APPROVAL_CUES: &[&str] = &[
     "allow",
     "approve",
@@ -128,14 +100,6 @@ const APPROVAL_CUES: &[&str] = &[
     "may i",
 ];
 
-/// Numbered selection list, e.g.:
-/// ```text
-///   Allow Codex to run this command?
-///     cargo test --all-features
-///   ❯ 1. Yes, run it
-///     2. Yes, and don't ask again this session
-///     3. No, and tell Codex what to do differently
-/// ```
 fn parse_numbered_approval(lines: &[String]) -> Option<AgentPrompt> {
     let last_opt = (0..lines.len())
         .rev()
@@ -151,14 +115,12 @@ fn parse_numbered_approval(lines: &[String]) -> Option<AgentPrompt> {
     if options.len() < 2 {
         return None;
     }
-    // Numbers must be consecutive starting at 1, or this isn't a real list.
     for (index, (num, _)) in options.iter().enumerate() {
         if *num as usize != index + 1 {
             return None;
         }
     }
 
-    // Up to a few non-empty lines above the option block carry the cue/command.
     let above: Vec<String> = lines[..start]
         .iter()
         .rev()
@@ -208,11 +170,9 @@ fn parse_numbered_approval(lines: &[String]) -> Option<AgentPrompt> {
             role,
         });
     }
-    // An approval we can't say "yes" to is not answerable.
     if !affirm_found {
         return None;
     }
-    // Codex convention: the last option is the negative ("No, and tell Codex…").
     if !deny_found {
         if let Some(last) = choices.last_mut() {
             if last.role == ChoiceRole::Neutral {
@@ -242,7 +202,6 @@ fn parse_numbered_approval(lines: &[String]) -> Option<AgentPrompt> {
     })
 }
 
-/// Inline yes/no approval, e.g. ``Run `cargo test`? [y/n]``.
 fn parse_yes_no_approval(lines: &[String]) -> Option<AgentPrompt> {
     let idx = (0..lines.len())
         .rev()
@@ -273,9 +232,6 @@ fn parse_yes_no_approval(lines: &[String]) -> Option<AgentPrompt> {
     })
 }
 
-/// Codex free-text composer: a `›`/`❯` line plus the `gpt-… ~/…` footer.
-/// Always low confidence — under triage-only this carries no answerable
-/// affordance, only "the agent is waiting; open the terminal".
 fn parse_composer(lines: &[String]) -> Option<AgentPrompt> {
     let has_footer = lines.iter().rev().take(3).any(|line| is_codex_footer(line));
     if !has_footer {
@@ -381,8 +337,6 @@ fn strip_divider_text(line: &str) -> String {
         .to_string()
 }
 
-/// FNV-1a over the joined parts. Deterministic within a process (which is all the
-/// stale-answer guard needs) and stable across builds.
 fn fingerprint(parts: &[&str]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for part in parts {

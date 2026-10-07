@@ -54,7 +54,6 @@ pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
     context_paths_from_matches(&matches)
 }
 
-/// A CLI flag name paired with the `RuntimePathRequest` setter it feeds.
 type CliFlagOverride = (
     &'static str,
     fn(RuntimePathRequest, &str) -> RuntimePathRequest,
@@ -64,8 +63,6 @@ pub(crate) fn context_paths_from_matches_and_env(
     matches: &ArgMatches,
     mut request: RuntimePathRequest,
 ) -> Result<CliContextPaths, CliError> {
-    // The `dev`/`stable` aliases are sugar for `--profile`; an explicit
-    // `--profile` flag still wins because it is applied last below.
     if let Some((name @ ("dev" | "stable"), _)) = matches.subcommand() {
         request = request.with_cli_profile(name);
     }
@@ -88,9 +85,6 @@ pub(crate) fn context_paths_from_matches_and_env(
     Ok(CliContextPaths::from_runtime_paths(request.resolve()))
 }
 
-/// Seed a [`RuntimePathRequest`] from the process environment: `$HOME` plus the
-/// optional `AJAX_*` overrides. CLI flags are layered on top later, so these are
-/// recorded as env-sourced.
 fn runtime_path_request_from_env() -> Result<RuntimePathRequest, CliError> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -316,9 +310,6 @@ fn merge_registries(
             }
             (Some(_), Some(baseline_task)) if memory_task == baseline_task => {}
             (Some(disk_task), _) if disk_task == memory_task => {}
-            // The task was on disk when this writer loaded but another writer
-            // has deleted it since: the deletion wins over any in-memory edits,
-            // otherwise every later save fails with a permanent conflict.
             (None, Some(_)) => {}
             (Some(disk_task), Some(baseline_task)) => {
                 let Some(merged_task) =

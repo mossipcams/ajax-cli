@@ -18,8 +18,6 @@ fn native_running_observation_drives_agent_running() {
 fn wrapper_exit_success_is_terminal_done_fallback() {
     let mut context = context_with_active_task();
     let mut runner = RuntimeRefreshRunner;
-    // No native lifecycle events; only a confirmed wrapper exit. Requirement
-    // 12: confirmed exit 0 is a Done fallback where native evidence is absent.
     let cache = ObsSource::new(vec![exit_obs(ActivityKind::Done, 1)]);
 
     refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
@@ -36,7 +34,6 @@ fn wrapper_exit_success_is_terminal_done_fallback() {
 fn wrapper_liveness_alone_does_not_set_agent_running() {
     let mut context = context_with_active_task();
     let mut runner = RuntimeRefreshRunner;
-    // Requirement 12: wrapper Running is liveness only, never Agent Running.
     let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
         alive: true,
         observed_at: SystemTime::now(),
@@ -202,9 +199,6 @@ fn failed_ci_projects_error_and_actionable_attention() {
 
 #[test]
 fn pending_ci_projects_running_without_masking_local_failures() {
-    // Relevant pending checks override the native/github failure with a
-    // Running "ci running" state, but never override a local check failure
-    // or a merge conflict (requirement 6).
     let now = SystemTime::now();
     let mut github = task_with_live(LiveStatusKind::CiFailed, "ci failed: ci");
     github.add_side_flag(SideFlag::TestsFailed);
@@ -243,11 +237,6 @@ fn pending_ci_projects_running_without_masking_local_failures() {
 
 #[test]
 fn pending_ci_does_not_mask_operator_approval_gate() {
-    // A `Running "CI running"` projection can never notify (attention.rs
-    // clears the notify candidate for Running), so letting pending CI
-    // overwrite an unacknowledged approval/input gate would make the only
-    // actionable signal both invisible and unnotified. Narrow deviation
-    // from plan §6 row 6, which ranks display and ignores notification.
     let now = SystemTime::now();
     let observed_at = now - Duration::from_secs(60);
 
@@ -270,8 +259,6 @@ fn pending_ci_does_not_mask_operator_approval_gate() {
     assert_eq!(projected.status, crate::ui_state::TaskStatus::Waiting);
     assert!(projected.actionable, "the operator still has to act");
 
-    // Once acknowledged, the gate is no longer an actionable signal and CI
-    // takes the display back (plan §6 row 6).
     let mut acknowledged =
         task_with_live(LiveStatusKind::WaitingForApproval, "waiting for approval");
     acknowledged.live_status_observed_at = Some(observed_at);
@@ -287,9 +274,6 @@ fn pending_ci_does_not_mask_operator_approval_gate() {
 
 #[test]
 fn retired_ci_evidence_no_longer_changes_operator_status() {
-    // Plan §7: rows 5/6 apply only while evidence is "relevant + not
-    // stale". Once the lifecycle retires the probe, CI evidence can never
-    // be confirmed again and must not keep projecting.
     let now = SystemTime::now();
 
     let mut merged = task_with_live(LiveStatusKind::CiPending, "ci running");
@@ -306,7 +290,6 @@ fn retired_ci_evidence_no_longer_changes_operator_status() {
     let mut active = task_with_live(LiveStatusKind::CiPending, "ci running");
     assert!(!github_probe_is_retired(&active));
 
-    // An unobservable probe can no longer vouch for a pending run.
     apply_github_checks_observation(
         &mut active,
         CiChecksObservation::Unobservable {

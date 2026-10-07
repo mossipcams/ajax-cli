@@ -1,5 +1,3 @@
-//! Typed errors at the web-session slice boundary.
-
 use crate::adapters::web_session_acp::{AcpSpawnError, RestoreFailure};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +41,6 @@ impl SessionError {
         matches!(self, Self::RestoreUnavailable(_))
     }
 
-    /// Stable id for transcript dedupe on reconnect ([#1040](https://github.com/mossipcams/ajax-cli/issues/1040)).
     pub fn spawn_error_id(generation: u64, message: &str) -> Option<String> {
         let kind = if message.contains("Authentication required") {
             "auth"

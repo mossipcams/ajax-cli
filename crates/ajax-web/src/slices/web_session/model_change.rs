@@ -1,11 +1,8 @@
-//! Harness Switch: same-harness is rejected; cross-harness resets ACP context.
-
 use super::normalize_session_model;
 use super::task_session_directory::TaskSessionDirectory;
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
-/// Cross-harness swap resets backend context; same harness keeps the ACP child.
 pub(crate) fn swap_resets_harness_context(current: AgentClient, requested_agent: &str) -> bool {
     agent_client_from_name(requested_agent) != current
 }
@@ -20,7 +17,6 @@ pub(crate) fn agent_client_from_name(agent: &str) -> AgentClient {
     }
 }
 
-/// After a cross-harness swap: reset the live slot or clear stored resume id.
 pub(crate) async fn apply_cross_harness_reset(
     directory: &TaskSessionDirectory,
     handle: &str,

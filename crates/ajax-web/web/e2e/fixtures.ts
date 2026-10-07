@@ -1,11 +1,5 @@
-// Shared mock harness for the Web Cockpit e2e suites. API responses are mocked
-// via addInitScript (overrides globalThis.fetch before the app boots) so tests
-// run without a live Rust server. Extracted from smoke.test.ts so every e2e
-// file drives the app through one fixture set.
-
 import { expect, type Page } from "@playwright/test";
 
-// ---- fixture data --------------------------------------------------------
 
 export const COCKPIT_FIXTURE = {
   backend: { authority: "host-native", control_enabled: true, warning: null },
@@ -30,8 +24,6 @@ export const COCKPIT_FIXTURE = {
       title: "Add auth",
       status: "running",
       status_explanation: null,
-      // Calm rows are where swipe-reveal lives: inbox rows render their actions
-      // inline instead, so the gesture needs a non-inbox card to exercise.
       actions: [
         { action: "review", label: "Review", destructive: false, confirmation_required: false },
       ],
@@ -81,7 +73,6 @@ export const SESSION_MODELS = {
   default: "cursor-grok-4.6-high",
 };
 
-/** A real harness catalog is long — Codex lists 29 — with the default deep in order. */
 export const LONG_SESSION_MODELS = {
   models: Array.from({ length: 29 }, (_, index) => ({
     id: `model-${index}`,
@@ -90,7 +81,6 @@ export const LONG_SESSION_MODELS = {
   default: "model-24",
 };
 
-// ---- session protocol v2 mock helpers ------------------------------------
 
 export const SESSION_PROTOCOL_VERSION = 2;
 
@@ -125,7 +115,6 @@ export function sessionEventJson(cursor: number, event: SessionServerEvent): str
   });
 }
 
-/** Resume cursor from an in-page reconnect (`?cursor=`); cold attach omits it. */
 export function sessionResumeCursor(url: string): number {
   try {
     const raw = new URL(url).searchParams.get("cursor");
@@ -137,7 +126,6 @@ export function sessionResumeCursor(url: string): number {
   }
 }
 
-// ---- fetch mock helper ---------------------------------------------------
 
 export async function mockFetch(page: Page, extra: Record<string, unknown> = {}) {
   const routes: Record<string, unknown> = {
@@ -199,13 +187,10 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
         }
       }
 
-      // Persist across location.reload() so e2e can observe the POST after
-      // Settings succeeds and reloads the page.
       if (path === "/api/server/test-in-stable" && method === "POST") {
         try {
           sessionStorage.setItem("ajax-e2e-test-in-stable-posted", "1");
         } catch {
-          // ignore quota / private-mode failures in odd runners
         }
         (globalThis as unknown as { __testInStablePosted?: boolean }).__testInStablePosted =
           true;
@@ -542,7 +527,6 @@ export async function terminalResizeFrames(page: Page): Promise<TerminalResizeFr
 
 export type ViewportEventKind = "resize" | "orientationchange" | "visualViewport.resize";
 
-/** Chromium reports env(safe-area-inset-bottom)=0; emulate iPhone home indicator (#1034). */
 export async function emulateHomeIndicatorInset(
   page: Page,
   bottomPx = 34,
@@ -555,7 +539,6 @@ export async function emulateHomeIndicatorInset(
   });
 }
 
-/** Session keyboard-band tests expect iOS Safari coarse-pointer metrics on desktop too. */
 export async function emulateCoarsePointer(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const realMatchMedia = window.matchMedia.bind(window);
@@ -594,7 +577,6 @@ export async function dispatchViewportEvents(
   }, events);
 }
 
-/** Two-finger outward pinch on the stable interaction surface (renderer-neutral). */
 export async function syntheticOutwardPinchOnInteractionSurface(page: Page): Promise<void> {
   const surface = terminalInteractionSurface(page);
   await surface.evaluate((el) => {
@@ -608,7 +590,6 @@ export async function syntheticOutwardPinchOnInteractionSurface(page: Page): Pro
     const rect = el.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
-    // 100px start distance, spread past the 12px activation threshold.
     el.dispatchEvent(
       makePinch("touchstart", [
         { x: centerX - 50, y: centerY },

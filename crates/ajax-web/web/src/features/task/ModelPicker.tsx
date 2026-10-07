@@ -24,9 +24,6 @@ import {
   thoughtLevelLiveOption,
 } from "@/shared/lib/liveSessionConfig";
 
-/** iOS often shows :active on Effort / Fast then drops the click because the
- *  model list's overflow layer sits over those chips. Pointerdown on touch
- *  applies before that cancellation; mouse still uses click. */
 function activateExtrasChip(
   event: { pointerType: string; preventDefault: () => void; stopPropagation: () => void },
   apply: () => void,
@@ -38,24 +35,15 @@ function activateExtrasChip(
 }
 
 interface Props {
-  /** Harness whose own catalog to list. */
   agent: string;
   agentLabel: string;
-  /** Composite selection: catalog id, or `opus|effort=high` for bridges. */
   value: string;
-  /** Live advertised ACP config options (connected session). */
   liveConfigOptions?: LiveSessionConfigOption[];
   disabled?: boolean;
   onChange: (selection: string) => void;
-  /** Called once with the harness default so callers can preselect it. */
   onCatalog?: (catalog: SessionModelCatalog) => void;
 }
 
-/**
- * Full harness catalog for model choice, plus effort / Fast when multiple levels
- * exist. Live sessionConfigOptions seed the current pin and supply in-band apply
- * ids; they do not replace the catalog model list.
- */
 export default function ModelPicker({
   agent,
   agentLabel,

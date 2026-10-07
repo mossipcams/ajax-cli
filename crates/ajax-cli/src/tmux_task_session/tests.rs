@@ -41,8 +41,6 @@ impl TaskSessionRunner for FailingTaskSessionRunner {
 }
 
 fn sample_termios() -> Termios {
-    // SAFETY: The test fills the fields that the wrapper mirrors before
-    // converting into nix's safe Termios wrapper.
     let mut raw: nix::libc::termios = unsafe { std::mem::zeroed() };
     raw.c_iflag =
         (InputFlags::IXON | InputFlags::IXOFF | InputFlags::IXANY | InputFlags::ICRNL).bits();
@@ -375,11 +373,8 @@ fn task_pty_winsize_uses_operator_rows_and_columns() {
 
 #[test]
 fn winsize_change_detection_tracks_rows_and_columns() {
-    // First observation always counts as a change.
     assert!(winsize_changed(None, (24, 80)));
-    // Identical size is a no-op so we never spam SIGWINCH at the child.
     assert!(!winsize_changed(Some((24, 80)), (24, 80)));
-    // A change in either dimension propagates.
     assert!(winsize_changed(Some((24, 80)), (30, 80)));
     assert!(winsize_changed(Some((24, 80)), (24, 120)));
 }
@@ -391,7 +386,6 @@ fn set_kernel_winsize(fd: i32, rows: u16, cols: u16) {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    // SAFETY: TIOCSWINSZ reads the winsize struct for a valid pty fd.
     let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCSWINSZ, &ws) };
     assert_eq!(
         result,
@@ -402,7 +396,6 @@ fn set_kernel_winsize(fd: i32, rows: u16, cols: u16) {
 }
 
 fn kernel_winsize(fd: i32) -> (u16, u16) {
-    // SAFETY: TIOCGWINSZ writes the winsize struct for a valid pty fd.
     let mut ws: nix::libc::winsize = unsafe { std::mem::zeroed() };
     let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCGWINSZ, &mut ws) };
     assert_eq!(
@@ -414,32 +407,25 @@ fn kernel_winsize(fd: i32) -> (u16, u16) {
     (ws.ws_row, ws.ws_col)
 }
 
-// End-to-end proof against real kernel PTY state: a live SIGWINCH must move
-// the child PTY's window size, and the old (no-sync) path must leave it stale.
 #[test]
 fn live_sigwinch_propagates_operator_size_to_child_pty() {
     use nix::pty::openpty;
     use nix::sys::signal::{raise, Signal};
     use std::os::fd::AsRawFd;
 
-    // "operator" = the terminal the operator looks at (production reads its
-    // size from stdin). "child" = the PTY the attached tmux client renders to.
     let operator = openpty(None, None).expect("openpty operator");
     let child = openpty(None, None).expect("openpty child");
     let operator_read_fd = operator.slave.as_raw_fd();
     let child_master_fd = child.master.as_raw_fd();
 
-    // Both start at 24x80, matching a fresh attach.
     set_kernel_winsize(operator.master.as_raw_fd(), 24, 80);
     set_kernel_winsize(child_master_fd, 24, 80);
 
     let mut trace = super::TaskSessionTrace::from_path(None).unwrap();
     let mut last: Option<(u16, u16)> = None;
 
-    // Install the real handler used in production (seeds a pending sync).
     let _guard = super::TaskWinchGuard::install().unwrap();
 
-    // First pump iteration syncs the current size on attach.
     super::sync_pending_winsize(operator_read_fd, child_master_fd, &mut last, &mut trace);
     assert_eq!(kernel_winsize(child_master_fd), (24, 80));
     assert_eq!(last, Some((24, 80)));
@@ -448,7 +434,6 @@ fn live_sigwinch_propagates_operator_size_to_child_pty() {
         kernel_winsize(child_master_fd)
     );
 
-    // The operator terminal is resized (e.g. mobile keyboard hides).
     set_kernel_winsize(operator.master.as_raw_fd(), 40, 100);
     println!(
         "[operator resized]  operator size = {:?}, child PTY size = {:?}",
@@ -456,19 +441,14 @@ fn live_sigwinch_propagates_operator_size_to_child_pty() {
         kernel_winsize(child_master_fd)
     );
 
-    // OLD BEHAVIOR: with no SIGWINCH propagation, the child stays stale —
-    // this is exactly the flicker/scroll-jump bug.
     assert_eq!(
         kernel_winsize(child_master_fd),
         (24, 80),
         "child should still be stale until the resize is propagated"
     );
 
-    // A real SIGWINCH is delivered to this thread, running the production
-    // handler, which flags a pending sync.
     raise(Signal::SIGWINCH).expect("raise SIGWINCH");
 
-    // NEW BEHAVIOR: the next pump iteration pushes the live size to the child.
     super::sync_pending_winsize(operator_read_fd, child_master_fd, &mut last, &mut trace);
 
     assert_eq!(

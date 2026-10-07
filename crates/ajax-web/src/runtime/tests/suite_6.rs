@@ -97,8 +97,6 @@ fn issue_1227_session_activity_fails_when_registry_is_not_saved() {
     assert_eq!(state.shared().revision, revision);
 }
 
-// #1232: the acknowledgment persists the registry, and used to do it while
-// holding the shared state lock that every Cockpit request needs.
 #[test]
 fn issue_1232_terminal_input_acknowledgment_runs_without_the_shared_state_lock() {
     let bridge = TestBridge {

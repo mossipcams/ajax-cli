@@ -217,9 +217,6 @@ fn cockpit_save_reloads_sqlite_even_when_mtime_stays_the_same() {
         .save(&concurrent)
         .unwrap();
 
-    // Simulate a filesystem where the timestamp cache did not advance
-    // even though SQLite revision did. The reload path should still notice
-    // the revision change and refresh the save baseline.
     last_loaded_mtime = state_file_mtime(&paths);
 
     let mut cached_snapshot = None;
@@ -421,8 +418,6 @@ fn cockpit_save_guard_error_returns_to_cockpit() {
     let mut tracked = load_tracked_context(&paths).unwrap();
     let mut last_loaded_mtime = state_file_mtime(&paths);
 
-    // Simulate the Ctrl-Q post-session path attempting to persist an
-    // in-memory registry that the empty-over-non-empty guard must reject.
     tracked.context.registry = InMemoryRegistry::default();
 
     let error = save_cockpit_state_to_sqlite(

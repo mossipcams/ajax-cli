@@ -1,5 +1,3 @@
-// Opt-in. AJAX_CHAOS=1 npm run web:test -- --run src/features/task/useTaskDetailResource.adversarial.test.tsx
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import taskDetailFixture from "@/fixtures/task-detail.json";
@@ -50,7 +48,6 @@ describe.runIf(chaos)("useTaskDetailResource adversarial", () => {
     };
     const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
 
-    // First load in flight (slow). Trigger reload (fast).
     await act(async () => {
       result.current.reload();
     });

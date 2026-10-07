@@ -1,5 +1,3 @@
-// Opt-in. AJAX_CHAOS=1 npm run web:test -- --run src/shared/lib/cockpitPoll.adversarial.test.ts
-
 import { describe, it, expect } from "vitest";
 import { createCockpitApplyGate, createInFlightGuard } from "./cockpitPoll";
 import type { BrowserCockpitView } from "./types";
@@ -49,7 +47,6 @@ describe.runIf(chaos)("cockpitPoll adversarial", () => {
     void guard.run(slow, { trailing: true });
     await first;
     await new Promise((r) => setTimeout(r, 80));
-    // One in-flight + one trailing coalesce, not 1+3.
     expect(runs).toBeLessThanOrEqual(2);
   });
 });

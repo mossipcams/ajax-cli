@@ -1,5 +1,3 @@
-//! Versioned sidecar prompt ownership ledger (separate from transcript JSONL).
-
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -166,8 +164,6 @@ impl PromptLedger {
             .retain(|entry| entry.client_message_id != client_message_id);
     }
 
-    /// On restart, promote orphaned dispatching rows to interrupted and return
-    /// queued rows in FIFO order.
     pub fn recover_after_restart(&mut self) -> (Vec<PromptLedgerEntry>, Vec<String>) {
         let mut interrupted = Vec::new();
         for entry in &mut self.entries {
@@ -276,7 +272,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 static FORCE_PERSIST_FAIL: AtomicBool = AtomicBool::new(false);
 
-/// Test-scoped persist failure injection; restores the prior flag on drop.
 #[cfg(test)]
 pub struct ForcePersistFailGuard {
     previous: bool,

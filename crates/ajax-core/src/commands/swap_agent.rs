@@ -1,9 +1,3 @@
-//! Move an existing task to a different harness.
-//!
-//! Only provisioned (ACP-backed) tasks may swap: an interactive task has a live
-//! agent in its tmux pane, and rewriting `selected_agent` under it would make the
-//! registry disagree with the process that is actually running.
-
 use super::{CommandContext, CommandError};
 use crate::{
     adapters::acp_launch_for_agent,
@@ -11,10 +5,6 @@ use crate::{
     registry::Registry,
 };
 
-/// Point `handle` at `agent`, optionally pinning the model it should run.
-///
-/// The next session attach spawns the new harness; callers must drop any live
-/// ACP slot for this task so it is not served by the previous harness.
 pub fn swap_task_agent<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,

@@ -118,7 +118,6 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
   }
 }
 
-/** Map validated wire input to typed Chat events. Raw transport stops here. */
 export function projectWireInput(
   input: SessionSnapshot | WebSessionServerEvent,
 ): ChatSessionEvent | ChatSessionEvent[] | null {
@@ -148,7 +147,6 @@ export function projectWireInput(
   return projectServerEvent(input);
 }
 
-/** Convenience for transport callbacks that receive one server event at a time. */
 export function projectWireEvent(event: WebSessionServerEvent): ChatSessionEvent | null {
   return projectServerEvent(event);
 }

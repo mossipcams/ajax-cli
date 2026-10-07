@@ -1,29 +1,20 @@
 use super::command::CommandSpec;
 use crate::models::AgentClient;
 
-/// Default Cursor Agent model for Ajax-started tasks (not Fast).
 pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
-/// Cursor ACP spawn argv when the operator leaves model unspecified / Auto.
-///
-/// Pro+ defaults Grok 4.6 to Fast when `--model` is omitted; this id selects
-/// the standard non-Fast tier on the harness command line ([#979]).
 pub const CURSOR_DEFAULT_SPAWN_MODEL: &str = "grok-4.6";
 
-/// Effort suffixes on Cursor catalog ids (`gpt-5.6-sol-high`, `cursor-grok-4.6-xhigh`, …).
 const CURSOR_EFFORT_SUFFIXES: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];
 
-/// Semantic pieces shared by Ajax catalog ids and Cursor ACP handshake ids.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CursorModelIntent {
     pub base: String,
     pub effort: Option<String>,
     pub fast: Option<bool>,
-    /// Live Cursor bracket ids carry `-thinking` in Ajax catalog bases separately.
     pub thinking: Option<bool>,
 }
 
-/// Parse a Cursor catalog id, pipe-form selection, or ACP bracket id into intent.
 pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     let raw = raw.trim();
     if raw.is_empty() || raw == "auto" {
@@ -121,7 +112,6 @@ pub fn parse_cursor_model_intent(raw: &str) -> Option<CursorModelIntent> {
     })
 }
 
-/// Normalize `-thinking` catalog bases onto `thinking=true` with a stripped base.
 pub fn canonical_cursor_model_intent(intent: &CursorModelIntent) -> CursorModelIntent {
     if intent.base.ends_with("-thinking") {
         CursorModelIntent {
@@ -139,7 +129,6 @@ pub fn canonical_cursor_model_intent(intent: &CursorModelIntent) -> CursorModelI
     }
 }
 
-/// Bracket ACP id for a Cursor intent (`claude-opus-5[thinking=true,effort=high,fast=false]`).
 pub fn cursor_bracket_token_from_intent(intent: &CursorModelIntent) -> String {
     let canonical = canonical_cursor_model_intent(intent);
     let fast = canonical.fast.unwrap_or(false);
@@ -154,7 +143,6 @@ pub fn cursor_bracket_token_from_intent(intent: &CursorModelIntent) -> String {
     format!("{}[{}]", canonical.base, options.join(","))
 }
 
-/// True when `applied` satisfies `desired`, including thinking and Fast axes.
 pub fn cursor_model_intents_match(
     desired: &CursorModelIntent,
     applied: &CursorModelIntent,
@@ -168,12 +156,6 @@ pub fn cursor_model_intents_match(
         && desired.fast.unwrap_or(false) == applied.fast.unwrap_or(false)
 }
 
-/// Reconstruct an exploded Cursor catalog id from a parsed intent.
-///
-/// Pipe-form picker selections persist base / effort / fast separately ([#991]);
-/// spawn argv must receive the catalog id Cursor accepts on `--model` ([#989]).
-/// Only `grok-*` bases receive the `cursor-grok-*` prefix; `thinking=true` folds
-/// onto a `-thinking` base before effort and fast suffixes are appended.
 fn compose_cursor_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
     let canonical = canonical_cursor_model_intent(intent);
     let fast = canonical.fast.unwrap_or(false);
@@ -195,13 +177,6 @@ fn compose_cursor_catalog_id_from_intent(intent: &CursorModelIntent) -> String {
     id
 }
 
-/// Map an Ajax catalog id or pipe-form selection to the token Cursor accepts on spawn `--model`.
-///
-/// Live Cursor honors catalog ids and bare handshake bases from `agent models` on
-/// spawn argv ([#989]). Pipe-form and bracket handshake ids reconstruct those
-/// catalog ids; bare bases and exploded catalog ids pass through unchanged
-/// ([#1079]). Bracket synthesis is reserved for in-band apply via
-/// [`cursor_catalog_to_acp_in_band_token`].
 pub fn cursor_catalog_to_acp_spawn_token(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed == CURSOR_DEFAULT_SPAWN_MODEL {
@@ -215,10 +190,6 @@ pub fn cursor_catalog_to_acp_spawn_token(raw: &str) -> String {
     trimmed.to_string()
 }
 
-/// Map an Ajax catalog id to the bracket ACP model id for in-band apply.
-///
-/// Unlike [`cursor_catalog_to_acp_spawn_token`], Grok catalog ids map to bracket
-/// tokens here because `session/set_config_option` never accepts catalog ids ([#954]).
 pub fn cursor_catalog_to_acp_in_band_token(catalog_id: &str) -> String {
     let Some(intent) = parse_cursor_model_intent(catalog_id) else {
         return catalog_id.to_string();
@@ -235,37 +206,23 @@ pub fn cursor_catalog_to_acp_in_band_token(catalog_id: &str) -> String {
     cursor_bracket_token_from_intent(&intent)
 }
 
-/// Cursor model ids ride a launch command line and an ACP argv, so they must
-/// stay a single bounded token. Bracketed option forms (`id[effort=high]`) pass.
 pub fn valid_cursor_model_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && !id.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-/// How a harness is told which model to run.
-///
-/// Verified against the installed bridges: Codex, Claude, and Pi all answer
-/// `session/set_config_option { configId, value }`, which also carries the
-/// reasoning level they expose as a separate option. Cursor takes `--model`
-/// before it speaks ACP at all, and bakes the level into the model id.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AcpModelSelection {
-    /// `--model <id>` on the spawn argv.
     SpawnArg,
-    /// `session/set_config_option { sessionId, configId, value }` per option.
     ConfigOption,
 }
 
-/// A model choice plus the harness options that go with it, written
-/// `opus|effort=high`. Cursor has no options and is just the bare id.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelSelection {
     pub model: String,
-    /// Extra harness config options, e.g. `("effort", "high")`.
     pub options: Vec<(String, String)>,
 }
 
 impl ModelSelection {
-    /// Rebuild the stored form. Round-trips with [`parse_model_selection`].
     pub fn encode(&self) -> String {
         let mut out = self.model.clone();
         for (key, value) in &self.options {
@@ -278,8 +235,6 @@ impl ModelSelection {
     }
 }
 
-/// Parse a stored selection. `None` when any piece is not a bounded token, so
-/// the same check guards ids arriving from the browser.
 pub fn parse_model_selection(raw: &str) -> Option<ModelSelection> {
     let raw = raw.trim();
     if raw.is_empty() || raw.len() > 256 {
@@ -305,43 +260,26 @@ pub fn parse_model_selection(raw: &str) -> Option<ModelSelection> {
     })
 }
 
-/// How one harness is started as an ACP stdio agent.
-///
-/// Cursor speaks ACP natively (`agent acp`); Codex, Claude, and Pi each ship a
-/// separate ACP bridge binary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AcpLaunch {
-    /// Programs to try in order, each with its base args.
     pub candidates: &'static [(&'static str, &'static [&'static str])],
-    /// Harness CLI that would speak ACP itself, when it ever advertises an
-    /// `acp` subcommand. Ajax prefers it over the packaged adapter. `None` when
-    /// the candidates above are already the harness's own binary.
     pub native_program: Option<&'static str>,
-    /// How this harness accepts a model choice.
     pub model_selection: AcpModelSelection,
-    /// Model Ajax runs when the operator has picked none. `None` means the
-    /// harness picks for itself.
     pub default_model: Option<&'static str>,
-    /// npm package providing the ACP program, when the harness needs one.
-    /// Ajax can run it on demand instead of requiring a global install.
     pub acp_package: Option<&'static str>,
-    /// Shown when no candidate program can be spawned.
     pub install_hint: &'static str,
 }
 
 impl AcpLaunch {
-    /// True when `--model <id>` belongs on the spawn argv.
     pub fn model_pins_at_spawn(&self) -> bool {
         matches!(self.model_selection, AcpModelSelection::SpawnArg)
     }
 }
 
-/// ACP entry point for a harness, or `None` when Ajax has no ACP mapping for it.
 pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
     match client {
         AgentClient::Cursor => Some(AcpLaunch {
             candidates: &[("agent", &["acp"]), ("cursor", &["agent", "acp"])],
-            // `agent acp` is Cursor's own ACP server.
             native_program: None,
             model_selection: AcpModelSelection::SpawnArg,
             default_model: Some(CURSOR_DEFAULT_MODEL),
@@ -350,7 +288,6 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
         }),
         AgentClient::Codex => Some(AcpLaunch {
             candidates: &[("codex-acp", &[])],
-            // Codex 0.147 speaks its own `app-server` protocol, not ACP.
             native_program: Some("codex"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
@@ -359,7 +296,6 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
         }),
         AgentClient::Claude => Some(AcpLaunch {
             candidates: &[("claude-agent-acp", &[])],
-            // Claude Code 2.1.232 ships no ACP server.
             native_program: Some("claude"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
@@ -368,7 +304,6 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
         }),
         AgentClient::Pi => Some(AcpLaunch {
             candidates: &[("pi-acp", &[])],
-            // Pi 0.80 exposes `--mode rpc`, its own protocol, not ACP.
             native_program: Some("pi"),
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
@@ -379,8 +314,6 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
     }
 }
 
-/// Harnesses whose ACP support comes from a separate adapter package, with the
-/// program each one installs. Used by `ajax doctor` and by the session host.
 pub fn acp_adapter_packages() -> Vec<(AgentClient, &'static str, &'static str)> {
     [
         AgentClient::Codex,
@@ -397,16 +330,10 @@ pub fn acp_adapter_packages() -> Vec<(AgentClient, &'static str, &'static str)> 
     .collect()
 }
 
-/// True when the operator did not pin a specific harness model id.
 pub fn is_unspecified_acp_model(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), None | Some("") | Some("auto"))
 }
 
-/// Model id to place on a spawn-pinned harness argv, or `None` for bridge harnesses
-/// with no operator pin.
-///
-/// Cursor with no operator pick still receives [`CURSOR_DEFAULT_SPAWN_MODEL`] on argv so
-/// the CLI default Composer Fast is not used ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub fn acp_spawn_model_for_argv(launch: AcpLaunch, model: Option<&str>) -> Option<String> {
     if launch.model_pins_at_spawn() {
         let raw = if is_unspecified_acp_model(model) {
@@ -425,9 +352,6 @@ pub fn acp_spawn_model_for_argv(launch: AcpLaunch, model: Option<&str>) -> Optio
     }
 }
 
-/// Argv for one ACP candidate, inserting `--model <id>` only where supported.
-///
-/// `agent acp` → `agent --model ID acp`; a bridge with no `acp` token appends.
 pub fn acp_args_for_candidate(
     launch: AcpLaunch,
     base_args: &[&str],
@@ -453,7 +377,6 @@ pub fn acp_args_for_candidate(
     args
 }
 
-/// True when a harness-reported model satisfies an unspecified / Auto Cursor attach.
 pub fn cursor_unspecified_spawn_satisfied(applied_model: &str) -> bool {
     let Some(applied_intent) = parse_cursor_model_intent(applied_model) else {
         return false;
@@ -477,7 +400,6 @@ pub fn cursor_unspecified_spawn_satisfied(applied_model: &str) -> bool {
 pub struct AgentLaunch {
     pub worktree_path: String,
     pub prompt: String,
-    /// Operator-chosen Cursor model; `None` uses [`CURSOR_DEFAULT_MODEL`].
     pub model: Option<String>,
 }
 

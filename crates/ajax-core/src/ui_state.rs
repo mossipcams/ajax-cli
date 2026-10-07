@@ -13,11 +13,6 @@ pub enum TaskStatus {
     Unknown,
 }
 
-/// Which of the operator's four questions this task answers. Precedence
-/// mirrors `derive_task_status`: an actionable gate is checked BEFORE the
-/// review boundary, or a card reading "Waiting for approval" files under
-/// review. Lifecycle is read directly so an acknowledged reviewable task
-/// stays in `Review` instead of sinking to `Idle`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AttentionBand {
@@ -65,10 +60,6 @@ impl TaskStatus {
 pub struct OperatorStatus {
     pub status: TaskStatus,
     pub explanation: Option<String>,
-    /// True when this is an actionable operator-attention state — an `Error`, or
-    /// a genuine input/approval `Waiting` — that should phone-ping. Derived from
-    /// structured evidence at projection time; the notifier reads this field, it
-    /// never matches the explanation string.
     pub actionable: bool,
 }
 
@@ -76,7 +67,6 @@ pub fn derive_operator_status(task: &Task) -> OperatorStatus {
     derive_task_status(task)
 }
 
-/// Error: always actionable.
 fn err(explanation: impl Into<String>) -> OperatorStatus {
     OperatorStatus {
         status: TaskStatus::Error,
@@ -85,7 +75,6 @@ fn err(explanation: impl Into<String>) -> OperatorStatus {
     }
 }
 
-/// Running: never actionable.
 fn run(explanation: impl Into<String>) -> OperatorStatus {
     OperatorStatus {
         status: TaskStatus::Running,
@@ -94,7 +83,6 @@ fn run(explanation: impl Into<String>) -> OperatorStatus {
     }
 }
 
-/// Actionable Waiting: a real operator input/approval gate — phone-pings.
 fn ping(explanation: impl Into<String>) -> OperatorStatus {
     OperatorStatus {
         status: TaskStatus::Waiting,
@@ -103,9 +91,6 @@ fn ping(explanation: impl Into<String>) -> OperatorStatus {
     }
 }
 
-/// Soft Waiting: visible as Waiting but not a personal attention gate (auth,
-/// rate limit, context limit, response-ready, ready-for-review, delegated) —
-/// no phone-ping.
 fn soft(explanation: impl Into<String>) -> OperatorStatus {
     OperatorStatus {
         status: TaskStatus::Waiting,
@@ -131,14 +116,10 @@ fn unknown() -> OperatorStatus {
 }
 
 fn derive_task_status(task: &Task) -> OperatorStatus {
-    // 0. TeardownIncomplete is always an error (requirement 11).
     if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
         return err("Teardown incomplete");
     }
 
-    // 1. Terminal/cleanup lifecycle decides whether runtime substrate is still
-    //    expected. Once merged or being cleaned up, a missing tmux session,
-    //    task window, worktree, or branch is normal — not an error (req 7, 10).
     let resources_expected = !matches!(
         task.lifecycle_status,
         LifecycleStatus::Merged
@@ -147,9 +128,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
             | LifecycleStatus::Removed
     );
 
-    // 2-4. Missing required substrate, an unobservable probe, or a checkout
-    //      mismatch are errors only while the lifecycle still expects those
-    //      resources (requirements 8-10).
     if resources_expected {
         if let Some(explanation) = canonical_missing_substrate_explanation(task) {
             return err(explanation);
@@ -162,8 +140,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         }
     }
 
-    // 5. Relevant GitHub failure/conflict (and other error-class live status)
-    //    overrides the native agent phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
         if let Some(explanation) = canonical_error_explanation(live.kind) {
             return err(explanation);
@@ -182,9 +158,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         return err("Task failed");
     }
 
-    // 6/9. Running: GitHub pending (CiPending, "CI running") or a native running
-    //      phase. Passing CI is not represented here — it clears the override
-    //      and reveals the native phase (requirement 6).
     if let Some(live) = task.live_status.as_ref() {
         if let Some(explanation) = canonical_running_explanation(live.kind) {
             return run(explanation);
@@ -196,8 +169,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         return run("Agent working");
     }
 
-    // 14. Terminal/cleanup lifecycles are idle unless running/error overrode
-    //     them above (requirement 10).
     if !resources_expected {
         return idle();
     }
@@ -205,7 +176,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     let live_acknowledged = live_evidence_is_acknowledged(task);
     if !live_acknowledged {
         if let Some(live) = task.live_status.as_ref() {
-            // Delegated waiting is on children, not the operator — soft.
             if let Some(explanation) =
                 crate::agent_status::operator_explanation_for_summary(&live.summary)
             {
@@ -221,7 +191,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         }
     }
 
-    // Lifecycle review boundary is Waiting in the UI but not a personal ping.
     if matches!(
         task.lifecycle_status,
         LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
@@ -242,10 +211,6 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         return soft("Response ready");
     }
 
-    // 16. An operational task with no status evidence at all cannot be proven
-    //     Running, Waiting, Done, or Error — report Unknown rather than pretend
-    //     it is at rest (precedence step 6). Every other resting state (terminal
-    //     lifecycle, acknowledged waiting, any live status) is Idle above/here.
     if matches!(
         task.lifecycle_status,
         LifecycleStatus::Active | LifecycleStatus::Waiting
@@ -257,24 +222,12 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     idle()
 }
 
-/// Metadata key stamped by runtime refresh while the launch wrapper reports a
-/// fresh live process. This is precedence tier 3: it proves the process exists
-/// and never asserts activity, so it can rule out `Unknown` but never produce
-/// `Running`.
 pub const AGENT_PROCESS_ALIVE_KEY: &str = "agent_process_alive_at";
 
-/// True when refresh last saw a fresh launch-wrapper heartbeat for this task.
-///
-/// Presence alone is the signal: refresh writes the key only while the
-/// heartbeat is inside `agent_status::PROCESS_LIVENESS_FRESH_FOR` and removes
-/// it otherwise, which keeps this projection free of any notion of "now".
 pub fn agent_process_is_alive(task: &Task) -> bool {
     task.metadata.contains_key(AGENT_PROCESS_ALIVE_KEY)
 }
 
-/// True when a task carries no agent-status evidence of any kind: no live
-/// status, an unstarted agent, no running/waiting side flags, and no confirmed
-/// live process.
 fn has_no_status_evidence(task: &Task) -> bool {
     task.live_status.is_none()
         && task.agent_status == AgentRuntimeStatus::NotStarted
@@ -311,9 +264,6 @@ fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {
     }
 }
 
-/// Waiting-class explanation and whether it is an actionable operator gate.
-/// Approval/input are actionable (phone-ping); auth, rate limit, context limit,
-/// and response-ready are soft — visible as Waiting but not personal attention.
 fn canonical_waiting_explanation(kind: LiveStatusKind) -> Option<(&'static str, bool)> {
     match kind {
         LiveStatusKind::WaitingForApproval => Some(("Waiting for approval", true)),

@@ -1,8 +1,3 @@
-/**
- * Buffer-level lock for seed-window scrollOnErase latching.
- * Permanent scrollOnErase dumps live ED2 frames into scrollback; bootstrap-only
- * keeps attach seed preservation without polluting history.
- */
 import { beforeAll, describe, expect, it } from "vitest";
 import { detectCsiEraseInDisplay } from "@/shared/lib/detectCsiEraseInDisplay";
 import { Terminal } from "@xterm/xterm";
@@ -129,7 +124,6 @@ describe("scrollOnErase bootstrap latch", () => {
   it("latching off before the first ED2 wipes seed instead of preserving it", async () => {
     const { term, host } = await openTerm({ scrollOnEraseInDisplay: true });
     await seedHistory(term, 8);
-    // Premature reveal-time latch (the race): ED2 then clears without scrollback push.
     term.options.scrollOnEraseInDisplay = false;
     await write(term, "\x1b[H\x1b[2J");
     await write(term, "LIVE-WIPED\r\n");

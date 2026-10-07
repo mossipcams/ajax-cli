@@ -1,15 +1,8 @@
-// Browser-native continuous speech capture + authenticated STT WebSocket transport.
-// No model, WebGPU, service worker, or PTY writes.
-
 const STT_PROTOCOL_VERSION = 1;
 const TARGET_SAMPLE_RATE = 16_000;
-// ~2 s of 16 kHz mono PCM16; matches server max_buffered_audio_ms default (2000).
 const MAX_BUFFERED_AUDIO_BYTES = 64_000;
-/** Client-side queue bound: ~2 s of 20 ms frames. */
 const MAX_QUEUED_AUDIO_FRAMES = 100;
-/** Fail after sustained inability to drain for this long. */
 const BACKPRESSURE_FAIL_MS = 1_500;
-/** Server caps one audio frame at 640 PCM bytes; 320 samples of PCM16 = 20 ms. */
 const MAX_AUDIO_FRAME_SAMPLES = 320;
 const FINALIZATION_TIMEOUT_MS = 5_000;
 const DEFAULT_PAUSE_GRACE_PERIOD_MS = 9_000;
@@ -51,7 +44,6 @@ export interface SpeechTransportCallbacks {
   onSpeechEnded: () => void;
   onError: (message: string) => void;
   onClosed: () => void;
-  /** Optional visible warning before hard failure (sustained backpressure). */
   onBackpressureWarning?: (message: string) => void;
 }
 
@@ -62,7 +54,6 @@ export interface SpeechTransport {
   sessionId(): string | undefined;
 }
 
-/** Binary STT audio frame: big-endian u32 sequence + raw PCM16 samples. */
 export function encodeSpeechAudioFrame(
   sequence: number,
   pcm: Int16Array,
@@ -90,8 +81,6 @@ export function newSessionId(): string {
     if (typeof crypto.randomUUID === "function") {
       return crypto.randomUUID();
     }
-    // randomUUID requires a secure context, and the cockpit is reachable over
-    // plain http on a LAN. getRandomValues has no such requirement.
     if (typeof crypto.getRandomValues === "function") {
       const bytes = crypto.getRandomValues(new Uint8Array(16));
       const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -140,7 +129,6 @@ function quantizePcm16(samples: Float32Array): Int16Array {
   return pcm;
 }
 
-/** Resample mono float samples to 16 kHz PCM16 with bounded linear conversion. */
 export function floatSamplesToPcm16(
   samples: Float32Array,
   inputSampleRate: number,
@@ -160,7 +148,6 @@ export function floatSamplesToPcm16(
 
   const downsampled = new Float32Array(outputLength);
   for (let index = 0; index < outputLength; index += 1) {
-    // Center each output sample in its source bin for stable decimation.
     const srcPos = index * ratio + (ratio - 1) / 2;
     const left = Math.max(0, Math.min(samples.length - 1, Math.floor(srcPos)));
     const right = Math.min(samples.length - 1, left + 1);
@@ -184,7 +171,6 @@ function createBrowserAudioCapture(
   }
   const context = new AudioContextCtor();
   const source = context.createMediaStreamSource(stream);
-  // ScriptProcessor remains the broadest iOS Safari fallback for raw PCM taps.
   const processor = context.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = (event) => {
     const input = event.inputBuffer.getChannelData(0);
@@ -202,17 +188,14 @@ function createBrowserAudioCapture(
       try {
         processor.disconnect();
       } catch {
-        // already disconnected
       }
       try {
         muteGain.disconnect();
       } catch {
-        // already disconnected
       }
       try {
         source.disconnect();
       } catch {
-        // already disconnected
       }
       void context.close();
     },
@@ -251,7 +234,6 @@ export function createBrowserSpeechPlatform(): SpeechTransportPlatform {
 }
 
 export type CreateSpeechTransportOptions = {
-  /** Shared with the TaskTerminal speech reducer when provided. */
   sessionId?: string;
 };
 
@@ -295,7 +277,6 @@ export function createSpeechTransport(
     backpressureWarned = false;
   }
 
-  /** Shared cleanup for cancel, finalize-complete, provider error, and visibility. */
   function teardown(options: {
     closeSocket: boolean;
     invalidateSession: boolean;
@@ -309,7 +290,6 @@ export function createSpeechTransport(
       try {
         socket.close();
       } catch {
-        // ignore close races
       }
     }
     if (options.closeSocket) {
@@ -516,9 +496,6 @@ export function createSpeechTransport(
     if (!socket || socket.readyState !== OPEN_READY_STATE) return;
     const pcm = floatSamplesToPcm16(samples, inputSampleRate);
     if (pcm.length === 0) return;
-    // The server rejects any frame carrying more than MAX_AUDIO_FRAME_SAMPLES of
-    // PCM. One capture callback resamples to far more than that (a 4096-sample
-    // buffer at 48 kHz yields 1365 samples), so split it into wire-sized frames.
     for (let offset = 0; offset < pcm.length; offset += MAX_AUDIO_FRAME_SAMPLES) {
       const chunk = pcm.subarray(offset, offset + MAX_AUDIO_FRAME_SAMPLES);
       const frame = encodeSpeechAudioFrame(nextSequence, chunk);
@@ -661,7 +638,6 @@ export function createSpeechTransport(
       try {
         sendControl("stt.cancel");
       } catch {
-        // ignore
       }
     }
     finalizationComplete = true;

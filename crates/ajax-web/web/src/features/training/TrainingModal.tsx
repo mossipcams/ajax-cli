@@ -35,7 +35,6 @@ function progressWidth(fraction: number): string {
   return `${Number(percent.toFixed(1))}%`;
 }
 
-/** Noun-first select-then-confirm sheet for the local training stack. */
 export default function TrainingModal({ open, onOpenChange }: Props) {
   const { status, error, refresh } = useTrainingStatus(open);
   const [models, setModels] = useState<trainingApi.TrainingModels | null>(null);
@@ -53,7 +52,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         setModels(result);
       })
       .catch(() => {
-        /* status banner surfaces failures; the models list simply stays empty */
       });
     return () => {
       cancelled = true;
@@ -66,7 +64,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
 
   const run = status?.run ?? null;
   const generation = status?.generation ?? null;
-  // The GPU host records a live job only as `train:<label> ...` when it sends no run object.
   const trainLabel = status?.state.startsWith("train:")
     ? status.state.slice("train:".length).split(" ")[0]
     : null;

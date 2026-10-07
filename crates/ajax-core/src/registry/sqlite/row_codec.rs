@@ -180,7 +180,6 @@ pub(crate) fn task_window_status_from_row(
     }))
 }
 
-/// Reads a nullable column that must be present, mapping `NULL` to a decode error.
 pub(crate) fn req<T: rusqlite::types::FromSql>(
     row: &Row<'_>,
     name: &str,

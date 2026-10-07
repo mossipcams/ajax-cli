@@ -1,4 +1,3 @@
-/** True when a host `error` event should revert an optimistic in-session model change. */
 export function isSessionModelChangeFailure(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (!normalized) return false;
@@ -16,7 +15,6 @@ export function isSessionModelChangeFailure(message: string): boolean {
   return false;
 }
 
-/** Config-option apply failures surface as dismissable notices (AoE contract). */
 export function isSessionConfigChangeFailure(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (!normalized) return false;

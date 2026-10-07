@@ -241,11 +241,6 @@ fn rooted_runtime_recovery_ignores_legacy_sibling_worktrees() {
     assert!(context.registry.get_task(&TaskId::new("web/c")).is_none());
 }
 
-/// A task provisioned with `AgentRunning` whose agent then went away without
-/// leaving a single trace — no native observation, no wrapper liveness, no
-/// alive-process marker — must not keep reporting "Agent working". Every
-/// source that could retract the claim is silent, so the refresh itself has to
-/// retract it or the operator surfaces lie indefinitely.
 #[test]
 fn exited_agent_is_not_projected_as_running_after_refresh() {
     let mut context = context_with_active_task();
@@ -272,8 +267,6 @@ fn exited_agent_is_not_projected_as_running_after_refresh() {
     );
     let mut runner = HealthyRefreshRunner::default();
 
-    // NoAgentStatusSource: no observations and no process liveness, matching a
-    // pane whose agent exited long ago.
     refresh_runtime_context_with_tier(
         &mut context,
         &mut runner,
@@ -295,9 +288,6 @@ fn exited_agent_is_not_projected_as_running_after_refresh() {
     );
 }
 
-/// The retraction above must not fire while the wrapper still reports the
-/// process alive: that is real evidence, and clearing on it would flap a
-/// live-but-quiet agent back to idle every refresh.
 #[test]
 fn live_process_evidence_preserves_running_projection() {
     let mut context = context_with_active_task();
@@ -328,9 +318,6 @@ fn live_process_evidence_preserves_running_projection() {
     );
 }
 
-/// A live status is a newer observation than provisioning, so the retraction
-/// must defer to the live-status machinery that owns it. Without this the
-/// steady-state running task flaps to idle on every hook-silent refresh.
 #[test]
 fn fresh_agent_status_preserves_running_projection() {
     let mut context = context_with_unchanged_running_task();
@@ -347,9 +334,6 @@ fn fresh_agent_status_preserves_running_projection() {
     assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
 }
 
-/// A provisioned ACP task has no agent pane, so the pane classifier has nothing
-/// true to say about it. Its run state comes from the ACP host as authoritative
-/// evidence; a refresh must not overwrite that with a shell reading.
 #[test]
 fn provisioned_task_uses_acp_run_state_instead_of_shell_guess() {
     use crate::live;
@@ -382,7 +366,6 @@ fn provisioned_task_uses_acp_run_state_instead_of_shell_guess() {
     let mut task = task_with_live(LiveStatusKind::AgentRunning, "Agent working");
     task.set_skip_interactive_agent(true);
     let task_id = task.id.clone();
-    // The ACP host's report, applied the way the session slice applies it.
     live::apply_authoritative_observation_at(
         &mut task,
         LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working"),
@@ -403,8 +386,6 @@ fn provisioned_task_uses_acp_run_state_instead_of_shell_guess() {
     );
 }
 
-/// #1069: once the ACP host reports `turn_end`, runtime refresh must not restore
-/// `Agent working` from an idle shell or stale side flag.
 #[test]
 fn issue_1069_refresh_preserves_acp_done_after_turn_end() {
     use crate::live;

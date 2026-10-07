@@ -1,6 +1,3 @@
-// Round 8 — HIGH-severity hunts only (wrong-task side effects, stuck UI, truth clobber).
-// Skip latch nits. AJAX_CHAOS=1 npm run web:test -- --run src/features/task/useTaskDetailResource.severe.test.tsx
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import taskDetailFixture from "@/fixtures/task-detail.json";
@@ -56,7 +53,6 @@ describe.runIf(chaos)("useTaskDetailResource SEVERE", () => {
       task_handle: "ajax-cli/grdt",
     });
 
-    // Operator leaves before resume returns.
     rerender({ handle: null });
 
     await act(async () => {
@@ -71,10 +67,6 @@ describe.runIf(chaos)("useTaskDetailResource SEVERE", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Product expectation: abandoning the task must not apply its resume cockpit
-    // and ideally should not leave a fire-and-forget resume mutation outstanding
-    // without cancellation. At minimum, cockpit from the abandoned resume must
-    // not clobber dashboard truth.
     expect(applyCockpit).not.toHaveBeenCalled();
   });
 
@@ -95,7 +87,6 @@ describe.runIf(chaos)("useTaskDetailResource SEVERE", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
 
-    // Eternal loading with null data = stuck skeleton with no Retry (#797 class).
     expect(result.current.detail.status).not.toBe("loading");
     expect(result.current.detail.status).toBe("error");
   });

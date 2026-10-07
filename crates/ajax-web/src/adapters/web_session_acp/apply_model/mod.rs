@@ -1,6 +1,3 @@
-//! Apply operator model pins after ACP session/new or resume/load and read back
-//! the harness-reported applied id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
-
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
     apply_steps_needing_send, build_set_config_request, is_unspecified_model,
@@ -9,9 +6,6 @@ use super::config_options::{
     validate_config_change, ConfigApplyStep,
 };
 
-/// Build every advertised apply step for one desired pin.
-///
-/// Cursor reasoning versus effort encoding is centralized here (#1010).
 pub fn desired_pin_to_apply_steps(
     options: &[SessionConfigOption],
     desired: &str,
@@ -27,15 +21,11 @@ use serde_json::Value;
 use super::client::HANDSHAKE_TIMEOUT;
 
 pub struct ApplyModelOutcome {
-    /// Model option `currentValue` after handshake and any in-band apply.
     pub applied_model: String,
-    /// Complete advertised list after the last successful set_config response.
     pub config_options: Option<Vec<SessionConfigOption>>,
-    /// Typed error when an explicit operator pin was refused or could not be proven.
     pub error: Option<String>,
 }
 
-/// Apply one advertised `{ configId, value }` on a live session (AoE contract).
 pub async fn apply_config_option(
     connection: &ConnectionTo<Agent>,
     session_id: &str,
@@ -88,7 +78,6 @@ pub async fn apply_config_option(
     }
 }
 
-/// True when the harness-reported applied id satisfies the operator pin (string fallback).
 pub fn operator_pin_satisfied(
     operator_pin: &str,
     applied_model: &str,
@@ -111,7 +100,6 @@ pub fn operator_pin_satisfied(
     operator_pin.trim() == applied_model.trim()
 }
 
-/// Read the model id a harness advertises as currently applied on the handshake.
 pub fn read_applied_model(
     session_result: &Value,
     config_options: Option<&[SessionConfigOption]>,
@@ -146,8 +134,6 @@ async fn apply_in_band(
     config_options: Option<Vec<SessionConfigOption>>,
 ) -> Result<(String, Vec<SessionConfigOption>), String> {
     let mut latest = config_options.unwrap_or_default();
-    // ponytail: bounded rounds — model set_config can reset sibling options so we
-    // re-filter after each response instead of trusting the pre-apply skip list.
     const MAX_ROUNDS: usize = 8;
     for _ in 0..MAX_ROUNDS {
         let pending = apply_steps_needing_send(&latest, steps);
@@ -163,7 +149,6 @@ async fn apply_in_band(
     Ok((applied, latest))
 }
 
-/// Apply `desired_model` when advertised and return the harness-reported applied id.
 pub async fn apply_model_pin(
     connection: &ConnectionTo<Agent>,
     session_id: &str,
@@ -251,8 +236,6 @@ pub async fn apply_model_pin(
         };
     }
 
-    // Bridge controls depend on the current model (#1145). Select the advertised
-    // base first, then validate the remaining pin against its returned controls.
     if !model_pins_at_spawn {
         if let (Some(selection), Some(model)) = (
             ajax_core::adapters::parse_model_selection(raw),

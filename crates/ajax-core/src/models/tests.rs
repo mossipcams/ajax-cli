@@ -42,7 +42,6 @@ fn task_attention_acknowledgment_uses_latest_timestamp() {
     task.record_attention_acknowledgment(later);
     assert_eq!(task.attention_acknowledged_at, Some(later));
 
-    // An earlier acknowledgment must not override the newer one.
     task.record_attention_acknowledgment(earlier);
     assert_eq!(task.attention_acknowledged_at, Some(later));
 }

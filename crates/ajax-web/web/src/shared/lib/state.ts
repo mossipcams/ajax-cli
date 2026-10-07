@@ -1,12 +1,5 @@
-// Transient, presentation-only UI state helpers. Pure functions only — no task
-// truth, no optimistic mutation, no lifecycle inference. Every value here is a
-// view over server-projected data the browser may select, filter, sort, or
-// bound, but never author.
-
 import type { BrowserTaskCard, TaskStatus } from "./types";
 
-/** Status tone + label for badges/dots. The browser only renders the canonical
- * TaskStatus contract; Rust owns derivation. */
 export interface StatusMeta {
   tone: TaskStatus;
   label: string;
@@ -29,7 +22,6 @@ export function statusMeta(status: string): StatusMeta {
   return { tone, label: STATUS_LABELS[tone] };
 }
 
-/** Presentation-only ordering. NOT a priority policy (that lives in Rust). */
 export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle", "unknown"];
 
 export function statusRank(status: string): number {
@@ -45,7 +37,6 @@ export function filterByProject(
   return cards.filter((card) => card.repo === project);
 }
 
-/** TaskList bands: Active = non-idle (unknown stays Active); Idle = idle only. */
 function sectionRank(status: string): number {
   return (status || "").toLowerCase() === "idle" ? 1 : 0;
 }
@@ -83,8 +74,6 @@ export function isConfirmExpired(entry: { expiresAt: number }, now: number): boo
   return now > entry.expiresAt;
 }
 
-/** Compact relative timestamp for glanceable metadata: "now", "5m ago",
- * "2d ago". Unset (zero) timestamps render as "—"; clock skew clamps to "now". */
 export function relativeTime(unixSecs: number, nowSecs: number): string {
   if (!unixSecs) return "—";
   const delta = Math.max(0, nowSecs - unixSecs);
@@ -94,7 +83,6 @@ export function relativeTime(unixSecs: number, nowSecs: number): string {
   return `${Math.floor(delta / 86400)}d ago`;
 }
 
-/** Compact duration: "42s", "3m", "1h 12m". */
 export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   if (total < 60) return `${total}s`;

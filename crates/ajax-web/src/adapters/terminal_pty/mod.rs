@@ -1,5 +1,3 @@
-//! PTY-backed tmux attach for the browser task terminal bridge.
-
 mod attach;
 mod bridge;
 

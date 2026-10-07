@@ -47,15 +47,6 @@ pub enum MonitorEvent {
     Process(ProcessEvent),
 }
 
-/// Map a monitor event onto a live observation.
-///
-/// Event payloads are typed at the source (supervisor/agent parsers, process
-/// exit, git snapshots), so text payloads are never keyword-classified here:
-/// agent prose about failures, conflicts, or questions is not status
-/// evidence. Text-bearing events fall back to their structural meaning — a
-/// message is agent activity, a tool call is a running command, stderr is
-/// process output — and only genuinely terminal events (exit, completion,
-/// failure, hang, git conflict flag) assert actionable states.
 pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservation> {
     match event {
         MonitorEvent::Agent(AgentEvent::Started { .. })
@@ -178,10 +169,6 @@ fn apply_git_snapshot_to_task(task: &mut crate::models::Task, status: GitStatus)
     task.apply_git_status(status);
 }
 
-/// A tool call carries the *invocation the agent is executing* (tool name
-/// plus command/path), which is structured evidence — unlike prose. When
-/// that invocation is a test-runner command, the observation is
-/// `TestsRunning`; anything else is a generic running command.
 fn tool_call_observation(name: &str) -> LiveObservation {
     if invokes_test_runner(name) {
         LiveObservation::new(
@@ -277,8 +264,6 @@ mod tests {
         assert!(!task.has_side_flag(SideFlag::NeedsInput));
     }
 
-    /// Message text is agent prose, never prompt evidence: a Codex composer
-    /// pasted into a message is activity, not a waiting state.
     #[test]
     fn message_text_is_never_prompt_classified() {
         let mut task = task();
@@ -372,11 +357,6 @@ mod tests {
         }
     }
 
-    /// Text payloads are agent prose or process output, never status
-    /// evidence: messages stay activity, process output stays process
-    /// activity, and a failed event is a plain command failure regardless of
-    /// which keywords its message contains. Actionable states come from
-    /// typed events and substrate evidence, not text classification.
     #[test]
     fn text_bearing_monitor_events_never_assert_actionable_states() {
         for (event, expected) in [

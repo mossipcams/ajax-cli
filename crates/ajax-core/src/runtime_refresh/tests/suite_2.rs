@@ -119,7 +119,6 @@ fn ack_blocked_pane_wait_does_not_fall_through_to_agent_running() {
         "waiting for approval",
     ));
     task.live_status_observed_at = Some(SystemTime::now() - Duration::from_secs(30));
-    // Future ack makes pane Waiting blocked_by_ack (`now <= ack`).
     task.record_attention_acknowledgment(SystemTime::now() + Duration::from_secs(3600));
     let mut runner = PermissionMenuRunner::default();
     let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
@@ -304,8 +303,6 @@ fn claude_unknown_phase_preserves_prior_waiting_live_status() {
     task.add_side_flag(SideFlag::NeedsInput);
     task.remove_side_flag(SideFlag::AgentRunning);
     let mut runner = PermissionMenuRunner::default();
-    // Liveness without lifecycle observations → reducer Unknown. Claude has no
-    // capability-gated unknown fallback; must not apply Unknown / clear waiting.
     let cache = ObsSource::new(vec![]).with_liveness(ProcessLiveness {
         alive: true,
         observed_at: SystemTime::now(),
@@ -424,7 +421,6 @@ fn steady_state_refresh_operation_budget() {
         .count();
 
     assert_eq!(git_worktree_lists, 0);
-    // Working Codex opens the running-reconcile capture gate once.
     assert_eq!(capture_panes, 1);
     assert!(
         tmux_commands <= 2,

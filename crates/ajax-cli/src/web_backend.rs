@@ -239,8 +239,6 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        // Attention delivery is owned by ajax-web declarative push.
-        // CLI must not take_attention_transition or it would stamp without pushing.
         let _ = deliver_notifications;
         if reloaded || state_changed {
             self.persist_changed_state(context)
@@ -317,12 +315,6 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         context: &CommandContext<InMemoryRegistry>,
         qualified_handle: &str,
     ) -> bool {
-        // Coalesce per episode: only acknowledge when there is live waiting
-        // evidence observed strictly after the last acknowledgment, so repeat
-        // operator typing without newer evidence does not re-persist the
-        // registry. (Some(_), None) means the task has live evidence and was
-        // never acknowledged; that is actionable. No live evidence yet means
-        // there is nothing for the operator to acknowledge.
         context
             .registry
             .list_tasks()

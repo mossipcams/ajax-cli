@@ -1,5 +1,3 @@
-//! Validate browser prompt content blocks and map them to ACP `ContentBlock`s.
-
 use crate::adapters::web_session_acp::PromptCapabilityDescriptor;
 use agent_client_protocol::schema::v1::{
     BlobResourceContents, ContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent,
@@ -8,7 +6,6 @@ use agent_client_protocol::schema::v1::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-/// Per-frame WebSocket ceiling for session client prompts (mirrors browser transport).
 pub(crate) const MAX_PROMPT_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_IMAGE_BLOCKS: usize = 8;
 const PROMPT_FRAME_HEADROOM_BYTES: usize = 4096;

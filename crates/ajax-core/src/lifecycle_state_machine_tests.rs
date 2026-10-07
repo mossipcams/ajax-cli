@@ -1,8 +1,3 @@
-//! Strict state-machine / property oracles for lifecycle + substrate truth.
-//!
-//! Durable facts (tmux/git/window status + side flags) must win over stale
-//! `LiveStatusKind::*Missing` observations for operator actions and blockers.
-
 use crate::lifecycle::{
     hydrate_lifecycle_status, mark_active, transition_lifecycle, validate_lifecycle_transition,
     LifecycleTransitionReason,
@@ -299,7 +294,6 @@ proptest! {
                 continue;
             }
 
-            // Stale live *Missing must not invent missing substrate against durable facts.
             prop_assert!(
                 !task.has_missing_substrate(),
                 "has_missing_substrate true despite durable present; live={:?}",

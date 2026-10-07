@@ -1,5 +1,3 @@
-//! Unit and fake-stdio integration tests for [`super::client`].
-
 use super::client::{AcpClientEvent, AcpStdioClient};
 use super::sdk_connection::preferred_permission_config;
 use super::{with_test_acp_extra_args, with_test_acp_program};
@@ -245,8 +243,6 @@ fn trusted_permission_config_picks_first_advertised_full_access_value() {
     );
 }
 
-// Regression: Cursor spawn must apply advertised full-access mode via official
-// session/set_config_option {configId: mode, value: agent}, not session/set_mode.
 #[test]
 fn cursor_applies_full_access_mode_in_band_when_advertised() {
     let dir = scratch_dir("mode-cursor-agent");
@@ -291,9 +287,6 @@ fn request_permission_response_serializes_official_acp_outcome_shape() {
     );
 }
 
-/// Cursor validates `session/new` params and rejects a missing
-/// `mcpServers` with an opaque JSON-RPC "Internal error", so the session
-/// could never start. Keep the key present and an array.
 #[test]
 fn session_new_params_carry_mcp_servers_array() {
     let params = serde_json::to_value(NewSessionRequest::new("/repo/worktree")).unwrap();
@@ -365,7 +358,6 @@ fn fake_spawn_sends_no_nonstandard_initialized_notification() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #880: ACP peers must agree on the initialize protocolVersion.
 #[test]
 fn fake_spawn_rejects_an_unsupported_protocol_version() {
     let dir = scratch_dir("unsupported-protocol");
@@ -405,7 +397,6 @@ fn invalid_initialize_response_includes_the_agent_stderr_hint() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #880: invalid stdout is a protocol error, not ignorable noise.
 #[test]
 fn fake_malformed_stdout_reports_an_error() {
     let dir = scratch_dir("malformed-stdout");
@@ -448,8 +439,6 @@ fn fake_begin_prompt_receives_pong_and_turn_end() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #880: trusted Ajax Chat auto-approves ACP permission requests on
-// the host without surfacing an operator prompt.
 #[test]
 fn fake_permission_request_auto_selects_allow_once_without_operator_response() {
     let dir = scratch_dir("permission-auto-allow-once");
@@ -626,7 +615,6 @@ fn fake_second_begin_prompt_while_in_flight_returns_err() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1031: resume/load transcript replay must not reach JSONL after install.
 #[test]
 fn fake_resume_drains_replayed_session_updates() {
     let dir = scratch_dir("resume-drain");

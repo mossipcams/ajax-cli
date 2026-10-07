@@ -3,50 +3,10 @@ import { readFileSync, statSync } from "node:fs";
 // @ts-expect-error ponytail: test-only filesystem loader; @types/node is not in web:check scope
 import { dirname, join } from "node:path";
 
-/** Measured baseline captured in T0/T3 — update only after an intentional CSS change. */
 export const BASELINE = {
-  /** Sum of styles.css + imported module bytes after T5 measured optimization.
-   * Re-measured when Effort / Fast chips sat above the model list's iOS
-   * overflow hit target so taps could change the selection.
-   * Re-measured when model-list scroll hit targets were restored (#1022).
-   * Re-measured again after pass-2 tool disclosure styling.
-   * Re-measured after waiting-pill glyph fix (mossipcams/ajax-cli#1020).
-   * Re-measured after chat elicitation and output-content owned modules.
-   * Re-measured after composer hotbar CSS and session tap-dismiss shell height
-   * (mossipcams/ajax-cli#1032).
-   * Re-measured after stacked composer hotbar above full-width message row.
-   * Re-measured after home-indicator inset moved into textarea row (#1034).
-   * Re-measured after flush-bottom composer and trailing hotbar action cluster.
-   * Re-measured after session closed-keyboard CSS lock on app-viewport (#1032).
-   * Re-measured after closed-keyboard session overflow chain 100lvh stretch.
-   * Re-measured after closed-keyboard session band uses lvh minus home inset.
-   * Re-measured after the live head stopped reprinting the transcript's tool
-   * row: `.session-tool*` and `.session-head-thought` lost their only
-   * consumer.
-   * Re-measured after removing dead `.detail-session-title` (PR #1056).
-   * Re-measured after page cross-slide host CSS and chat swipe compositor hints (#1070).
-   * Re-measured after cross-slide idle wrappers use display:contents (#1074).
-   * Re-measured after outlet flex selectors use descendant combinator (#1074).
-   * Re-measured after settled assistant prose copy control (in-flow `.pill`).
-   * Re-measured after live assistant row pending indicator (paragraph gate).
-   * Re-measured after the turn-disclosure comment caught up with always-visible
-   * tool rows (comment text only; built CSS is unchanged).
-   * Re-measured after chronological chat scroll and Load earlier CSS (#1088).
-   * Re-measured after the turn-disclosure comment in conversation.css grew to
-   * describe collapsed settled/live tool rows (comment text only; built CSS
-   * is unchanged).
-   * Re-measured after task-row swipe reveal sits behind the full-width row.
-   * Re-measured after workspace layout CSS included in combined stylesheet.
-   * Built app.css bytes re-measured after swipe-reveal dashboard layout CSS.
-   * Re-measured after markdown wrap CSS (overflow-wrap / word-break for prose).
-   * Re-measured after touch momentum scrolling for tool and diff bodies (#1153).
-   * Re-measured after explicit ACP restore recovery actions (#1152).
-   * Re-measured after removing side-tab accents from activity cards.
-   * Re-measured after inline pi context usage meter in the live head.
-   * Re-measured after moving the training modal CSS into settings.css. */
   sourceStylesCssBytes: 113_651,
-  builtAppCssBytes: 97_119,
-  builtAppCssGzipBytes: 16_225,
+  builtAppCssBytes: 97_077,
+  builtAppCssGzipBytes: 16_211,
   classSelectorLines: 643,
   hasSelectors: 18,
 } as const;
@@ -96,7 +56,6 @@ export const STYLES_SOURCE_MODULE_RELS = [
 
 export const STYLES_CSS_DIRECT_TEST_READERS = [] as const;
 
-/** Locked cascade section order — original HEAD order; update only when a wave moves rules. */
 export const LOCKED_MAJOR_SECTIONS = [
   "Base element resets",
   "TOP CHROME — sticky header stack with iOS safe-area",
@@ -147,7 +106,6 @@ export function countHasSelectors(css: string): number {
   return css.split("\n").filter((line) => line.includes(":has(")).length;
 }
 
-// Major section dividers: banner comments ending with --- in cascade order.
 export function majorCascadeSectionMarkers(css: string): string[] {
   return [...css.matchAll(/^\/\* ([^\n]+?) -{3,} \*\/\s*$/gm)].map((match) =>
     match[1].trim(),
@@ -242,7 +200,6 @@ function expandLocalStylesheetImports(
   return expanded;
 }
 
-/** Expand local @import statements in manifest order; keep package imports as statements. */
 export function readOrderedStylesSource(webSrcRoot: string): string {
   return expandLocalStylesheetImports(join(webSrcRoot, STYLES_MANIFEST_REL));
 }
@@ -254,7 +211,6 @@ export function totalStylesSourceBytes(webSrcRoot: string): number {
   );
 }
 
-/** Local `./…` @import targets declared in one stylesheet file. */
 export function localStylesheetImports(css: string): string[] {
   return stylesheetImportStatements(css)
     .map((statement) => statement.match(/@import\s+["'](\.\/[^"']+)["']/)?.[1])
@@ -342,7 +298,6 @@ export function stylesImportGraph(webSrcRoot: string): Map<string, string[]> {
   return graph;
 }
 
-/** Visit counts starting from the manifest; each owned module must appear once. */
 export function stylesManifestReachCounts(webSrcRoot: string): Map<string, number> {
   const counts = new Map<string, number>();
   const visit = (moduleRel: string) => {

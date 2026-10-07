@@ -13,13 +13,6 @@ function isIncompatibleResponse(error: Error): boolean {
   return (error as Error & { kind?: string }).kind === "incompatible";
 }
 
-/**
- * Whole-app boundary. It previously discarded the error and rendered
- * "Incompatible server response" for *every* crash, so a render bug was
- * indistinguishable from a real contract failure and the message actively
- * pointed diagnosis at the server. Keep that wording only for genuine
- * contract failures, show the real message otherwise, and always log.
- */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
 

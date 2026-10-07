@@ -1,28 +1,17 @@
-//! Structural pane wait hints for capability-gated fallback.
-//!
-//! Visible-pane text is weak evidence. This module only recognizes idle
-//! question prompts and permission menus anchored to the screen bottom.
-//! It never classifies busy chrome or stream-json activity.
-
 use crate::{
     agent_capability::{profile_for_agent_client, CapabilityFact},
     live::{LiveObservation, LiveStatusKind},
     models::AgentClient,
 };
 
-/// Prompt window for bottom-anchored chrome recognition.
 const PROMPT_WINDOW: usize = 10;
 
-/// A weak wait hint derived from visible pane chrome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PaneWaitHint {
     WaitingQuestion,
     WaitingPermission,
 }
 
-/// Recognize a wait hint from visible-pane chrome only.
-///
-/// Returns `None` for empty panes, busy indicators, and stream-json events.
 pub fn recognize_wait_hint(agent: AgentClient, visible_pane: &str) -> Option<PaneWaitHint> {
     let trimmed = visible_pane.trim();
     if trimmed.is_empty() {
@@ -35,10 +24,6 @@ pub fn recognize_wait_hint(agent: AgentClient, visible_pane: &str) -> Option<Pan
     })
 }
 
-/// Capability-gated pane wait observation for refresh fallback.
-///
-/// Returns `None` when the agent profile supplies native wait evidence or the
-/// pane chrome does not match an allowed wait hint.
 pub fn maybe_pane_wait(agent: AgentClient, visible_pane: &str) -> Option<LiveObservation> {
     let hint = recognize_wait_hint(agent, visible_pane)?;
     let profile = profile_for_agent_client(agent);
@@ -63,10 +48,6 @@ pub fn maybe_pane_wait(agent: AgentClient, visible_pane: &str) -> Option<LiveObs
     }
 }
 
-/// Ungated pane wait observation for AoE-shaped running/idle reconcile.
-///
-/// Used when structured lifecycle projects activity but visible-pane chrome may
-/// still show a permission or input prompt.
 pub fn reconcile_wait_from_pane(agent: AgentClient, visible_pane: &str) -> Option<LiveObservation> {
     match recognize_wait_hint(agent, visible_pane)? {
         PaneWaitHint::WaitingPermission => Some(LiveObservation::new(
@@ -287,7 +268,6 @@ mod tests {
         assert_eq!(recognize_wait_hint(AgentClient::Other, pane), None);
     }
 
-    // Cursor and Pi fixture shapes adapted from AoE (MIT).
     #[test]
     fn client_specific_cursor_permission_chrome_is_waiting_permission() {
         let pane =

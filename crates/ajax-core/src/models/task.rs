@@ -47,10 +47,8 @@ pub struct Task {
     side_flags: BTreeSet<SideFlag>,
 }
 
-/// Registry metadata: Cursor launched without interactive agent send-keys.
 pub const SKIP_INTERACTIVE_AGENT_KEY: &str = "skip_interactive_agent";
 
-/// Registry metadata: model the operator picked for this task's agent.
 pub const SESSION_MODEL_KEY: &str = "session_model";
 
 impl Task {
@@ -98,9 +96,6 @@ impl Task {
         }
     }
 
-    /// Record that the operator acknowledged this task's attention at `at`.
-    /// Keeps the latest timestamp so an earlier acknowledgment cannot override a
-    /// newer one.
     pub fn record_attention_acknowledgment(&mut self, at: SystemTime) {
         let latest = match self.attention_acknowledged_at {
             Some(existing) if existing >= at => existing,
@@ -159,7 +154,6 @@ impl Task {
         }
     }
 
-    /// Model the operator picked for this task's agent, if any.
     pub fn session_model(&self) -> Option<&str> {
         self.metadata
             .get(SESSION_MODEL_KEY)
@@ -301,9 +295,6 @@ impl Task {
         self.refresh_runtime_projection();
     }
 
-    /// Durable substrate facts win over a contradictory stale live missing
-    /// observation (#788–#791). Unrefuted live missing (no durable present
-    /// evidence yet) still counts.
     fn live_reports_unrefuted_missing_substrate(&self) -> bool {
         let Some(live) = self.live_status.as_ref() else {
             return false;

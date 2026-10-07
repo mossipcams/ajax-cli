@@ -1,14 +1,3 @@
-//! ACP v1 `session/update` → browser wire event mapping.
-//!
-//! Two entry points on purpose. `map_acp_session_notification` takes the typed
-//! SDK notification and is the path every conforming harness uses.
-//! `map_acp_session_update` takes the raw JSON and covers updates the SDK could
-//! not type (`UnknownSessionUpdate`), where field names still vary by harness.
-//!
-//! What crosses this boundary decides what the chat surface can render. ACP
-//! separates message, thought, tool call, tool content, plan, permission, and
-//! usage; anything flattened here is unrecoverable in the browser.
-
 use super::output_content::{
     extract_output_block, extract_tool_content_item, map_output_block, map_output_block_to_tool,
     OutputContentBlockWire,
@@ -49,8 +38,6 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
         }],
         "state_update" | "status" => status_event(update_body),
         "usage_update" => extract_usage(update_body),
-        // Capability announcements, not conversation. Slash commands are live
-        // session state (see drain); mode/config updates are also non-transcript.
         "available_commands_update"
         | "current_mode_update"
         | "config_option_update"
@@ -64,7 +51,6 @@ pub fn map_acp_session_update(update: &Value) -> Vec<SessionServerEvent> {
     }
 }
 
-/// Map the official ACP v1 notification without erasing its typed update first.
 pub fn map_acp_session_notification(update: &SessionNotification) -> Vec<SessionServerEvent> {
     match &update.update {
         SessionUpdate::UserMessageChunk(chunk) => typed_message_event("user", chunk),
@@ -111,9 +97,6 @@ fn typed_message_event(role: &str, chunk: &ContentChunk) -> Vec<SessionServerEve
     )
 }
 
-/// Context pressure is the one number an operator steers by mid-turn, so it is
-/// a first-class event rather than an artifact blob. Cumulative cost is omitted:
-/// `ajax cost` already owns spend reporting.
 fn typed_usage_event(update: &UsageUpdate) -> Vec<SessionServerEvent> {
     if update.size == 0 {
         return Vec::new();
@@ -175,12 +158,6 @@ fn typed_tool_call_update_event(call: &ToolCallUpdate) -> Vec<SessionServerEvent
     }]
 }
 
-/// A tool call's output is the substance of a turn — the diff it wrote, the text
-/// a command printed. ACP carries it in `content`; dropping it left the browser
-/// able to say only that an edit happened.
-///
-/// `ToolCallContent::Terminal` is skipped: Ajax advertises no `terminal/*`
-/// client capability, so no agent can create a terminal to embed here.
 fn map_tool_content(content: &[ToolCallContent]) -> Vec<ToolContent> {
     content
         .iter()
@@ -240,10 +217,6 @@ fn plan_status(status: &agent_client_protocol::schema::v1::PlanEntryStatus) -> &
     }
 }
 
-/// ACP tool calls are the bulk of a turn. `tool_call` opens one and
-/// `tool_call_update` revises it, so both map to the same event keyed by
-/// `toolCallId`; the browser merges by that key and keeps the fields an update
-/// omits.
 fn tool_call_event(update_body: &Value) -> Vec<SessionServerEvent> {
     let call_id = update_body
         .get("toolCallId")
@@ -288,8 +261,6 @@ fn raw_input_from_body(update_body: &Value) -> Option<&Value> {
         .or_else(|| update_body.get("raw_input"))
 }
 
-/// Cursor often sends the path on `rawInput` while leaving `locations` empty.
-/// Derive one follow-along target so the browser row can name the file.
 fn derive_tool_locations(
     explicit: Vec<String>,
     raw_input: Option<&Value>,
@@ -361,8 +332,6 @@ fn extract_tool_locations(update_body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Untyped mirror of [`map_tool_content`], for harnesses whose update the SDK
-/// could not type. Same two shapes, same omissions.
 fn extract_tool_content(update_body: &Value) -> Vec<ToolContent> {
     update_body
         .get("content")
@@ -397,8 +366,6 @@ fn extract_tool_content(update_body: &Value) -> Vec<ToolContent> {
         .unwrap_or_default()
 }
 
-/// ACP status-like updates carry a machine `state` and sometimes a human
-/// `detail`/`label`/`title`. The browser prefers the human line in the head.
 fn status_event(update_body: &Value) -> Vec<SessionServerEvent> {
     let state = update_body
         .get("state")

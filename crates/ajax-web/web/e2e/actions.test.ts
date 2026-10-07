@@ -1,7 +1,3 @@
-// Button/action coverage suite: one test per interactive control not already
-// exercised by smoke.test.ts. Drives the real app (webkit + chromium) through
-// each button and asserts its observable effect.
-
 import { test, expect, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
@@ -9,7 +5,6 @@ import {
   mockFetch,
 } from "./fixtures";
 
-// Record clipboard writes so Copy buttons can be asserted.
 async function installClipboardSpy(page: Page) {
   await page.addInitScript(() => {
     const writes: string[] = [];
@@ -28,7 +23,6 @@ async function installClipboardSpy(page: Page) {
 const clipboardWrites = (page: Page) =>
   page.evaluate(() => (window as unknown as { __clipboardWrites: string[] }).__clipboardWrites);
 
-// Force the cockpit poll to fail so ConnectionStatus renders its action row.
 async function failCockpit(page: Page) {
   await page.addInitScript(() => {
     const orig = globalThis.fetch.bind(globalThis);
@@ -47,7 +41,6 @@ const dashboard = (page: Page) => page.locator("[data-testid='outlet-dashboard']
 const settings = (page: Page) => page.locator("[data-testid='outlet-settings']");
 const resultPanel = (page: Page) => page.locator(".result-panel");
 
-// ---- App chrome navigation ------------------------------------------------
 
 test("header Settings link opens the settings route", async ({ page }) => {
   await mockFetch(page);
@@ -69,7 +62,6 @@ test("returning from settings reaches the dashboard route", async ({ page }) => 
   await expect(dashboard(page)).toBeVisible();
 });
 
-// ---- TaskDetail -----------------------------------------------------------
 
 test("task detail Back returns to the dashboard", async ({ page }) => {
   await mockFetch(page);
@@ -98,7 +90,6 @@ test("task detail Copy buttons copy branch and worktree path", async ({ page }) 
   await expect.poll(() => clipboardWrites(page)).toContain("/repo/web/ajax-fix-login");
 });
 
-// ---- SettingsView ---------------------------------------------------------
 
 test("settings Back returns to the dashboard", async ({ page }) => {
   await mockFetch(page);
@@ -122,7 +113,6 @@ test("settings Test in Stable confirms then pulls main and reloads", async ({ pa
   await expect(page.getByRole("button", { name: /Tap to confirm/i })).toBeVisible();
   await page.getByRole("button", { name: /Tap to confirm/i }).click();
 
-  // Settings reloads on success; sessionStorage survives so the POST is still observable.
   await expect
     .poll(
       () => page.evaluate(() => sessionStorage.getItem("ajax-e2e-test-in-stable-posted")),
@@ -153,7 +143,6 @@ test("settings Copy Diagnostics surfaces a result and Dismiss clears it", async 
   await expect(resultPanel(page)).toHaveCount(0);
 });
 
-// ---- NewTaskSheet ---------------------------------------------------------
 
 test("new task sheet Cancel closes the sheet", async ({ page }) => {
   await mockFetch(page);
@@ -189,8 +178,6 @@ test("new task sheet Start submits and opens the task", async ({ page }) => {
   });
 });
 
-// Step two lists the chosen harness's own models and must not widen the card.
-// jsdom sees neither the second page's layout nor the per-harness fetch.
 test("new task sheet steps to the harness model page", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
@@ -216,9 +203,6 @@ test("new task sheet steps to the harness model page", async ({ page }) => {
   await expect(sheet.locator("#new-task-title-input")).toHaveValue("Add logout");
 });
 
-// Found against the real dev server: Codex lists 29 models. The full catalog is
-// listed inside a scrollable picker so Start stays on screen; the harness default
-// is scrolled into view within the picker bounds.
 test("long model catalog keeps Start reachable and scrolls to the default", async ({ page }) => {
   await mockFetch(page, { "/api/session/models": LONG_SESSION_MODELS });
   await page.goto("/app.html");
@@ -256,10 +240,6 @@ test("long model catalog keeps Start reachable and scrolls to the default", asyn
   ).toBe(true);
 });
 
-// Keyboard traversal of the agent picker, driven the way a user reaches it: Tab in
-// from the title field, then arrow. jsdom cannot cover this — it does not implement
-// the focus semantics — and a Radix RadioGroup silently failed exactly here, leaving
-// the unselected agents unreachable. This is the test that caught it.
 test("agent picker is keyboard reachable and moves with arrow keys", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html");
@@ -285,7 +265,6 @@ test("agent picker is keyboard reachable and moves with arrow keys", async ({ pa
   );
 });
 
-// ---- ConnectionStatus (error-state action row) ----------------------------
 
 test("connection Copy Diagnostics jumps to the settings route", async ({ page }) => {
   await failCockpit(page);

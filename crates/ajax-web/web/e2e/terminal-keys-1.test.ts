@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,
@@ -27,7 +21,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
@@ -128,10 +121,6 @@ test("repeatable hotbar key ignores a late trailing pointer click without double
   await openTaskTerminal(page);
   const baseline = await inputFrameCount(page);
 
-  // A tap already emits once on pointerdown. iOS can then deliver the synthetic
-  // compat click a frame late — after the old setTimeout(0) suppress flag had
-  // expired — which re-sent the arrow and skipped a line. A pointer-generated
-  // click carries detail > 0; a keyboard activation carries detail 0.
   await tapToolbarButton(page, "Left arrow");
   await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
 
@@ -236,8 +225,6 @@ test("supported Ctrl toolbar combinations send exact control codes and disarm st
   const toolbar = terminalToolbar(page);
   const ctrl = toolbar.getByRole("button", { name: "Control modifier" });
 
-  // The dedicated ⌃C toolbar key was removed; Ctrl+C now goes through the Ctrl
-  // modifier plus a typed "c", which the last leg of this test covers.
   await ctrl.click();
   await expect(ctrl).toHaveAttribute("aria-pressed", "true");
   await toolbar.getByRole("button", { name: "Left arrow" }).click();

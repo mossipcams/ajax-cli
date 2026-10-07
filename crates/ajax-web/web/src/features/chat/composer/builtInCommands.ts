@@ -13,7 +13,6 @@ export function isBuiltInClearCommand(text: string): boolean {
   return text.trim() === BUILT_IN_CLEAR_COMMAND;
 }
 
-/** Ajax-owned slash commands precede harness-advertised ones with the same name. */
 export function mergeSlashCommands(
   advertised: LiveAvailableCommand[] | undefined,
 ): LiveAvailableCommand[] {

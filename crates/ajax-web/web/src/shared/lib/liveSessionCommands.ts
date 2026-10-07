@@ -1,4 +1,3 @@
-/** One advertised ACP slash command from protocol v2 `availableCommands`. */
 export interface LiveAvailableCommand {
   name: string;
   description: string;

@@ -1,8 +1,5 @@
-/** Session chat visible-height math — one authoritative band for orchestration chat. */
-
 export const SESSION_KEYBOARD_OPEN_PX = 100;
 export const MIN_USABLE_VIEWPORT_PX = 50;
-/** AoE StructuredView slop — within this many px of the bottom counts as pinned. */
 export const SESSION_PIN_THRESHOLD_PX = 16;
 export const SESSION_VIEWPORT_ATTR = "data-session-viewport";
 export const LAYOUT_STABLE_FRAMES = 2;
@@ -14,12 +11,10 @@ function layoutKey(node: HTMLDivElement): string {
   return `${node.scrollHeight}:${node.clientHeight}`;
 }
 
-/** Inner chronological column inside the scroller, when present. */
 export function getThreadInner(thread: HTMLDivElement): HTMLElement {
   return thread.querySelector<HTMLElement>(THREAD_INNER_SELECTOR) ?? thread;
 }
 
-/** Last transcript row — live-edge anchor for empty-state heuristics. */
 export function findLiveEdgeAnchor(thread: HTMLDivElement): HTMLElement | null {
   const inner = getThreadInner(thread);
   for (let i = inner.children.length - 1; i >= 0; i -= 1) {
@@ -37,7 +32,6 @@ export function transcriptScrollBottom(
   return scrollHeight - scrollTop - clientHeight;
 }
 
-/** Live edge = scrollTop within threshold of the visual bottom (chronological scroller). */
 export function transcriptAtBottom(
   scrollTop: number,
   scrollHeight: number,
@@ -54,12 +48,10 @@ export function transcriptAtLiveEdge(
   return transcriptAtBottom(thread.scrollTop, thread.scrollHeight, thread.clientHeight, threshold);
 }
 
-/** Pin/follow the live edge with instant scrollTop — chronological stick-to-bottom. */
 export function pinTranscriptToLiveEdge(thread: HTMLDivElement): void {
   thread.scrollTop = Math.max(0, thread.scrollHeight - thread.clientHeight);
 }
 
-/** Transcript scroll snapshot captured before a keyboard or layout transition. */
 export interface TranscriptGeometry {
   atBottom: boolean;
   scrollTop?: number;
@@ -76,10 +68,6 @@ export function captureTranscriptGeometry(node: HTMLDivElement): TranscriptGeome
   };
 }
 
-/**
- * Restore equivalent transcript position after layout settles. No animation.
- * At-bottom → stick-to-bottom; history → same scrollTop plus scrollHeight delta above.
- */
 export function restoreTranscriptGeometry(
   node: HTMLDivElement,
   before: TranscriptGeometry,
@@ -93,14 +81,12 @@ export function restoreTranscriptGeometry(
   node.scrollTop = before.scrollTop + heightDelta;
 }
 
-/** Poll until scrollHeight/clientHeight stop changing, then run restore once. */
 export function afterTranscriptLayoutSettles(
   node: HTMLDivElement,
   restoreTarget: TranscriptGeometry,
   restore: () => void,
   options?: {
     ignoreProgrammaticScroll?: { current: boolean };
-    /** When set, live-edge poll frames stop pinning if the operator scrolled away. */
     pinnedRef?: { current: boolean };
   },
 ): () => void {
@@ -142,7 +128,6 @@ export function afterTranscriptLayoutSettles(
   return () => cancelAnimationFrame(raf);
 }
 
-/** Tell global keyboard CSS that session chat owns its band geometry. */
 export function claimSessionViewportOwnership(): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute(SESSION_VIEWPORT_ATTR, "owned");
@@ -153,7 +138,6 @@ export function releaseSessionViewportOwnership(): void {
   document.documentElement.removeAttribute(SESSION_VIEWPORT_ATTR);
 }
 
-/** Layout viewport already shrank with the keyboard (PWA / Android / iOS 26). */
 export function layoutViewportShrinksWithKeyboard(
   innerHeight: number,
   visualViewportHeight: number,
@@ -161,7 +145,6 @@ export function layoutViewportShrinksWithKeyboard(
   return innerHeight - visualViewportHeight < 50;
 }
 
-/** True when visualViewport occlusion looks like a soft keyboard, not URL-bar drift. */
 export function isSessionKeyboardOpen(
   fullHeight: number,
   visualViewportHeight: number,
@@ -170,11 +153,6 @@ export function isSessionKeyboardOpen(
   return fullHeight - visualViewportHeight > SESSION_KEYBOARD_OPEN_PX;
 }
 
-/**
- * Bottom padding for iOS regular Safari where innerHeight stays full while
- * visualViewport shrinks. Zero when the layout viewport already accounts for
- * the keyboard so flex / dvh is not padded twice.
- */
 export function sessionKeyboardPadding(
   innerHeight: number,
   visualViewportHeight: number,
@@ -186,7 +164,6 @@ export function sessionKeyboardPadding(
   return Math.max(0, innerHeight - visualViewportHeight - safeBottomPx);
 }
 
-/** Visible band height for the session surface (visualViewport when usable). */
 export function sessionVisibleHeight(
   innerHeight: number,
   visualViewportHeight: number,
@@ -195,10 +172,6 @@ export function sessionVisibleHeight(
   return innerHeight;
 }
 
-/**
- * Inline style for the bounded session flex column. Reserves keyboard height
- * only on iOS regular Safari; returns undefined elsewhere so dvh/flex owns it.
- */
 export function sessionSurfaceStyle(
   innerHeight: number,
   visualViewportHeight: number,

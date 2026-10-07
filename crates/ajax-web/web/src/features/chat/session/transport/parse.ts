@@ -193,7 +193,6 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
   }
 }
 
-/** Validate protocol v2 frames at the WebSocket boundary. */
 export function parseServerFrame(raw: string): ParsedServerFrame | null {
   try {
     const payload = JSON.parse(raw) as unknown;
@@ -283,7 +282,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
   }
 }
 
-/** @deprecated use parseServerFrame */
 export function parseServerEvent(raw: string): WebSessionServerEvent | null {
   const frame = parseServerFrame(raw);
   if (!frame) return null;

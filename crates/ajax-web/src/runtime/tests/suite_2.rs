@@ -234,7 +234,6 @@ async fn refresh_cockpit_and_cache_refreshes_once_and_caches() {
     super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
     assert_eq!(state.shared().bridge.refresh_count, 1);
 
-    // Within the cache TTL the tick shares the handler's cached response.
     super::refresh_cockpit_and_cache(&state, RefreshTier::Full, true).await;
     assert_eq!(state.shared().bridge.refresh_count, 1);
 }
@@ -683,8 +682,6 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        // SAFETY: ajax-web runtime tests are not run in parallel with other
-        // env-mutating tests in this module.
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }

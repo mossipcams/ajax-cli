@@ -29,9 +29,6 @@ export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): Terminal
   const cellHeightPx = () => {
     const term = getTerminal();
     if (!term || !interactionEl || term.rows <= 0) return 18;
-    // Measure a real row: geometry mode rounds `rows` up (ceil), so deriving the
-    // cell height as clientHeight/rows is short by the rounding slack and the
-    // scroll mapping drifts a few percent per screen of scrollback.
     const row = interactionEl.querySelector(".xterm-rows > *");
     const measured = row ? row.getBoundingClientRect().height : 0;
     if (measured > 0) return measured;
@@ -50,9 +47,6 @@ export function createTerminalScrollSync(deps: TerminalScrollSyncDeps): Terminal
     const term = getTerminal();
     if (!term || !spacerEl || !interactionEl) return;
     spacerEl.style.height = `${scrollbackLines() * cellHeightPx()}px`;
-    // Style height is not in scrollHeight until layout. Force that read so a
-    // same-turn scrollInteractionToBottom does not pin to a stale maxTop
-    // (seeded open would land above the CLI and drop followLive).
     void interactionEl.offsetHeight;
   };
 

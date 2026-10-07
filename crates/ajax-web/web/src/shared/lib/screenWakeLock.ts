@@ -1,5 +1,3 @@
-/** Screen Wake Lock — keep the device awake while Cockpit is foreground-visible. */
-
 export interface WakeLockSentinel {
   release(): Promise<void>;
   addEventListener(type: "release", listener: () => void): void;
@@ -43,11 +41,6 @@ export function createBrowserScreenWakeLockPlatform(): ScreenWakeLockPlatform | 
   };
 }
 
-/**
- * Request a screen wake lock while the page is visible; release when hidden.
- * Fail-open when unsupported or denied. Re-acquire after visibility resume and
- * on the next user gesture when the platform requires activation.
- */
 export function setupScreenWakeLock(
   platformOrNull: ScreenWakeLockPlatform | null = createBrowserScreenWakeLockPlatform(),
 ): () => void {
@@ -74,7 +67,6 @@ export function setupScreenWakeLock(
     try {
       await current.release();
     } catch {
-      // Fail open — Cockpit still works without the lock.
     }
   }
 
@@ -91,14 +83,12 @@ export function setupScreenWakeLock(
           try {
             await next.release();
           } catch {
-            // Fail open.
           }
           return;
         }
         sentinel = next;
         next.addEventListener("release", onSentinelRelease);
       } catch {
-        // Unsupported, denied, low battery, or missing user gesture — fail open.
       } finally {
         acquireInFlight = null;
       }

@@ -135,7 +135,6 @@ describe("TaskList", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");
     const row = screen.getByRole("button", { name: /web\/a/ });
-    // web/a: resume is filtered; Fix CI sits in the reveal layer until swipe.
     expect(wrap).not.toHaveClass("is-revealed-wrap");
     expect(within(wrap).queryByRole("button", { name: "Fix CI" })).toBeNull();
     expect(within(row).queryByRole("button", { name: "Fix CI" })).toBeNull();
@@ -259,7 +258,6 @@ describe("TaskList", () => {
 
     const idle = within(tasks).getByRole("group");
     expect(idle).toHaveAttribute("open");
-    // web/a (error) and web/b (running) are active; only api/c is idle.
     expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
     expect(within(idle).queryByRole("button", { name: /web\/a/ })).toBeNull();
     expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();

@@ -574,7 +574,6 @@ mod tests {
             let launch = acp_launch_for_agent(client).expect("bridge acp");
             assert_eq!(launch.candidates[0].0, program);
             assert!(launch.candidates[0].1.is_empty());
-            // The bridges take no model on argv; they select in-band.
             assert!(!launch.model_pins_at_spawn());
         }
 
@@ -633,7 +632,6 @@ mod tests {
         );
     }
 
-    // Regression for #989: explicit Cursor catalog ids pass through on spawn argv.
     #[test]
     fn cursor_catalog_spawn_passes_through_explicit_catalog_ids_issue_989() {
         use crate::adapters::agent::{
@@ -690,7 +688,6 @@ mod tests {
         assert_eq!(fast.fast, Some(true));
     }
 
-    // Regression for #991: pipe-form Cursor picks reconstruct catalog ids on spawn argv.
     #[test]
     fn cursor_catalog_pipe_form_reconstructs_spawn_catalog_ids_issue_991() {
         use crate::adapters::agent::{
@@ -751,7 +748,6 @@ mod tests {
         );
     }
 
-    // Regression for #984: effort-suffixed Sol catalog ids map to in-band bracket tokens.
     #[test]
     fn cursor_catalog_maps_sol_high_to_acp_in_band_token_issue_984() {
         use crate::adapters::agent::{
@@ -792,7 +788,6 @@ mod tests {
         assert_eq!(plain.thinking, None);
     }
 
-    // Regression for #1013: thinking catalog ids match bracket tokens with thinking=true.
     #[test]
     fn cursor_model_intents_match_thinking_catalog_and_bracket_issue_1013() {
         use crate::adapters::{

@@ -397,7 +397,6 @@ fn class_change_keeps_shared_debounce() {
     );
 
     task.add_side_flag(SideFlag::Conflicted);
-    // Waiting→Error mid-dwell keeps the shared 15s clock.
     assert_eq!(
         super::take_attention_transition_at(&mut task, at(1_010)),
         None
@@ -421,14 +420,12 @@ fn waiting_then_idle_past_episode_clear_then_waiting_fires_again() {
     assert!(task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
     assert!(task.metadata.contains_key(super::NOTIFY_QUIET_SINCE_KEY));
 
-    // Still within the 30s quiet window: stamps remain.
     assert_eq!(
         super::take_attention_transition_at(&mut task, at(1_039)),
         None
     );
     assert!(task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
 
-    // Quiet dwell elapsed: episode clears.
     assert_eq!(
         super::take_attention_transition_at(&mut task, at(1_040)),
         None
@@ -446,7 +443,6 @@ fn waiting_cycle_within_episode_clear_fires_once() {
     let mut task = waiting_task("notify");
     confirm_at(&mut task, 1_000);
 
-    // Agent turn boundary: brief Running, then waiting again before clear.
     task.remove_side_flag(SideFlag::NeedsInput);
     assert_eq!(
         super::take_attention_transition_at(&mut task, at(1_010)),
@@ -458,7 +454,6 @@ fn waiting_cycle_within_episode_clear_fires_once() {
         None
     );
 
-    // Sustained Idle past episode clear, then Waiting again → re-fire.
     task.remove_side_flag(SideFlag::NeedsInput);
     assert_eq!(
         super::take_attention_transition_at(&mut task, at(1_030)),
@@ -704,9 +699,6 @@ fn real_user_waiting_still_notifies() {
     confirm_at(&mut task, 1_000);
 }
 
-/// A rate-limited wait is transient and retryable, not actionable operator
-/// input. It still shows as Waiting/"Rate limited" in the UI but must not
-/// phone-ping or stamp a notify episode.
 #[test]
 fn rate_limited_waiting_does_not_notify() {
     let mut task = active_task("rate-limited");
@@ -729,9 +721,6 @@ fn rate_limited_waiting_does_not_notify() {
     assert!(task.metadata.is_empty());
 }
 
-/// Turn-settled Done (Cursor stop, Claude/Codex/Pi settle) shows as
-/// Waiting/"Response ready" in the UI but must not phone-ping or stamp a
-/// notify episode — same as "Ready for review" / "Rate limited".
 #[test]
 fn response_ready_waiting_does_not_notify() {
     let mut task = active_task("response-ready");
@@ -773,7 +762,6 @@ fn waiting_explanation_churn_does_not_refire_within_episode() {
         Some("Waiting for input".to_string())
     );
 
-    // Same Waiting class, different explanation — no re-fire.
     crate::live::apply_observation_at(
         &mut task,
         LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
@@ -784,8 +772,6 @@ fn waiting_explanation_churn_does_not_refire_within_episode() {
         None
     );
 
-    // Class change Waiting → Error still fires once after a fresh shared dwell
-    // (prior delivery cleared the candidate).
     crate::live::apply_observation_at(
         &mut task,
         LiveObservation::new(LiveStatusKind::Blocked, "blocked"),

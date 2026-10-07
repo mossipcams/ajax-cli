@@ -69,7 +69,6 @@ fn new_claude_waiting_after_acknowledgment_projects_needs_input() {
         &mut task,
         std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
     );
-    // Waiting evidence newer than the acknowledgment.
     crate::live::apply_observation_at(
         &mut task,
         LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
@@ -84,8 +83,6 @@ fn new_claude_waiting_after_acknowledgment_projects_needs_input() {
 
 #[test]
 fn acknowledgment_does_not_hide_failure_or_missing_substrate() {
-    // CommandFailed surfaces as a NeedsInput attention state and TmuxMissing
-    // as Failed; acknowledgment must change neither, so neither becomes Idle.
     for status in [LiveStatusKind::CommandFailed, LiveStatusKind::TmuxMissing] {
         let mut task = claude_active_task();
         crate::live::apply_observation(&mut task, LiveObservation::new(status, "evidence"));
@@ -368,9 +365,6 @@ fn active_lifecycle_with_tests_running_live_status_is_running() {
 
 #[test]
 fn active_lifecycle_without_signals_is_unknown() {
-    // An active task with no live status, an unstarted agent, and no flags
-    // has no source that can prove Running/Waiting/Done/Error — it projects
-    // Unknown rather than a fabricated Idle (precedence step 6).
     let mut task = base_task();
     mark_active(&mut task).unwrap();
 
@@ -379,9 +373,6 @@ fn active_lifecycle_without_signals_is_unknown() {
 
 #[test]
 fn live_process_without_native_events_is_idle_not_unknown() {
-    // Precedence tier 3: a confirmed live wrapper process is real evidence,
-    // so the task is at rest — not unprovable. It must never read Running,
-    // because liveness alone never becomes AgentRunning.
     let mut task = base_task();
     mark_active(&mut task).unwrap();
     assert_eq!(
@@ -400,16 +391,12 @@ fn live_process_without_native_events_is_idle_not_unknown() {
     assert_ne!(projected.status, TaskStatus::Running);
     assert!(!projected.actionable);
 
-    // Refresh removes the key once the heartbeat goes stale, and the task
-    // falls back to Unknown.
     task.metadata.remove(AGENT_PROCESS_ALIVE_KEY);
     assert_eq!(derive_operator_status(&task).status, TaskStatus::Unknown);
 }
 
 #[test]
 fn active_lifecycle_with_acknowledged_waiting_is_idle_not_unknown() {
-    // Positive evidence of rest (an acknowledged waiting live status) keeps
-    // the task Idle; only the true no-evidence case becomes Unknown.
     let mut task = claude_active_task();
     crate::live::apply_observation_at(
         &mut task,
@@ -426,8 +413,6 @@ fn active_lifecycle_with_acknowledged_waiting_is_idle_not_unknown() {
 
 #[test]
 fn actionable_flag_is_set_structurally_per_evidence() {
-    // Genuine input/approval waiting and errors are actionable; soft waits
-    // (rate limit) and the review boundary are not; running/idle are not.
     let mut approval = claude_active_task();
     crate::live::apply_observation(
         &mut approval,

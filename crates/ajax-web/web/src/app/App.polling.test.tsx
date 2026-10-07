@@ -5,7 +5,6 @@ import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 import { taskHash } from "@/shared/lib/routes";
 
-// Hard file-scope stub: late microtasks must never reach jsdom's real WebSocket.
 class StubWebSocket {
   readyState = 1;
   close() {}
@@ -59,10 +58,6 @@ describe("App polling cadence", () => {
     vi.unstubAllGlobals();
   });
 
-  // Polling-cadence lifecycle. These pin the behaviour that the two
-  // `react-hooks/exhaustive-deps` suppressions used to hide: the interval effect
-  // must reschedule on cadence change, must not churn on unrelated re-renders,
-  // and the mount-once listener effect must stay subscribed exactly once.
   function cockpitCountingFetch() {
     let cockpitCalls = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -87,7 +82,6 @@ describe("App polling cadence", () => {
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
 
-    // Dashboard cadence is 3000ms: three ticks add three polls.
     await vi.advanceTimersByTimeAsync(9000);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(4));
   });
@@ -116,13 +110,10 @@ describe("App polling cadence", () => {
 
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls).toBe(1));
-    // Flush the quiet-fleet re-render so the 10s idle interval replaces the
-    // 3s active one started while cockpit.data was still null.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    // Quiet fleet cadence is 10s: 3s active would add a poll here.
     await vi.advanceTimersByTimeAsync(3000);
     expect(cockpitCalls).toBe(1);
 
@@ -138,13 +129,9 @@ describe("App polling cadence", () => {
     render(<App />);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(1));
 
-    // Task route slows the cadence to 10000ms. If the old 3000ms interval were
-    // left running, 4000ms would add one poll instead of none.
     await act(async () => {
       setHash(taskHash("web/a"));
     });
-    // Guard: a wrong prefix would silently leave the route on dashboard and the
-    // 3000ms cadence would look correct.
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
     const afterRouteChange = cockpitCalls();
 
@@ -179,7 +166,6 @@ describe("App polling cadence", () => {
     await act(async () => {
       setHash(taskHash("web/missing"));
     });
-    // #861: a missing-task 404 is a detail error, not a cockpit disconnect.
     await vi.waitFor(() => expect(screen.getByTestId("task-load-error")).toBeInTheDocument());
     expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
 
@@ -203,8 +189,6 @@ describe("App polling cadence", () => {
     const focusRegistrations = addSpy.mock.calls.filter(([type]) => type === "focus").length;
     expect(focusRegistrations).toBe(1);
 
-    // A focus resume triggers exactly one extra cockpit load after debounce, not
-    // one per re-render that has happened since mount.
     const beforeFocus = cockpitCalls();
     window.dispatchEvent(new Event("focus"));
     await vi.advanceTimersByTimeAsync(750);
@@ -283,11 +267,6 @@ describe("App polling cadence", () => {
     expect(cockpitCalls).toBe(2);
   });
 
-  // Regression: loadDetail must not depend on cockpit data. It is a dependency
-  // of the detail effect, so an identity that churns with each poll re-runs that
-  // effect and fires an extra resume mutation every time the projection changes.
-  // A static fixture hides this — the apply gate suppresses unchanged
-  // projections — so this drives a cockpit whose payload really does change.
   it("does not re-resume an open task when the cockpit projection changes", async () => {
     let cockpitCalls = 0;
     let resumeCalls = 0;
@@ -297,7 +276,6 @@ describe("App polling cadence", () => {
         const path = String(input);
         if (path === "/api/cockpit") {
           cockpitCalls += 1;
-          // Each poll returns a genuinely different projection.
           return Promise.resolve(
             jsonResponse({
               ...cockpit,
@@ -326,14 +304,12 @@ describe("App polling cadence", () => {
     expect(screen.getByTestId("outlet-task")).toBeInTheDocument();
     await vi.waitFor(() => expect(resumeCalls).toBe(1));
 
-    // Task-route cadence is 10000ms; drive polls, each with a changed payload.
     const pollsAtStart = cockpitCalls;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15000);
     });
     expect(cockpitCalls).toBeGreaterThan(pollsAtStart);
 
-    // Changed projections must not add resume mutations.
     expect(resumeCalls).toBe(1);
   });
 

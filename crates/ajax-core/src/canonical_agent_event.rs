@@ -1,7 +1,3 @@
-//! Canonical agent-event kinds, envelope fold, and snapshot projection.
-//!
-//! Owns facts→snapshot reduction; CLI keeps translate/write/JSONL I/O.
-
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
@@ -11,9 +7,7 @@ use crate::agent_status::{
     ActivityKind as StatusActivityKind, Confidence, ObservationSource, StatusObservation,
 };
 
-/// Freshness window for non-terminal structured provider lifecycle events.
 const LIFECYCLE_FRESH_FOR: Duration = Duration::from_secs(30 * 60);
-/// Terminal lifecycle events persist until superseded by newer evidence.
 const LIFECYCLE_TERMINAL_FRESH_FOR: Duration = Duration::from_secs(365 * 24 * 3600);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -95,10 +89,6 @@ pub struct ParsedEnvelope {
     #[serde(default)]
     pub detail: Option<CanonicalEventDetail>,
     pub received_at_unix_millis: u128,
-    /// Run this event belongs to. Every run appends to the same per-task log,
-    /// so folding must group by this field or a child's events corrupt the
-    /// parent's phase. Absent on envelopes written before the field existed,
-    /// which are treated as the primary run.
     #[serde(default)]
     pub run_id: Option<String>,
     #[serde(default)]
@@ -261,7 +251,6 @@ pub fn fold_envelopes(events: &[ParsedEnvelope]) -> RunSnapshot {
     state.snapshot()
 }
 
-/// Map a folded [`RunSnapshot`] onto reducer-ready [`StatusObservation`]s.
 pub fn observations_from_run_snapshot(
     snapshot: &RunSnapshot,
     now: SystemTime,
@@ -316,9 +305,6 @@ mod tests {
     use crate::agent_status::{reduce_agent_status, ReduceInput};
     use crate::models::LiveStatusKind;
 
-    /// Compact folded-phase label used by the fold tests. Mirrors how the CLI's
-    /// legacy string projection read a `RunSnapshot`; kept test-local since no
-    /// production code projects a snapshot to a string anymore.
     fn phase_label(snapshot: &RunSnapshot) -> Option<&'static str> {
         match snapshot.phase {
             AgentPhase::Failed => Some("failed"),

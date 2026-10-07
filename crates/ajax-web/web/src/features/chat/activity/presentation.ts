@@ -1,9 +1,3 @@
-// How an ACP tool call reads on the surface: its tone, its mark, its path, and
-// the shape of the diff it wrote. Shared by the live head (one running call)
-// and the conversation (every call, kept in place).
-
-/** ACP `ToolKind` → the route's tone vocabulary. Kinds that change the worktree
- * carry the running tone; kinds that only look carry none. */
 export const TOOL_TONES: Record<string, string> = {
   read: "muted",
   edit: "running",
@@ -15,8 +9,6 @@ export const TOOL_TONES: Record<string, string> = {
   fetch: "muted",
 };
 
-/** One glyph per kind. Mono marks, not an icon set: this column is the CLI
- * speaking, and a drawn icon would be the only illustration on the surface. */
 export const TOOL_MARKS: Record<string, string> = {
   read: "◦",
   edit: "±",
@@ -45,14 +37,10 @@ export function toolStatusLabel(status: string): string {
   return TOOL_STATUS_LABELS[status] ?? status;
 }
 
-/** Success is the default and costs no words: the row's mark carries it. Only
- * the states that want the operator get one. */
 export function toolStatusNote(status: string): string | null {
   return status === "completed" ? null : (TOOL_STATUS_LABELS[status] ?? status);
 }
 
-/** Some harnesses send the title as markdown (`` `cargo test` ``). The row is
- * not markdown, so the delimiters arrive on screen as literal backticks. */
 export function cleanTitle(title: string): string {
   return title.replace(/`/g, "").trim();
 }
@@ -68,15 +56,12 @@ const GENERIC_TOOL_TITLES = new Set([
   "mcp tool",
 ]);
 
-/** Generic ACP titles name the tool, not what it touched. */
 export function isGenericToolTitle(title: string): boolean {
   const normalized = cleanTitle(title).toLowerCase();
   if (GENERIC_TOOL_TITLES.has(normalized)) return true;
   return normalized === "tool" || normalized === "mcp";
 }
 
-/** When the harness sends "MCP: gitnexus_query", the part after the prefix is
- * the row target; "MCP: tool" is still generic. */
 export function mcpToolNameFromTitle(title: string): string | null {
   const match = cleanTitle(title).match(/^mcp:\s*(.+)$/i);
   if (!match) return null;
@@ -85,7 +70,6 @@ export function mcpToolNameFromTitle(title: string): string | null {
   return name;
 }
 
-/** Execute titles can be whole scripts. The row names the first line or clause. */
 export function shortCommand(command: string): string {
   const firstLine = command.trim().split("\n")[0]?.trim() ?? command.trim();
   const firstClause = firstLine.split(/\s&&\s|\s;\s|\s\|\s/)[0]?.trim() ?? firstLine;
@@ -94,9 +78,6 @@ export function shortCommand(command: string): string {
   return `${firstClause.slice(0, max - 1)}…`;
 }
 
-/** The one field worth reading on the row: where the call acted. A path beats
- * the tool's name — "Read File" is the same on every read — and a command is
- * already its own target. */
 export function toolTarget(call: {
   kind?: string;
   title: string;
@@ -114,8 +95,6 @@ export function toolTarget(call: {
   return mcpToolNameFromTitle(title) ?? (title || call.callId);
 }
 
-/** Present tense for the live "currently doing" line. Past tense for settled
- * rows lives beside it so the two cannot drift apart. */
 export const OPERATION_VERBS: Record<string, string> = {
   read: "Reading",
   edit: "Editing",
@@ -138,8 +117,6 @@ export const OPERATION_VERBS_PAST: Record<string, string> = {
   fetch: "Fetched",
 };
 
-/** Filename when the call touched a path; the query or command when one was
- * derived; nothing when only a generic tool title is known yet. */
 export function toolRowTarget(call: {
   kind: string;
   title: string;
@@ -162,7 +139,6 @@ export function toolRowTarget(call: {
   return "";
 }
 
-/** Verb-first row label: "Read serve.rs", "Ran cargo nextest …". */
 export function toolRowLabel(call: {
   kind: string;
   title: string;
@@ -182,11 +158,6 @@ function isTokenBoundary(text: string, index: number): boolean {
   return TOKEN_BOUNDARY.test(text[index - 1]!) || TOKEN_BOUNDARY.test(text[index]!);
 }
 
-/** Both ends of a target distinguish it; the middle rarely does. Two commands
- * that differ only past the width of the column are a rendering failure, so the
- * tail is held aside and only the head is allowed to ellipsize — middle
- * truncation that follows the real column width without measuring it. The split
- * lands on a token boundary so a shortened command still reads as a command. */
 export function middleSplit(text: string, tail = 14): [string, string] {
   if (text.length <= tail * 2) return [text, ""];
 
@@ -203,7 +174,6 @@ export function middleSplit(text: string, tail = 14): [string, string] {
   return [text.slice(0, splitAt), text.slice(splitAt)];
 }
 
-/** How many lines of tool output to show before the expand control. */
 export const CONTENT_PREVIEW_LINES = 8;
 
 export function textPreview(
@@ -225,9 +195,6 @@ export function textPreview(
   };
 }
 
-/** Wall time, rounded to what an operator would say out loud. Under a second is
- * not worth a column — and replayed history, which arrives in one burst with no
- * host timestamps, lands there rather than claiming a duration it never had. */
 export function formatElapsed(ms: number | undefined): string | null {
   if (ms === undefined || ms < 1000) return null;
   const seconds = Math.round(ms / 1000);
@@ -242,8 +209,6 @@ export function elapsedMs(call: { startedAt?: number; endedAt?: number }): numbe
   return call.endedAt - call.startedAt;
 }
 
-/** Paths are long and their tail is the informative end, so keep the last two
- * segments rather than ellipsizing the filename away. */
 export function shortPath(path: string): string {
   const parts = path.split("/").filter(Boolean);
   if (parts.length <= 2) return parts.join("/");
@@ -252,14 +217,6 @@ export function shortPath(path: string): string {
 
 export type DiffLine = { sign: " " | "-" | "+"; text: string };
 
-/** Line diff for an ACP `ToolCallContent::Diff`, which carries whole file texts.
- * Printing both in full would bury the edit, so this trims the lines the two
- * sides share at each end and shows what is left.
- *
- * ponytail: single hunk — an edit touching two distant regions renders as one
- * span covering both. Swap in an LCS diff if multi-hunk edits become common
- * enough to read badly.
- */
 export function diffLines(oldText: string, newText: string): DiffLine[] {
   const before = oldText.length ? oldText.split("\n") : [];
   const after = newText.length ? newText.split("\n") : [];
@@ -275,12 +232,8 @@ export function diffLines(oldText: string, newText: string): DiffLine[] {
     tail += 1;
   }
 
-  // Nothing differs: a diff with no change is no diff, and context lines with
-  // no sign between them would read as an edit that did nothing.
   if (head === before.length && head === after.length) return [];
 
-  // Two lines of shared text on each side: enough to place the change in the
-  // file, not so much that the change stops being the thing you see.
   const context = 2;
   const leading = Math.max(0, head - context);
   const lines: DiffLine[] = [];

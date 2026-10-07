@@ -49,9 +49,6 @@ pub fn doctor_with_environment<R: Registry>(
             },
         }
     }));
-    // Browser sessions drive Codex, Claude, and Pi through their Agent Client
-    // Protocol adapters. They are separate installs, so name the missing one
-    // rather than letting a session fail with an empty model list.
     checks.extend(
         acp_adapter_packages()
             .into_iter()

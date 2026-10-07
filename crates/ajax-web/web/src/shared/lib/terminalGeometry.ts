@@ -4,9 +4,7 @@ export const MIN_FONT_SIZE = 7;
 export const MAX_FONT_SIZE = 20;
 export const FONT_STORAGE_KEY = "ajax.terminal.fontSize";
 
-/** xterm scrollback cap for mobile viewports (matches TaskTerminal mobile layout query). */
 export const MOBILE_SCROLLBACK_LINES = 2000;
-/** xterm scrollback cap for desktop viewports. */
 export const DESKTOP_SCROLLBACK_LINES = 10000;
 
 const MOBILE_MEDIA_QUERY =
@@ -43,7 +41,6 @@ export function persistFontSize(size: number) {
   try {
     localStorage.setItem(FONT_STORAGE_KEY, String(size));
   } catch {
-    // Storage may be unavailable in private mode.
   }
 }
 

@@ -1,5 +1,3 @@
-//! Browser Cockpit read experience.
-
 use ajax_core::{
     commands::{self, CommandContext},
     models::{AgentAttempt, GitStatus, TmuxStatus},
@@ -37,8 +35,6 @@ pub struct BrowserTaskCard {
     pub attention: ajax_core::ui_state::AttentionBand,
     pub last_activity_unix_secs: u64,
     pub actions: Vec<WebAction>,
-    /// True when this task can hold an ACP session: an interactive task keeps
-    /// its agent in tmux, so opening it as a chat would attach to nothing.
     pub session_capable: bool,
 }
 
@@ -70,7 +66,6 @@ fn host_native_backend() -> BrowserBackend {
     }
 }
 
-/// Whether a session may attach: the same rule the session slice enforces.
 fn session_capable<R: Registry>(
     context: &CommandContext<R>,
     id: &ajax_core::models::TaskId,
@@ -96,8 +91,6 @@ fn browser_task_card<R: Registry>(context: &CommandContext<R>, card: &TaskCard) 
     }
 }
 
-/// Explicit repository identity for browser DTOs. Splitting `qualified_handle`
-/// is a policy the browser must not own; Rust derives it once here.
 fn repo_of_handle(qualified_handle: &str) -> String {
     qualified_handle
         .split_once('/')
@@ -131,7 +124,6 @@ pub struct BrowserTaskDetail {
     pub created_unix_secs: u64,
     pub last_activity_unix_secs: u64,
     pub agent_attempts: Vec<BrowserAgentAttempt>,
-    /// True when this task can hold an ACP session (see [`BrowserTaskCard`]).
     pub session_capable: bool,
 }
 

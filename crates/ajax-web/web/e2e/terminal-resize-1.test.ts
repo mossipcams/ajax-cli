@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   terminalSurface,
@@ -32,7 +26,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
@@ -148,8 +141,6 @@ test("repeated same-dimension viewport burst then meaningful change deduplicates
   const countAfterBurst = (await terminalResizeFrames(page)).length;
   expect(countAfterBurst).toBe(countBeforeBurst);
 
-  // Shrink height substantially so the flex-filled inline terminal recomputes
-  // a genuinely different logical grid (rows), not a dedupe-identical one.
   await page.setViewportSize({ width: 360, height: 640 });
   await dispatchViewportEvents(page, ["resize", "visualViewport.resize"]);
 
@@ -182,8 +173,6 @@ test("keyboard-open resize burst does not storm PTY resize; closing eventually s
     countBeforeKeyboard,
     countAfterKeyboardBurst,
   );
-  // Class-edge band settle may emit a few discreteIntent sizes; bursts must not
-  // storm beyond that budget.
   expect(keyboardOpenFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
   expect(hasAdjacentDuplicateSizes(keyboardOpenFrames)).toBe(false);
 

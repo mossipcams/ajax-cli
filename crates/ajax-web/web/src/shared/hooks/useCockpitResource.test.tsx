@@ -43,10 +43,6 @@ describe("useCockpitResource", () => {
     expect(result.current.connectionDetail).toBeNull();
   });
 
-  // An iOS home-screen PWA mounts with document.hidden still true behind the
-  // splash screen. loadCockpit must fetch anyway, or the app strands on
-  // "checking" until the 60s hidden interval fires. Skipping while hidden is
-  // the background poll's job (App.tsx), not this loader's.
   it("loadCockpit still fetches when document.hidden is true", async () => {
     Object.defineProperty(document, "hidden", {
       configurable: true,

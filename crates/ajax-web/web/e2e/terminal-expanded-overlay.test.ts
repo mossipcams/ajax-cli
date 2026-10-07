@@ -1,6 +1,3 @@
-// Terminal-expanded Details overlay coverage. Lives outside terminal-behavior.test.ts
-// so this PR does not touch that already-over-LOC file.
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,

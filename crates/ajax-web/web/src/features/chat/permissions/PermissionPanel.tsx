@@ -13,9 +13,7 @@ export default function PermissionPanel({ decision, connected, onApprove, onReje
     <div className="session-decision" data-testid="session-decision" role="alert">
       <p className="session-decision-title">{decision.title}</p>
       {decision.detail ? <p className="session-decision-detail">{decision.detail}</p> : null}
-      {/* Disabled while the socket is down: the handler already refuses to
-          answer on a dead connection, so an enabled-looking control would
-          be a silent no-op. The `Reconnecting` flag above says why. */}
+      {}
       <div className="session-decision-actions">
         <Button type="button" variant="default" disabled={!connected} onClick={onApprove}>
           Approve

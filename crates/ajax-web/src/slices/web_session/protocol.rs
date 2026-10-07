@@ -1,5 +1,3 @@
-//! Versioned WebSocket envelopes for orchestration chat (protocol v2).
-
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
     AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
@@ -8,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 pub const SESSION_PROTOCOL_VERSION: u32 = 2;
 
-/// Live session chrome grouped for attach/snapshot construction.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionChrome {
     pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
@@ -35,7 +32,6 @@ pub struct PendingElicitation {
     pub schema: serde_json::Value,
 }
 
-/// Attach state sent once per logical attach or generation change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     #[serde(rename = "type")]
@@ -116,7 +112,6 @@ impl SessionSnapshot {
     }
 }
 
-/// One persisted transcript row with its absolute cursor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEventEnvelope {
     #[serde(rename = "type")]

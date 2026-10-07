@@ -222,7 +222,6 @@ describe("browser session renewal", () => {
       if (descriptor) {
         Object.defineProperty(Document.prototype, "visibilityState", descriptor);
       }
-      // Drop the instance override so later tests see a visible document again.
       delete (document as { visibilityState?: string }).visibilityState;
     }
   });
@@ -562,7 +561,6 @@ describe("POST transport options", () => {
 });
 
 describe("startDevDeploy", () => {
-  // GitHub issue #1035: accepted deploy starts return 202, not 200.
   it("issue #1035 accepts HTTP 202 and posts the task handle", async () => {
     mockFetch((input, init) => {
       const path = String(input);

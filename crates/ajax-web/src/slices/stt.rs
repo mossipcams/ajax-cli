@@ -1,10 +1,7 @@
-//! Versioned STT control/event wire types and bounded binary audio framing.
-
 use serde::{Deserialize, Serialize};
 
 pub const STT_PROTOCOL_VERSION: u32 = 1;
 
-/// Maximum PCM16 payload bytes per binary audio frame (20 ms at 16 kHz mono).
 pub const MAX_AUDIO_FRAME_BYTES: usize = 640;
 
 const AUDIO_SEQUENCE_PREFIX_BYTES: usize = 4;

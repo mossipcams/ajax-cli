@@ -1,7 +1,3 @@
-// Phase 6.2: Contract fixture parity. These tests verify that the representative
-// fixture JSON files satisfy the TypeScript boundary guards and DTO shape.
-// If Rust changes a serialized field name or enum casing these tests will fail,
-// prompting a synchronized types.ts update.
 import { describe, it, expect } from "vitest";
 import {
   assertCockpit,

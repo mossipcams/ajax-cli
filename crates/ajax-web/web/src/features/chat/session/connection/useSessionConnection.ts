@@ -40,25 +40,17 @@ interface Options {
   setConnectionState: (state: ConnectionState) => void;
   setEverOpened: (everOpened: boolean) => void;
   onSessionInvalidated?: () => void;
-  /** Host snapshot model for the live session (task metadata, not localStorage). */
   onSessionModel?: (model: string) => void;
-  /** Live advertised ACP config options from the host snapshot. */
   onSessionConfigOptions?: (options: LiveSessionConfigOption[] | undefined) => void;
-  /** Live advertised ACP slash commands from the host snapshot. */
   onSessionAvailableCommands?: (commands: LiveAvailableCommand[] | undefined) => void;
-  /** Live advertised ACP prompt capabilities from the host snapshot. */
   onSessionPromptCapabilities?: (capabilities: LivePromptCapabilities | undefined) => void;
-  /** Agent-reported session title from the host snapshot. */
   onSessionTitle?: (title: string | undefined) => void;
-  /** Revert an optimistic in-session model change after a host error. */
   onSessionModelRejected?: () => void;
-  /** Surface config-option apply failures as dismissable notices. */
   onConfigError?: (message: string) => void;
   onRestoreFailure?: () => void;
   onRestoreResolved?: () => void;
 }
 
-/** Connect/reconnect contract: host owns the prompt queue; the browser does not recreate it. */
 export function useSessionConnection({
   handle,
   dispatch,
@@ -87,10 +79,7 @@ export function useSessionConnection({
     let reconnectAttempts = 0;
     let reconnecting = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    // Coalesces streamed ACP text with requestAnimationFrame so the reducer sees
-    // full-content updates during the turn without one dispatch per token.
     let buffer: MessageBuffer | undefined;
-    /** Survives in-page reconnect; cleared on full reload with the reducer. */
     let nextToReadCursor: number | undefined;
     everOpenedRef.current = false;
     setEverOpened(false);
@@ -141,9 +130,6 @@ export function useSessionConnection({
           },
           onSnapshot: applySnapshot,
           onReady: (nextModel) => {
-            // The `ready` event already flushes via onEvent; this is a
-            // belt-and-suspenders flush for any replayed text that arrived
-            // before the handshake completed, so history renders promptly.
             buffer?.flushAll();
             handshakeAttempts = 0;
             reconnectAttempts = 0;
@@ -165,8 +151,6 @@ export function useSessionConnection({
             if (event.type === "error" && isSessionConfigChangeFailure(event.message)) {
               onConfigError?.(event.message);
             }
-            // The socket cannot report why an upgrade was refused, so swap its
-            // blank failure for the reason the task detail already carries.
             if (event.type === "error" && event.message === OPEN_FAILURE) {
               buffer?.push({
                 type: "error",
@@ -174,9 +158,6 @@ export function useSessionConnection({
               });
               return;
             }
-            // Streamed text is rAF-coalesced to the latest full content per
-            // itemId; boundary events flush any pending lane first so ordering
-            // is preserved.
             buffer?.push(event);
           },
           onClosed: () => {

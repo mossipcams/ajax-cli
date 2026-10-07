@@ -76,7 +76,6 @@ fn git_list_remote_branches_command() -> CommandSpec {
     )
 }
 
-// from suite_12.rs
 fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
     vec![
         output(0, "ajax-other\n"),
@@ -96,7 +95,6 @@ fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
     ]
 }
 
-// from suite_12.rs
 fn missing_drop_observation_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
@@ -146,7 +144,6 @@ fn missing_drop_observation_commands() -> Vec<CommandSpec> {
     ]
 }
 
-// from suite_12.rs
 fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
     vec![
         output(0, ""),
@@ -168,7 +165,6 @@ fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
     ]
 }
 
-// from suite_12.rs
 fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
     assert_eq!(commands.len(), 10);
     assert_eq!(
@@ -249,7 +245,6 @@ fn assert_present_cleanable_force_drop_commands(commands: &[CommandSpec]) {
     assert_eq!(commands[9], git_list_remote_branches_command());
 }
 
-// from suite_13.rs
 fn runtime_snapshot_directory(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "ajax-cli-runtime-snapshot-{}-{}-{label}",
@@ -261,7 +256,6 @@ fn runtime_snapshot_directory(label: &str) -> PathBuf {
     ))
 }
 
-// from suite_13.rs
 fn write_runtime_snapshot(cache_dir: &Path, state: &str, observed_at_unix_millis: u128) {
     let runtime_dir = cache_dir.join("agent-runtime");
     std::fs::create_dir_all(&runtime_dir).unwrap();
@@ -280,7 +274,6 @@ fn write_runtime_snapshot(cache_dir: &Path, state: &str, observed_at_unix_millis
     .unwrap();
 }
 
-// from suite_13.rs
 fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> {
     let mut context = sample_context();
     context.runtime_paths.cache_dir = cache_dir.to_path_buf();
@@ -295,7 +288,6 @@ fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> 
     context
 }
 
-// from suite_2.rs
 fn tmux_live_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
@@ -323,7 +315,6 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
     ]
 }
 
-// from suite_2.rs
 fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
     let mut commands = tmux_live_commands();
     commands.insert(
@@ -337,7 +328,6 @@ fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
     commands
 }
 
-// from suite_2.rs
 fn expected_ci_discovery_command() -> CommandSpec {
     CommandSpec::new(
         "gh",
@@ -356,20 +346,17 @@ fn expected_ci_discovery_command() -> CommandSpec {
     .with_timeout(std::time::Duration::from_secs(30))
 }
 
-// from suite_2.rs
 fn expected_ci_probe_command() -> CommandSpec {
     CommandSpec::new("gh", ["pr", "checks", "42", "--json", "name,state,link"])
         .with_cwd("/tmp/worktrees/web-fix-login")
         .with_timeout(std::time::Duration::from_secs(30))
 }
 
-// from suite_2.rs
 fn extend_expected_ci_monitor_commands(expected: &mut Vec<CommandSpec>) {
     expected.push(expected_ci_discovery_command());
     expected.push(expected_ci_probe_command());
 }
 
-// from suite_2.rs
 fn ci_pr_list_output() -> CommandOutput {
     output(
         0,
@@ -377,12 +364,10 @@ fn ci_pr_list_output() -> CommandOutput {
     )
 }
 
-// from suite_2.rs
 fn ci_pr_checks_output() -> CommandOutput {
     output(0, r#"[{"name":"ci","state":"SUCCESS","link":"x"}]"#)
 }
 
-// from suite_2.rs
 fn expected_ci_discovery_command_for_branch(worktree: &str, branch: &str) -> CommandSpec {
     CommandSpec::new(
         "gh",
@@ -401,12 +386,10 @@ fn expected_ci_discovery_command_for_branch(worktree: &str, branch: &str) -> Com
     .with_timeout(std::time::Duration::from_secs(30))
 }
 
-// from suite_2.rs
 fn ci_monitor_live_outputs() -> Vec<CommandOutput> {
     vec![ci_pr_list_output(), ci_pr_checks_output()]
 }
 
-// from suite_2.rs
 fn ci_pr_list_output_for(number: u64, branch: &str, head_sha: &str) -> CommandOutput {
     output(
         0,
@@ -416,7 +399,6 @@ fn ci_pr_list_output_for(number: u64, branch: &str, head_sha: &str) -> CommandOu
     )
 }
 
-// from suite_2.rs
 fn expected_ci_probe_command_for_pr(worktree: &str, number: u64) -> CommandSpec {
     CommandSpec::new(
         "gh",
@@ -432,12 +414,10 @@ fn expected_ci_probe_command_for_pr(worktree: &str, number: u64) -> CommandSpec 
     .with_timeout(std::time::Duration::from_secs(30))
 }
 
-// from suite_2.rs
 fn expected_new_task_open_command(session: &str) -> CommandSpec {
     CommandSpec::new("tmux", ["attach-session", "-t", session]).with_mode(CommandMode::InheritStdio)
 }
 
-// from suite_2.rs
 fn run_start_with_attach_mode(
     args: impl IntoIterator<Item = &'static str>,
     context: &mut CommandContext<InMemoryRegistry>,
@@ -448,7 +428,6 @@ fn run_start_with_attach_mode(
         .map(|rendered| rendered.output)
 }
 
-// from suite_2.rs
 const EXPECTED_HUSKY_GUARD: &str =
     "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
 
@@ -483,7 +462,6 @@ fn expected_task_launch_command(
     }
 }
 
-// from suite_2.rs
 fn expected_sync_default_branch_commands(repo_path: &str, branch: &str) -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("git", ["-C", repo_path, "fetch", "origin", branch])
@@ -491,7 +469,6 @@ fn expected_sync_default_branch_commands(repo_path: &str, branch: &str) -> Vec<C
     ]
 }
 
-// from suite_2.rs
 fn ajax_binary_path() -> PathBuf {
     if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax-cli") {
         return binary.into();
@@ -510,7 +487,6 @@ fn ajax_binary_path() -> PathBuf {
     })
 }
 
-// from suite_2.rs
 fn seeded_profile_homes(tag: &str) -> (PathBuf, CliContextPaths, CliContextPaths) {
     let directory = std::env::temp_dir().join(format!("ajax-cli-{tag}-{}", std::process::id()));
     let stable_paths = CliContextPaths::from_runtime_paths(
@@ -544,7 +520,6 @@ fn seeded_profile_homes(tag: &str) -> (PathBuf, CliContextPaths, CliContextPaths
     (directory, stable_paths, dev_paths)
 }
 
-// from suite_2.rs
 fn registry_with_task(handle: &str) -> InMemoryRegistry {
     let mut registry = InMemoryRegistry::default();
     let mut task = Task::new(
@@ -564,7 +539,6 @@ fn registry_with_task(handle: &str) -> InMemoryRegistry {
     registry
 }
 
-// from suite_2.rs
 fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::CockpitActionItem {
     ajax_core::models::CockpitActionItem {
         task_id: TaskId::new(format!("__cockpit_action__{action}")),
@@ -575,7 +549,6 @@ fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::CockpitActionI
     }
 }
 
-// from suite_4.rs
 fn write_fake_codex(tag: &str) -> PathBuf {
     let fake_codex =
         std::env::temp_dir().join(format!("ajax-cli-fake-codex-{tag}-{}", std::process::id()));
@@ -590,12 +563,10 @@ fn write_fake_codex(tag: &str) -> PathBuf {
     fake_codex
 }
 
-// from suite_5.rs
 struct RecoveryRunner {
     commands: Vec<CommandSpec>,
 }
 
-// from suite_5.rs
 impl RecoveryRunner {
     fn new() -> Self {
         Self {
@@ -604,7 +575,6 @@ impl RecoveryRunner {
     }
 }
 
-// from suite_5.rs
 impl CommandRunner for RecoveryRunner {
     fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
         self.commands.push(command.clone());

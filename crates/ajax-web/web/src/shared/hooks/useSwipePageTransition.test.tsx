@@ -291,9 +291,6 @@ describe("useSwipePageTransition", () => {
   );
 
   it("settles and reattaches swipe listeners when animating flip is skipped (#1077)", async () => {
-    // Same-module spyOn cannot intercept beginCommit's internal call; jsdom's
-    // setTimeout(0) flip path would still run. Force the double-rAF branch with a
-    // no-op requestAnimationFrame so the animating flip callback never fires.
     const originalUserAgent = navigator.userAgent;
     const originalRaf = window.requestAnimationFrame;
     Object.defineProperty(navigator, "userAgent", {
@@ -319,7 +316,6 @@ describe("useSwipePageTransition", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 40);
       });
-      // Inner flip fallback never scheduled; beginCommit fallback not yet due.
       expect(gestureBusyGate.isBusy()).toBe(true);
 
       await act(async () => {

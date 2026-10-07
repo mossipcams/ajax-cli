@@ -1,7 +1,3 @@
-//! PTY-backed tmux attach for the browser task terminal bridge.
-
-/// Transport input for a browser task terminal attach: the task handle, its
-/// tmux session, and its task window. Owned by the PTY adapter that consumes it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalAttachPlan {
     pub qualified_handle: String,
@@ -121,9 +117,6 @@ pub(crate) fn build_tmux_attach_command(command_plan: &TmuxAttachCommandPlan) ->
     command
 }
 
-/// A single tmux invocation used to stand up or tear down the isolated client
-/// session. Kept as a plain data plan so the wiring is unit-testable without a
-/// live tmux server.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmuxCommand {
     pub program: String,
@@ -139,47 +132,23 @@ impl TmuxCommand {
     }
 }
 
-/// Attach a mobile client to its *own* grouped tmux session instead of the
-/// shared task session.
-///
-/// `tmux attach-session` sizes a window to the smallest attached client, so a
-/// phone in portrait would shrink the agent window for every other client and
-/// SIGWINCH-storm the pane on each keyboard open/close. A grouped session
-/// (`new-session -t <shared>`) shares the shared session's window set but keeps
-/// an independent size, so the phone can be tiny without disturbing anyone. The
-/// ephemeral session *lingers in tmux* on disconnect so the same client token
-/// can reconnect to its existing viewport; it is only destroyed by the explicit
-/// [`destroy_ephemeral_session_commands`] reaper path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IsolatedAttachPlan {
-    /// The ephemeral grouped session name, e.g. `ajax-web-fix-login-m1a2b3c4`.
     pub ephemeral_session: String,
-    /// Commands to run before attaching (create the grouped session).
     pub setup: Vec<TmuxCommand>,
-    /// Existing task-pane history to seed before live PTY output.
     pub history: TmuxCommand,
-    /// The attach command spawned inside the outer PTY.
     pub attach: TmuxAttachCommandPlan,
-    /// Commands to run on disconnect (remove the grouped session).
     pub teardown: Vec<TmuxCommand>,
 }
 
-/// Prefix that marks a session as an ephemeral per-client grouped session.
-/// The reaper uses this to distinguish them from real task sessions.
 pub const EPHEMERAL_SESSION_INFIX: &str = "-m";
 
 pub fn build_isolated_attach_plan(plan: &TerminalAttachPlan) -> IsolatedAttachPlan {
-    // Random tokens cannot reconnect, so destroy on disconnect instead of lingering.
     let mut isolated = build_isolated_attach_plan_with_token(plan, &random_session_token());
     isolated.teardown = destroy_ephemeral_session_commands(&isolated.ephemeral_session);
     isolated
 }
 
-/// Build an isolated attach plan keyed to a stable client id. Two calls with the
-/// same client id produce the *same* ephemeral session name, so a browser tab
-/// reconnects to its existing tmux viewport instead of spinning up a new one.
-/// Callers without a client id should keep using [`build_isolated_attach_plan`]
-/// (random per call) to stay unique.
 pub fn build_isolated_attach_plan_for_client(
     plan: &TerminalAttachPlan,
     client_id: &str,
@@ -187,18 +156,11 @@ pub fn build_isolated_attach_plan_for_client(
     build_isolated_attach_plan_with_token(plan, &ephemeral_client_token(client_id))
 }
 
-/// Stable 12 lowercase-hex token for a browser client id. Empty / whitespace-
-/// only ids fall back to a fresh random 12-hex token so callers that have no
-/// client id stay unique per call rather than all collapsing onto one shared
-/// session.
 pub fn ephemeral_client_token(client_id: &str) -> String {
     let trimmed = client_id.trim();
     if trimmed.is_empty() {
         return random_session_token();
     }
-    // FNV-1a 64-bit fold of the trimmed id bytes -> first 12 hex chars. No new
-    // crate dependency; this only needs uniqueness across browser client ids,
-    // not cryptographic resistance.
     let mut hash: u64 = 0xcbf29ce484222325;
     for &byte in trimmed.as_bytes() {
         hash ^= byte as u64;
@@ -208,10 +170,6 @@ pub fn ephemeral_client_token(client_id: &str) -> String {
     full[..12].to_string()
 }
 
-/// Explicit destroy commands for a lingering ephemeral session, used by the
-/// reaper / manual destroy path. The normal disconnect teardown is intentionally
-/// empty so reconnects reuse the viewport; this helper is the only thing that
-/// kills a grouped session.
 pub fn destroy_ephemeral_session_commands(ephemeral_session: &str) -> Vec<TmuxCommand> {
     vec![TmuxCommand::new(["kill-session", "-t", ephemeral_session])]
 }
@@ -227,9 +185,6 @@ pub(crate) fn build_isolated_attach_plan_with_token(
 ) -> IsolatedAttachPlan {
     let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
     let history_target = tmux_attach_target(&ephemeral, &plan.task_window);
-    // Reuse the shared attach builder against the ephemeral session so the
-    // "never attach through the browser handle" and task-window guarantees
-    // are preserved for the isolated client too.
     let ephemeral_plan = TerminalAttachPlan {
         qualified_handle: plan.qualified_handle.clone(),
         tmux_session: ephemeral.clone(),
@@ -237,10 +192,6 @@ pub(crate) fn build_isolated_attach_plan_with_token(
     };
     IsolatedAttachPlan {
         setup: vec![
-            // Do not use `-A` here: attach-if-exists requires a TTY and breaks
-            // reconnect from `run_tmux_command_blocking`. `-d` creates detached;
-            // an already-present ephemeral session returns "duplicate session",
-            // which setup treats as success.
             TmuxCommand::new([
                 "new-session",
                 "-d",
@@ -249,8 +200,6 @@ pub(crate) fn build_isolated_attach_plan_with_token(
                 "-t",
                 &plan.tmux_session,
             ]),
-            // Quieter status redraw on the browser-only grouped session; never
-            // touch the shared task session's options.
             TmuxCommand::new(["set-option", "-t", &ephemeral, "status-interval", "5"]),
             TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-activity", "off"]),
             TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-bell", "off"]),
@@ -262,25 +211,18 @@ pub(crate) fn build_isolated_attach_plan_with_token(
             "-t",
             &history_target,
             "-S",
-            // ponytail: matches DESKTOP_SCROLLBACK_LINES; raise both caps if deeper history matters.
             "-10000",
             "-E",
             "-1",
         ]),
         attach: build_tmux_attach_command_plan(&ephemeral_plan),
-        // Disconnect leaves the ephemeral session in tmux so the same client
-        // token can reconnect; the reaper kills it later via
-        // `destroy_ephemeral_session_commands`.
         teardown: vec![],
         ephemeral_session: ephemeral,
     }
 }
 
-/// 12 lowercase-hex chars of randomness for the ephemeral session suffix.
 pub(crate) fn random_session_token() -> String {
     let mut bytes = [0_u8; 6];
-    // A failed RNG here only weakens uniqueness of a short-lived session name;
-    // fall back to a time-derived token rather than aborting the attach.
     if getrandom::fill(&mut bytes).is_err() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -299,9 +241,6 @@ pub(crate) fn run_tmux_command_blocking(
         .output()
 }
 
-/// True when `name` looks like an ephemeral per-client grouped session
-/// (`<shared>-m<12 lowercase hex>`). Requires the full 12-hex token so real
-/// task sessions such as `ajax-web-main` are never matched.
 pub fn is_ephemeral_session_name(name: &str) -> bool {
     match name.rfind(EPHEMERAL_SESSION_INFIX) {
         Some(index) if index > 0 => {
@@ -315,9 +254,6 @@ pub fn is_ephemeral_session_name(name: &str) -> bool {
     }
 }
 
-/// Select the ephemeral grouped sessions to kill from a list of live session
-/// names. A crashed bridge can leave its per-client session behind; the web
-/// server reaps them on startup so they don't accumulate.
 pub fn ephemeral_sessions_to_reap(names: &[String]) -> Vec<String> {
     names
         .iter()
@@ -326,10 +262,6 @@ pub fn ephemeral_sessions_to_reap(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Ephemeral sessions with zero attached clients. Safe to kill while the web
-/// server is live: active browser bridges keep `session_attached >= 1`.
-/// When `exclude` is set, that session name is kept even if detached so a
-/// reconnecting client can reattach to its lingered viewport.
 pub fn ephemeral_sessions_to_reap_detached(
     rows: &[(String, u32)],
     exclude: Option<&str>,
@@ -342,9 +274,6 @@ pub fn ephemeral_sessions_to_reap_detached(
         .collect()
 }
 
-/// Best-effort: list tmux sessions and kill any orphaned ephemeral grouped
-/// sessions. Never fails the caller; if tmux is absent or has no server there
-/// is nothing to reap.
 pub fn reap_orphan_terminal_sessions() {
     let listing = match run_tmux_command_blocking(&TmuxCommand::new([
         "list-sessions",
@@ -364,15 +293,10 @@ pub fn reap_orphan_terminal_sessions() {
     }
 }
 
-/// Kill detached ephemeral sessions while the server is running. Call on each
-/// terminal connect so remount/reconnect storms cannot accumulate hundreds of
-/// `-m*` sessions (linger-by-design without a live reaper).
 pub fn reap_detached_ephemeral_terminal_sessions() {
     reap_detached_ephemeral_terminal_sessions_except(None);
 }
 
-/// Like [`reap_detached_ephemeral_terminal_sessions`], but keeps one detached
-/// ephemeral session (the reconnect target for this bridge connection).
 pub fn reap_detached_ephemeral_terminal_sessions_except(keep: Option<&str>) {
     let listing = match run_tmux_command_blocking(&TmuxCommand::new([
         "list-sessions",
