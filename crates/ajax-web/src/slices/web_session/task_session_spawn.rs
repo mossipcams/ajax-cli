@@ -44,7 +44,7 @@ pub(super) async fn acquire(
             return Ok(());
         }
         let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
-        release_live_client(state, resume_id.is_none())?;
+        release_live_client(state, resume_id.is_none(), "attach replaced a dead slot")?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
         install_replaced_client(state, new_client, &report, model)?;
@@ -199,7 +199,7 @@ pub(super) async fn respawn(
     }
     let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
     let agent = state.agent;
-    release_live_client(state, resume_id.is_none())?;
+    release_live_client(state, resume_id.is_none(), "respawn")?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
@@ -213,7 +213,7 @@ pub(super) async fn reset_harness_context(
 ) -> Result<u64, SessionError> {
     // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
-    release_live_client(state, true)?;
+    release_live_client(state, true, "harness switch")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
@@ -268,7 +268,7 @@ pub(super) async fn clear_session_context(
     let agent = state.agent;
     // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
-    release_live_client(state, true)?;
+    release_live_client(state, true, "clear context")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
@@ -317,7 +317,18 @@ pub(super) async fn clear_session_context(
 fn release_live_client(
     state: &mut TaskSessionState,
     close_session: bool,
+    reason: &'static str,
 ) -> Result<(), SessionError> {
+    // This is the only place the host sends ACP `session/cancel` on its own.
+    // Name the caller when it cuts a running turn short (#1189).
+    if state.prompts.active_prompt.is_some() {
+        tracing::warn!(
+            handle = %state.qualified_handle,
+            generation = state.generation,
+            reason,
+            "releasing the ACP child while a turn is in flight; the turn will be cancelled"
+        );
+    }
     retry_pending_exit_interruption(state);
     if state.prompts.pending_exit_interruption.is_some() {
         return Err(SessionError::persist("prompt ownership recovery pending"));
