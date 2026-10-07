@@ -357,7 +357,7 @@ fn execute_task_command<R: Registry>(
 ) -> Result<OperateOutcome, OperateError> {
     let task_handle = &request.task_handle;
     if matches!(kind, TaskCommandKind::Review | TaskCommandKind::Repair) {
-        let _ = commands::refresh_git_substrate_evidence(context, runner);
+        refresh_git_evidence_for_task(context, runner, task_handle)?;
     }
 
     let open_mode = if matches!(kind, TaskCommandKind::Resume | TaskCommandKind::Repair) {
@@ -381,6 +381,31 @@ fn execute_task_command<R: Registry>(
         state_changed,
         output: format_execution_outputs(&outputs),
     })
+}
+
+/// Review and Repair act on Git evidence, so they stop when the task's own
+/// repository could not be observed instead of using what is on record. A
+/// failure in some other repository does not block them.
+fn refresh_git_evidence_for_task<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+) -> Result<(), OperateError> {
+    let mut unobserved = Vec::new();
+    let changed =
+        commands::refresh_observable_git_substrate_evidence(context, runner, &mut unobserved)
+            .map_err(|error| OperateError::Command(error, false))?;
+    let repo = context
+        .registry
+        .get_task(&ajax_core::models::TaskId::new(task_handle))
+        .map(|task| task.repo.clone());
+    match unobserved
+        .into_iter()
+        .find(|(name, _)| Some(name) == repo.as_ref())
+    {
+        Some((_, error)) => Err(OperateError::Command(error, changed)),
+        None => Ok(()),
+    }
 }
 
 fn task_command_confirmed(
