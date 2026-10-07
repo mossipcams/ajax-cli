@@ -11,9 +11,6 @@ function count(n: number, singular: string, plural: string): string {
 
 const SUMMARY_KINDS = new Set(["read", "edit", "move", "delete", "search", "execute"]);
 
-/** What the turn did, once it is done doing it: "Read 6 files · edited 2 files
- * · searched 3 queries · ran 4 commands · used 2 tools · 38s". Named work
- * first, failures next, wall time last. */
 export function activitySummary(items: ConversationItem[]): string {
   const calls = tools(items);
   const kinds = (...wanted: string[]) =>

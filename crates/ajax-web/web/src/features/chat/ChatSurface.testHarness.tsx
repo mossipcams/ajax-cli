@@ -20,8 +20,6 @@ export const stylesSource = readOrderedStylesSource(join(here, "../.."));
 export { chatSurfaceSource };
 
 export const transport = {
-  // `WebSessionTransport.sendPrompt` returns the clientMessageId it queued, and
-  // "" when it refuses to send; the composer keys off that.
   sendPrompt: vi.fn(() => "cmid-1"),
   withdrawQueuedPrompt: vi.fn(),
   sendCancel: vi.fn(),
@@ -172,8 +170,6 @@ export function send(event: webSessionTransport.WebSessionServerEvent) {
   flushRaf();
 }
 
-/** Type into the composer and press Enter — send, queue, or stop-and-send,
- * whichever the current turn state makes it. */
 export function typeComposer(text: string) {
   fireEvent.change(screen.getByLabelText("Message"), { target: { value: text } });
   fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });

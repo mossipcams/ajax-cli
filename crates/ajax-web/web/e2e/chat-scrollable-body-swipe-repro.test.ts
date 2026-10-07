@@ -1,7 +1,3 @@
-// Mobile-webkit: overflowing tool and diff bodies own their touch gestures.
-//
-//   npm run web:smoke -- e2e/chat-scrollable-body-swipe-repro.test.ts
-
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   DETAIL_FIXTURE,

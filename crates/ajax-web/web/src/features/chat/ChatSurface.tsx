@@ -19,7 +19,6 @@ import {
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { ChatTaskAttention } from "./status/public";
 
-/** Selectable transcript prose — page swipe must not steal iOS text selection. */
 const CHAT_TRANSCRIPT_TEXT_SELECTOR =
   ".session-said, .session-reply, .session-note-text, .session-thread-empty";
 
@@ -38,7 +37,6 @@ function hasActiveChatTranscriptTextSelection(): boolean {
   return Boolean(element.closest(CHAT_TRANSCRIPT_TEXT_SELECTOR));
 }
 
-/** Ignore transcript touches only while native text highlighting is active. */
 function shouldIgnoreChatTranscriptSwipeTarget(target: EventTarget | null): boolean {
   if (!isChatTranscriptTextTarget(target)) return false;
   return hasActiveChatTranscriptTextSelection();

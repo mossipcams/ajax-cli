@@ -1,31 +1,16 @@
-// The live head: one fixed panel that always answers "what is the agent doing
-// and does it need me?". It escalates — a decision outranks work in progress,
-// which outranks a task that needs attention, which outranks idle — so the
-// operator reads one state, never four competing banners.
-//
-// Identity chrome (back, title, Details) lives on the shared Task Workspace
-// header above this panel. Permission controls are composed via `permission`.
-
 import type { ReactNode } from "react";
 import { ContextUsageMeter } from "./UsageIndicators";
 import { headStateLabel, type ChatHeadView } from "./headView";
 
 interface Props {
   view: ChatHeadView;
-  /** Permission markup from features/chat/permissions — not owned by status. */
   permission?: ReactNode;
-  /** Task actions for the attention state — composed by Task Workspace. */
   actions?: ReactNode;
   onStop: () => void;
 }
 
 export default function LiveHead({ view, permission, actions, onStop }: Props) {
   const quiet = view.state === "working" && view.activityAgeMs >= 60_000;
-  // The turn's activity row narrates the operation in the transcript, where the
-  // conversation is. The head printing the same command a screen away gave the
-  // operator two live regions and a void between them. The head keeps the state
-  // and Stop, and speaks only before the first event, when the transcript has
-  // nothing to show yet.
   const showThinking = view.state === "working" && !view.hasActivity;
 
   return (
@@ -40,9 +25,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
             className={`status-dot${view.state === "working" && !quiet ? " is-live" : ""}`}
             aria-hidden="true"
           />
-          {/* #1039: one badge. A dropped socket is the state — `Ready` beside
-              `Reconnecting` claimed both at once, and neither the agent's
-              readiness nor an ask can be acted on until the socket is back. */}
+          {}
           {view.connected ? (
             <span className="session-head-label">{headStateLabel(view.state, quiet)}</span>
           ) : (

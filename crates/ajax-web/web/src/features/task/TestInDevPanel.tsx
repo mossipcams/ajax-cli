@@ -31,8 +31,6 @@ export default function TestInDevPanel({ taskHandle, onResult }: Props) {
     setBusy(true);
     try {
       const response = await startDevDeploy(taskHandle);
-      // Issue #1035: cancel any mount-time status fetch and keep the accepted
-      // 202 building snapshot visible until polling reports inactive.
       await queryClient.cancelQueries({ queryKey: queryKeys.devDeploy() });
       queryClient.setQueryData(queryKeys.devDeploy(), response);
       setPendingDeploy(response.deploy);

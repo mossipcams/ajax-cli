@@ -5,10 +5,8 @@ import {
   transcriptScrollBottom,
 } from "@/shared/lib/sessionViewport";
 
-/** No-op — live-edge assertions use scrollTop metrics in jsdom. */
 export function syncTranscriptLayoutRects(_thread: HTMLDivElement): void {}
 
-/** Legacy hook for tests that still patch scrollIntoView; pin uses scrollTop now. */
 export function installTranscriptScrollIntoViewMock(): () => void {
   return () => {};
 }
@@ -25,7 +23,6 @@ export function expectThreadAwayFromLiveEdge(thread: HTMLDivElement): void {
   expect(transcriptAtLiveEdge(thread)).toBe(false);
 }
 
-/** Vitest helper: scroll away from live edge. */
 export function scrollThreadToHistory(thread: HTMLDivElement, scrollTop: number): void {
   thread.scrollTop = scrollTop;
 }

@@ -216,8 +216,6 @@ export default function TaskTerminal({ handle }: Props) {
       const code = data.toLowerCase().charCodeAt(0);
       if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
     }
-    // ANSI CSI cursor sequences are the point of this match.
-    // eslint-disable-next-line no-control-regex -- CSI ESC must appear in the pattern
     const cursor = /^\x1b\[([ABCD])$/.exec(data);
     if (cursor) return `\x1b[1;5${cursor[1]}`;
     return data;
@@ -284,19 +282,7 @@ export default function TaskTerminal({ handle }: Props) {
     input.addEventListener("focus", seedSentinelFromFocus);
   };
 
-  // Measured on an iOS 26 Simulator: a held Delete repeats deleteContentBackward
-  // at ~100ms, then escalates to deleteWordBackward after ~800ms. Ignoring the
-  // escalation strands the rest of the hold. deleteInputPayload is in
-  // terminalPaste.ts.
 
-  // Backspace is the one key we leave uncancelled (cancelling it kills the iOS
-  // hold-to-delete repeat), so WebKit really edits the helper textarea and then
-  // reveals the caret — after the input event, measured on mobile-webkit as
-  // input → selectionchange → scroll. .terminal-host is sticky, so the
-  // textarea's layout position sits near the top of the spacer-extended scroll
-  // range and the reveal drags the wrap, and the whole terminal with it, up into
-  // scrollback. Pin the offset over the edit and put it back from the scroll
-  // event the reveal fires, before that scroll can drive the PTY viewport.
   const pinnedScrollTopRef = useRef<number | null>(null);
 
   const pinInteractionScroll = () => {
@@ -307,7 +293,6 @@ export default function TaskTerminal({ handle }: Props) {
     pinnedScrollTopRef.current = null;
   };
 
-  /** True when this scroll was the caret reveal and has been undone. */
   const restorePinnedInteractionScroll = (): boolean => {
     const wrap = interactionElRef.current;
     const pinned = pinnedScrollTopRef.current;
@@ -318,9 +303,7 @@ export default function TaskTerminal({ handle }: Props) {
     return true;
   };
 
-  // Dedup paste vs beforeinput(insertFromPaste) on browsers that fire both.
   const pasteHandledAtRef = useRef(0);
-  // Empty sync clipboardData: block xterm's empty clear, recover from input.
   const pasteExpectRef = useRef(false);
   const claimPasteHandle = (): boolean => {
     const now = performance.now();
@@ -346,29 +329,20 @@ export default function TaskTerminal({ handle }: Props) {
     const payload = deleteInputPayload(event.inputType);
     if (payload) {
       pinInteractionScroll();
-      // No preventDefault: cancelling here also cancels the iOS repeat loop.
       sendKey(consumeCtrl(payload));
       return;
     }
     onTextareaPasteBeforeInput(event);
   };
 
-  // Reseed here, never from a beforeinput microtask: the microtask checkpoint
-  // runs *before* the browser applies the deletion, so it always sees the
-  // sentinel still present, does nothing, and leaves the textarea empty for the
-  // next repeat tick.
   const onTextareaInput = (event: Event) => {
     const inputType = (event as InputEvent).inputType ?? "";
     if (inputType.startsWith("delete")) {
       pasteExpectRef.current = false;
       seedTermSentinel();
-      // The reveal scroll lands in this frame; drop the pin after it so it can
-      // never swallow a later finger scroll.
       requestAnimationFrame(clearInteractionScrollPin);
       return;
     }
-    // Safari often recovers empty clipboardData pastes as insertText (not
-    // insertFromPaste). Only ignore insertText when we are not expecting paste.
     if (
       inputType === "insertFromPaste" ||
       inputType === "insertFromPasteAsQuotation" ||
@@ -379,8 +353,6 @@ export default function TaskTerminal({ handle }: Props) {
       if (textarea instanceof HTMLTextAreaElement) {
         const raw = pasteRawFromExpectValue(textarea.value);
         pasteExpectRef.current = false;
-        // Force-clear: seedBackspaceSentinel no-ops when ZWS is still present
-        // beside the pasted text.
         textarea.value = BACKSPACE_SENTINEL;
         sendPastedText(raw);
       }
@@ -392,22 +364,18 @@ export default function TaskTerminal({ handle }: Props) {
   const onTextareaPaste = (event: ClipboardEvent) => {
     const text = readPasteText(event.clipboardData);
     if (text) {
-      // Only cancel once we have payload — empty preventDefault swallowed all
-      // Safari pastes when clipboardData was inaccessible synchronously.
       event.preventDefault();
       event.stopImmediatePropagation();
       sendPastedText(text);
       return;
     }
 
-    // beforeinput may already have owned this paste gesture.
     if (performance.now() - pasteHandledAtRef.current < 50) {
       event.preventDefault();
       event.stopImmediatePropagation();
       return;
     }
 
-    // Sync formats empty: block xterm's empty clear, let the browser insert.
     pasteExpectRef.current = true;
     event.stopImmediatePropagation();
   };
@@ -488,11 +456,6 @@ export default function TaskTerminal({ handle }: Props) {
     repeatable: boolean,
   ) => {
     const ownedFocus = consumeToolbarPointerOwnedFocus(event);
-    // Repeatable keys already emit once from onRepeatableKeyPointerDown, so the
-    // trailing pointer/touch click must never send again. iOS can deliver that
-    // synthetic click after a timing flag would have expired (that race sent the
-    // arrow twice and skipped a line), so key off event.detail — 0 means a
-    // keyboard activation, which had no pointerdown emit and must send once.
     if (repeatable && event.detail !== 0) {
       refocusTermIfOwned(ownedFocus);
       return;
@@ -632,8 +595,6 @@ export default function TaskTerminal({ handle }: Props) {
     resetResizeDedupeRef.current?.();
     if (!entering) {
       blurTerm();
-      // Exit while keyboard-open used to call discreteIntent=false, which is a
-      // no-op under the fit freeze — inline band never refit. Always settle.
       scheduleBandSettle();
       return;
     }

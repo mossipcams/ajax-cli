@@ -1,11 +1,6 @@
-// Diff Review mobile-webkit smoke: task detail swipe-left opens the projection
-// shell without requiring a live Rust backend.
-
 import { test, expect, type Locator } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket } from "./fixtures";
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
-// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(async ({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
@@ -46,7 +41,6 @@ test("task detail swipe-left opens Diff Review chrome", async ({ page }) => {
   await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8000 });
   await expect(page.getByTestId("diff-review")).toBeVisible();
   await expect(page.getByTestId("diff-pr-strip")).toBeVisible();
-  // Signal files auto-open into the hunk viewer (file list is the empty/noise-only path).
   await expect(page.getByTestId("diff-hunk-viewer")).toBeVisible();
   await expect(page.getByTestId("diff-source")).toHaveText(/pr:12/);
 });

@@ -13,7 +13,6 @@ import {
 } from "./selectors";
 import { explainAcpError, explainOpenFailure } from "./errors";
 
-// reduceWire drops unmapped wire events (artifacts) at the projection boundary.
 
 function reduceWire(
   state: ChatSessionReducerState,
@@ -782,9 +781,6 @@ describe("a turn that ends leaves nothing running", () => {
     content: [],
   };
 
-  // #1044: ACP is not obliged to send a terminal update for a call the operator
-  // stopped, so the head went on advertising a command that had stopped
-  // running — while the transcript beside it already said `Ran 1 command`.
   it("settles an unfinished tool call when the turn is cancelled", () => {
     const view = run([
       { prompt: "run the tests" },
@@ -821,8 +817,6 @@ describe("a failed turn is reported once", () => {
   const errorNotes = (view: ChatSessionView) =>
     view.conversation.filter((item) => item.kind === "note" && item.tone === "error");
 
-  // #1045: the generic note fired on every `turn_end{error}`, so a host error that
-  // already named the failure was followed by a second, vaguer one.
   it("does not add the generic note when the host already explained", () => {
     const view = run([
       { prompt: "run nextest" },
@@ -833,7 +827,6 @@ describe("a failed turn is reported once", () => {
     expect(errorNotes(view)).toHaveLength(1);
   });
 
-  // "Stopped without a response" is simply untrue when the agent answered.
   it("does not claim silence when the turn produced an answer", () => {
     const view = run([
       { prompt: "run nextest" },
@@ -852,8 +845,6 @@ describe("a failed turn is reported once", () => {
 });
 
 describe("the plan belongs to its turn", () => {
-  // #1047: one plan row for the whole session meant a later turn's plan rewrote the
-  // plan filed under the first turn, and no turn after it ever got one.
   it("opens a new plan row per turn instead of rewriting the first", () => {
     const view = run([
       { prompt: "first" },
@@ -881,10 +872,6 @@ describe("the plan belongs to its turn", () => {
 });
 
 describe("the permission ask reads as a command, not as markdown", () => {
-  // #1046 (sibling of #970, which fixed case-folding on this string): the
-  // same control still rendered
-  // the harness's markdown delimiters literally, at the moment the operator
-  // was deciding whether to allow a destructive command.
   it("strips markdown delimiters from the title once, at the boundary", () => {
     const view = run([
       { prompt: "clean up" },

@@ -66,8 +66,6 @@ describe("useSessionConnection", () => {
     unmount();
   });
 
-  // Regression for issue #931: host snapshots seed the New Task preference
-  // through onSessionModel, not by reading localStorage as live session truth.
   it("reports host snapshot models through onSessionModel (#931)", () => {
     const hostModels: string[] = [];
     const transport: webSessionTransport.WebSessionTransport = {
@@ -98,9 +96,6 @@ describe("useSessionConnection", () => {
     unmount();
   });
 
-  // Regression for issue #904: streamed ACP message chunks must be coalesced
-  // with requestAnimationFrame before reaching the reducer, not dispatched one
-  // per token or held until turn_end.
   it("coalesces streamed message chunks before dispatching", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const frameQueue: FrameRequestCallback[] = [];

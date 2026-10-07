@@ -13,7 +13,6 @@ interface Props {
   onStop: () => void;
 }
 
-/** Builds the typed head view and renders LiveHead; permission markup is composed upstream. */
 export default function ChatLiveHead({
   view,
   taskAttention,
@@ -23,11 +22,6 @@ export default function ChatLiveHead({
   actions = null,
   onStop,
 }: Props) {
-  // One bit, not three rows: has this turn produced anything the transcript's
-  // activity row can narrate? Until it has, the head says `Thinking…`; after
-  // that the transcript owns the operation and the head stays out of it.
-  // Scoped to the turn in flight: an earlier turn's tool rows must not silence
-  // `Thinking…` for a turn that has not produced anything yet.
   const hasActivity = (() => {
     for (let i = view.conversation.length - 1; i >= 0; i -= 1) {
       const item = view.conversation[i];

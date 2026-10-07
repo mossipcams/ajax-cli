@@ -1,16 +1,3 @@
-// A tool call in the conversation: one row on the shared activity grid — mark,
-// target, elapsed — over the body holding what the call actually produced, the
-// text a command printed or the diff an edit wrote.
-//
-// The row states the target, not the tool: "Read File" is identical on every
-// read, and the path is the only reason to look. Success spends no words — the
-// mark carries it — so the right column is free for the states that want the
-// operator.
-//
-// Default collapse follows status, not preference: a call that succeeded needs
-// one line, a call that failed or is still running is why the operator opened
-// this surface. Once toggled, the operator's choice wins for that call.
-
 import { useState } from "react";
 import type { ToolCall, ToolContent } from "../session/public";
 import { OutputContentBlockView } from "../public";
@@ -30,8 +17,6 @@ import {
   TOOL_TONES,
 } from "./presentation";
 
-/** The one row shape every activity line uses: mark, target, right-hand meta.
- * One grid, so a column of them reads as a column and not as loose paragraphs. */
 export function ActivityRow({
   mark,
   target,
@@ -43,12 +28,7 @@ export function ActivityRow({
   mark: string;
   target: string;
   meta?: string | null;
-  /** Characters held back from ellipsis. Paths and commands are distinguished by
-   * their end, so they keep the default; prose is not, and passes 0 rather than
-   * ending on a severed word. */
   tailChars?: number;
-  /** The target is a path, a command, or other machine text. Labels and prose
-   * are set in the body face like the rest of the conversation. */
   mono?: boolean;
 } & React.ComponentProps<"button">) {
   const [head, tail] = middleSplit(target, tailChars);
@@ -165,8 +145,6 @@ function ContentBlock({
   if (content.type === "image" || content.type === "resource_link" || content.type === "resource") {
     return <OutputContentBlockView block={content} />;
   }
-  // Execute output arrives here as text: Ajax advertises no `terminal/*` client
-  // capability, so there is never an embedded terminal to render instead.
   return (
     <TextOutputBlock text={content.text} failed={failed} blockKind={outputBlockKind(kind)} />
   );
@@ -198,13 +176,9 @@ export default function ToolCard({ call }: { call: ToolCall }) {
         mark={toolMark(call.kind)}
         target={rowLabel}
         mono
-        // Elapsed is the resting right column; a word replaces it only when the
-        // call is running, queued, or broken.
         meta={toolStatusNote(call.status) ?? formatElapsed(elapsedMs(call))}
-        // The row shows the action; the accessible name keeps what ran.
         aria-label={rowLabel === label ? label : `${rowLabel} · ${target}`}
         title={call.locations[0] ?? label}
-        // Nothing to show, nothing to toggle — but the row still states what ran.
         disabled={call.content.length === 0}
         aria-expanded={expanded}
         onClick={() => setOpen(!expanded)}

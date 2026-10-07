@@ -14,14 +14,12 @@ function taskTerminalStylesSection(): string {
   return stylesSource.slice(start, end);
 }
 
-/** Exact height-based visualViewport band pin (flush above iOS keyboard). */
 const HEIGHT_PIN_TOP = /top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/;
 const HEIGHT_PIN_HEIGHT =
   /height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/;
 const HEIGHT_PIN_MAX_HEIGHT =
   /max-height:\s*var\(--app-height,\s*var\(--app-band-height,\s*100dvh\)\)/;
 
-/** Forbidden: 100lvh bottom math that gaps above the soft keyboard on Safari. */
 const FORBIDDEN_LVH_BOTTOM =
   /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top/;
 
@@ -83,7 +81,6 @@ describe("keyboard band height pin contract", () => {
 
   it("pins fullscreen layer with visualViewport height (not 100lvh bottom)", () => {
     const rule = stylesSource.match(/\.fullscreen-layer\s*\{([^}]*)\}/)?.[1] ?? "";
-    // FullscreenLayer does not set max-height; height alone is enough.
     expectHeightBandPin(rule, { requireMaxHeight: false });
   });
 
@@ -111,7 +108,6 @@ describe("keyboard band height pin contract", () => {
     expect(body).not.toMatch(/env\(safe-area-inset-bottom\)/);
   });
 
-  // Embedded shell is dist/app.css (include_bytes!), not the src/styles.css source.
   it("ships the expanded keyboard-open hotbar pad override in dist/app.css", () => {
     const distCss = readFileSync(join(here, "../../../dist/app.css"), "utf8");
     expect(distCss).toMatch(

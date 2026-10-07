@@ -362,10 +362,6 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
-  // The host rejects a frame over its ceiling before it can read the frame's
-  // clientMessageId, so the prompt is never acknowledged. Queued, it was resent
-  // on every reconnect and rejected every time — one long paste poisoned the
-  // session permanently, surviving reloads in sessionStorage.
   it("refuses a prompt too large for the host frame limit instead of queueing it", () => {
     const socket = fakeSocket();
     const cbs = callbacks();

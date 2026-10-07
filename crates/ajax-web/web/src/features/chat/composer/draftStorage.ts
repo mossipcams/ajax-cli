@@ -27,7 +27,6 @@ export function writeComposerDraft(handle: string, text: string): void {
     if (text) localStorage.setItem(draftKey(handle), text);
     else localStorage.removeItem(draftKey(handle));
   } catch {
-    // Private mode / storage denied: composer still works in-memory.
   }
 }
 
@@ -35,7 +34,6 @@ export function clearComposerDraft(handle: string): void {
   writeComposerDraft(handle, "");
 }
 
-/** Restore one editable queued follow-up; stopping is normalized to queued. */
 export function readComposerQueue(handle: string): ComposerState {
   try {
     const raw = localStorage.getItem(queueKey(handle));
@@ -66,14 +64,12 @@ export function writeComposerQueue(handle: string, state: ComposerState): void {
       return;
     }
     if (hasBlocks) {
-      // Attachment-bearing queues stay in memory for this tab; never persist text-only shadows.
       localStorage.removeItem(queueKey(handle));
       return;
     }
     const payload: StoredComposerQueue = { text: state.text };
     localStorage.setItem(queueKey(handle), JSON.stringify(payload));
   } catch {
-    // Quota / private mode: queue still works in-memory for this tab.
   }
 }
 
@@ -81,13 +77,11 @@ export function clearComposerQueue(handle: string): void {
   writeComposerQueue(handle, { status: "idle" });
 }
 
-/** Drop commit clears presentation-only composer state for a handle. */
 export function clearComposerPresentationState(handle: string): void {
   clearComposerDraft(handle);
   clearComposerQueue(handle);
 }
 
-/** Test-only helper: detect attachment bytes that must not touch localStorage. */
 export function queueHasAttachmentBytes(
   contentBlocks?: PromptContentBlockWire[],
 ): boolean {

@@ -7,7 +7,6 @@ interface Props {
   conversation: ReactNode;
 }
 
-/** Empty-state gate, conversation slot, and queued preview — composer owns queue UX. */
 export default function ChatTranscriptTail({ itemCount, conversation }: Props) {
   const { queued } = useComposerContext();
   if (itemCount === 0 && queued === null) {

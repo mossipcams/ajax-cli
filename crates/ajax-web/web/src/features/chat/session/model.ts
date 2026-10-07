@@ -1,11 +1,7 @@
-/** Chat-facing session types. Presentation imports these via session/public only. */
-
 import type { OutputContentBlock, ToolContent } from "@/shared/lib/liveSessionOutputContent";
 
 export type { OutputContentBlock, ToolContent };
 
-/** `cancelled` is client-applied: ACP need not send a terminal update for a
- * call the operator stopped, and an unsettled call reads as still running. */
 export type ToolStatus = "pending" | "in_progress" | "completed" | "failed" | "cancelled";
 
 export interface ToolCall {
@@ -102,7 +98,6 @@ import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
 
-/** Host-confirmed model and advertised config options from session snapshots. */
 export interface ChatModelState {
   confirmedModel: string;
   configOptions?: LiveSessionConfigOption[];
@@ -122,7 +117,6 @@ export interface ChatSessionView {
   revision: number;
 }
 
-/** Closed union — reducer input after wire projection. No raw wire role/status strings. */
 export type ChatSessionEvent =
   | {
       type: "agent_message";
@@ -169,7 +163,6 @@ export type ChatSessionAction =
   | { type: "elicitation_answered" }
   | { type: "reset" };
 
-/** Reducer carries seq for stable item ids; not part of the public view contract. */
 export interface ChatSessionReducerState {
   view: ChatSessionView;
   seq: number;

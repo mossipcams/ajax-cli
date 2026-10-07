@@ -132,7 +132,6 @@ describe("SessionModelControls", () => {
     expect(onApply).toHaveBeenCalledWith("reasoning", "high");
   });
 
-  // Regression #1014: Cursor parameterized picker advertises Fast as true/false select.
   it("renders Fast as Off/On and applies advertised string values for Cursor", () => {
     const onApply = vi.fn();
     const { rerender } = render(

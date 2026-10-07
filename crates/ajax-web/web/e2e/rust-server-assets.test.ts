@@ -1,6 +1,3 @@
-// Mobile WebKit smoke against the release-built Rust HTTPS server. API and
-// terminal transport are mocked in-page; HTML/JS/CSS load from the real server.
-
 import { test, expect } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket, terminalSurface } from "./fixtures";
 

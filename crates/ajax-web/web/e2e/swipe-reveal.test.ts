@@ -1,18 +1,6 @@
-// Swipe-to-reveal e2e characterization. Pins TaskList behavior across
-// implementations: a left touch-drag on a dashboard row opens it by exactly
-// SWIPE_REVEAL_WIDTH and tapping the revealed first action dispatches
-// the operation (no second confirm tap for non-destructive review).
-//
-// Mobile-webkit only — desktop has no touch path and no reduced-pointer
-// equivalent, so we skip other projects up front. Touch events are dispatched
-// in-page via the same Object.defineProperty(touches) pattern used in
-// terminal-behavior.test.ts so the gesture runs against the real action.
-
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { mockFetch } from "./fixtures";
 
-// A calm (non-inbox) row: inbox rows surface their actions inline as real
-// buttons, so the swipe gesture only applies to the calm list.
 const TARGET_HANDLE = "api/add-auth";
 const OPERATION_PATH = "/api/operations";
 
@@ -72,8 +60,6 @@ async function touchDragRowLeft(page: Page, row: Locator, dx: number) {
   }, dx);
 }
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
-// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
@@ -85,8 +71,6 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  // mockFetch must install first so the spy wraps it; otherwise the mock
-  // returns early for matched paths and the spy never sees the operation POST.
   await mockFetch(page);
   await installFetchSpy(page);
   await page.goto("/app.html");
@@ -102,16 +86,13 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
       return Number.isFinite(parsed) ? parsed : 158;
     });
 
-  // Swipe past the 56px snap trigger so the action settles open at the reveal cap.
   await touchDragRowLeft(page, row, revealWidth + 20);
 
-  // Reveal state: row is flagged is-revealed and translated by the reveal width.
   await expect(row).toHaveClass(/is-revealed/);
   await expect
     .poll(() => row.evaluate((el) => (el as HTMLElement).style.transform))
     .toBe(`translateX(-${revealWidth}px)`);
 
-  // The revealed action is now visually present in the row wrap and clickable.
   const revealedAction = page.locator(
     `.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="review"]`,
   );
@@ -119,8 +100,6 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
 
   await revealedAction.click();
 
-  // The tap must POST to /api/operations — review is non-destructive so it
-  // fires immediately without a second confirm tap (matches smoke flow).
   await expect
     .poll(() => fetchCalls(page))
     .toContainEqual(

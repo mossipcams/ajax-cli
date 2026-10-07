@@ -11,7 +11,6 @@ export type TaskTerminalSpeechDeps = {
   pasteThroughTerm: (text: string, ownedFocus?: boolean) => boolean;
 };
 
-/** Terminal-owned speech adapter: inserts finalized STT text into the PTY with undo. */
 export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
   speechModel: ReturnType<typeof useSpeechInput>["speechModel"];
   pauseCountdownSeconds: number | undefined;
@@ -34,7 +33,6 @@ export function useTaskTerminalSpeech(deps: TaskTerminalSpeechDeps): {
       },
       undoInserts: (records: readonly SpeechInsert[]) => {
         const payload = undoPayload(records);
-        // ponytail: assumes speech only appends to the current line; en-US UTF-16 .length DEL undo.
         if (payload && connectionRef.current?.isOpen()) {
           connectionRef.current.sendInput(payload);
         }

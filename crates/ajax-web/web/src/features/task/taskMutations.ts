@@ -27,7 +27,6 @@ type DropComposerCleanup = (handle: string) => void;
 
 let dropComposerCleanup: DropComposerCleanup | null = null;
 
-/** Registered by task-workspace while mounted; runs on committed Drop before dismiss. */
 export function registerDropComposerCleanup(fn: DropComposerCleanup | null): void {
   dropComposerCleanup = fn;
 }
@@ -93,7 +92,6 @@ export async function runTaskAction(
   }
 }
 
-/** Arm the delayed-Drop undo window after shell confirm. */
 export function armDropUndo(
   action: WebAction,
   handle: string,
@@ -126,7 +124,6 @@ export function armDropUndo(
   callbacks.onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });
 }
 
-/** Proceed after shell confirm: Drop arms undo; other actions run immediately. */
 export function commitConfirmedAction(
   action: WebAction,
   handle: string,

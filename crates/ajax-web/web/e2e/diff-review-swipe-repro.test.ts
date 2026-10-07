@@ -1,11 +1,6 @@
-// Mobile-webkit: plain swipe-left opens Diff; swipe-right does not.
-//
-//   npm run web:smoke -- e2e/diff-review-swipe-repro.test.ts
-
 import { test, expect, type Locator } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket } from "./fixtures";
 
-// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(async ({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",

@@ -10,7 +10,6 @@ export { DEFAULT_SESSION_MODEL, decodeModelSelection, encodeModelSelection };
 
 export const SESSION_MODEL_STORAGE_KEY = "ajax.web.session.model";
 
-/** Harness id the session models API expects, regardless of task-detail casing. */
 export function normalizeSessionAgent(agent?: string): string {
   const trimmed = (agent ?? "cursor").trim().toLowerCase();
   return trimmed || "cursor";
@@ -34,7 +33,6 @@ export function writeSessionModel(model: string): void {
     localStorage.setItem(SESSION_MODEL_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent(SESSION_MODEL_EVENT));
   } catch {
-    // Private mode / storage denied: preference just won't stick.
   }
 }
 
@@ -64,31 +62,24 @@ export function useSessionModelPreference(): [string, (model: string) => void] {
 export interface SessionModelOption {
   id: string;
   label: string;
-  /** Reasoning levels for this Cursor base (slim catalog from the API). */
   efforts?: string[];
-  /** True when a Fast sibling exists for this Cursor base. */
   hasFast?: boolean;
 }
 
-/** A second axis beside the models, e.g. the reasoning level. */
 export interface SessionModelGroup {
-  /** Config id the harness answers to, e.g. `effort`. */
   id: string;
   label: string;
   options: SessionModelOption[];
   default: string;
 }
 
-/** Catalog plus the model the server launches when the request omits one. */
 export interface SessionModelCatalog {
   models: SessionModelOption[];
   default: string;
   reasoning?: SessionModelGroup;
-  /** Set when the harness could not be read at all (missing, or not on PATH). */
   error?: string;
 }
 
-/** Matches effort suffixes on Cursor catalog ids (see core `CURSOR_EFFORT_SUFFIXES`). */
 export const CURSOR_EFFORT_SUFFIXES = ["xhigh", "high", "medium", "low", "none", "max"] as const;
 
 export interface CursorModelIntent {
@@ -97,7 +88,6 @@ export interface CursorModelIntent {
   fast: boolean;
 }
 
-/** One collapsed Cursor model row (Fast and duplicate effort ids folded out). */
 export interface CursorDisplayModel {
   base: string;
   label: string;
@@ -112,7 +102,6 @@ function stripFastSuffix(id: string): { stem: string; fast: boolean } {
   return { stem: id, fast: false };
 }
 
-/** Encode a Cursor picker selection as pipe-form session_model. */
 export function encodeCursorSelection(
   base: string,
   effort: string | undefined,
@@ -126,7 +115,6 @@ export function encodeCursorSelection(
   return encodeModelSelection(base, options);
 }
 
-/** Parse a Cursor ACP bracket id such as `gpt-5.6-sol[effort=high,fast=false]`. */
 function parseCursorBracketId(raw: string): CursorModelIntent | null {
   const bracketStart = raw.indexOf("[");
   if (bracketStart <= 0) return null;
@@ -146,7 +134,6 @@ function parseCursorBracketId(raw: string): CursorModelIntent | null {
   return intent;
 }
 
-/** Parse pipe-form or legacy exploded Cursor ids into picker state. */
 export function decodeCursorPipeOrCatalogId(raw: string): CursorModelIntent | null {
   if (raw.includes("|")) {
     const { model, options } = decodeModelSelection(raw);
@@ -163,7 +150,6 @@ export function decodeCursorPipeOrCatalogId(raw: string): CursorModelIntent | nu
   }
   return parseCursorCatalogId(raw);
 }
-/** Parse a Cursor Ajax catalog id into comparable base / effort / fast pieces. */
 export function parseCursorCatalogId(raw: string): CursorModelIntent | null {
   const trimmed = raw.trim();
   if (!trimmed || trimmed === DEFAULT_SESSION_MODEL) return null;
@@ -217,7 +203,6 @@ function intentsMatch(a: CursorModelIntent, b: CursorModelIntent): boolean {
   return a.base === b.base && (a.effort ?? "") === (b.effort ?? "") && a.fast === b.fast;
 }
 
-/** Find the catalog id for a Cursor intent, preferring an exact catalog match. */
 export function composeCursorCatalogId(
   intent: CursorModelIntent,
   catalogIds: Iterable<string>,
@@ -229,7 +214,6 @@ export function composeCursorCatalogId(
   return null;
 }
 
-/** Collapse Cursor catalog rows that differ only by `-fast` or effort into one shortlist slot. */
 export function collapseCursorCatalogModels(models: SessionModelOption[]): SessionModelOption[] {
   const slim = models.some(
     (option) =>
@@ -254,7 +238,6 @@ export function collapseCursorCatalogModels(models: SessionModelOption[]): Sessi
   return [...auto, ...collapsed];
 }
 
-/** Build collapsed Cursor model rows for the picker (Auto stays a normal catalog row). */
 export function buildCursorDisplayModels(models: SessionModelOption[]): CursorDisplayModel[] {
   const grouped = new Map<
     string,
@@ -294,7 +277,6 @@ export function buildCursorDisplayModels(models: SessionModelOption[]): CursorDi
   }));
 }
 
-/** Decode a persisted Cursor pipe-form or legacy catalog id into picker state. */
 export function decodeCursorSelection(
   raw: string,
   displayModels: CursorDisplayModel[],
@@ -309,7 +291,6 @@ export function decodeCursorSelection(
   return { base: intent.base, effort, fast: intent.fast };
 }
 
-/** Default effort when the operator picks a collapsed Cursor base row. */
 export function defaultCursorEffort(
   row: CursorDisplayModel,
   catalogDefault?: string,
@@ -333,7 +314,6 @@ export interface CursorEffortChoice {
   label: string;
 }
 
-/** Union catalog efforts with live thought_level choices; prefer live labels when connected. */
 export function mergeCursorEffortChoices(
   catalogEfforts: readonly string[],
   liveChoices: ReadonlyArray<{ value: string; name: string }> = [],
@@ -350,8 +330,6 @@ export function mergeCursorEffortChoices(
     });
 }
 
-/** Cursor always has Auto; a bridge harness with no answer has nothing to
- *  offer, and an empty catalog means "let the harness choose". */
 function fallbackCatalog(agent: string): SessionModelCatalog {
   if (agent !== "cursor") return { models: [], default: "" };
   return {
@@ -360,7 +338,6 @@ function fallbackCatalog(agent: string): SessionModelCatalog {
   };
 }
 
-/** Models the given harness can run; each harness advertises its own list. */
 export async function fetchSessionModels(agent = "cursor"): Promise<SessionModelCatalog> {
   const harness = normalizeSessionAgent(agent);
   const response = await fetch(`/api/session/models?agent=${encodeURIComponent(harness)}`, {

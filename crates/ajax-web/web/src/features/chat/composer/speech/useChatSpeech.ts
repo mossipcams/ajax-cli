@@ -8,7 +8,6 @@ export type ChatSpeechDeps = {
   setDraft: (value: string) => void;
 };
 
-/** Chat-owned speech adapter: inserts finalized STT text into the composer draft. */
 export function useChatSpeech({ handle, draftRef, setDraft }: ChatSpeechDeps) {
   const adapter = useMemo(
     () => ({

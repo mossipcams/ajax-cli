@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,
@@ -27,8 +21,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
-// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
     testInfo.title ===

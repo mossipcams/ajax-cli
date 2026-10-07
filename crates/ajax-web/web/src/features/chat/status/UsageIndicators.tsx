@@ -1,7 +1,5 @@
 import type { TurnUsage, Usage } from "../session/public";
 
-/** Context pressure from ACP `usage_update`. Shown whenever the harness reports
- * a non-zero window; high pressure gets a warning tone at 90%+. */
 export function ContextUsageMeter({ usage }: { usage: Usage }) {
   const ratio = Math.min(1, usage.used / usage.size);
   return (
@@ -22,8 +20,6 @@ const TURN_USAGE_FIELDS: { key: keyof TurnUsage; label: string }[] = [
   { key: "totalTokens", label: "total" },
 ];
 
-/** Per-turn token counts from ACP prompt results. Only present fields are
- * shown — missing counts are omitted, never rendered as zero. */
 export function formatTurnUsage(turnUsage: TurnUsage): string | null {
   const parts = TURN_USAGE_FIELDS.flatMap(({ key, label }) => {
     const value = turnUsage[key];
