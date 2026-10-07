@@ -13,6 +13,8 @@ pub(super) struct SessionEvidence {
     pub last_logged_spawn_error_id: Option<String>,
     pub transcript_durability_fault: Option<String>,
     pub pending_transcript_error_snapshot: bool,
+    /// Stored rows that could not be read back; shown, but does not block prompts.
+    pub transcript_corruption: Option<String>,
 }
 
 impl SessionEvidence {
@@ -32,6 +34,18 @@ impl SessionEvidence {
         }
         self.last_logged_spawn_error_id = Some(id);
         false
+    }
+
+    pub(super) fn note_transcript_durability_fault(&mut self, reason: String) {
+        self.transcript_durability_fault = Some(reason);
+        self.pending_transcript_error_snapshot = true;
+    }
+
+    pub(super) fn transcript_error(&self) -> Option<String> {
+        self.transcript_durability_fault
+            .clone()
+            .or_else(|| self.activity_report_fault.clone())
+            .or_else(|| self.transcript_corruption.clone())
     }
 
     pub(super) fn note_activity_report_failure(&mut self, error: &SessionError) {
@@ -97,6 +111,7 @@ mod tests {
             last_logged_spawn_error_id: None,
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
+            transcript_corruption: None,
         };
         let error = SessionError::persist("task activity report failed");
         evidence.note_activity_report_failure(&error);
@@ -119,6 +134,7 @@ mod tests {
             last_logged_spawn_error_id: None,
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
+            transcript_corruption: None,
         };
         evidence.flush_pending_activity_report("web/fix-login");
         assert!(evidence.activity_report_fault.is_none());

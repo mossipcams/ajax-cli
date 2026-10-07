@@ -227,19 +227,13 @@ where
             activity,
             std::time::SystemTime::now(),
         )?;
-        let mut guard = self.shared();
-        if guard.revision == base_revision {
-            guard.context = context;
-            guard.runner = runner;
-            guard.bridge = bridge;
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
-            let mut persisted_bridge = guard.bridge.clone();
-            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
-            Ok(())
-        } else {
-            Err("cockpit state changed while reporting session activity".to_string())
-        }
+        self.commit_durable(
+            context,
+            runner,
+            bridge,
+            base_revision,
+            "cockpit state changed while reporting session activity",
+        )
     }
 
     fn wire_session_activity_reporter(&self)
@@ -289,19 +283,13 @@ where
         };
         crate::slices::operate::set_task_session_model(&mut context, handle, model)
             .map_err(|error| crate::slices::operate::format_operate_error(&error))?;
-        let mut guard = self.shared();
-        if guard.revision == base_revision {
-            guard.context = context;
-            guard.runner = runner;
-            guard.bridge = bridge;
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
-            let mut persisted_bridge = guard.bridge.clone();
-            let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
-            Ok(())
-        } else {
-            Err("cockpit state changed while updating session model".to_string())
-        }
+        self.commit_durable(
+            context,
+            runner,
+            bridge,
+            base_revision,
+            "cockpit state changed while updating session model",
+        )
     }
 
     pub(crate) fn prepare_task_session_attach(
@@ -338,20 +326,50 @@ where
                 .get_task(&ajax_core::models::TaskId::new(handle))
                 .is_some_and(|task| task.skip_interactive_agent());
         let mut guard = self.shared();
-        if guard.revision == base_revision {
-            guard.context = context;
-            guard.runner = runner;
-            guard.bridge = bridge;
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
-            if promoted {
-                let mut persisted_bridge = guard.bridge.clone();
-                let _ = persisted_bridge.persist_registry_snapshot(&mut guard.context);
-            }
-            Ok(plan)
-        } else {
-            Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat)
+        if guard.revision != base_revision {
+            return Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat);
         }
+        // A promotion that is not on disk would revert on restart (#1225).
+        if promoted
+            && bridge
+                .clone()
+                .persist_registry_snapshot(&mut context)
+                .is_err()
+        {
+            return Err(crate::slices::web_session::SessionRouteError::PromotionNotSaved);
+        }
+        guard.context = context;
+        guard.runner = runner;
+        guard.bridge = bridge;
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
+        Ok(plan)
+    }
+
+    /// Commit a control-lane mutation only once its registry snapshot is on
+    /// disk, so success means durable and shared state never runs ahead of it.
+    fn commit_durable(
+        &self,
+        mut context: CommandContext<InMemoryRegistry>,
+        runner: C,
+        bridge: B,
+        base_revision: u64,
+        conflict_message: &str,
+    ) -> Result<(), String> {
+        let mut guard = self.shared();
+        if guard.revision != base_revision {
+            return Err(conflict_message.to_string());
+        }
+        bridge
+            .clone()
+            .persist_registry_snapshot(&mut context)
+            .map_err(|error| format!("registry state was not saved: {error}"))?;
+        guard.context = context;
+        guard.runner = runner;
+        guard.bridge = bridge;
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
+        Ok(())
     }
 }
 

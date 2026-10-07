@@ -118,7 +118,9 @@ export function useSessionConnection({
       setState("connecting");
       transportRef.current?.dispose();
       transportRef.current = undefined;
-      buffer?.dispose();
+      // The resume cursor is already past any text still waiting on a frame
+      // (frames stop while the page is hidden), so it will not be replayed.
+      buffer?.flushAll();
       buffer = new MessageBuffer((event) => dispatchWireEvent(dispatch, event));
       const transport = connectWebSessionTransport(
         handle,

@@ -99,7 +99,18 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         })
         .collect::<Vec<_>>();
     let mut changed = if needs_git_substrate_refresh(&tasks) {
-        commands::refresh_git_substrate_evidence(context, runner)?
+        // One unreachable repository must not fail the refresh for the rest.
+        let mut unobserved = Vec::new();
+        let changed =
+            commands::refresh_observable_git_substrate_evidence(context, runner, &mut unobserved)?;
+        for (repo, error) in unobserved {
+            tracing::warn!(
+                repo,
+                ?error,
+                "git observation failed; keeping prior evidence"
+            );
+        }
+        changed
     } else {
         false
     };

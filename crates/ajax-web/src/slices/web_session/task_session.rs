@@ -192,7 +192,14 @@ impl TaskSessionState {
         if filtered.is_empty() {
             return Ok(());
         }
-        web_session_store::append_events(&self.state_dir, &self.qualified_handle, &filtered);
+        if let Err(error) =
+            web_session_store::try_append_events(&self.state_dir, &self.qualified_handle, &filtered)
+        {
+            let reason = format!("transcript could not be saved: {error}");
+            self.evidence
+                .note_transcript_durability_fault(reason.clone());
+            return Err(SessionError::persist(reason));
+        }
         self.log.append(filtered);
         Ok(())
     }
@@ -315,6 +322,7 @@ pub(crate) fn spawn_task_session(
                 last_logged_spawn_error_id: None,
                 transcript_durability_fault: None,
                 pending_transcript_error_snapshot: false,
+                transcript_corruption: None,
             },
             generation: 0,
             holders: HolderCount(0),
@@ -351,6 +359,11 @@ pub(crate) fn spawn_task_session(
                 }
             }
         }
+        // Last chance for a report that was deferred while the lane was busy:
+        // nothing retries it once this loop is gone (#1176).
+        state
+            .evidence
+            .retry_pending_activity_report(&state.qualified_handle);
         if close_on_exit {
             state.prompts.queued.clear();
             state.prompts.prompt_ledger.remove_queued();
@@ -507,12 +520,12 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         #[cfg(test)]
         TaskSessionCommand::Pump => state.pump(),
         TaskSessionCommand::EvictionSnapshot { reply } => {
-            let persisted_session_id = web_session_store::load::<SessionServerEvent>(
+            // Unreadable metadata is not evictable: eviction relies on a restore.
+            let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
                 &state.state_dir,
                 &state.qualified_handle,
             )
-            .acp_session_id
-            .is_some();
+            .is_ok_and(|stored| stored.acp_session_id.is_some());
             let _ = reply.send(EvictionSnapshot {
                 evictable: state.is_idle()
                     && !state.busy()

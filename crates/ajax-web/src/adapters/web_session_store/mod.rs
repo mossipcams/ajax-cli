@@ -1,7 +1,7 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
 };
 
@@ -18,6 +18,8 @@ pub struct StoredSession<T> {
     pub model: String,
     pub events: Vec<T>,
     pub dropped: usize,
+    /// Interior rows that could not be read back; the history is incomplete.
+    pub corrupt_lines: usize,
 }
 
 impl<T> Default for StoredSession<T> {
@@ -27,6 +29,7 @@ impl<T> Default for StoredSession<T> {
             model: "auto".to_string(),
             events: Vec::new(),
             dropped: 0,
+            corrupt_lines: 0,
         }
     }
 }
@@ -40,6 +43,12 @@ struct DiskMeta {
     model: String,
     #[serde(default)]
     dropped: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    corrupt_lines: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,124 +56,174 @@ struct DiskEventLine<T> {
     event: T,
 }
 
-pub fn load<T: DeserializeOwned>(state_dir: &Path, handle: &str) -> StoredSession<T> {
-    let path = session_path(state_dir, handle);
-    if !path.is_file() {
-        return StoredSession::default();
-    }
-    let Ok(file) = File::open(&path) else {
-        return StoredSession::default();
+/// Read the stored session. A missing file is an empty session; a file that
+/// exists but cannot be read is an error, never an empty session.
+pub fn try_load<T: DeserializeOwned>(
+    state_dir: &Path,
+    handle: &str,
+) -> io::Result<StoredSession<T>> {
+    let file = match File::open(session_path(state_dir, handle)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(StoredSession::default())
+        }
+        Err(error) => return Err(error),
     };
-    let lines: Vec<String> = BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    if lines.is_empty() {
-        return StoredSession::default();
+    let mut lines = Vec::new();
+    for line in BufReader::new(file).split(b'\n') {
+        // A row that is not UTF-8 is a corrupt row, not an unreadable file.
+        let line = String::from_utf8_lossy(&line?).into_owned();
+        if !line.trim().is_empty() {
+            lines.push(line);
+        }
     }
-    let parse_end = if matches!(parse_line::<T>(&lines[lines.len() - 1]), ParsedLine::Skip) {
-        lines.len().saturating_sub(1)
-    } else {
-        lines.len()
+    // An unparsable final row is a write cut short by a crash, not corruption.
+    let parse_end = match lines.last() {
+        Some(last) if matches!(parse_line::<T>(last), ParsedLine::Corrupt) => lines.len() - 1,
+        _ => lines.len(),
     };
     let mut session = StoredSession::default();
+    let mut corrupt_lines = 0;
     for line in &lines[..parse_end] {
         match parse_line(line) {
             ParsedLine::Meta(meta) => {
                 session.acp_session_id = meta.acp_session_id;
                 session.model = meta.model;
                 session.dropped = meta.dropped;
+                session.corrupt_lines = meta.corrupt_lines;
             }
             ParsedLine::Event(event) => session.events.push(event),
+            ParsedLine::Corrupt => corrupt_lines += 1,
             ParsedLine::Skip => {}
         }
     }
-    session
+    session.corrupt_lines += corrupt_lines;
+    Ok(session)
 }
 
-pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, model: &str) {
-    let mut session = load::<serde_json::Value>(state_dir, handle);
+pub fn try_save_meta(
+    state_dir: &Path,
+    handle: &str,
+    acp_session_id: Option<&str>,
+    model: &str,
+) -> io::Result<()> {
+    // A failed load must not be rewritten as an empty session.
+    let mut session = try_load::<serde_json::Value>(state_dir, handle)?;
     session.acp_session_id = acp_session_id.map(str::to_string);
     session.model = model.to_string();
-    persist(state_dir, handle, &session);
+    rewrite_file(state_dir, handle, &session)
 }
 
-pub fn clear_acp_session_id(state_dir: &Path, handle: &str) {
-    let mut session = load::<serde_json::Value>(state_dir, handle);
+pub fn clear_acp_session_id(state_dir: &Path, handle: &str) -> io::Result<()> {
+    let mut session = try_load::<serde_json::Value>(state_dir, handle)?;
     if session.acp_session_id.is_none() {
-        return;
+        return Ok(());
     }
     session.acp_session_id = None;
-    persist(state_dir, handle, &session);
+    rewrite_file(state_dir, handle, &session)
 }
 
+pub fn try_append_events<T: Serialize + serde::de::DeserializeOwned>(
+    state_dir: &Path,
+    handle: &str,
+    new_events: &[T],
+) -> io::Result<()> {
+    if new_events.is_empty() {
+        return Ok(());
+    }
+
+    let path = session_path(state_dir, handle);
+    if !path.is_file() {
+        rewrite_file(state_dir, handle, &StoredSession::<T>::default())?;
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    for event in new_events {
+        let row = serde_json::json!({
+            "kind": "event",
+            "event": event,
+        });
+        let line = serde_json::to_string(&row).map_err(io::Error::other)?;
+        writeln!(file, "{line}")?;
+    }
+    file.flush()?;
+
+    // The rows above are durable; a failed compaction only leaves the file large.
+    if let Err(error) = compact::<T>(state_dir, handle, &path) {
+        tracing::warn!(%error, handle, "failed to compact web session transcript");
+    }
+    Ok(())
+}
+
+fn compact<T: Serialize + DeserializeOwned>(
+    state_dir: &Path,
+    handle: &str,
+    path: &Path,
+) -> io::Result<()> {
+    if fs::metadata(path)?.len() <= MAX_LOG_BYTES {
+        return Ok(());
+    }
+    let mut session = try_load::<T>(state_dir, handle)?;
+    let excess = session.events.len().saturating_sub(MAX_LOG_EVENTS);
+    if excess == 0 {
+        return Ok(());
+    }
+    session.events.drain(..excess);
+    session.dropped += excess;
+    rewrite_file(state_dir, handle, &session)
+}
+
+/// Operator-facing warning when stored rows could not be read back.
+pub fn corruption_warning(corrupt_lines: usize) -> Option<String> {
+    (corrupt_lines > 0).then(|| {
+        format!(
+            "{corrupt_lines} stored transcript rows were unreadable; this history is incomplete"
+        )
+    })
+}
+
+// Test fixtures: seed and inspect transcripts without error plumbing.
+#[cfg(test)]
+pub fn load<T: DeserializeOwned>(state_dir: &Path, handle: &str) -> StoredSession<T> {
+    try_load(state_dir, handle).unwrap_or_default()
+}
+
+#[cfg(test)]
+pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, model: &str) {
+    let _ = try_save_meta(state_dir, handle, acp_session_id, model);
+}
+
+#[cfg(test)]
 pub fn append_events<T: Serialize + serde::de::DeserializeOwned>(
     state_dir: &Path,
     handle: &str,
     new_events: &[T],
 ) {
-    if new_events.is_empty() {
-        return;
-    }
-
-    let path = session_path(state_dir, handle);
-    if !path.is_file() {
-        persist(state_dir, handle, &StoredSession::<T>::default());
-    }
-    let result = (|| -> Result<(), std::io::Error> {
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-        for event in new_events {
-            let row = serde_json::json!({
-                "kind": "event",
-                "event": event,
-            });
-            let line = serde_json::to_string(&row).map_err(std::io::Error::other)?;
-            writeln!(file, "{line}")?;
-        }
-        file.flush()
-    })();
-    if let Err(error) = result {
-        tracing::warn!(%error, handle, "failed to append web session transcript");
-        return;
-    }
-
-    let oversized = fs::metadata(&path)
-        .map(|metadata| metadata.len() > MAX_LOG_BYTES)
-        .unwrap_or(false);
-    if !oversized {
-        return;
-    }
-    let mut session = load::<T>(state_dir, handle);
-    let excess = session.events.len().saturating_sub(MAX_LOG_EVENTS);
-    if excess == 0 {
-        return;
-    }
-    session.events.drain(..excess);
-    session.dropped += excess;
-    persist(state_dir, handle, &session);
+    let _ = try_append_events(state_dir, handle, new_events);
 }
 
 enum ParsedLine<T> {
     Meta(DiskMeta),
     Event(T),
+    /// Not a readable row: the stored history lost something here.
+    Corrupt,
+    /// A well-formed row of a kind this build does not know.
     Skip,
 }
 
 fn parse_line<T: DeserializeOwned>(line: &str) -> ParsedLine<T> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        return ParsedLine::Skip;
+        return ParsedLine::Corrupt;
     };
     let Some(kind) = value.get("kind").and_then(serde_json::Value::as_str) else {
-        return ParsedLine::Skip;
+        return ParsedLine::Corrupt;
     };
     match kind {
         "meta" => serde_json::from_str::<DiskMeta>(line)
             .map(ParsedLine::Meta)
-            .unwrap_or(ParsedLine::Skip),
+            .unwrap_or(ParsedLine::Corrupt),
         "event" => serde_json::from_str::<DiskEventLine<T>>(line)
             .map(|row| ParsedLine::Event(row.event))
-            .unwrap_or(ParsedLine::Skip),
+            .unwrap_or(ParsedLine::Corrupt),
         _ => ParsedLine::Skip,
     }
 }
@@ -214,12 +273,6 @@ pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
         .join(format!("{}.jsonl", encode_handle(handle)))
 }
 
-fn persist<T: Serialize>(state_dir: &Path, handle: &str, session: &StoredSession<T>) {
-    if let Err(error) = rewrite_file(state_dir, handle, session) {
-        tracing::warn!(%error, handle, "failed to persist web session transcript");
-    }
-}
-
 fn rewrite_file<T: Serialize>(
     state_dir: &Path,
     handle: &str,
@@ -236,6 +289,7 @@ fn rewrite_file<T: Serialize>(
         acp_session_id: session.acp_session_id.clone(),
         model: session.model.clone(),
         dropped: session.dropped,
+        corrupt_lines: session.corrupt_lines,
     };
     let meta_line = serde_json::to_string(&meta).map_err(std::io::Error::other)?;
     writeln!(file, "{meta_line}")?;

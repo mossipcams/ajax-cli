@@ -145,7 +145,7 @@ fn apply_security_headers(response: &mut AxumResponse) {
     );
     headers.insert(
         HeaderName::from_static("permissions-policy"),
-        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        HeaderValue::from_static("camera=(), microphone=(self), geolocation=()"),
     );
     headers.insert(
         HeaderName::from_static("content-security-policy"),
@@ -174,9 +174,10 @@ mod tests {
 
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        // #1242: Same-origin microphone is required for speech-to-text getUserMedia.
         assert_eq!(
             response.headers()["permissions-policy"],
-            "camera=(), microphone=(), geolocation=()"
+            "camera=(), microphone=(self), geolocation=()"
         );
         assert!(response.headers()["content-security-policy"]
             .to_str()

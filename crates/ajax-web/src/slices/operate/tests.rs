@@ -984,3 +984,6 @@ fn operate_slice_stale_mismatch_confirmation_rejects_changed_checkout() {
     );
     assert_only_git_substrate_observations(runner.commands.as_slice());
 }
+
+#[path = "git_evidence_tests.rs"]
+mod git_evidence_tests;

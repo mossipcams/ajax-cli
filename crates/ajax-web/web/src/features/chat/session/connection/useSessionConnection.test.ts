@@ -262,4 +262,53 @@ describe("useSessionConnection", () => {
     expect(resumeCursors).toEqual([undefined, 4]);
     unmount();
   });
+
+  it("#1188 keeps a streamed reply that was still buffered when the socket reconnects", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // A hidden page never runs the frame that would flush the buffer.
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const dispatched: ChatSessionAction[] = [];
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      setConfigOption: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    const resumeCursors: (number | undefined)[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks, _platform, _model, resumeCursor) => {
+        callbacks.push(nextCallbacks);
+        resumeCursors.push(resumeCursor);
+        return transport;
+      },
+    );
+
+    const { unmount } = renderHook(() =>
+      useSessionConnection({
+        ...hookOptions(),
+        dispatch: (action) => dispatched.push(action),
+      }),
+    );
+
+    act(() => {
+      callbacks[0]?.onReady("auto");
+      callbacks[0]?.onEvent({ type: "message", role: "agent", text: "Final answer", itemId: "i1" });
+      callbacks[0]?.onCursorAdvance?.(9);
+      callbacks[0]?.onClosed();
+    });
+    act(() => vi.advanceTimersByTime(0));
+
+    expect(resumeCursors).toEqual([undefined, 9]);
+    expect(
+      dispatched.filter((a) => a.type === "event" && a.event.type === "agent_message"),
+    ).toEqual([
+      { type: "event", event: { type: "agent_message", text: "Final answer", itemId: "i1" } },
+    ]);
+    unmount();
+  });
 });

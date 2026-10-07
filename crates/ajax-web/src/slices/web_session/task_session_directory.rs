@@ -256,7 +256,9 @@ impl TaskSessionDirectory {
                 .await;
             let _ = entry.join_handle.await;
         }
-        web_session_store::clear_acp_session_id(&self.state_dir, handle);
+        if let Err(error) = web_session_store::clear_acp_session_id(&self.state_dir, handle) {
+            tracing::warn!(%error, handle, "failed to clear stored ACP session id on drop");
+        }
     }
 
     #[cfg(test)]
@@ -384,8 +386,7 @@ impl TaskSessionDirectory {
             .await??;
             Ok(())
         } else {
-            web_session_store::clear_acp_session_id(&self.state_dir, handle);
-            Ok(())
+            clear_stored_session_id(&self.state_dir, handle)
         }
     }
 
@@ -400,8 +401,7 @@ impl TaskSessionDirectory {
             .await?
             .map_err(Into::into)
         } else {
-            web_session_store::clear_acp_session_id(&self.state_dir, handle);
-            Ok(0)
+            clear_stored_session_id(&self.state_dir, handle).map(|()| 0)
         }
     }
 
@@ -427,15 +427,16 @@ impl TaskSessionDirectory {
                 return snapshot;
             }
         }
-        let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
+        let (stored, transcript_error) = load_detached(&self.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-        let (snapshot, replayed) = super::replay::build_attach(
+        let (mut snapshot, replayed) = super::replay::build_attach(
             &log,
             fallback_model,
             false,
             client_cursor,
             SessionChrome::default(),
         );
+        snapshot.transcript_error = transcript_error;
         AttachSnapshot {
             generation: 0,
             snapshot,
@@ -460,7 +461,7 @@ impl TaskSessionDirectory {
                 return batch;
             }
         }
-        let stored = web_session_store::load::<SessionServerEvent>(&self.state_dir, handle);
+        let (stored, _) = load_detached(&self.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
         let (events, next) = log.read_from_enveloped(cursor);
         OutboundBatch {
@@ -642,6 +643,35 @@ pub(crate) async fn apply_client_message(
         }
         SessionClientMessage::RetryRestore | SessionClientMessage::StartFresh => {
             Err("restore recovery is only available before session attach".to_string())
+        }
+    }
+}
+
+fn clear_stored_session_id(state_dir: &Path, handle: &str) -> Result<(), String> {
+    web_session_store::clear_acp_session_id(state_dir, handle)
+        .map_err(|error| format!("stored session id could not be cleared: {error}"))
+}
+
+/// Stored transcript for a handle with no live slot, plus what to tell the
+/// operator when it could not be read back whole.
+fn load_detached(
+    state_dir: &Path,
+    handle: &str,
+) -> (
+    web_session_store::StoredSession<SessionServerEvent>,
+    Option<String>,
+) {
+    match web_session_store::try_load::<SessionServerEvent>(state_dir, handle) {
+        Ok(stored) => {
+            let warning = web_session_store::corruption_warning(stored.corrupt_lines);
+            (stored, warning)
+        }
+        Err(error) => {
+            tracing::warn!(%error, handle, "stored web session is unreadable");
+            (
+                Default::default(),
+                Some(format!("stored session is unreadable: {error}")),
+            )
         }
     }
 }

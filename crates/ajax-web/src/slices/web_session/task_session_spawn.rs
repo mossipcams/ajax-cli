@@ -41,8 +41,8 @@ pub(super) async fn acquire(
             state.acquire_holder();
             return Ok(());
         }
-        let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle);
-        release_live_client(state, resume_id.is_none())?;
+        let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
+        release_live_client(state, resume_id.is_none(), "attach replaced a dead slot")?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
         install_replaced_client(state, new_client, &report, model)?;
@@ -51,8 +51,12 @@ pub(super) async fn acquire(
     }
 
     state.acp.model = model.to_string();
+    // Unreadable metadata must fail the attach, not start a fresh ACP context.
     let stored: StoredSession<SessionServerEvent> =
-        web_session_store::load(&state.state_dir, &state.qualified_handle);
+        web_session_store::try_load(&state.state_dir, &state.qualified_handle)
+            .map_err(unreadable_session)?;
+    state.evidence.transcript_corruption =
+        web_session_store::corruption_warning(stored.corrupt_lines);
     let resume_id = stored.acp_session_id.clone();
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
 
@@ -115,7 +119,7 @@ pub(super) async fn apply_config_option(
             if let Some(options) = outcome.config_options.as_deref() {
                 state.acp.session_config_options = Some(config_option_descriptors(options));
             }
-            web_session_store::save_meta(
+            let persist_warning = web_session_store::try_save_meta(
                 &state.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
@@ -123,8 +127,9 @@ pub(super) async fn apply_config_option(
                     outcome.config_options.as_deref(),
                     &state.acp.model,
                 ),
-            );
-            let persist_warning = None;
+            )
+            .err()
+            .map(|error| format!("Model changed but session state was not saved — {error}"));
             state.acp.pending_model_snapshot = Some(outcome.applied_model);
             state.acp.pending_config_snapshot = state.acp.session_config_options.clone();
             let (persist_model, model_warning) = match outcome.config_options.as_deref() {
@@ -184,9 +189,9 @@ pub(super) async fn respawn(
     if !force && !slot_must_replace(state.acp.acp_alive, host_exited) {
         return Ok(state.generation);
     }
-    let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle);
+    let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
     let agent = state.agent;
-    release_live_client(state, resume_id.is_none())?;
+    release_live_client(state, resume_id.is_none(), "respawn")?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
@@ -198,7 +203,9 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, SessionError> {
-    release_live_client(state, true)?;
+    // Operator reset: retry transcript writes instead of staying blocked.
+    state.evidence.transcript_durability_fault = None;
+    release_live_client(state, true, "harness switch")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
@@ -207,19 +214,27 @@ pub(super) async fn reset_harness_context(
         &state.prompts.prompt_ledger,
     );
 
-    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
+    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle).map_err(
+        |error| SessionError::persist(format!("stored session id could not be cleared: {error}")),
+    )?;
 
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
 
-    let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
-
-    web_session_store::save_meta(
+    if let Err(error) = web_session_store::try_save_meta(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, model),
-    );
+    ) {
+        discard_staged_client(new_client);
+        return Err(SessionError::persist(format!(
+            "new session id could not be saved: {error}"
+        )));
+    }
+
+    let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
+
     state.acp.client = Some(new_client);
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
@@ -243,7 +258,9 @@ pub(super) async fn clear_session_context(
 ) -> Result<u64, SessionError> {
     let model = state.acp.model.clone();
     let agent = state.agent;
-    release_live_client(state, true)?;
+    // Operator reset: retry transcript writes instead of staying blocked.
+    state.evidence.transcript_durability_fault = None;
+    release_live_client(state, true, "clear context")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
@@ -252,19 +269,27 @@ pub(super) async fn clear_session_context(
         &state.prompts.prompt_ledger,
     );
 
-    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle);
+    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle).map_err(
+        |error| SessionError::persist(format!("stored session id could not be cleared: {error}")),
+    )?;
 
     let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
 
-    let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
-
-    web_session_store::save_meta(
+    if let Err(error) = web_session_store::try_save_meta(
         &state.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, &model),
-    );
+    ) {
+        discard_staged_client(new_client);
+        return Err(SessionError::persist(format!(
+            "new session id could not be saved: {error}"
+        )));
+    }
+
+    let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
+
     state.acp.client = Some(new_client);
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
@@ -283,7 +308,18 @@ pub(super) async fn clear_session_context(
 fn release_live_client(
     state: &mut TaskSessionState,
     close_session: bool,
+    reason: &'static str,
 ) -> Result<(), SessionError> {
+    // This is the only place the host sends ACP `session/cancel` on its own.
+    // Name the caller when it cuts a running turn short (#1189).
+    if state.prompts.active_prompt.is_some() {
+        tracing::warn!(
+            handle = %state.qualified_handle,
+            generation = state.generation,
+            reason,
+            "releasing the ACP child while a turn is in flight; the turn will be cancelled"
+        );
+    }
     retry_pending_exit_interruption(state);
     if state.prompts.pending_exit_interruption.is_some() {
         return Err(SessionError::persist("prompt ownership recovery pending"));
@@ -354,8 +390,14 @@ fn release_live_client(
     result
 }
 
-fn replace_resume_id(state_dir: &Path, handle: &str) -> Option<String> {
-    web_session_store::load::<SessionServerEvent>(state_dir, handle).acp_session_id
+fn unreadable_session(error: std::io::Error) -> SessionError {
+    SessionError::persist(format!("stored session is unreadable: {error}"))
+}
+
+fn replace_resume_id(state_dir: &Path, handle: &str) -> Result<Option<String>, SessionError> {
+    web_session_store::try_load::<SessionServerEvent>(state_dir, handle)
+        .map(|stored| stored.acp_session_id)
+        .map_err(unreadable_session)
 }
 
 async fn spawn_acp(

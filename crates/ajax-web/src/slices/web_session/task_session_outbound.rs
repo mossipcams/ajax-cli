@@ -21,11 +21,7 @@ pub(super) fn attach_snapshot(
             session_title: state.acp.session_title.clone(),
         },
     );
-    snapshot.transcript_error = state
-        .evidence
-        .transcript_durability_fault
-        .clone()
-        .or_else(|| state.evidence.activity_report_fault.clone());
+    snapshot.transcript_error = state.evidence.transcript_error();
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -113,13 +109,7 @@ fn snapshot(
             session_title: state.acp.session_title.clone(),
         },
     )
-    .with_transcript_error(
-        state
-            .evidence
-            .transcript_durability_fault
-            .clone()
-            .or_else(|| state.evidence.activity_report_fault.clone()),
-    )
+    .with_transcript_error(state.evidence.transcript_error())
 }
 
 #[cfg(test)]

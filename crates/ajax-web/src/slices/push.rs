@@ -19,6 +19,8 @@ use web_push_native::{
     Auth, WebPushBuilder,
 };
 
+mod delivery;
+
 const VAPID_KEY_FILE: &str = "web-push-vapid.key";
 const SUBSCRIPTIONS_FILE: &str = "web-push-subscriptions.json";
 pub(crate) const DEFAULT_PUSH_POLL_SECONDS: u64 = 30;
@@ -112,6 +114,10 @@ impl PushHub {
             match serde_json::from_str::<SubscriptionStore>(&raw) {
                 Ok(store) => store,
                 Err(error) => {
+                    let kept = subscriptions_path.with_extension("json.corrupt");
+                    if let Err(error) = write_private_file(&kept, raw.as_bytes()) {
+                        eprintln!("could not keep invalid {SUBSCRIPTIONS_FILE}: {error}");
+                    }
                     eprintln!("invalid {SUBSCRIPTIONS_FILE} ({error}); wiping to empty store");
                     let empty = SubscriptionStore::default();
                     let rewritten = serde_json::to_string_pretty(&empty)
@@ -255,7 +261,7 @@ pub(crate) fn spawn_push_flusher(hub: Arc<PushHub>) {
 
 pub(crate) fn deliver_attention_pushes(
     context: &mut CommandContext<InMemoryRegistry>,
-    hub: &PushHub,
+    hub: &Arc<PushHub>,
 ) -> bool {
     let (subscriptions, key_pair) = {
         let Ok(guard) = hub.inner.lock() else {
@@ -276,7 +282,7 @@ pub(crate) fn deliver_attention_pushes(
         .map(|task| task.id.clone())
         .collect();
     let mut fired = false;
-    let mut dead_endpoints = Vec::new();
+    let mut jobs = Vec::new();
     for task_id in task_ids {
         let Some(task) = context.registry.get_task_mut(&task_id) else {
             continue;
@@ -290,26 +296,15 @@ pub(crate) fn deliver_attention_pushes(
                 .navigate
                 .as_deref()
                 .unwrap_or("https://localhost/");
-            let vapid_subject = navigate.trim_end_matches('/').to_string();
-            let payload = attention_payload(&transition, navigate);
-            match build_push_request(subscription.clone(), payload, &key_pair, &vapid_subject) {
-                Ok(request) => match deliver_with_curl_blocking(request) {
-                    Ok(()) => {}
-                    Err(error) if is_gone_endpoint(&error) => {
-                        dead_endpoints.push(subscription.endpoint.clone());
-                    }
-                    Err(error) => {
-                        eprintln!("declarative push delivery failed: {error}");
-                    }
-                },
-                Err(error) => {
-                    eprintln!("declarative push build failed: {error}");
-                }
-            }
+            jobs.push(delivery::PushJob {
+                subscription: subscription.clone(),
+                payload: attention_payload(&transition, navigate),
+                vapid_subject: navigate.trim_end_matches('/').to_string(),
+            });
         }
     }
-    if !dead_endpoints.is_empty() {
-        hub.prune_endpoints(&dead_endpoints);
+    if !jobs.is_empty() {
+        delivery::spawn(Arc::clone(hub), key_pair, jobs);
     }
     fired
 }
@@ -357,14 +352,33 @@ pub(crate) fn navigation_url(headers: &HeaderMap) -> Result<String, String> {
     Ok(format!("https://{host}/"))
 }
 
+/// Write through a temp file and rename, so a crash mid-write leaves the
+/// previous file intact instead of a truncated one. The file holds the VAPID
+/// private key or subscription keys, so the temp file is always a new
+/// owner-only file: a leftover or planted one at that path is removed, never
+/// reused, and `create_new` refuses to write through a symlink.
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))?;
+    use std::io::Write;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let failed = |error: std::io::Error| format!("write {}: {error}", path.display());
+    match fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(failed(error)),
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    Ok(())
+    let mut file = options.open(&tmp).map_err(failed)?;
+    file.write_all(bytes).map_err(failed)?;
+    file.sync_all().map_err(failed)?;
+    fs::rename(&tmp, path).map_err(failed)
 }
 
 fn vapid_public_key_bytes(key_pair: &ES256KeyPair) -> Vec<u8> {
@@ -502,59 +516,6 @@ fn build_push_request(
         .map_err(|error| format!("build encrypted push request: {error}"))
 }
 
-fn is_gone_endpoint(error: &str) -> bool {
-    error.contains("404")
-        || error.contains("410")
-        || error.contains("HTTP/2 404")
-        || error.contains("HTTP/2 410")
-}
-
-fn deliver_with_curl_blocking(request: Request<Vec<u8>>) -> Result<(), String> {
-    let (parts, body) = request.into_parts();
-    let mut command = std::process::Command::new("curl");
-    command
-        .args(["-sS", "--fail", "--max-time", "10", "-X"])
-        .arg(parts.method.as_str());
-    for (name, value) in &parts.headers {
-        command.arg("-H").arg(format!(
-            "{name}: {}",
-            value
-                .to_str()
-                .map_err(|error| format!("invalid push request header: {error}"))?
-        ));
-    }
-    let mut child = command
-        .args(["--data-binary", "@-"])
-        .arg(parts.uri.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("start curl push delivery: {error}"))?;
-    {
-        use std::io::Write;
-        child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "open curl stdin for push delivery".to_string())?
-            .write_all(&body)
-            .map_err(|error| format!("write encrypted push payload to curl: {error}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("wait for curl push delivery: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let detail = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
-            "push delivery failed with {}: {}",
-            output.status,
-            detail.trim()
-        ))
-    }
-}
-
 async fn deliver_with_curl(request: Request<Vec<u8>>) -> Result<(), String> {
     let (parts, body) = request.into_parts();
     let mut command = Command::new("curl");
@@ -669,6 +630,67 @@ mod tests {
             serde_json::json!({"subscriptions": []}),
             "legacy file must be replaced with empty current-shape store, not migrated"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn issue_1241_invalid_subscriptions_file_is_kept_beside_the_wipe() {
+        let dir = scratch_dir("corrupt-kept-1241");
+        let path = dir.join(SUBSCRIPTIONS_FILE);
+        fs::write(&path, "{\"subscriptions\":[{\"endpoint\":\"https://web.pu").unwrap();
+        let hub = PushHub::load_or_create(&dir).unwrap();
+        assert!(!hub.has_subscriptions());
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.corrupt")).unwrap(),
+            "{\"subscriptions\":[{\"endpoint\":\"https://web.pu",
+            "the unreadable store must stay recoverable"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_owner_only_even_when_the_source_was_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = scratch_dir("private-mode");
+        let path = dir.join(SUBSCRIPTIONS_FILE);
+        fs::write(&path, "not json").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        // A temp path planted as a symlink must be replaced, not written through.
+        let outside = dir.join("outside");
+        fs::write(&outside, "untouched").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp")))
+            .unwrap();
+
+        PushHub::load_or_create(&dir).unwrap();
+
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&path.with_extension("json.corrupt")), 0o600);
+        assert_eq!(mode(&dir.join(VAPID_KEY_FILE)), 0o600);
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "untouched");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn issue_1241_failed_subscription_write_leaves_the_previous_file() {
+        let dir = scratch_dir("atomic-1241");
+        let hub = PushHub::load_or_create(&dir).unwrap();
+        hub.upsert_subscription(sample_subscription(), "https://cockpit.example/")
+            .unwrap();
+        hub.flush_if_dirty().unwrap();
+        let path = dir.join(SUBSCRIPTIONS_FILE);
+        let saved = fs::read_to_string(&path).unwrap();
+
+        // A directory at the temp path makes the next write fail before rename.
+        fs::create_dir_all(dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp"))).unwrap();
+        hub.apply_unsubscribe(&UnsubscribeRequest {
+            endpoint: None,
+            all: true,
+        })
+        .unwrap();
+        assert!(hub.flush_if_dirty().is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
         let _ = fs::remove_dir_all(dir);
     }
 

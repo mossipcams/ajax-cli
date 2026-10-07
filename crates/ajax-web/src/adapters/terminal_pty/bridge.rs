@@ -223,6 +223,17 @@ pub(crate) async fn send_error_and_close(socket: &mut WebSocket, error: String) 
     let _ = socket.send(Message::Close(None)).await;
 }
 
+/// Run a tmux command off the async worker thread. A slow or hung tmux would
+/// otherwise stall every other terminal and session task on that worker.
+pub(crate) async fn run_tmux_command(
+    command: &TmuxCommand,
+) -> std::io::Result<std::process::Output> {
+    let command = command.clone();
+    tokio::task::spawn_blocking(move || run_tmux_command_blocking(&command))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
 pub async fn bridge_task_terminal_socket(
     mut socket: WebSocket,
     plan: TerminalAttachPlan,
@@ -239,7 +250,7 @@ pub async fn bridge_task_terminal_socket(
     .await;
 
     for command in &isolated.setup {
-        let failure = match run_tmux_command_blocking(command) {
+        let failure = match run_tmux_command(command).await {
             Ok(output) if output.status.success() => continue,
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -259,7 +270,7 @@ pub async fn bridge_task_terminal_socket(
     }
 
     let probe = task_window_probe_command(&isolated.ephemeral_session, &plan.task_window);
-    let probe_failure = match run_tmux_command_blocking(&probe) {
+    let probe_failure = match run_tmux_command(&probe).await {
         Ok(output) if output.status.success() => None,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -420,13 +431,13 @@ pub async fn bridge_task_terminal_socket(
     }
 
     if seed_history {
-        if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
+        if let Ok(output) = run_tmux_command(&isolated.history).await {
             if output.status.success() {
                 if let Some(payload) = captured_history_frame_bytes(output.stdout) {
                     if socket.send(Message::Binary(payload.into())).await.is_err() {
                         cleanup_spawned_child_async(child).await;
                         for command in &isolated.teardown {
-                            let _ = run_tmux_command_blocking(command);
+                            let _ = run_tmux_command(command).await;
                         }
                         return;
                     }
