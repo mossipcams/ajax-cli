@@ -60,6 +60,7 @@ pub(super) struct TestBridge {
     disk_context: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
     reload_calls: Arc<AtomicUsize>,
     clear_registry_on_operate: bool,
+    persist_result: Result<(), crate::WebError>,
 }
 
 impl Default for TestBridge {
@@ -99,6 +100,7 @@ impl Default for TestBridge {
             disk_context: Arc::new(Mutex::new(None)),
             reload_calls: Arc::new(AtomicUsize::new(0)),
             clear_registry_on_operate: false,
+            persist_result: Ok(()),
         }
     }
 }
@@ -230,6 +232,13 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
     ) -> Result<bool, crate::WebError> {
         self.acknowledge_calls.fetch_add(1, Ordering::SeqCst);
         self.acknowledge_result.clone()
+    }
+
+    fn persist_registry_snapshot(
+        &mut self,
+        _context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), crate::WebError> {
+        self.persist_result.clone()
     }
 }
 
@@ -525,3 +534,4 @@ mod suite_2;
 mod suite_3;
 mod suite_4;
 mod suite_5;
+mod suite_6;
