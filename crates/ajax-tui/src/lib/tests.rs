@@ -573,8 +573,6 @@ fn cockpit_text_renderer_does_not_show_review_lane() {
         &InboxResponse { items: vec![] },
     );
 
-    // Only the lane header is forbidden; task titles may legitimately
-    // contain the word "review".
     assert!(
         !content.lines().any(|line| line.starts_with("Review:")),
         "{content}"
@@ -676,7 +674,6 @@ fn selecting_different_task_collapses_drawer() {
     app.activate_selected();
     assert!(app.expanded_task.is_some());
 
-    // Step past the expanded task's drawer rows onto the next task.
     loop {
         app.select_next();
         if matches!(app.selectables[app.selected], SelectableKind::Task(_)) {
@@ -690,8 +687,6 @@ fn selecting_different_task_collapses_drawer() {
         }
     }
 
-    // Drawer should collapse once cursor moves off the expanded task.
-    // (Implementation collapses via the navigation hook.)
     assert!(app.expanded_task.is_none());
 }
 
@@ -723,11 +718,9 @@ fn enter_on_task_in_project_toggles_drawer() {
     tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Review];
     let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
 
-    // Drill into Project view for "web".
     app.activate_selected();
     assert!(matches!(app.view, AppView::Project { .. }));
 
-    // Locate the task selectable.
     let task_idx = app
         .selectables
         .iter()
@@ -848,7 +841,6 @@ fn task_row_renders_primary_action_label_and_chrome() {
         Evidence::Lifecycle(LifecycleStatus::Reviewable),
     )];
     let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
-    // Drill into the project so the task row is unambiguously visible.
     while !matches!(app.view, AppView::Project { .. }) {
         if matches!(
             app.selectables.get(app.selected),
@@ -1891,9 +1883,6 @@ fn cockpit_renders_backend_snapshot() {
 
 #[test]
 fn project_drill_in_has_no_inbox_section() {
-    // Inbox lives only on the Projects (top) view per option A. The
-    // Project drill-in shows each repo task exactly once with its
-    // annotation chrome on the row.
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
     app.select_next();
     app.activate_selected();
@@ -1935,10 +1924,8 @@ fn feed_starts_with_inbox_then_projects() {
     let autodoctor_pos = content.find("autodoctor").unwrap();
     let autosnooze_pos = content.find("autosnooze").unwrap();
 
-    // Inbox precedes both projects.
     assert!(inbox_pos < autodoctor_pos);
     assert!(inbox_pos < autosnooze_pos);
-    // Initial selection is the inbox item.
     assert_eq!(app.selected_action().unwrap().action, "resume");
 }
 
@@ -1984,12 +1971,10 @@ fn main_page_task_row_enter_expands_drawer_then_dispatches() {
         }
         app.select_next();
     }
-    // First Enter on a Task expands the drawer (does not dispatch).
     assert!(app.activate_selected().is_none());
     assert!(matches!(&app.view, AppView::Projects));
     assert!(app.expanded_task.is_some());
 
-    // Second Enter on the first drawer action dispatches.
     let item = app.activate_selected().unwrap();
     assert_eq!(item.task_handle, "web/fix-login");
     assert_eq!(item.action, "resume");
@@ -2102,7 +2087,6 @@ fn project_page_lists_each_task_once_without_inbox_section() {
 #[test]
 fn activating_project_opens_project_workflow() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, NewTask]. Skip the inbox to reach the project.
     app.select_next();
     assert!(app.activate_selected().is_none());
 
@@ -2309,7 +2293,6 @@ fn input_delete_accepts_common_terminal_encodings() {
 #[test]
 fn delete_in_task_title_input_erases_without_closing_ajax() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
     app.select_next();
     app.activate_selected();
     app.activate_selected();
@@ -2491,11 +2474,9 @@ fn help_escape_returns_to_previous_view() {
 #[test]
 fn project_view_lists_new_task_first_then_tasks() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, task]. Drill into the project.
     app.select_next();
     app.activate_selected();
 
-    // Project view should be: [NewTask, task].
     assert_eq!(
         app.selectables
             .iter()
@@ -2510,8 +2491,6 @@ fn project_view_lists_new_task_first_then_tasks() {
             .collect::<Vec<_>>(),
         vec!["new_task".to_string(), "web/fix-login".to_string()]
     );
-    // No action wall — only one task-style row in the middle is dispatched
-    // on Enter and that's a Task or Review (not a project-action verb).
     for s in &app.selectables {
         assert!(
             !matches!(s, SelectableKind::TaskAction { .. }),
@@ -2576,7 +2555,6 @@ fn enter_on_task_expands_drawer_with_primary_action_preselected() {
         sample_tasks(),
         InboxResponse { items: vec![] },
     );
-    // Projects view (no inbox, no review): [project, task]. Walk to the task.
     app.select_next();
     app.select_next();
     assert!(matches!(
@@ -2584,12 +2562,10 @@ fn enter_on_task_expands_drawer_with_primary_action_preselected() {
         Some(SelectableKind::Task(_))
     ));
 
-    // Enter expands the drawer in-place, doesn't dispatch.
     assert!(app.activate_selected().is_none());
     assert!(matches!(&app.view, AppView::Projects));
     assert!(app.expanded_task.is_some());
 
-    // Drawer cursor lands on the primary action ("resume").
     let item = app.selected_action().unwrap();
     assert_eq!(item.task_handle, "web/fix-login");
     assert_eq!(item.action, "resume");
@@ -2734,9 +2710,8 @@ fn drawer_action_dispatches_on_enter() {
         .position(|s| matches!(s, SelectableKind::Task(_)))
         .expect("project view has at least one task");
     app.selected = task_idx;
-    app.activate_selected(); // expand drawer
+    app.activate_selected();
 
-    // Cursor now rests on the first drawer action row.
     let item = app.activate_selected().unwrap();
     assert_eq!(item.task_handle, "web/fix-login");
     assert_eq!(item.action, "resume");
@@ -2870,7 +2845,6 @@ fn enter_on_inbox_row_expands_drawer_with_recommendation_preselected() {
         }],
     };
     let mut app = App::new(sample_repos(), sample_tasks(), inbox);
-    // Top-level Projects view: [inbox row, project, task]. Default selection is the inbox.
     assert!(matches!(
         app.selectables.get(app.selected),
         Some(SelectableKind::Inbox(_))
@@ -3003,8 +2977,6 @@ fn selected_project_only_shows_that_projects_tasks() {
         ],
     };
     let mut app = App::new(repos, tasks.clone(), inbox);
-    // Selectables: [inbox web, inbox api, project web, project api, NewTask].
-    // Step past both inbox rows and the web project to land on the api project.
     app.select_next();
     app.select_next();
     app.select_next();
@@ -3038,12 +3010,9 @@ fn selected_project_only_shows_that_projects_tasks() {
 
 #[test]
 fn project_new_task_row_opens_title_input() {
-    // NewTask is the first selectable inside Project view.
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, task]. Drill into project.
     app.select_next();
     app.activate_selected();
-    // Project view, selected = 0 = NewTask.
     assert!(matches!(
         app.selectables.first(),
         Some(SelectableKind::NewTask { .. })
@@ -3071,7 +3040,6 @@ fn project_new_task_row_opens_title_input() {
 #[test]
 fn new_task_title_input_collects_text_before_pending_action() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects → drill into project; NewTask is selected = 0 in Project view.
     app.select_next();
     app.activate_selected();
     app.activate_selected();
@@ -3091,7 +3059,6 @@ fn new_task_title_input_collects_text_before_pending_action() {
 #[test]
 fn new_task_title_backspace_edits_then_returns_to_main_menu() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
     app.select_next();
     app.activate_selected();
     app.activate_selected();
@@ -3142,7 +3109,6 @@ fn new_task_title_backspace_edits_then_returns_to_main_menu() {
 #[test]
 fn escape_from_new_task_input_returns_to_ajax_main_menu() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
     app.select_next();
     app.activate_selected();
     app.activate_selected();
@@ -3232,14 +3198,12 @@ fn select_prev_clamps_at_zero() {
 #[test]
 fn select_next_walks_inbox_project_newtask_status() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, task].
     assert_eq!(app.selected, 0);
     app.select_next();
     assert_eq!(app.selected, 1);
     app.select_next();
     assert_eq!(app.selected, 2);
     assert_eq!(app.selected_action().unwrap().action, "resume");
-    // clamps at last
     app.select_next();
     assert_eq!(app.selected, 2);
 }
@@ -3247,21 +3211,12 @@ fn select_next_walks_inbox_project_newtask_status() {
 #[test]
 fn select_at_feed_row_lands_on_correct_selectable() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Layout on Projects view (every group gets a header row):
-    //   0 blank (top breathing space)
-    //   1 -- inbox (n) --
-    //   2 inbox     ← selectable 0
-    //   3 -- projects --
-    //   4 project   ← selectable 1
-    //   5 -- start --
-    //   6 NewTask   ← selectable 2
     app.select_at_feed_row(2);
     assert_eq!(app.selected, 0);
     app.select_at_feed_row(4);
     assert_eq!(app.selected, 1);
     app.select_at_feed_row(6);
     assert_eq!(app.selected, 2);
-    // header row → no change
     app.select_at_feed_row(3);
     assert_eq!(app.selected, 2);
 }
@@ -3288,7 +3243,6 @@ fn new_task_is_always_present_even_when_other_sections_empty() {
         Vec::<TaskCard>::new(),
         InboxResponse { items: vec![] },
     );
-    // Top-level holds only the project; drilling in always shows NewTask first.
     app.activate_selected();
     assert!(matches!(
         app.selectables.first(),
@@ -3301,7 +3255,6 @@ fn new_task_is_always_present_even_when_other_sections_empty() {
 #[test]
 fn selected_action_for_inbox_uses_action() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, NewTask] — inbox is the initial selection.
     let item = app.selected_action().unwrap();
     assert_eq!(item.task_handle, "web/fix-login");
     assert_eq!(item.action, "resume");
@@ -3314,9 +3267,7 @@ fn selected_action_for_task_uses_single_open_row() {
         sample_tasks(),
         InboxResponse { items: vec![] },
     );
-    // Projects view (no inbox): [project, task]. Drill into the project.
     app.activate_selected();
-    // Project view (no inbox): [NewTask, task]. Step past NewTask.
     app.select_next();
     let item = app.selected_action().unwrap();
     assert_eq!(item.task_handle, "web/fix-login");
@@ -3332,7 +3283,6 @@ fn reload_updates_app_data_and_clamps_selection() {
         Vec::<TaskCard>::new(),
         InboxResponse { items: vec![] },
     );
-    // Only the project row remains at top level → clamps to it.
     assert_eq!(app.selected, 0);
     assert_eq!(app.selected_action().unwrap().action, "status");
 }
@@ -3368,7 +3318,6 @@ fn refresh_after_removed_task_returns_to_main_page() {
 #[test]
 fn ensure_visible_scrolls_viewport_to_selected() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Projects view: [inbox, project, NewTask] — walk to the bottom selectable.
     app.select_next();
     app.select_next();
     app.ensure_visible(2);
@@ -3392,7 +3341,6 @@ fn on_action_message_outcome_sets_flash() {
 #[test]
 fn action_errors_set_flash_and_stay_in_ajax() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Select an inbox row so the task notice lookup matches the dispatched item.
     let item = app.selected_action().expect("inbox item selected");
 
     let pending = super::handle_action_result(
@@ -3657,13 +3605,11 @@ fn notify_task_identical_message_resets_ticks_remaining() {
         super::cockpit_state::Origin::UserAction,
     );
     let full = super::cockpit_state::NOTICE_TICKS_SUCCESS;
-    // Tick the notice down a few steps, but not to zero.
     for _ in 0..3 {
         app.tick_notices();
     }
     assert_eq!(app.notices.get(&task_id).unwrap().ticks_remaining, full - 3);
 
-    // Identical (msg, severity) must reset to full lifetime.
     app.notify_task(
         task_id.clone(),
         "saved".to_string(),
@@ -3722,7 +3668,6 @@ fn notify_task_background_event_does_not_replace_user_action_at_equal_severity()
 #[test]
 fn current_notice_prefers_selected_task_notice_over_system_notice() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // selected=0 → inbox item for task-99 (sample_inbox).
     let selected_task_id = app
         .selected_task_id()
         .cloned()
@@ -3748,7 +3693,6 @@ fn current_notice_prefers_selected_task_notice_over_system_notice() {
 #[test]
 fn current_notice_returns_system_notice_when_selected_row_has_none() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    // Move selection onto the project row, which does not map to a task id.
     app.select_next();
     assert!(app.selected_task_id().is_none());
 
@@ -3787,7 +3731,6 @@ fn current_notice_prefers_pending_confirm_over_selected_task() {
     );
     app.pending_confirmation = Some(confirm_item);
 
-    // A notice on the currently selected row must lose to the pending Confirm.
     app.notify_task(
         selected_task_id,
         "selected message".to_string(),
@@ -3812,14 +3755,12 @@ fn error_notice_decays_over_error_lifetime() {
     );
 
     let lifetime = super::cockpit_state::NOTICE_TICKS_ERROR;
-    // After exactly `lifetime` ticks, the notice is still present at 0.
     for _ in 0..lifetime {
         app.tick_notices();
     }
     let remaining = app.notices.get(&task_id).map(|n| n.ticks_remaining);
     assert_eq!(remaining, Some(0));
 
-    // One more tick prunes it.
     app.tick_notices();
     assert!(!app.notices.contains_key(&task_id));
 }
@@ -3838,7 +3779,6 @@ fn confirm_notice_does_not_decay() {
     let initial = app.notices.get(&task_id).unwrap().ticks_remaining;
     assert_eq!(initial, super::cockpit_state::NOTICE_TICKS_CONFIRM);
 
-    // Tick well past any non-sticky lifetime; Confirm must persist unchanged.
     for _ in 0..super::cockpit_state::NOTICE_TICKS_ERROR + 2 {
         app.tick_notices();
     }
@@ -3860,7 +3800,6 @@ fn reload_prunes_notices_for_vanished_tasks() {
     );
     assert!(app.notices.contains_key(&task_id));
 
-    // Refresh with no cards — task-1 has vanished.
     app.apply_refresh(CockpitSnapshot {
         repos: sample_repos(),
         cards: Vec::<TaskCard>::new(),
@@ -3986,7 +3925,6 @@ fn reload_drops_success_hint_on_lifecycle_change_keeps_error_confirm() {
         super::cockpit_state::Origin::UserAction,
     );
 
-    // All four tasks change lifecycle on refresh.
     let refreshed = vec![
         sample_card(
             "task-1",
@@ -4171,7 +4109,6 @@ fn drawer_actions_render_directly_under_task_row() {
     let task_idx = app.selected;
     app.activate_selected();
 
-    // Drawer actions follow the task in the selectable list.
     let next = app
         .selectables
         .get(task_idx + 1)

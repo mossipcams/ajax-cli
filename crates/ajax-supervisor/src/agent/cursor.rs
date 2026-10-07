@@ -185,8 +185,6 @@ fn agent_event_from_text(text: &str) -> Option<AgentEvent> {
         });
     }
 
-    // Assistant prose is never failure/completion evidence: stream-json
-    // result/status events own those outcomes. Anything else is activity.
     Some(AgentEvent::Message {
         text: text.to_string(),
     })
