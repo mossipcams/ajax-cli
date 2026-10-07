@@ -90,8 +90,13 @@ export function connectWebSessionTransport(
       return;
     }
 
-    callbacks.onCursorAdvance?.(frame.cursor + 1);
     const parsed = frame.event;
+    // Socket-local errors use cursor 0 but are not part of transcript replay.
+    if (parsed.type === "error" && frame.cursor === 0) {
+      callbacks.onEvent(parsed);
+      return;
+    }
+    callbacks.onCursorAdvance?.(frame.cursor + 1);
     if (parsed.type === "prompt_accepted") {
       const index = pendingPrompts.findIndex(
         (prompt) => prompt.clientMessageId === parsed.clientMessageId,
@@ -154,7 +159,11 @@ export function connectWebSessionTransport(
         return "";
       }
       if (pendingPrompts.length >= MAX_QUEUED_PROMPTS) {
-        pendingPrompts.shift();
+        callbacks.onEvent({
+          type: "error",
+          message: "The prompt queue is full. Wait for a pending message to be accepted and try again.",
+        });
+        return "";
       }
       pendingPrompts.push(prompt);
       writeOutbox(handle, pendingPrompts);
