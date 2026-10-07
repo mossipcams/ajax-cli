@@ -310,12 +310,12 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         self.persist_operate(result, context)
     }
 
-    fn acknowledge_operator_input(
-        &mut self,
-        context: &mut CommandContext<InMemoryRegistry>,
+    fn needs_operator_acknowledgment(
+        &self,
+        context: &CommandContext<InMemoryRegistry>,
         qualified_handle: &str,
-    ) -> Result<bool, WebError> {
-        let needs_ack = context
+    ) -> bool {
+        context
             .registry
             .list_tasks()
             .into_iter()
@@ -327,9 +327,15 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
                     _ => false,
                 },
             )
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
 
-        if !needs_ack {
+    fn acknowledge_operator_input(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        qualified_handle: &str,
+    ) -> Result<bool, WebError> {
+        if !RuntimeBridge::<C>::needs_operator_acknowledgment(self, context, qualified_handle) {
             return Ok(false);
         }
 

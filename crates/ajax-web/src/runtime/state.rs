@@ -537,19 +537,38 @@ where
     let state = state.clone();
     Arc::new(move || {
         state.mark_browser_cockpit_seen();
+        if !{
+            let guard = state.shared();
+            guard
+                .bridge
+                .needs_operator_acknowledgment(&guard.context, &task_handle)
+        } {
+            return;
+        }
+        let (mut context, mut bridge, base_revision) = {
+            let guard = state.shared();
+            (guard.context.clone(), guard.bridge.clone(), guard.revision)
+        };
+        if !bridge
+            .acknowledge_operator_input(&mut context, &task_handle)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let mut guard = state.shared();
-        let acknowledged = {
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.bridge = bridge;
+        } else {
             let WebSharedState {
                 context, bridge, ..
             } = &mut *guard;
-            bridge
-                .acknowledge_operator_input(context, &task_handle)
-                .unwrap_or(false)
-        };
-        if acknowledged {
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
+            if !matches!(bridge.reload_registry_from_disk(context), Ok(true)) {
+                return;
+            }
         }
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
     })
 }
 

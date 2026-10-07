@@ -60,7 +60,10 @@ pub(super) struct TestBridge {
     reload_calls: Arc<AtomicUsize>,
     clear_registry_on_operate: bool,
     persist_result: Result<(), crate::WebError>,
+    acknowledge_probe: AcknowledgeProbe,
 }
+
+type AcknowledgeProbe = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
 
 impl Default for TestBridge {
     fn default() -> Self {
@@ -100,6 +103,7 @@ impl Default for TestBridge {
             reload_calls: Arc::new(AtomicUsize::new(0)),
             clear_registry_on_operate: false,
             persist_result: Ok(()),
+            acknowledge_probe: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -228,6 +232,9 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         _task_handle: &str,
     ) -> Result<bool, crate::WebError> {
         self.acknowledge_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(probe) = self.acknowledge_probe.lock().unwrap().as_ref() {
+            probe();
+        }
         self.acknowledge_result.clone()
     }
 

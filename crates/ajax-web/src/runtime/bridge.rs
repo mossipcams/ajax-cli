@@ -59,6 +59,14 @@ pub trait RuntimeBridge<C: CommandRunner> {
         Ok(false)
     }
 
+    fn needs_operator_acknowledgment(
+        &self,
+        _context: &CommandContext<InMemoryRegistry>,
+        _task_handle: &str,
+    ) -> bool {
+        true
+    }
+
     fn persist_registry_snapshot(
         &mut self,
         _context: &mut CommandContext<InMemoryRegistry>,
