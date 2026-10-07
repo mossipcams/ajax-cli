@@ -1,7 +1,7 @@
 import { test, expect, type Locator } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket } from "./fixtures";
 
-test.beforeEach(async ({}, testInfo) => {
+test.beforeEach(async (_, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "Diff Review entry swipe is a touch gesture; desktop has no equivalent",

@@ -14,7 +14,7 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-test.beforeEach(({}, testInfo) => {
+test.beforeEach((_, testInfo) => {
   const desktopOnly =
     testInfo.title ===
     "desktop expanded mode keeps terminal bounded and task details summary reachable";

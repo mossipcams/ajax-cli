@@ -209,7 +209,7 @@ async function doubleTapHoldDragTerminalText(
   );
 }
 
-test.beforeEach(({}, testInfo) => {
+test.beforeEach((_, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "terminal acceptance is mobile-webkit only",

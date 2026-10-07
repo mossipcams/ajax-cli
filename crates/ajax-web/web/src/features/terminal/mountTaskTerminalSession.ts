@@ -127,6 +127,7 @@ export function mountTaskTerminalSession(
     return () => {};
   }
 
+  // eslint-disable-next-line prefer-const -- assigned once later in a closure; const needs an initializer
   let terminalAddons: ReturnType<typeof attachTerminalAddons> | undefined;
   let lastSentCols = 0;
   let lastSentRows = 0;
@@ -249,6 +250,7 @@ export function mountTaskTerminalSession(
     }
   };
 
+  // eslint-disable-next-line prefer-const -- assigned once later in a closure; const needs an initializer
   let refitController: ReturnType<typeof createRefitController> | undefined;
 
   const resetDedupe = () => {

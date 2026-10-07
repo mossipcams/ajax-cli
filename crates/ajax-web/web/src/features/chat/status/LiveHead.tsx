@@ -20,7 +20,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
       data-state={view.state}
     >
       {view.showHeadLine ? (
-        <div className="session-head-line" aria-live="polite">
+        <div className="session-head-line" data-testid="session-head-line" aria-live="polite">
           <span
             className={`status-dot${view.state === "working" && !quiet ? " is-live" : ""}`}
             aria-hidden="true"

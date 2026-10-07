@@ -160,10 +160,12 @@ describe("LiveHead context usage", () => {
     mountHead({ connected, showHeadLine: true, usage: { used: 25, size: 100 } });
     const meter = screen.getByTestId("session-usage");
     const label = screen.getByText(connected ? "Ready" : "Reconnecting");
-    expect(label.parentElement).toHaveClass("session-head-line");
-    expect(label.parentElement).toContainElement(meter);
-    expect(label.nextElementSibling).toBe(meter);
-    expect(meter.nextElementSibling).toHaveClass("session-head-controls");
+    const headLine = screen.getByTestId("session-head-line");
+    expect(headLine).toContainElement(label);
+    expect(headLine).toContainElement(meter);
+    expect(headLine).toHaveTextContent(
+      `${connected ? "Ready" : "Reconnecting"}Context 25% full`,
+    );
     expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
   });
 
@@ -175,9 +177,11 @@ describe("LiveHead context usage", () => {
       attentionText: "Waiting for review",
       usage: { used: 25, size: 100 },
     });
-    expect(screen.getByTestId("session-head").lastElementChild).toBe(
-      screen.getByTestId("session-usage"),
-    );
+    expect(screen.queryByTestId("session-head-line")).toBeNull();
+    const section = screen.getByTestId("session-head");
+    const usage = screen.getByTestId("session-usage");
+    expect(section).toContainElement(usage);
+    expect(section).toHaveTextContent("Waiting for reviewContext 25% full");
     expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
   });
 

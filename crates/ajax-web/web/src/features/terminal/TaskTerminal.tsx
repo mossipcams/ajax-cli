@@ -216,6 +216,7 @@ export default function TaskTerminal({ handle }: Props) {
       const code = data.toLowerCase().charCodeAt(0);
       if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
     }
+    // eslint-disable-next-line no-control-regex
     const cursor = /^\x1b\[([ABCD])$/.exec(data);
     if (cursor) return `\x1b[1;5${cursor[1]}`;
     return data;
