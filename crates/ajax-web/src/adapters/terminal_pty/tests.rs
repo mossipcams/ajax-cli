@@ -797,3 +797,27 @@ async fn terminal_cleanup_does_not_wait_forever_after_kill() {
         "cleanup should time out instead of waiting forever, took {elapsed:?}"
     );
 }
+
+// #1235: tmux setup, probe and history calls ran on the async worker itself.
+#[tokio::test(flavor = "current_thread")]
+async fn issue_1235_slow_tmux_command_does_not_block_the_async_worker() {
+    let slow = TmuxCommand {
+        program: "sleep".to_string(),
+        args: vec!["0.5".to_string()],
+    };
+    let command = tokio::spawn(async move { super::bridge::run_tmux_command(&slow).await });
+    let other_task = tokio::spawn(tokio::time::sleep(Duration::from_millis(20)));
+
+    let started = Instant::now();
+    other_task.await.expect("other task joins");
+    assert!(
+        started.elapsed() < Duration::from_millis(300),
+        "other tasks on this worker must run while tmux is slow"
+    );
+    assert!(command
+        .await
+        .expect("command joins")
+        .expect("command runs")
+        .status
+        .success());
+}
