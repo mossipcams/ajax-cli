@@ -323,6 +323,25 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
 ) -> Result<bool, CommandError> {
+    refresh_git_substrate_by_repo(context, runner, None)
+}
+
+/// Like [`refresh_git_substrate_evidence`], but a repository whose Git
+/// observation fails is skipped and named in `unobserved` instead of failing
+/// the refresh for every other repository. Its tasks keep their prior evidence.
+pub fn refresh_observable_git_substrate_evidence<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    unobserved: &mut Vec<(String, CommandError)>,
+) -> Result<bool, CommandError> {
+    refresh_git_substrate_by_repo(context, runner, Some(unobserved))
+}
+
+fn refresh_git_substrate_by_repo<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    mut unobserved: Option<&mut Vec<(String, CommandError)>>,
+) -> Result<bool, CommandError> {
     let tasks = context
         .registry
         .list_tasks()
@@ -352,11 +371,23 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
         }
 
         let repo_path = repo.path.display().to_string();
-        let worktrees_output = run_successful_command(runner, &git.list_worktrees(&repo_path))?;
-        if worktrees_output.trim().is_empty() {
-            continue;
-        }
-        let branches_output = run_successful_command(runner, &git.list_branches(&repo_path))?;
+        let listing =
+            run_successful_command(runner, &git.list_worktrees(&repo_path)).and_then(|worktrees| {
+                if worktrees.trim().is_empty() {
+                    return Ok(None);
+                }
+                run_successful_command(runner, &git.list_branches(&repo_path))
+                    .map(|branches| Some((worktrees, branches)))
+            });
+        let (worktrees_output, branches_output) = match (listing, unobserved.as_deref_mut()) {
+            (Ok(Some(listing)), _) => listing,
+            (Ok(None), _) => continue,
+            (Err(error), Some(unobserved)) => {
+                unobserved.push((repo.name.clone(), error));
+                continue;
+            }
+            (Err(error), None) => return Err(error),
+        };
         let worktrees = GitAdapter::parse_worktrees(&worktrees_output);
         let branches = GitAdapter::parse_branches(&branches_output)
             .into_iter()
