@@ -457,3 +457,45 @@ fn issue_1069_refresh_preserves_acp_done_after_turn_end() {
     );
     assert_eq!(status.explanation.as_deref(), Some("Response ready"));
 }
+
+// #1199: a configured repository path that is gone made every Cockpit refresh fail.
+#[test]
+fn issue_1199_unobservable_repository_does_not_fail_the_refresh() {
+    struct MissingRepoRunner {
+        inner: HealthyRefreshRunner,
+    }
+
+    impl CommandRunner for MissingRepoRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if git_worktree_list(&command.args) {
+                return Ok(CommandOutput {
+                    status_code: 128,
+                    stdout: String::new(),
+                    stderr: "fatal: cannot change to '/gone': No such file or directory"
+                        .to_string(),
+                });
+            }
+            self.inner.run(command)
+        }
+    }
+
+    let mut context = context_with_active_task();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap();
+    task.git_status = None;
+    task.add_side_flag(SideFlag::WorktreeMissing);
+    let mut runner = MissingRepoRunner {
+        inner: HealthyRefreshRunner::default(),
+    };
+
+    refresh_runtime_context(&mut context, &mut runner)
+        .expect("an unobservable repository must not fail the whole refresh");
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        task.has_side_flag(SideFlag::WorktreeMissing),
+        "a failed observation is unknown, so prior evidence is kept"
+    );
+}
