@@ -132,8 +132,10 @@ impl PushHub {
                 Err(error) => {
                     // No legacy migrate: bare arrays / unknown shapes are wiped.
                     // Keep the unreadable bytes beside it so the wipe is recoverable.
+                    // Written private: it still holds subscription keys, and a
+                    // plain copy would inherit whatever mode the file had.
                     let kept = subscriptions_path.with_extension("json.corrupt");
-                    if let Err(error) = fs::copy(&subscriptions_path, &kept) {
+                    if let Err(error) = write_private_file(&kept, raw.as_bytes()) {
                         eprintln!("could not keep invalid {SUBSCRIPTIONS_FILE}: {error}");
                     }
                     eprintln!("invalid {SUBSCRIPTIONS_FILE} ({error}); wiping to empty store");
@@ -380,18 +382,33 @@ pub(crate) fn navigation_url(headers: &HeaderMap) -> Result<String, String> {
 }
 
 /// Write through a temp file and rename, so a crash mid-write leaves the
-/// previous file intact instead of a truncated one.
+/// previous file intact instead of a truncated one. The file holds the VAPID
+/// private key or subscription keys: it is owner-only from creation, never
+/// briefly world-readable.
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, bytes).map_err(|error| format!("write {}: {error}", tmp.display()))?;
+    let failed = |error: std::io::Error| format!("write {}: {error}", path.display());
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    fs::rename(&tmp, path).map_err(|error| format!("write {}: {error}", path.display()))
+    let mut file = options.open(&tmp).map_err(failed)?;
+    #[cfg(unix)]
+    {
+        // `mode` only applies on create; a temp file left by a crash keeps its own.
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(failed)?;
+    }
+    file.write_all(bytes).map_err(failed)?;
+    file.sync_all().map_err(failed)?;
+    fs::rename(&tmp, path).map_err(failed)
 }
 
 fn vapid_public_key_bytes(key_pair: &ES256KeyPair) -> Vec<u8> {
@@ -660,6 +677,28 @@ mod tests {
             "{\"subscriptions\":[{\"endpoint\":\"https://web.pu",
             "the unreadable store must stay recoverable"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_owner_only_even_when_the_source_was_not() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let dir = scratch_dir("private-mode");
+        let path = dir.join(SUBSCRIPTIONS_FILE);
+        fs::write(&path, "not json").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        // A stale temp file from a crash must not lend its mode to the result.
+        let stale = dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp"));
+        fs::write(&stale, "stale").unwrap();
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o644)).unwrap();
+
+        PushHub::load_or_create(&dir).unwrap();
+
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&path.with_extension("json.corrupt")), 0o600);
+        assert_eq!(mode(&dir.join(VAPID_KEY_FILE)), 0o600);
         let _ = fs::remove_dir_all(dir);
     }
 
