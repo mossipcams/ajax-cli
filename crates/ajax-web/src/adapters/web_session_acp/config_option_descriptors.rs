@@ -1,5 +1,3 @@
-//! Browser-facing snapshots of live ACP session config options.
-
 use super::config_options::category_name;
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions,
@@ -7,7 +5,6 @@ use agent_client_protocol::schema::v1::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// One advertised choice for a select config option (browser snapshot).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOptionChoiceDescriptor {
@@ -15,7 +12,6 @@ pub struct ConfigOptionChoiceDescriptor {
     pub name: String,
 }
 
-/// Lightweight descriptor for live session config options (AoE-style).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigOptionDescriptor {

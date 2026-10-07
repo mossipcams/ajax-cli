@@ -1,5 +1,3 @@
-//! Cursor validation and replay planning for protocol v2 attach.
-
 use super::protocol::{
     PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
@@ -12,7 +10,6 @@ pub(crate) struct ReplayPlan {
     pub from: usize,
 }
 
-/// Decide whether a browser-supplied cursor can resume incrementally.
 pub(crate) fn plan_replay(client_cursor: Option<usize>, log: &TranscriptLog) -> ReplayPlan {
     let next = log.absolute_next_cursor();
     let dropped = log.dropped;

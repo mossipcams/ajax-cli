@@ -1,5 +1,3 @@
-//! In-flight and queued prompt ownership for one session slot.
-
 use super::acp_drain::PromptTerminal;
 use super::QueuedPrompt;
 use crate::adapters::web_session_store::prompt_ledger::PromptLedger;
@@ -59,20 +57,13 @@ impl ActivePrompt {
 }
 
 pub(super) struct PromptQueue {
-    /// Sidecar prompt ownership; dedupe authority separate from transcript JSONL.
     pub prompt_ledger: PromptLedger,
-    /// ACP request identity and durable browser identity for the active prompt.
     pub active_prompt: Option<ActivePrompt>,
     pub queued: VecDeque<QueuedPrompt>,
-    /// Suppresses repeated operator errors while a queued transition retries.
     pub queue_persist_error_reported: bool,
-    /// Set when the sidecar ledger cannot be loaded safely; rejects new submits.
     pub ledger_unusable: Option<String>,
-    /// Exit-interruption persist still pending after unexpected child death.
     pub pending_exit_interruption: Option<PendingExitInterruption>,
-    /// Suppress duplicate ACP exit evidence during expected cancel/detach/shutdown.
     pub suppress_exit_evidence: bool,
-    /// Prevents duplicate unexpected-exit reconciliation for one child death.
     pub child_exit_reconciled: bool,
 }
 

@@ -1,5 +1,3 @@
-//! Unit tests for live ACP slash-command descriptors.
-
 use super::available_command_descriptors::{
     available_command_descriptors, AvailableCommandDescriptor,
 };

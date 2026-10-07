@@ -1,9 +1,3 @@
-//! Granular orchestration-chat module import guards.
-//!
-//! Enforces the forbidden-import table in
-//! `.planning/agent-plans/architecture-granular-rules.md` against production
-//! sources only (skips `*_tests.rs`, `test_support.rs`, and `runtime/tests/**`).
-
 #[cfg(test)]
 mod tests {
     use crate::architecture::scan::{

@@ -1,11 +1,3 @@
-//! Declarative Web Push attention delivery for Web Cockpit.
-//!
-//! Uses `window.pushManager` on the client (no service worker). Server loads
-//! VAPID keys and subscriptions under `state_dir` at process start into an
-//! in-memory push hub, encrypts with `web-push-native`, and delivers via `curl`.
-//! HTTP handlers mutate in-memory state only; a background flusher persists
-//! (avoids CodeQL `rust/path-injection` on remote-reachable `state_dir` joins).
-
 use ajax_core::attention::{take_attention_transition, AttentionTransition};
 use ajax_core::commands::CommandContext;
 use ajax_core::registry::{InMemoryRegistry, Registry};
@@ -31,8 +23,6 @@ const VAPID_KEY_FILE: &str = "web-push-vapid.key";
 const SUBSCRIPTIONS_FILE: &str = "web-push-subscriptions.json";
 pub(crate) const DEFAULT_PUSH_POLL_SECONDS: u64 = 30;
 
-/// Process-local push persistence. Disk I/O happens in `PushHub::load_or_create`
-/// and `PushHub::flush_if_dirty` (background only) — not from HTTP handlers.
 pub(crate) struct PushHub {
     inner: Mutex<PushInner>,
     disk: Option<PushDiskPaths>,
@@ -53,7 +43,6 @@ struct PushInner {
 pub(crate) struct PushSubscription {
     pub(crate) endpoint: String,
     pub(crate) keys: PushSubscriptionKeys,
-    /// Absolute https cockpit URL for declarative `navigate` (set server-side).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) navigate: Option<String>,
 }
@@ -68,7 +57,6 @@ pub(crate) struct PushSubscriptionKeys {
 pub(crate) struct UnsubscribeRequest {
     #[serde(default)]
     pub(crate) endpoint: Option<String>,
-    /// Clear every stored subscription (Settings Disable with no local sub).
     #[serde(default)]
     pub(crate) all: bool,
 }
@@ -77,7 +65,6 @@ pub(crate) struct UnsubscribeRequest {
 pub(crate) struct PushTestRequest {
     #[serde(flatten)]
     subscription: PushSubscription,
-    /// Optional delay before delivery (Settings closed-app smoke test).
     #[serde(default)]
     delay_ms: u64,
 }
@@ -91,7 +78,6 @@ struct SubscriptionStore {
 }
 
 impl PushHub {
-    /// In-memory only (no disk). Used by `WebAppState::new` test harnesses.
     pub fn ephemeral() -> Arc<Self> {
         let key_pair = ES256KeyPair::generate();
         Arc::new(Self {
@@ -105,8 +91,6 @@ impl PushHub {
         })
     }
 
-    /// Load or create VAPID + subscriptions under `state_dir`. Call at process
-    /// start only — not from HTTP handlers.
     pub fn load_or_create(state_dir: &Path) -> Result<Arc<Self>, String> {
         fs::create_dir_all(state_dir).map_err(|error| format!("create state dir: {error}"))?;
         let vapid_path = state_dir.join(VAPID_KEY_FILE);
@@ -128,7 +112,6 @@ impl PushHub {
             match serde_json::from_str::<SubscriptionStore>(&raw) {
                 Ok(store) => store,
                 Err(error) => {
-                    // No legacy migrate: bare arrays / unknown shapes are wiped.
                     eprintln!("invalid {SUBSCRIPTIONS_FILE} ({error}); wiping to empty store");
                     let empty = SubscriptionStore::default();
                     let rewritten = serde_json::to_string_pretty(&empty)
@@ -170,8 +153,6 @@ impl PushHub {
     ) -> Result<(), String> {
         validate_subscription(&subscription)?;
         validate_navigate_url(navigate)?;
-        // Single-operator Cockpit: latest subscribe replaces the store so VAPID
-        // rotation / re-enable cannot accumulate stale endpoints.
         subscription.navigate = Some(navigate.to_string());
         {
             let mut guard = self
@@ -229,7 +210,6 @@ impl PushHub {
         self.flush_notify.notify_one();
     }
 
-    /// Persist dirty subscription state. Call from background tasks only.
     pub(crate) fn flush_if_dirty(&self) -> Result<(), String> {
         let Some(disk) = self.disk.as_ref() else {
             return Ok(());
@@ -254,7 +234,6 @@ impl PushHub {
             .inner
             .lock()
             .map_err(|_| "push hub lock poisoned".to_string())?;
-        // Only clear dirty if no newer mutation landed during the write.
         if guard.store == store {
             guard.dirty = false;
         }
@@ -262,12 +241,10 @@ impl PushHub {
     }
 }
 
-/// Background flusher so HTTP handlers never touch push disk paths.
 pub(crate) fn spawn_push_flusher(hub: Arc<PushHub>) {
     tokio::spawn(async move {
         loop {
             hub.flush_notify.notified().await;
-            // Coalesce bursts from enable/disable.
             tokio::time::sleep(Duration::from_millis(50)).await;
             if let Err(error) = hub.flush_if_dirty() {
                 eprintln!("declarative push flush failed: {error}");
@@ -276,8 +253,6 @@ pub(crate) fn spawn_push_flusher(hub: Arc<PushHub>) {
     });
 }
 
-/// Take attention transitions and fan-out declarative push. Returns true when
-/// any task metadata stamp changed (caller should persist registry).
 pub(crate) fn deliver_attention_pushes(
     context: &mut CommandContext<InMemoryRegistry>,
     hub: &PushHub,
@@ -363,7 +338,6 @@ pub(crate) fn schedule_test_push(
     Ok(())
 }
 
-/// Build navigate URL from Host; when Origin is present it must match Host.
 pub(crate) fn navigation_url(headers: &HeaderMap) -> Result<String, String> {
     let host = headers
         .get(header::HOST)
@@ -434,7 +408,6 @@ fn validate_navigate_url(navigate: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Allow only known browser push services — blocks SSRF to RFC1918/metadata.
 fn push_endpoint_host_allowed(endpoint: &Uri) -> bool {
     let Some(authority) = endpoint.authority() else {
         return false;
@@ -682,7 +655,6 @@ mod tests {
     fn invalid_legacy_subscriptions_file_is_wiped_not_migrated() {
         let dir = scratch_dir("legacy-wipe");
         let path = dir.join(SUBSCRIPTIONS_FILE);
-        // Legacy shape was a bare array; current store is {"subscriptions":[...]}.
         fs::write(
             &path,
             r#"[{"endpoint":"https://web.push.apple.com/x","keys":{"p256dh":"a","auth":"b"}}]"#,

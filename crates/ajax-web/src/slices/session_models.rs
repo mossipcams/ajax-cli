@@ -1,14 +1,3 @@
-//! Per-harness model catalog for task creation and orchestration chat.
-//!
-//! Cursor lists its models through the CLI (`agent models`). The other
-//! harnesses advertise theirs on the ACP `session/new` handshake, which costs a
-//! short-lived bridge process — too slow to repeat on every page.
-//!
-//! A catalog only changes when the harness itself changes, so the cache is keyed
-//! by the harness CLI version rather than by a clock: read the version (cheap),
-//! reuse the stored catalog when it matches, and re-read the catalog only after
-//! the harness has been updated.
-
 use ajax_core::{
     adapters::{parse_cursor_model_intent, CURSOR_DEFAULT_MODEL},
     models::AgentClient,
@@ -20,19 +9,14 @@ use std::{collections::HashMap, sync::Mutex};
 pub struct SessionModelOption {
     pub id: String,
     pub label: String,
-    /// Reasoning levels advertised for this Cursor base (slim catalog only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<String>>,
-    /// True when a Fast sibling exists for this Cursor base (slim catalog only).
     #[serde(rename = "hasFast", skip_serializing_if = "Option::is_none")]
     pub has_fast: Option<bool>,
 }
 
-/// A second axis beside the model list — the reasoning level, which Cursor
-/// bakes into its model ids and the bridges expose as their own option.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionModelGroup {
-    /// Config id the harness answers to, e.g. `effort`.
     pub id: String,
     pub label: String,
     pub options: Vec<SessionModelOption>,
@@ -42,18 +26,12 @@ pub struct SessionModelGroup {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionModelsResponse {
     pub models: Vec<SessionModelOption>,
-    /// Model the harness runs when the operator picks nothing.
     pub default: String,
-    /// Agent this catalog belongs to, echoed so the browser can cache per agent.
     pub agent: String,
-    /// Reasoning level, when this harness exposes one separately.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<SessionModelGroup>,
-    /// Why the catalog is empty, when the harness could not be read at all.
-    /// An empty list with no error means the harness offers no choice.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Harness version this catalog was read from.
     pub harness_version: String,
 }
 
@@ -64,8 +42,6 @@ struct Cache {
 
 static CACHE: Mutex<Option<HashMap<String, Cache>>> = Mutex::new(None);
 
-/// Version string for the harness CLI, used as the cache key. Empty when the
-/// CLI cannot be asked, which keeps the catalog uncached rather than stale.
 pub fn harness_version(agent: AgentClient) -> String {
     let program = match agent {
         AgentClient::Cursor => "agent",
@@ -86,7 +62,6 @@ pub fn harness_version(agent: AgentClient) -> String {
         .unwrap_or_default()
 }
 
-/// Agent name as the browser sends it, mapped to a client Ajax can start.
 pub fn agent_client_from_name(agent: &str) -> AgentClient {
     match agent.trim().to_ascii_lowercase().as_str() {
         "codex" => AgentClient::Codex,
@@ -97,7 +72,6 @@ pub fn agent_client_from_name(agent: &str) -> AgentClient {
     }
 }
 
-/// List the models `agent` can run. Soft-fails to the harness default alone.
 pub fn list_session_models(agent: &str) -> SessionModelsResponse {
     let key = agent.trim().to_ascii_lowercase();
     let key = if key.is_empty() {
@@ -110,7 +84,6 @@ pub fn list_session_models(agent: &str) -> SessionModelsResponse {
 
     if let Ok(guard) = CACHE.lock() {
         if let Some(cache) = guard.as_ref().and_then(|entries| entries.get(&key)) {
-            // An unreadable version can't prove the cache is current.
             if !version.is_empty() && cache.harness_version == version {
                 return cache.response.clone();
             }
@@ -120,8 +93,6 @@ pub fn list_session_models(agent: &str) -> SessionModelsResponse {
     let mut response = fetch_catalog(&key);
     response.harness_version = version.clone();
 
-    // Never cache a failure: a harness that was briefly unreachable would then
-    // stay "not installed" until its version changed, which may be never.
     if response.error.is_none() && !version.is_empty() {
         if let Ok(mut guard) = CACHE.lock() {
             guard.get_or_insert_with(HashMap::new).insert(
@@ -168,15 +139,12 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
             models,
             default: CURSOR_DEFAULT_MODEL.to_string(),
             agent: agent.to_string(),
-            // Cursor carries its reasoning level inside the model id.
             reasoning: None,
             error: None,
             harness_version: String::new(),
         };
     }
 
-    // A harness Ajax cannot start at all is an install or PATH problem, not a
-    // harness with nothing to offer. Say which, rather than showing a bare list.
     if let Some(missing) = missing_acp_program(client) {
         return SessionModelsResponse {
             models: Vec::new(),
@@ -188,8 +156,6 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
         };
     }
 
-    // The bridges only advertise their catalog inside a session, so this costs
-    // one short-lived ACP process per cache miss.
     let catalog =
         crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir());
     let models = catalog
@@ -236,7 +202,6 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     }
 }
 
-/// Install hint when none of a harness's ACP programs can be found.
 fn missing_acp_program(client: AgentClient) -> Option<String> {
     let launch = ajax_core::adapters::acp_launch_for_agent(client)?;
     let found = launch
@@ -268,7 +233,6 @@ fn fetch_models_from_agent() -> Option<Vec<SessionModelOption>> {
     }
 }
 
-/// Parse `agent models` text: lines like `id - Label` after an optional header.
 pub fn parse_agent_models_output(stdout: &str) -> Vec<SessionModelOption> {
     let mut models = Vec::new();
     for line in stdout.lines() {
@@ -325,7 +289,6 @@ fn effort_rank(effort: &str) -> usize {
         .unwrap_or(CURSOR_EFFORT_RANK.len())
 }
 
-/// Collapse exploded Cursor `agent models` ids into unique bases with axis metadata.
 pub fn collapse_cursor_catalog(models: Vec<SessionModelOption>) -> Vec<SessionModelOption> {
     let mut auto = Vec::new();
     let mut order: Vec<String> = Vec::new();
@@ -378,14 +341,12 @@ pub fn collapse_cursor_catalog(models: Vec<SessionModelOption>) -> Vec<SessionMo
     collapsed
 }
 
-/// Replace collapsed Cursor row labels with ACP `choice.name` values when available.
 fn overlay_cursor_acp_labels(models: &mut [SessionModelOption]) {
     let labels =
         crate::adapters::web_session_acp::read_cursor_acp_model_labels(&std::env::temp_dir());
     apply_cursor_label_overlay(models, &labels);
 }
 
-/// Apply a base-id label map; leaves Auto and unmatched rows unchanged.
 pub(crate) fn apply_cursor_label_overlay(
     models: &mut [SessionModelOption],
     labels: &HashMap<String, String>,
@@ -407,8 +368,6 @@ pub(crate) fn apply_cursor_label_overlay(
 mod tests {
     use super::*;
 
-    // The catalog is re-read when the harness changes, not on a timer: a second
-    // call at the same version must not pay for another handshake.
     #[test]
     fn catalog_is_cached_against_the_harness_version() {
         let first = list_session_models("cursor");
@@ -427,8 +386,6 @@ mod tests {
         }
     }
 
-    // A harness that cannot be reached must be retried, not remembered: the
-    // fix is usually an install, and the version it would key on never changes.
     #[test]
     fn a_failed_catalog_read_is_not_cached() {
         let failed = list_session_models("other");

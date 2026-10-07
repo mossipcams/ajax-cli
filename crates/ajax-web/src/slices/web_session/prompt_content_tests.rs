@@ -1,5 +1,3 @@
-//! Prompt content validation and transcript shaping.
-
 use super::prompt_content::{
     build_prompt_payload, default_prompt_capabilities, reject_disallowed_wire_blocks,
     validate_prompt_content, PromptContentBlockWire, MAX_IMAGE_BLOCKS, MAX_PROMPT_FRAME_BYTES,

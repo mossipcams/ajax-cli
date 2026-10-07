@@ -152,7 +152,6 @@ async fn static_shell_assets_are_no_store_and_gzipped() {
         }
     }
 
-    // HTML shell and API remain no-store (do not get the immutable cache).
     let shell = get_public(&app, "/").await;
     assert_eq!(shell.status(), StatusCode::OK);
     assert_eq!(shell.headers()["cache-control"], "no-store");
@@ -161,7 +160,6 @@ async fn static_shell_assets_are_no_store_and_gzipped() {
     assert_eq!(cockpit.status(), StatusCode::OK);
     assert_eq!(cockpit.headers()["cache-control"], "no-store");
 
-    // Negotiated gzip applies to compressible static JS when requested.
     let app_js_gz = app
         .clone()
         .oneshot(
@@ -198,7 +196,6 @@ async fn static_shell_assets_ignore_if_none_match() {
         );
         let baseline_body = to_bytes(baseline.into_body(), usize::MAX).await.unwrap();
 
-        // Matching If-None-Match must still return 200 with a body, never 304.
         let matched = app
             .clone()
             .oneshot(
@@ -223,7 +220,6 @@ async fn static_shell_assets_ignore_if_none_match() {
         let matched_body = to_bytes(matched.into_body(), usize::MAX).await.unwrap();
         assert_eq!(matched_body, baseline_body, "{path} if-none-match body");
 
-        // Stale If-None-Match: same no-store 200 with a non-empty body.
         let stale = app
             .clone()
             .oneshot(
@@ -249,7 +245,6 @@ async fn static_shell_assets_ignore_if_none_match() {
         assert_eq!(stale_body, baseline_body, "{path} stale body");
     }
 
-    // gzip + If-None-Match must still return 200 with a body, never 304.
     let gz_matched = app
         .clone()
         .oneshot(
@@ -301,7 +296,6 @@ async fn static_shell_assets_ignore_if_none_match() {
         "/app.js gzip 200 must not carry an ETag"
     );
 
-    // The HTML shell keeps no-store and gains no ETag.
     let shell = get_public(&app, "/").await;
     assert_eq!(shell.status(), StatusCode::OK);
     assert!(
@@ -407,8 +401,6 @@ async fn axum_api_routes_require_browser_session_cookie_except_health() {
         .await
         .unwrap();
     assert_eq!(start.status(), StatusCode::UNAUTHORIZED);
-    // Authenticated training calls are covered by the slice tests with a fake
-    // runner; here we only verify the auth gate (the production state would ssh).
 }
 
 #[tokio::test]

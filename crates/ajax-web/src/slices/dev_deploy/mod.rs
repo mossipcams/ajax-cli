@@ -1,9 +1,3 @@
-//! Shared Ajax Dev deployment slot ("Test in Dev").
-//!
-//! Stable Ajax resolves an ajax-cli task's registered worktree, builds that
-//! worktree as-is, and restarts only the existing `ajax-web-dev` instance.
-//! Clients never supply a filesystem path.
-
 use ajax_core::{commands::CommandContext, config::ManagedRepo, models::Task, registry::Registry};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -189,10 +183,6 @@ pub fn lock_slot(slot: &SharedDevDeploySlot) -> MutexGuard<'_, DevDeploySlot> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Resolve a trusted Ajax-managed ajax-cli worktree from registry state.
-///
-/// The client supplies only `task_handle`. The filesystem path comes from the
-/// task record and is validated against the configured ajax-cli repo.
 pub fn resolve_ajax_dev_deploy_source<R: Registry>(
     context: &CommandContext<R>,
     task_handle: &str,
@@ -245,8 +235,6 @@ fn validate_managed_ajax_worktree(
     let worktrees_root = legacy_worktrees_root(&managed.path);
     let under_legacy = worktree.starts_with(&worktrees_root);
     if !under_legacy {
-        // Still allow when git common-dir matches (covers rooted placements and
-        // odd but still Ajax-owned worktrees of the same repo object).
         if !same_git_common_dir(&managed.path, worktree) {
             return Err(DevDeployError::WorktreeNotManaged {
                 path: worktree.clone(),
@@ -285,11 +273,6 @@ fn same_git_common_dir(repo_path: &Path, worktree_path: &Path) -> bool {
     }
 }
 
-/// `git` for probing an arbitrary worktree path. Clears the ambient git
-/// environment (`GIT_DIR` et al. are exported when this process runs inside a
-/// git hook, e.g. husky's pre-commit) so `-C <path>` discovery is honoured
-/// instead of silently resolving to the hook's repository — otherwise a path
-/// outside the worktrees tree validates as a real worktree.
 fn git_probe() -> Command {
     let mut cmd = Command::new("git");
     cmd.env_remove("GIT_DIR")
@@ -385,8 +368,6 @@ pub fn restart_script_from_env() -> Result<PathBuf, DevDeployError> {
     Ok(path)
 }
 
-/// Prefer the selected worktree's restart script so a Test in Dev deploy can
-/// carry script changes; fall back to the process AJAX_WEB_RESTART_SCRIPT.
 pub fn resolve_restart_script(worktree: &Path) -> Result<PathBuf, DevDeployError> {
     let candidate = worktree.join("scripts/dev-web-restart.sh");
     if candidate.is_file() {
@@ -395,7 +376,6 @@ pub fn resolve_restart_script(worktree: &Path) -> Result<PathBuf, DevDeployError
     restart_script_from_env()
 }
 
-/// Launch the existing restart script for the shared dev slot only.
 pub fn spawn_test_in_dev(script: &Path, worktree: &Path) -> Result<(), DevDeployError> {
     restart_command(script, worktree)
         .spawn()
@@ -409,7 +389,6 @@ fn restart_command(script: &Path, worktree: &Path) -> Command {
     command
 }
 
-/// Run a Test in Dev restart job and track slot phase transitions from script output.
 pub(crate) fn run_test_in_dev_job(
     slot: Arc<SharedDevDeploySlot>,
     script: PathBuf,
@@ -491,7 +470,6 @@ pub(crate) fn run_test_in_dev_job(
     }
 }
 
-/// Build argv for tests and dry-run inspection. Always targets profile=dev.
 pub fn test_in_dev_command_args(worktree: &Path) -> Vec<String> {
     vec![
         "--worktree".to_string(),

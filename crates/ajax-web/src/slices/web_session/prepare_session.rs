@@ -1,5 +1,3 @@
-//! Resolve whether a task may attach an orchestration session and build the plan.
-
 use super::task_pane_agent::tmux_task_pane_runs_live_agent;
 use super::{
     harness_default_model, is_unspecified_model, normalize_session_model, SessionAttachPlan,

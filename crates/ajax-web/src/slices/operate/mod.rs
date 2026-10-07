@@ -1,5 +1,3 @@
-//! Browser-submitted operator actions.
-
 use ajax_core::{
     adapters::{
         environment::{local_branch_exists, origin_fetch_age},
@@ -40,7 +38,6 @@ pub struct StartTaskRequest {
     pub request_id: String,
     #[serde(default)]
     pub orchestration_chat: bool,
-    /// Cursor model id chosen in the browser; absent launches the Ajax default.
     #[serde(default)]
     pub model: Option<String>,
 }
@@ -123,8 +120,6 @@ fn operate_inner<R: Registry>(
     }
 }
 
-/// Test convenience: `start_task_with_checkpoint` with a noop checkpoint.
-/// Production callers (ajax-cli) always supply a real checkpoint.
 #[cfg(test)]
 pub fn start_task<R: Registry>(
     context: &mut CommandContext<R>,
@@ -193,7 +188,6 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         ));
     }
 
-    // Same id shape a session accepts; the launch line shell-quotes it.
     let model = match request
         .model
         .as_deref()
@@ -207,7 +201,6 @@ fn start_task_with_checkpoint_inner<R: Registry>(
                     "model selection requires an agent Ajax can start over ACP",
                 ));
             }
-            // `model|configId=value`: the model id plus any harness option.
             if ajax_core::adapters::parse_model_selection(raw).is_none() {
                 return Err(OperateError::UnsupportedCapability("unsupported model"));
             }
@@ -270,15 +263,10 @@ fn start_plan_observation<R: Registry>(
     }
 }
 
-/// Single agent allowlist for web task starts; the route pre-check and the
-/// slice validation must never disagree.
 pub fn supported_start_agent(agent: &str) -> bool {
     matches!(agent, "codex" | "claude" | "cursor" | "pi")
 }
 
-/// Move an existing provisioned task to another harness, optionally pinning the
-/// model it should run. The caller resets backend context on a live slot or
-/// clears the stored ACP resume id when idle.
 pub fn swap_task_agent<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,
@@ -304,8 +292,6 @@ pub fn swap_task_agent<R: Registry>(
     })
 }
 
-/// Persist the desired session model on a provisioned task before the host
-/// applies the pin on the live ACP session (or on the next attach when idle).
 pub fn set_task_session_model<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,
@@ -332,8 +318,6 @@ pub fn set_task_session_model<R: Registry>(
     })
 }
 
-/// True when the harness has an ACP entry point, so a provisioned (no send-keys)
-/// start can be driven from the browser instead of the tmux pane.
 pub fn supports_acp_session(agent: &str) -> bool {
     ajax_core::adapters::acp_launch_for_agent(agent_client_from_name(agent)).is_some()
 }

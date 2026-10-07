@@ -1,5 +1,3 @@
-//! ACP child spawn, replace, and first attach for per-task session slots.
-
 use super::task_session::TaskSessionState;
 use super::task_session_exit::{
     interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
@@ -81,9 +79,7 @@ pub(super) async fn acquire(
 
 pub(crate) struct ApplyConfigOptionResult {
     pub generation: u64,
-    /// Pipe-form task metadata to persist after a successful model-option apply.
     pub persist_model: Option<String>,
-    /// Live apply succeeded, but its confirmed state cannot be persisted safely.
     pub persist_warning: Option<String>,
 }
 
@@ -145,10 +141,6 @@ pub(super) async fn apply_config_option(
                 }
                 _ => (None, None),
             };
-            // Keep the slot pin and the registry pin as the same string. The
-            // persisted pipe form is what `prepare_task_session` hands back as
-            // `want_model`; leaving the slot on the old spelling desyncs restart
-            // metadata from the live apply (#1149).
             if let Some(model) = persist_model.as_deref() {
                 state.acp.model = model.to_string();
             }
@@ -288,7 +280,6 @@ pub(super) async fn clear_session_context(
     Ok(state.generation)
 }
 
-/// Cancel and drop the live ACP child so the next spawn owns stdio alone.
 fn release_live_client(
     state: &mut TaskSessionState,
     close_session: bool,
@@ -335,8 +326,6 @@ fn release_live_client(
             if let Some(active) = state.prompts.active_prompt.as_ref() {
                 let needs_turn_end = active.terminal.is_none();
                 interrupt_active_prompt(state)?;
-                // Teardown will discard the child before its terminal result arrives.
-                // A terminal already captured by the pump emits its own event.
                 if needs_turn_end {
                     state.append_to_log(vec![SessionServerEvent::TurnEnd {
                         stop_reason: Some("cancelled".to_string()),
@@ -366,9 +355,6 @@ fn release_live_client(
 }
 
 fn replace_resume_id(state_dir: &Path, handle: &str) -> Option<String> {
-    // A stored ACP session id always means restore on slot replacement — never
-    // a silent `session/new` behind the existing transcript, even when the
-    // desired pin differs from the slot pin ([#1179]).
     web_session_store::load::<SessionServerEvent>(state_dir, handle).acp_session_id
 }
 
@@ -378,9 +364,6 @@ async fn spawn_acp(
     model: &str,
     resume_id: Option<&str>,
 ) -> Result<(AcpStdioClient, SpawnReport), SessionError> {
-    // Spawn on the session task thread so test ACP overrides (thread-local) and
-    // the child's dedicated owner stay aligned. One task per session, so this
-    // does not block the directory or other sessions.
     let worktree = worktree_path.to_path_buf();
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {

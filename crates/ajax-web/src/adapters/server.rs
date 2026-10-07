@@ -1,5 +1,3 @@
-//! Web Cockpit process lifecycle (restart via re-exec or an external script).
-
 #[cfg(not(test))]
 use std::{process::Command, thread, time::Duration};
 
@@ -61,10 +59,6 @@ fn should_exit_after_launch(result: Result<(), String>) -> bool {
     result.is_ok()
 }
 
-/// Re-exec the current process or spawn a configured restart script after a short
-/// delay, then exit only when the successor spawn succeeded.
-///
-/// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_process_restart() {
     #[cfg(not(test))]
     {
@@ -141,10 +135,6 @@ pub fn test_in_stable_enabled(profile: Option<&str>, script: Option<&str>) -> bo
         && matches!(profile, Some(STABLE_PROFILE) | Some(DEV_PROFILE))
 }
 
-/// Test in Stable runs through a sibling of the restart script, not the restart
-/// script itself: `dev-web-restart.sh` kills the tmux session it was spawned
-/// from, so a direct child of the web server dies on SIGPIPE mid-restart. The
-/// wrapper re-launches the restart in its own detached tmux session.
 pub fn test_in_stable_script(restart_script: &str) -> String {
     std::path::Path::new(restart_script)
         .with_file_name(TEST_IN_STABLE_SCRIPT)
@@ -180,8 +170,6 @@ fn discover_dev_web_restart_script(cwd: &std::path::Path) -> Option<std::path::P
     None
 }
 
-/// When cwd lives under `ajax-cli__worktrees`, the main checkout is the sibling
-/// `ajax-cli` directory next to that worktrees folder (e.g. trashed worktree cwd).
 fn infer_main_ajax_cli_checkout_from_worktree_path(
     path: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
@@ -219,9 +207,6 @@ pub fn resolve_restart_script(
 pub struct TestInStableConfig {
     pub script: String,
     pub port: String,
-    /// True when Settings should wait for cutover (stable instance only).
-    /// Independent of process exit; the live listener stays up until the
-    /// detached wrapper replaces it after build/install.
     pub exits_current_process: bool,
 }
 
@@ -291,12 +276,6 @@ pub fn test_in_stable_restarts_current_instance() -> bool {
     process_test_in_stable_config().is_some_and(|config| config.exits_current_process)
 }
 
-/// Spawn the detached Test in Stable wrapper with stable profile args.
-///
-/// The live stable listener must not exit here; the wrapper rebuilds in
-/// `ajax-test-in-stable` and cuts over only after the new binary is healthy.
-///
-/// Under `cfg(test)` this is a no-op so integration tests do not terminate the runner.
 pub fn schedule_test_in_stable() {
     #[cfg(not(test))]
     {
@@ -641,8 +620,6 @@ mod tests {
         .expect("stable config");
 
         assert!(config.exits_current_process);
-        // schedule_test_in_stable is cfg(test) no-op; stable must not exit the
-        // live listener — cutover is owned by the detached wrapper script.
         super::schedule_test_in_stable();
 
         let _ = std::fs::remove_dir_all(&root);

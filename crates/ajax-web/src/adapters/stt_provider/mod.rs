@@ -1,8 +1,3 @@
-//! Supervised local STT provider boundary and Moonshine command adapter.
-//!
-//! Transport-agnostic: no WebSocket, PTY, or task-registry coupling. Model-
-//! specific process launch stays behind [`MoonshineProvider`].
-
 use serde::Deserialize;
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -14,7 +9,6 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-/// Maximum PCM16 payload bytes in one sidecar audio frame.
 pub const MAX_SIDECAR_AUDIO_PCM_BYTES: usize = 640;
 
 const SIDECAR_FRAME_KIND_START: u8 = 0;
@@ -23,7 +17,6 @@ const SIDECAR_FRAME_KIND_FINALIZE: u8 = 2;
 const SIDECAR_FRAME_KIND_CANCEL: u8 = 3;
 const SIDECAR_EVENT_QUEUE_BOUND: usize = 64;
 
-/// Session parameters handed to a provider when speech capture begins.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderSessionConfig {
     pub session_id: String,
@@ -33,14 +26,12 @@ pub struct ProviderSessionConfig {
     pub phrase_end_silence_ms: u64,
 }
 
-/// Provider availability for health probes and UI gating.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderHealth {
     Available,
     Unavailable(String),
 }
 
-/// Recoverable provider failures. Never panic for missing or unusable commands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderError {
     Unavailable(String),
@@ -66,26 +57,15 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
-/// Typed provider-side transcript and activity events.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderEvent {
-    /// Sidecar can accept audio for this session (model loaded).
     Ready,
-    Partial {
-        sequence: u32,
-        text: String,
-    },
-    Final {
-        sequence: u32,
-        text: String,
-    },
+    Partial { sequence: u32, text: String },
+    Final { sequence: u32, text: String },
     SpeechStarted,
     SpeechEnded,
-    /// Successful session completion after finalize; not an error.
     Completed,
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl ProviderEvent {
@@ -101,13 +81,10 @@ impl ProviderEvent {
     }
 }
 
-/// Encode one sidecar audio frame: kind `1`, big-endian sequence, raw PCM16.
 pub fn encode_sidecar_audio_frame(sequence: u32, pcm: &[u8]) -> Result<Vec<u8>, ProviderError> {
     if pcm.len() > MAX_SIDECAR_AUDIO_PCM_BYTES {
         return Err(ProviderError::AudioBufferOverflow);
     }
-    // Length-prefixed like the start frame: without it the sidecar cannot tell
-    // where this frame's PCM ends and the next frame begins.
     let len = u32::try_from(pcm.len())
         .map_err(|_| ProviderError::Protocol("audio frame payload too large".to_string()))?;
     let mut frame = Vec::with_capacity(1 + 4 + 4 + pcm.len());
@@ -156,7 +133,6 @@ struct SidecarEventLine {
     text: Option<String>,
 }
 
-/// Parse one newline-delimited sidecar JSON event line.
 pub fn parse_sidecar_event_line(line: &[u8]) -> Result<ProviderEvent, ProviderError> {
     let parsed: SidecarEventLine = serde_json::from_slice(line)
         .map_err(|error| ProviderError::Protocol(format!("invalid sidecar event JSON: {error}")))?;
@@ -263,8 +239,6 @@ fn map_spawn_error(program: &str, error: io::Error) -> ProviderError {
     ))
 }
 
-/// Supervised local Moonshine Small Streaming sidecar adapter.
-/// Persistent Moonshine worker process. Model stays loaded across sessions.
 struct PersistentWorker {
     child: Child,
     frame_tx: SyncSender<Vec<u8>>,
@@ -279,14 +253,12 @@ impl PersistentWorker {
     }
 }
 
-/// Supervised Moonshine Small Streaming provider with a persistent worker.
 pub struct MoonshineProvider {
     command: Option<String>,
     max_buffered_audio_ms: u64,
     phrase_end_silence_ms: u64,
     shut_down: bool,
     worker: Option<PersistentWorker>,
-    /// How many times a worker process was spawned (reuse detection for tests).
     worker_spawns: u32,
 }
 
@@ -404,19 +376,14 @@ impl MoonshineProvider {
     }
 }
 
-/// One recognition session on the persistent Moonshine worker.
 pub struct MoonshineSession {
     session_id: String,
     frame_tx: Option<SyncSender<Vec<u8>>>,
     events: Arc<Mutex<Receiver<ProviderEvent>>>,
     next_sequence: u32,
-    /// True after an idempotent finalize signal; worker stays up for event drain.
     finalizing: bool,
-    /// True after cancel tears down this session (worker remains).
     closed: bool,
-    /// Latches terminal reader disconnect handling (error or clean completion).
     sidecar_ended: bool,
-    /// True after an explicit `stt.completed` event; exit is not an error.
     completed: bool,
 }
 
@@ -484,7 +451,6 @@ impl MoonshineSession {
         if self.closed {
             return;
         }
-        // Best-effort cancel frame; never kill the persistent worker here.
         let _ = self
             .frame_tx
             .as_ref()
@@ -516,8 +482,6 @@ impl Drop for PersistentWorker {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        // Do not join reader/writer: a wedged write_all can outlive kill briefly
-        // and hang tests/shutdown. Detach by dropping the JoinHandles.
         let _ = self.writer.take();
         let _ = self.reader.take();
     }

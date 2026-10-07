@@ -1,5 +1,3 @@
-//! Per-task orchestration session command loop and owned state.
-
 use super::acp_slot::AcpSlot;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
@@ -117,8 +115,6 @@ pub(crate) enum TaskSessionCommand {
         reply: oneshot::Sender<EvictionSnapshot>,
     },
     Shutdown {
-        /// When true, send ACP `session/close` before killing stdio (Drop / Switch).
-        /// When false, detach so a later spawn can resume/load (idle eviction / restart).
         close: bool,
     },
 }

@@ -10,9 +10,6 @@ use ajax_core::{
     registry::{InMemoryRegistry, Registry as _},
 };
 
-// Routing depends on this: the browser opens chat only for tasks the host will
-// actually attach, so the card must mark capability the same way the session
-// slice admits one.
 #[test]
 fn cards_mark_only_provisioned_acp_tasks_as_session_capable() {
     use ajax_core::models::AgentClient;
@@ -53,7 +50,6 @@ fn cards_mark_only_provisioned_acp_tasks_as_session_capable() {
     );
 }
 
-// Child exit must not clear the provisioned bit (#1092).
 #[test]
 fn provisioned_task_stays_session_capable_issue_1092() {
     use ajax_core::models::AgentClient;
@@ -296,8 +292,6 @@ fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
     let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
     assert_eq!(detail.qualified_handle, "web/fix-login");
-    // A missing worktree with an intact branch is recoverable — Repair is
-    // surfaced (primary), and Drop stays available as an escape hatch.
     assert_eq!(detail.actions[0].action, "repair");
     assert!(detail.actions.iter().any(|action| action.action == "drop"));
     assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
@@ -501,7 +495,6 @@ fn browser_card_exposes_explicit_repo_identity() {
 
     let browser = browser_task_card(&context, &card);
 
-    // The browser must not split `qualified_handle` to learn the repo.
     assert_eq!(browser.repo, "web");
 }
 
@@ -538,10 +531,8 @@ fn browser_contract_fixture_has_stable_card_shape() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let card = &value["cards"][0];
 
-    // Explicit repo identity is part of the browser contract.
     assert_eq!(card["repo"], "web");
     assert_eq!(card["qualified_handle"], "web/fix-login");
-    // Actions remain the sole capability list and carry no `status` field.
     assert!(card["actions"].is_array());
     for action in card["actions"].as_array().unwrap() {
         assert!(

@@ -1,5 +1,3 @@
-//! Shared browser action capability vocabulary for Web Cockpit slices.
-
 use ajax_core::{
     commands::{BranchAdoptionPlan, CommandContext, OpenMode},
     models::OperatorAction,

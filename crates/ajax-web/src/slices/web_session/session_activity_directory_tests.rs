@@ -1,5 +1,3 @@
-//! #1069: task evidence must flow through host transcript append, not WS flush.
-
 use super::test_support::{scratch_dir, BlockingSessionDirectory};
 use super::{record_session_activity, SessionActivity, SessionServerEvent};
 use ajax_core::registry::Registry;
@@ -61,8 +59,6 @@ fn task_status(
     derive_operator_status(task).status
 }
 
-/// Drives PromptAccepted then TurnEnd through TaskSessionDirectory append (no WS).
-/// Would pass only when evidence is reported from append_to_log, not WS flush.
 #[test]
 fn issue_1069_append_path_clears_agent_working_without_websocket() {
     let (handle, context) = provisioned_handle_context();
@@ -104,7 +100,6 @@ fn issue_1069_append_path_clears_agent_working_without_websocket() {
     assert_eq!(status.explanation.as_deref(), Some("Response ready"));
 }
 
-/// A failed persist must not commit reporter state so turn_end can retry (#1069).
 #[test]
 fn issue_1069_failed_report_retries_turn_end_on_next_append() {
     let (handle, context) = provisioned_handle_context();
@@ -164,8 +159,6 @@ fn issue_1069_failed_report_retries_turn_end_on_next_append() {
     );
 }
 
-/// #1132: when turn_end reporting is deferred (control lane busy / try_lock miss),
-/// the session poll tick must apply it without another transcript append.
 #[test]
 fn issue_1132_deferred_turn_end_retries_on_session_poll_without_later_append() {
     let (handle, context) = provisioned_handle_context();

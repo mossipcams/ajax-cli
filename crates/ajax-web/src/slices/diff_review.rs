@@ -1,5 +1,3 @@
-//! Read-only Diff Review projections for the Web Cockpit.
-
 use ajax_core::{
     adapters::{CommandRunner, GithubChecksAdapter},
     commands::CommandContext,

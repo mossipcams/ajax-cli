@@ -1,5 +1,3 @@
-//! Unit tests for [`super::config_options`].
-
 use super::config_option_descriptors::config_option_descriptors;
 use super::config_options::*;
 use agent_client_protocol::schema::v1::{
@@ -557,8 +555,6 @@ fn find_option_by_category_prefers_category_over_id() {
     );
 }
 
-/// Split-catalog fixture for issue #997 sibling-reset retry: advertises every High
-/// pin base model value id without changing [`parameterized_options`].
 fn split_catalog_high_pin_options() -> Vec<SessionConfigOption> {
     vec![
         SessionConfigOption::select(
@@ -664,7 +660,6 @@ fn config_option_descriptors_include_boolean_current_value() {
     assert_eq!(fast.current_value, json!(true));
 }
 
-/// Cursor parameterized picker advertises Fast as a true/false select ([#1014]).
 #[test]
 fn fast_select_option_is_advertised_and_persistable_issue_1014() {
     let options = vec![

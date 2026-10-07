@@ -1,33 +1,21 @@
-//! Model catalog read from a harness's own ACP handshake.
-//!
-//! Each bridge advertises its models on `session/new`, in one of two shapes:
-//! Codex uses `models.availableModels`, Claude and Pi use a `configOptions`
-//! entry with `id: "model"`. Cursor is not read here — it lists models through
-//! its CLI (`agent models`), which needs no process handshake.
-
 use super::client::AcpStdioClient;
 use ajax_core::adapters::parse_cursor_model_intent;
 use ajax_core::models::AgentClient;
 use serde_json::Value;
 use std::{collections::HashMap, path::Path};
 
-/// A selectable option group: `(id, label)` pairs plus the harness's current
-/// choice. Used for the model list and for the reasoning level beside it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AgentOptionGroup {
-    /// Config id the harness answers to, e.g. `effort` or `reasoning_effort`.
     pub id: String,
     pub label: String,
     pub options: Vec<(String, String)>,
     pub current: Option<String>,
 }
 
-/// One selectable model, plus the id the harness would use on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelCatalog {
     pub models: Vec<(String, String)>,
     pub default_model: Option<String>,
-    /// Reasoning level, when the harness exposes one as its own option.
     pub reasoning: Option<AgentOptionGroup>,
 }
 
@@ -41,7 +29,6 @@ impl AgentModelCatalog {
     }
 }
 
-/// Read one `configOptions` entry into a group.
 fn option_group(option: &Value) -> Option<AgentOptionGroup> {
     let id = option.get("id").and_then(Value::as_str)?;
     let options = option
@@ -76,9 +63,6 @@ fn option_group(option: &Value) -> Option<AgentOptionGroup> {
     })
 }
 
-/// Find a config option by category, falling back to its id — the harnesses
-/// name the reasoning option differently (`effort`, `reasoning_effort`,
-/// `thought_level`) but agree on the category.
 fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> {
     let options = result.get("configOptions").and_then(Value::as_array)?;
     options
@@ -91,9 +75,6 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
         })
 }
 
-/// Start the harness's ACP process in `cwd` just long enough to read its
-/// catalog. Returns an empty catalog when the harness cannot start or answers
-/// with no models — the caller then offers the harness default only.
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
     let Ok((client, _report)) = AcpStdioClient::spawn(agent, cwd, None, None) else {
         return AgentModelCatalog::empty();
@@ -103,12 +84,6 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
     catalog
 }
 
-/// Pull the model catalog out of a `session/new` result.
-///
-/// The harnesses advertise a `model` config option and, separately, a
-/// `thought_level` one — that second axis is the reasoning level, which Cursor
-/// instead bakes into its model ids. `models.availableModels` is the older shape
-/// and is used only when no `model` config option is offered.
 pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {
     let reasoning = config_option_in(result, "thought_level").and_then(option_group);
 
@@ -157,12 +132,6 @@ pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {
     }
 }
 
-/// Display names Cursor advertises on its `model` config option, keyed by base id.
-///
-/// New Task keeps ids and effort/fast axes from `agent models`, but row labels
-/// should match the connected switcher (`choice.name` values such as
-/// `Grok 4.6`, not CLI strings like `Cursor Grok 4.6`). Returns empty on failure
-/// so callers fail open to the CLI labels they already have.
 #[cfg(not(test))]
 pub fn read_cursor_acp_model_labels(cwd: &Path) -> HashMap<String, String> {
     let Ok((client, _report)) = AcpStdioClient::spawn(AgentClient::Cursor, cwd, None, None) else {
@@ -173,13 +142,11 @@ pub fn read_cursor_acp_model_labels(cwd: &Path) -> HashMap<String, String> {
     labels
 }
 
-/// Test builds must not spawn a Cursor ACP child from the catalog route.
 #[cfg(test)]
 pub fn read_cursor_acp_model_labels(_cwd: &Path) -> HashMap<String, String> {
     HashMap::new()
 }
 
-/// Pull base-id display labels out of a Cursor `session/new` result.
 pub fn cursor_model_labels_from_session_new(result: &Value) -> HashMap<String, String> {
     let Some(group) = config_option_in(result, "model").and_then(option_group) else {
         return HashMap::new();
@@ -270,8 +237,6 @@ mod tests {
         );
     }
 
-    // Claude and Pi keep the reasoning level in its own option; the picker has
-    // to show it, because the model id alone does not carry it.
     #[test]
     fn reads_the_reasoning_level_as_its_own_group() {
         let catalog = parse_session_new_catalog(&json!({

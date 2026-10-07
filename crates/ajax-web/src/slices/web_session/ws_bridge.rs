@@ -1,5 +1,3 @@
-//! Authenticated orchestration-chat WebSocket bridge over the task-session directory.
-
 use super::{
     apply_client_message, ApplyClientMessageOutcome, PersistSessionModel, SessionAttachPlan,
     SessionClientMessage, SessionError, SessionEventEnvelope, SessionSnapshot,
@@ -13,7 +11,6 @@ use std::{
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
-/// Per-frame WebSocket ceiling for session client messages (prompts, cancel, etc.).
 pub(crate) const MAX_SESSION_FRAME_BYTES: usize = super::prompt_content::MAX_PROMPT_FRAME_BYTES;
 pub(crate) const SESSION_PING_INTERVAL: Duration = Duration::from_secs(20);
 

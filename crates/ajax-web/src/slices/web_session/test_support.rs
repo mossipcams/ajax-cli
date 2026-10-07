@@ -1,5 +1,3 @@
-//! Blocking test helpers over the async task-session directory.
-
 use super::task_session_directory::TaskSessionDirectory;
 use super::SessionError;
 use ajax_core::models::AgentClient;

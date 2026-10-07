@@ -111,7 +111,6 @@ fn attach_replay_keeps_only_usage_after_the_latest_reset_with_absolute_cursors()
         SessionServerEvent::Usage { used: 5, size: 100 },
         turn_usage,
     ];
-    // Exercise full and incremental replay, including a trimmed log's cursor offset.
     for dropped in [0, 20] {
         let log = TranscriptLog::from_events(events.clone(), dropped);
         for client_cursor in [None, Some(dropped + 2), Some(dropped + 8)] {

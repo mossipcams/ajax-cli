@@ -1,5 +1,3 @@
-//! Unexpected ACP child exit reconciliation and durable exit-interruption retry.
-
 use super::acp_drain::{PromptTerminal, PromptTerminalOutcome};
 use super::prompt_content::{self, PromptContentBlockWire};
 use super::prompt_queue::{ActivePrompt, PendingExitInterruption};

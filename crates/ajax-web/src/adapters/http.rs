@@ -1,5 +1,3 @@
-//! HTTP request and response transport mechanisms.
-
 use crate::WebError;
 use axum::{
     http::{header, HeaderName, HeaderValue, StatusCode},

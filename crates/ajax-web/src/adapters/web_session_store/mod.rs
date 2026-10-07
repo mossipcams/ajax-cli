@@ -1,5 +1,3 @@
-//! JSONL persistence for orchestration chat transcripts under `state_dir`.
-
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -8,8 +6,6 @@ use std::{
 };
 
 pub const MAX_LOG_EVENTS: usize = 2000;
-// Compact occasionally so append-only writes remain bounded without rewriting
-// the whole transcript for every streamed ACP chunk.
 const MAX_LOG_BYTES: u64 = 64 * 1024;
 
 pub(crate) const WEB_SESSION_DIR: &str = "web-session";
@@ -94,7 +90,6 @@ pub fn save_meta(state_dir: &Path, handle: &str, acp_session_id: Option<&str>, m
     persist(state_dir, handle, &session);
 }
 
-/// Clear the stored ACP resume id so the next attach uses `session/new`.
 pub fn clear_acp_session_id(state_dir: &Path, handle: &str) {
     let mut session = load::<serde_json::Value>(state_dir, handle);
     if session.acp_session_id.is_none() {
@@ -182,7 +177,6 @@ fn decode_handle(encoded: &str) -> String {
     encoded.replace("%2F", "/").replace("%25", "%")
 }
 
-/// Qualified handles with a persisted JSONL transcript under `state_dir`.
 pub fn list_persisted_handles(state_dir: &Path) -> Vec<String> {
     let dir = state_dir.join(WEB_SESSION_DIR);
     let Ok(entries) = fs::read_dir(&dir) else {
@@ -200,7 +194,6 @@ pub fn list_persisted_handles(state_dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Remove the persisted transcript for `handle`. Returns true when a file was deleted.
 pub fn delete_session(state_dir: &Path, handle: &str) -> bool {
     let path = session_path(state_dir, handle);
     let deleted_transcript = match fs::remove_file(&path) {

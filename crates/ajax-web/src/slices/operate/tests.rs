@@ -294,8 +294,6 @@ fn start_task_pi_agent_command_runs_pi_in_task_window() {
     )
     .unwrap();
 
-    // pi opens in the current directory; the task window's cwd is
-    // the worktree, so the launch needs no extra arguments.
     assert_eq!(
         agent_send_keys_line(runner.commands()),
         "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- pi"
@@ -328,8 +326,6 @@ fn start_task_cursor_agent_command_uses_selected_model() {
     );
 }
 
-// A bridge harness takes no model on argv, so the choice is recorded on the
-// task and applied when its ACP session starts.
 #[test]
 fn start_task_stores_the_model_for_a_bridge_harness() {
     let mut context = context_with_managed_repo();
@@ -590,7 +586,6 @@ fn start_task_orchestration_chat_skips_send_keys_for_cursor() {
     );
 }
 
-// Every harness Ajax can start over ACP provisions the same way Cursor does.
 #[test]
 fn start_task_orchestration_chat_provisions_each_acp_harness() {
     for agent in ["codex", "claude", "pi"] {

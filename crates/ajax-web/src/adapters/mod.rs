@@ -1,5 +1,3 @@
-//! External browser and web companion mechanisms.
-
 pub mod assets;
 pub mod browser_session;
 pub(crate) mod cloudflare_access;

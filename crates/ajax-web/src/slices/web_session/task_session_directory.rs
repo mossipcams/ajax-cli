@@ -1,5 +1,3 @@
-//! Process-wide map of qualified handles to per-task session command loops.
-
 use super::{
     protocol::SessionChrome,
     task_session::{
@@ -258,14 +256,9 @@ impl TaskSessionDirectory {
                 .await;
             let _ = entry.join_handle.await;
         }
-        // Drop is a terminal close: the stored id must not survive it, or a
-        // later attach would fail closed on restoring a closed session instead
-        // of starting the documented fresh context
-        // ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
         web_session_store::clear_acp_session_id(&self.state_dir, handle);
     }
 
-    /// Tear down the live child without ACP `session/close` so resume/load can succeed.
     #[cfg(test)]
     pub async fn detach_session(&self, handle: &str) {
         let removed = {
@@ -281,13 +274,11 @@ impl TaskSessionDirectory {
         }
     }
 
-    /// Shut down any live slot and delete the persisted transcript for `handle`.
     pub async fn cleanup_session(&self, handle: &str) {
         self.drop_session(handle).await;
         web_session_store::delete_session(&self.state_dir, handle);
     }
 
-    /// Delete persisted transcripts with no registry owner at process start.
     pub fn prune_stale_persisted(&self, owned: &std::collections::HashSet<String>) {
         super::session_cleanup::prune_stale_persisted_sessions(&self.state_dir, owned);
     }
@@ -571,10 +562,7 @@ async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, S
 #[derive(Debug, PartialEq)]
 pub(crate) enum ApplyClientMessageOutcome {
     Applied,
-    ModelChanged {
-        /// WS-only warning when live apply succeeded but task persist failed.
-        persist_warning: Option<String>,
-    },
+    ModelChanged { persist_warning: Option<String> },
 }
 
 pub(crate) async fn apply_client_message(
