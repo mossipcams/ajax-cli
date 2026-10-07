@@ -1,7 +1,8 @@
 import { test, expect, type Locator } from "@playwright/test";
 import { mockFetch, mockTerminalWebSocket } from "./fixtures";
 
-test.beforeEach(async (_, testInfo) => {
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(async ({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "Diff Review entry swipe is a touch gesture; desktop has no equivalent",

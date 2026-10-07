@@ -60,7 +60,8 @@ async function touchDragRowLeft(page: Page, row: Locator, dx: number) {
   }, dx);
 }
 
-test.beforeEach((_, testInfo) => {
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "swipe-reveal is a touch gesture; desktop has no equivalent",

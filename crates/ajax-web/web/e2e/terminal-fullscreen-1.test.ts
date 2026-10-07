@@ -22,7 +22,8 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-test.beforeEach((_, testInfo) => {
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   const desktopOnly =
     testInfo.title ===
     "desktop expanded mode keeps terminal bounded and task details summary reachable";

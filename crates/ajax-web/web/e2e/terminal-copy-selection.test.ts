@@ -209,7 +209,8 @@ async function doubleTapHoldDragTerminalText(
   );
 }
 
-test.beforeEach((_, testInfo) => {
+// eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
+test.beforeEach(({}, testInfo) => {
   test.skip(
     testInfo.project.name !== "mobile-webkit",
     "terminal acceptance is mobile-webkit only",
