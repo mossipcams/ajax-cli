@@ -1,9 +1,7 @@
 import type { Terminal } from "@xterm/xterm";
 
-/** HTTP(S) only — shared by hit-test and WebLinksAddon. */
 export const HTTP_URL_REGEX = /(https?:\/\/[^\s"'<>]+)/i;
 
-/** Matches xterm WebLinksAddon trailing-punctuation trim behavior. */
 const TRAILING_URL_PUNCTUATION = /[.,;:!?)}\]'"]+$/;
 
 export type HttpLinkHit = { url: string };

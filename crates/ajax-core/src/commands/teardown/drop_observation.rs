@@ -206,8 +206,6 @@ pub fn drop_op_step_key(op: DropOp) -> &'static str {
     op.step_key()
 }
 
-/// Tear down git resources before killing tmux so a failed drop can be retried while the
-/// session is still attachable.
 pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> {
     DROP_TEARDOWN_ORDER
         .into_iter()

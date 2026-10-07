@@ -10,7 +10,6 @@ import terminalBackspaceSentinelSource from "./terminalBackspaceSentinel.ts?raw"
 import terminalPasteSource from "./terminalPaste.ts?raw";
 import composerBlurSource from "../chat/scrolling/composerBlur.ts?raw";
 
-/** Shell + peeled mount/speech/paste modules for source-contract asserts. */
 const taskTerminalFeatureSource =
   `${taskTerminalSource}\n${mountTaskTerminalSessionSource}\n${useTaskTerminalSpeechSource}\n${useSpeechInputSource}\n${terminalBackspaceSentinelSource}\n${terminalPasteSource}`;
 
@@ -88,9 +87,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("resets document scroll before focusing the terminal textarea", () => {
-    // Path-agnostic by design: this import has been spelled "../viewport",
-    // "@/viewport" and now "@/shared/lib/viewport" across slices 9's rounds. What
-    // matters is that resetDocumentScroll comes from the viewport module.
     expect(taskTerminalFeatureSource).toMatch(
       /import\s*\{[^}]*resetDocumentScroll[^}]*\}\s*from\s*["'][^"']*\/viewport["']/,
     );
@@ -171,8 +167,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
         /const scheduleFit\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {2,4}\};/,
       )?.[1] ?? "";
 
-    // discreteIntent must not bypass: open-path scheduleImmediate(true) can
-    // land a late rAF after selection and otherwise unmount Copy under the tap.
     expect(scheduleFitBody).toMatch(
       /\(term(?:Ref\.current)?\?\.getSelection\(\)\s*\?\?\s*["']['"]\)\.length\s*>\s*0/,
     );
@@ -265,8 +259,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(observerBody).toMatch(/MutationObserver/);
     expect(observerBody).toMatch(/nowOpen\s*===\s*wasKeyboardOpen/);
     expect(observerBody).toMatch(/resetDocumentScroll\s*\(\s*\)/);
-    // Either spelling: call sites inside the mount effect go through the
-    // onBandSettle effect event (slice 10), which delegates to scheduleBandSettle.
     expect(observerBody).toMatch(/(?:schedule|on)BandSettle\s*\(\s*\)/);
     expect(observerBody).not.toMatch(/EXPANDED_CLASS/);
     expect(observerBody).not.toMatch(/nowOpen\s*&&\s*!wasKeyboardOpen/);
@@ -364,8 +356,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
         /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
-    // Reveal must NOT latch off: attach ED2 can still be in flight after the
-    // quiet window. Latch on the first post-reveal erase instead.
     const revealBody =
       mountBody.match(/const revealSeed = \(\) => \{([\s\S]*?)\n {2}\};/)?.[1] ?? "";
     expect(revealBody).not.toMatch(/scrollOnEraseInDisplay\s*=\s*false/);
@@ -393,7 +383,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("names terminal control keys for assistive tech", () => {
     expect(taskTerminalFeatureSource).toMatch(/ariaLabel:\s*"Escape"/);
-    // Visible ⌃C toolbar entry removed; keyboard Ctrl+C remains via Control modifier.
     expect(taskTerminalFeatureSource).toMatch(/aria-label="Control modifier"/);
     expect(taskTerminalFeatureSource).toMatch(/aria-label=\{key\.ariaLabel\}/);
     expect(taskTerminalFeatureSource).toMatch(/aria-label="Paste"/);
@@ -468,10 +457,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(beforeInput).toMatch(/sendKey\(consumeCtrl\(payload\)\)/);
     expect(beforeInput).not.toMatch(/\.preventDefault\s*\(/);
 
-    // Measured on iOS 26: a held Delete repeats deleteContentBackward at ~100ms
-    // and then escalates to deleteWordBackward. Dropping the escalation strands
-    // the rest of the hold, which is what "hold backspace does nothing" looked
-    // like in the app.
     const payloads = extractBlock(
       taskTerminalFeatureSource,
       /export function deleteInputPayload\s*\(inputType:\s*string\)/,
@@ -509,8 +494,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(onInput).toMatch(/pasteRawFromExpectValue\(textarea\.value\)/);
     expect(onInput).toMatch(/textarea\.value\s*=\s*BACKSPACE_SENTINEL/);
     expect(onInput).toMatch(/sendPastedText\(raw\)/);
-    // insertText must not clear pasteExpect before recovery — Safari often
-    // delivers empty-clipboardData paste recovery as insertText.
     expect(onInput).toMatch(/pasteExpectRef\.current/);
     expect(onInput).toMatch(
       /insertFromPaste[\s\S]*pasteExpectRef\.current[\s\S]*insertText/,
@@ -566,9 +549,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(onInput).toMatch(/startsWith\("delete"\)/);
     expect(onInput).toMatch(/seedTermSentinel\(\)/);
 
-    // The microtask checkpoint runs before the browser applies the deletion, so
-    // a beforeinput-scheduled reseed always sees the sentinel still there, does
-    // nothing, and leaves the field empty for the next repeat tick.
     expect(taskTerminalFeatureSource).not.toMatch(/queueMicrotask\(\s*\w*[Ss]entinel\s*\)/);
     expect(taskTerminalFeatureSource).toMatch(/addEventListener\("input",\s*\w+\)/);
   });
@@ -580,11 +560,6 @@ describe("TaskTerminal iOS keyboard geometry", () => {
       /\n {2}\};\n\}\s*$/,
     );
 
-    // Matching names are not enough. hardenMobileTextarea runs through an
-    // effect event (latest render's closure) while cleanup runs with the
-    // effect's own closure, so a plain component-scope arrow resolves to two
-    // different functions and the listener is never removed. Each handler must
-    // be stable: declared at module scope, or via useEffectEvent.
     const registeredFocus =
       taskTerminalFeatureSource.match(/addEventListener\("focus",\s*(\w+)\)/)?.[1] ?? "add-missing";
     const registeredBeforeInput =
@@ -625,7 +600,6 @@ describe("TaskTerminal speech input", () => {
     expect(taskTerminalFeatureSource).toMatch(/undoInsertedSpeech/);
     expect(taskTerminalFeatureSource).toMatch(/isStandaloneStartOver/);
 
-    // Contiguous finalTranscript deltas paste via the terminal adapter (outside setState).
     const onFinal = taskTerminalFeatureSource.match(/onFinal:[\s\S]*?\n {4,8}\},/)?.[0] ?? "";
     expect(onFinal).toMatch(/insertDelta\(/);
     expect(onFinal).toMatch(/finalTranscript/);
@@ -654,7 +628,6 @@ describe("TaskTerminal speech input", () => {
   });
 
   it("keeps Mic text visible across active speech states", () => {
-    // Mic stays the fixed toolbar label (JSX text child); states only arm styling.
     expect(taskTerminalFeatureSource).toMatch(/>\n\s*Mic\n/);
     expect(taskTerminalFeatureSource).toMatch(/pause_pending/);
     expect(taskTerminalFeatureSource).toMatch(/finalizing/);
@@ -706,7 +679,6 @@ describe("TaskTerminal seeded history reveal", () => {
 
     expect(taskTerminalFeatureSource).toMatch(/SEED_REVEAL_QUIET_MS\s*=\s*120/);
     expect(taskTerminalFeatureSource).toMatch(/SEED_REVEAL_MAX_MS\s*=\s*2000/);
-    expect(taskTerminalFeatureSource).toMatch(/~\s*7 batches/);
     expect(taskTerminalFeatureSource).not.toMatch(/SEED_REVEAL_GATE_MIN_BYTES/);
 
     const mountBody =
@@ -714,15 +686,12 @@ describe("TaskTerminal seeded history reveal", () => {
         /export function mountTaskTerminalSession\([\s\S]*?\)\s*:\s*\(\)\s*=>\s*void\s*\{([\s\S]*)\n\}\s*$/,
       )?.[1] ?? "";
 
-    // Hiding starts at mount (before dial), not on a byte-size guess about the frame.
-    expect(mountBody).toMatch(/beginSeedPending\(\);\s*\n\s*\/\/ ponytail: defer dial/);
+    expect(mountBody).toMatch(/beginSeedPending\(\);\s*\n\s*queueMicrotask/);
     const onOpenBody =
       mountBody.match(/onOpen:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOpenBody).toMatch(/if\s*\(\s*seeded\s*\)\s*\{\s*\n\s*beginSeedPending\(\)/);
     expect(onOpenBody).toMatch(/if\s*\(\s*!seeded\s*\)\s*\{\s*\n\s*cancelSeedPending\(\)/);
 
-    // Every write restarts the quiet window: the seed is scrollback only, and the
-    // tmux attach repaint of the visible pane lands in later frames.
     const onOutputBody =
       mountBody.match(/onOutput:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n {4,8}\},/)?.[1] ?? "";
     expect(onOutputBody).toMatch(/termRef\.current\?\.write\(/);
@@ -733,7 +702,6 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(onOutputBody).not.toMatch(/setFollowLive\(true\)/);
     expect(onOutputBody).toMatch(/deferSeedReveal\(\)/);
     expect(onOutputBody).not.toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
-    // Pending path must not drive wrap.scrollTop (no applyOutput while pending).
     const pendingBranch =
       onOutputBody.match(/if\s*\(\s*isSeedPending\(\)\s*\)\s*\{([\s\S]*?)\}\s*else\s*\{/)?.[1] ?? "";
     expect(pendingBranch).toMatch(/syncSpacer/);
@@ -747,8 +715,6 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(revealBody).toMatch(/snapSeedToBottom\(\)/);
     expect(revealBody).toMatch(/classList\.remove\(["']is-seed-pending["']\)/);
     expect(revealBody).toMatch(/requestAnimationFrame/);
-    // Unhide only after the post-layout snap while still pending — never snap
-    // after opacity returns (that is the visible scroll-to-bottom open).
     const firstSnapIndex = revealBody.indexOf("snapSeedToBottom()");
     const rafIndex = revealBody.indexOf("requestAnimationFrame");
     const removeIndex = revealBody.indexOf('classList.remove("is-seed-pending")');
@@ -782,15 +748,11 @@ describe("TaskTerminal seeded history reveal", () => {
     expect(deferBody).toMatch(/setTimeout\(revealSeed, SEED_REVEAL_QUIET_MS\)/);
     expect(deferBody).toMatch(/seedCapTimer \?\?= setTimeout\(revealSeed, SEED_REVEAL_MAX_MS\)/);
 
-    // Timers start at the first write, not at open, so a silent socket never
-    // reveals a still-empty grid on a wall-clock deadline.
     const beginBody =
       mountBody.match(/const beginSeedPending = \(\) => \{([\s\S]*?)\n {2,4}\};/)?.[1] ?? "";
     expect(beginBody).toMatch(/classList\.add\(["']is-seed-pending["']\)/);
     expect(beginBody).not.toMatch(/setTimeout/);
 
-    // Mid-parse term scroll sync while hidden would fight the reveal snap.
-    // Wrapper scroll must still run so followLive can drop for "New output".
     expect(mountBody).toMatch(
       /onScroll\(\(\)\s*=>\s*\{[\s\S]*?if\s*\(\s*isSeedPending\(\)\s*\)\s*return;[\s\S]*?scrollSync\.onTermScroll\(\)/,
     );

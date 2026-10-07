@@ -1,8 +1,3 @@
-// Render batching only: rAF-coalesce streamed assistant/thought updates to the
-// latest full-content text per itemId. The host normalizes ACP text into full
-// updates; this layer does not merge deltas. Boundary events still flush any
-// pending lane before they reach the reducer.
-
 import type { OutputContentBlock } from "@/shared/lib/liveSessionOutputContent";
 import type { WebSessionServerEvent } from "./contracts";
 
@@ -14,7 +9,6 @@ interface LaneState {
   messageId?: string;
   text: string;
   contentBlocks?: OutputContentBlock[];
-  /** Last payload dispatched for this lane; skips redundant reducer work. */
   sentKey?: string;
 }
 

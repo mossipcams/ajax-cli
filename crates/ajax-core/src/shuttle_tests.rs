@@ -1,9 +1,3 @@
-//! Strict Shuttle harness: concurrent durable substrate updates vs stale live.
-//!
-//! Explores interleavings across tmux/window/git apply paths and stale
-//! `LiveStatusKind::*Missing` writes. When durable facts end present, operator
-//! actions and blockers must not claim missing substrate.
-
 use crate::lifecycle::mark_active;
 use crate::models::{
     AgentClient, GitStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag, Task,
@@ -120,7 +114,6 @@ fn concurrent_stale_live_missing_vs_durable_applies_stay_operable() {
 
             let mut handles = Vec::new();
 
-            // Durable writers.
             for op in 0u8..3 {
                 let registry = Arc::clone(&registry);
                 let task_id = task_id.clone();
@@ -138,7 +131,6 @@ fn concurrent_stale_live_missing_vs_durable_applies_stay_operable() {
                 }));
             }
 
-            // Stale live writers.
             for kind in [
                 LiveStatusKind::TmuxMissing,
                 LiveStatusKind::TaskWindowMissing,
@@ -157,7 +149,6 @@ fn concurrent_stale_live_missing_vs_durable_applies_stay_operable() {
                 handle.join().unwrap();
             }
 
-            // Force durable present so the oracle targets stale-live false positives.
             {
                 let mut registry = registry.lock().unwrap();
                 let task = registry.get_task_mut(&task_id).expect("task");

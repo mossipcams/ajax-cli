@@ -1,8 +1,3 @@
-// Minimal hand-written boundary guards. No schema framework: the backend and
-// frontend ship in one binary and the API is same-origin. A guard failure must
-// surface a visible "incompatible server response" error — never silently
-// coerce data or invent defaults.
-
 import type {
   BrowserCockpitView,
   BrowserTaskDetail,

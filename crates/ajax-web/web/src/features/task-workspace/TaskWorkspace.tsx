@@ -78,8 +78,6 @@ export default function TaskWorkspace({
     return () => registerDropComposerCleanup(null);
   }, []);
 
-  // Drop confirm uses the shell ResultPanel (z-index 40); close the details
-  // sheet (z-index 50) so Confirm is reachable without raising ResultPanel.
   useEffect(() => {
     if (pendingConfirmAction === "drop") setDetailsOpen(false);
   }, [pendingConfirmAction]);

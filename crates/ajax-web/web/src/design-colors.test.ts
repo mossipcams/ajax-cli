@@ -9,7 +9,6 @@ const repoRoot = join(webSrcRoot, "../../../..");
 const designMd = readFileSync(join(repoRoot, "DESIGN.md"), "utf8");
 const stylesCss = readOrderedStylesSource(webSrcRoot);
 
-/** Parse `colors:` hex map from DESIGN.md YAML frontmatter. */
 function designColors(): Record<string, string> {
   const fm = designMd.split("---", 2)[1] ?? "";
   const colorsBlock = fm.match(/\ncolors:\n([\s\S]*?)\n(?:typography|rounded|spacing|components):/)?.[1] ?? "";
@@ -20,7 +19,6 @@ function designColors(): Record<string, string> {
   return out;
 }
 
-/** Resolve `--name: value` from :root, following one level of `var(--other)`. */
 function rootCustomProps(css: string): Record<string, string> {
   const root = css.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
   const raw: Record<string, string> = {};

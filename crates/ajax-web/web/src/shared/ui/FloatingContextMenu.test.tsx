@@ -24,9 +24,6 @@ describe("FloatingContextMenu", () => {
   });
 
   it("stacks above the expanded terminal panel", () => {
-    // Expanded terminal uses z-index 45; without this the portaled Open/Copy
-    // menu paints under the terminal and taps never reach the buttons (#708
-    // restore dropped the CSS while keeping the TSX).
     const rule = stylesSource.match(
       /\.floating-context-menu\s*\{[^}]*\}/,
     )?.[0];

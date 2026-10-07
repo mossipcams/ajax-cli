@@ -1,5 +1,3 @@
-//! GitHub PR-check probes during Full-tier runtime refresh.
-
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -40,8 +38,6 @@ pub(super) fn refresh_github_check_evidence<R: Registry>(
             .get(task_id)
             .copied()
             .unwrap_or(false);
-        // Retired probes leave evidence nothing can ever confirm again: drop it
-        // so a merged task stops projecting "CI running" (plan §7).
         if let Some(task) = context.registry.get_task_mut(task_id) {
             if github_probe_is_retired(task)
                 && task.live_status.as_ref().is_some_and(is_github_owned_ci)
@@ -74,9 +70,6 @@ pub(super) fn refresh_github_check_evidence<R: Registry>(
     }
 }
 
-/// True when this task will never be probed again, so any GitHub-owned CI
-/// evidence it still holds can no longer be confirmed and must not keep
-/// projecting (plan §7: rows 5/6 require "relevant + not stale").
 pub(super) fn github_probe_is_retired(task: &Task) -> bool {
     matches!(
         task.lifecycle_status,
@@ -129,9 +122,6 @@ pub(super) fn apply_github_checks_observation(
             }
         }
         CiChecksObservation::Pending => {
-            // Pending checks are a relevant GitHub result: surface them as
-            // Running with a CI explanation (override the native phase), but
-            // never over an existing error or missing-substrate state.
             task.metadata.remove(CI_PROBE_ERROR_KEY);
             if can_apply_github_override(task) {
                 live::apply_observation(
@@ -141,16 +131,10 @@ pub(super) fn apply_github_checks_observation(
             }
         }
         CiChecksObservation::Healthy => {
-            // Passing checks clear the GitHub override and reveal the native
-            // hook-derived status. Passing CI alone is not Done.
             task.metadata.remove(CI_PROBE_ERROR_KEY);
             clear_github_ci_evidence(task);
         }
         CiChecksObservation::Unobservable { reason } => {
-            // A probe that cannot observe the PR can no longer vouch for a run
-            // it previously reported pending; leaving it would project
-            // "CI running" indefinitely (plan §7 staleness). A failure we did
-            // observe stays until a later probe supersedes it.
             task.metadata.insert(CI_PROBE_ERROR_KEY.to_string(), reason);
             if task
                 .live_status
@@ -190,15 +174,6 @@ fn can_apply_github_override(task: &Task) -> bool {
     }
 }
 
-/// True when the task is parked on an approval/input gate the operator has not
-/// acknowledged yet.
-///
-/// Such a gate is the only actionable signal the operator receives, and a
-/// `Running` projection can never notify (`attention.rs` clears the notify
-/// candidate for `Running`). A GitHub override would therefore make the gate
-/// both invisible and unnotified for as long as CI runs, so it yields here.
-/// This narrows plan §6 row 6, which ranks display and does not model
-/// notification.
 fn is_unacknowledged_attention_gate(task: &Task, status: &LiveObservation) -> bool {
     matches!(
         status.kind,
@@ -213,8 +188,6 @@ pub(super) fn is_github_ci_failure(status: &LiveObservation) -> bool {
     status.kind == LiveStatusKind::CiFailed && status.summary.starts_with(GITHUB_CI_FAILED_PREFIX)
 }
 
-/// GitHub-owned CI live status (failure or pending) that a passing probe clears
-/// to reveal the native hook-derived status.
 fn is_github_owned_ci(status: &LiveObservation) -> bool {
     is_github_ci_failure(status) || status.kind == LiveStatusKind::CiPending
 }

@@ -50,8 +50,6 @@ impl ObsSource {
     }
 }
 
-/// Reducer-ready lifecycle observation `age_secs` old with a `ttl_secs`
-/// freshness window, on the primary run.
 pub(super) fn lifecycle_obs(kind: ActivityKind, age_secs: u64, ttl_secs: u64) -> StatusObservation {
     let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
     StatusObservation {
@@ -65,7 +63,6 @@ pub(super) fn lifecycle_obs(kind: ActivityKind, age_secs: u64, ttl_secs: u64) ->
     }
 }
 
-/// Confirmed wrapper exit `age_secs` old on the primary run.
 pub(super) fn exit_obs(kind: ActivityKind, age_secs: u64) -> StatusObservation {
     let observed_at = SystemTime::now() - Duration::from_secs(age_secs);
     StatusObservation {
@@ -121,8 +118,6 @@ pub(super) fn runtime_stdout(args: &[String]) -> &'static str {
         }
         "-C" if git_branch_list(args) => "main\najax/fix-login\n",
         "list-windows" => "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
-        // Non-wait chrome: Working reconcile captures for Claude/Codex/Cursor;
-        // idle composer here would falsely upgrade Working → Waiting.
         "capture-pane" => "{\"type\":\"thinking\"}\n",
         _ => "",
     }

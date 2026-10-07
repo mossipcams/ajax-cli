@@ -1,9 +1,3 @@
-//! Authoritative ghost-task classification for registry persistence and Cockpit visibility.
-//!
-//! A registry ghost is a task row that should not survive SQLite save/load and should not
-//! appear in Cockpit. Recoverable missing-substrate tasks remain persisted so operators
-//! keep history and can repair, drop, or rediscover substrate.
-
 use crate::models::{LifecycleStatus, SideFlag, Task};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,9 +28,6 @@ pub fn registry_persistence_disposition(task: &Task) -> RegistryPersistenceDispo
         if has_no_recoverable_git_substrate(task) {
             return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale);
         }
-        // Keep stale tasks that still show recoverable git substrate so drop can
-        // finish teardown. Pure Stale with no substrate evidence stays pruned so
-        // Cockpit can hide long-inactive tasks.
         if task
             .git_status
             .as_ref()

@@ -13,18 +13,9 @@ pub struct GithubChecksAdapter {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CiChecksObservation {
-    /// At least one check reached a definitive terminal failure. The summary
-    /// names the first failed check encountered in the payload.
     Failed { summary: String },
-    /// Every check resolved to a healthy (or neutral) terminal state.
     Healthy,
-    /// One or more checks are still running or queued, and none have failed.
     Pending,
-    /// CI state could not be observed. The reason carries diagnostic text
-    /// (a `gh`/auth/network message or the runner error's Display text).
-    /// An `Unobservable` outcome must never be treated as a CI failure —
-    /// callers projecting to `LiveStatusKind::CiFailed` must treat it as
-    /// "no signal" rather than "failed".
     Unobservable { reason: String },
 }
 

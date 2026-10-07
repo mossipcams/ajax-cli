@@ -206,9 +206,6 @@ printf 'fake codex'
         self.fake_lifecycle_log()
     }
 
-    /// Seed native hook-derived status for a task by writing the canonical
-    /// JSONL event log and the launch-wrapper runtime snapshot the refresh
-    /// reads (there is no legacy `~/.cache/tmux-agent-status` path anymore).
     fn write_hook_status(&self, task_id: &str, value: &str) {
         let stem = task_id.replace('/', "__");
         let cache = self.root.join(".cache/ajax");

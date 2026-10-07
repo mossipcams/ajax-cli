@@ -1,9 +1,6 @@
-//! Browser-facing snapshots of live ACP slash commands.
-
 use agent_client_protocol::schema::v1::{AvailableCommand, AvailableCommandInput};
 use serde::{Deserialize, Serialize};
 
-/// One advertised slash command for protocol v2 snapshots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailableCommandDescriptor {

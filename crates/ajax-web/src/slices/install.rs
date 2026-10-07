@@ -1,5 +1,3 @@
-//! Safari/browser shell.
-
 use crate::adapters::assets;
 
 pub use crate::adapters::assets::StaticAsset;
@@ -18,12 +16,6 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
 
 #[cfg(test)]
 mod tests {
-    //! These tests verify the *serving contract* of the bundled React shell:
-    //! the static HTML mount point, the supported asset routes, and the
-    //! preserved visual language. The browser's runtime behavior (rendering,
-    //! routing, polling, confirmations, prompts) is covered by the Vitest
-    //! component/unit suite under `web/src`, so these tests deliberately do not
-    //! grep the minified bundle for implementation detail.
     use super::{app_version, browser_shell, static_asset};
     use crate::adapters::assets as asset_adapter;
 
@@ -44,12 +36,8 @@ mod tests {
         assert!(shell.contains("name=\"viewport\""));
         assert!(shell.contains("width=device-width"));
         assert!(shell.contains("name=\"ajax-app-version\""));
-        // The build-time placeholder is replaced with the live version.
         assert!(shell.contains(app_version()));
         assert!(!shell.contains("__AJAX_APP_VERSION__"));
-        // One local module script and one local stylesheet at bare URLs.
-        // Shell assets are no-store — no ?v= cache busting. terminal.js is
-        // fetched by the app via dynamic import — not listed in the shell.
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(!shell.contains("src=\"/app.js?"));
@@ -57,7 +45,6 @@ mod tests {
         assert!(shell.contains("type=\"module\""));
         assert!(!shell.contains("src=\"/terminal.js\""));
         assert!(!shell.contains("href=\"/terminal.js\""));
-        // React mounts into this single node.
         assert!(shell.contains("id=\"app\""));
         assert!(
             shell.contains("ajax-boot-paint"),
@@ -72,8 +59,6 @@ mod tests {
     #[test]
     fn shell_no_longer_carries_the_legacy_imperative_dom() {
         let shell = browser_shell();
-        // The hand-built container shell is gone; everything below the mount
-        // point is rendered client-side by React components.
         for legacy in [
             "class=\"cockpit-chrome\"",
             "id=\"inbox\"",
@@ -137,9 +122,6 @@ mod tests {
 
     #[test]
     fn stylesheet_preserves_the_safari_first_visual_language() {
-        // Compare without internal spaces or attribute quotes so the assertions
-        // survive CSS minification (`scrollbar-width:none` vs
-        // `scrollbar-width: none`, `[data-testid=x]` vs `[data-testid="x"]`).
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
         let compact = css.replace([' ', '"'], "").to_ascii_lowercase();
 
@@ -151,13 +133,10 @@ mod tests {
         assert!(compact.contains("html.keyboard-open.app-viewport"));
         assert!(compact.contains("position:fixed"));
         assert!(compact.contains("height:var(--app-band-height"));
-        // Inputs stay >= 16px so iOS Safari does not zoom on focus.
         assert!(compact.contains("font-size:16px"));
-        // CLI cockpit palette tokens (ajax-tui xterm 110/179/174/108 + grays).
         for hex in ["#e6e6e6", "#87afd7", "#d7af5f", "#d78787", "#87af87"] {
             assert!(compact.contains(hex), "css missing palette token: {hex}");
         }
-        // Full-height layouts must use dynamic units, never 100vh, on iOS.
         assert!(!compact.contains("100vh"));
     }
 
@@ -168,7 +147,6 @@ mod tests {
         assert!(!app.is_empty());
         assert!(!term.is_empty());
         assert_ne!(app, term);
-        // xterm lives in the deferred chunk, not the boot shell.
         assert!(
             term.contains("xterm") || term.contains("XTerm") || term.contains("FitAddon"),
             "terminal.js should carry the xterm surface"
@@ -181,8 +159,6 @@ mod tests {
         let term = std::str::from_utf8(static_asset("/terminal.js").unwrap().body).unwrap();
         assert!(!app.is_empty());
         assert!(!term.is_empty());
-        // Boot graph owns the same-origin HTTP API surface (ActionBar, sheets).
-        // String literals survive minification.
         for endpoint in [
             "/api/cockpit",
             "/api/operations",
@@ -201,20 +177,15 @@ mod tests {
             app.contains("pushManager.subscribe"),
             "app.js missing declarative push subscribe"
         );
-        // xterm must stay deferred — not in the boot shell.
         assert!(
             !app.contains("FitAddon"),
             "app.js must not embed the xterm FitAddon (belongs in terminal.js)"
         );
-        // Safari-first: never register a service worker — scan both embedded scripts.
         for script in [app, term] {
             assert!(!script.contains("serviceWorker"));
-            // The legacy polling pane bridge was removed in favor of the live
-            // terminal websocket; its endpoints must not survive in the bundle.
             assert!(!script.contains("/answer"));
             assert!(!script.contains("/input"));
         }
-        // Declarative push lives in the boot shell only.
         assert!(
             !term.contains("pushManager.subscribe"),
             "terminal.js must not embed declarative push subscribe"

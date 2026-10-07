@@ -1,5 +1,3 @@
-//! Task/cockpit/diff/terminal/STT/operate Axum handlers.
-
 mod cockpit;
 mod live;
 

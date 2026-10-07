@@ -10,9 +10,6 @@ mod architecture;
 #[cfg(test)]
 mod architecture_web_session;
 
-/// Shared task/context fixtures for ajax-web unit tests. Substrate names
-/// follow the ajax conventions: `repo/handle`, branch `ajax/handle`, worktree
-/// `/repo/{repo}__worktrees/ajax-{handle}`, session `ajax-{repo}-{handle}`.
 #[cfg(test)]
 pub(crate) mod test_support {
     use ajax_core::{
@@ -22,7 +19,6 @@ pub(crate) mod test_support {
         registry::{InMemoryRegistry, Registry as _},
     };
 
-    /// The standard registered test task: `web/fix-login`.
     pub(crate) fn fix_login_task() -> Task {
         task_in("web", "fix-login", "Fix login")
     }
@@ -63,7 +59,6 @@ pub(crate) mod test_support {
         CommandContext::new(config_with(repos), registry)
     }
 
-    /// Context managing the `web` repo with the standard `web/fix-login` task.
     pub(crate) fn context_with_fix_login_task() -> CommandContext<InMemoryRegistry> {
         context_with_tasks(&["web"], vec![fix_login_task()])
     }

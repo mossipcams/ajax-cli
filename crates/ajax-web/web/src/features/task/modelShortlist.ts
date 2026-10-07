@@ -11,7 +11,6 @@ export const SHORTLIST_CAP = 10;
 
 type Matcher = (id: string, label: string) => boolean;
 
-/** Cursor popular-model rank: first catalog match wins each slot. */
 const CURSOR_RANK: Matcher[] = [
   (id) => id === DEFAULT_SESSION_MODEL || id === "auto",
   (id) => id.includes("composer-2.5"),
@@ -70,7 +69,6 @@ function findById(models: SessionModelOption[], id: string | undefined): Session
   return models.find((option) => option.id === id);
 }
 
-/** ~10 popular models plus pinned Auto, harness default, and current selection. */
 export function buildModelShortlist(
   models: SessionModelOption[],
   agent: string,

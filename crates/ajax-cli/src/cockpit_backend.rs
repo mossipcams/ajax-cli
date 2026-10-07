@@ -476,10 +476,6 @@ pub(crate) fn save_cockpit_state_to_sqlite(
     Ok(())
 }
 
-// Recover from a rejected post-session Cockpit save by reloading disk state
-// into the in-memory context and resetting the tracked save baseline, instead
-// of propagating the error out of the Cockpit loop. Only `CliError::ContextSave`
-// is recoverable; every other error is returned unchanged.
 fn recover_cockpit_save_error(
     paths: &CliContextPaths,
     context: &mut CommandContext<InMemoryRegistry>,

@@ -1,5 +1,3 @@
-//! Live ACP session title capture, snapshots, and transcript isolation.
-
 use super::acp_drain::drain_acp_events;
 use super::acp_map::map_acp_session_notification;
 use super::acp_usage::UsageDeduper;

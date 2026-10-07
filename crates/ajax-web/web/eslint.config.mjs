@@ -401,6 +401,7 @@ export default tseslint.config(
       "no-regex-spaces": "error",
       "prefer-const": "error",
       "no-empty-pattern": "error",
+      "no-empty": ["error", { allowEmptyCatch: true }],
       "no-control-regex": "error",
     },
   },

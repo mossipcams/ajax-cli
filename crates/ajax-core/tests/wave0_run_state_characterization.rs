@@ -1,9 +1,3 @@
-//! Wave 0: cross-layer run-state characterization (no behavior changes).
-//!
-//! Records disagreements between `reduce_agent_status`, materialized Task fields
-//! (the apply layer), and `derive_operator_status`. Wave 1+ may converge these;
-//! this file must not weaken assertions to make them pass.
-
 use std::time::{Duration, UNIX_EPOCH};
 
 use ajax_core::{
@@ -36,7 +30,6 @@ struct GoldenRow {
     reducer_live_kind: LiveStatusKind,
     reducer_phase: ParentPhase,
     operator_status: TaskStatus,
-    /// Human-readable contradictions that exist today and must not be papered over.
     disagreements: Vec<&'static str>,
 }
 
@@ -86,8 +79,6 @@ fn active_codex_task() -> Task {
     task
 }
 
-/// Provisioned ACP task after `AgentCommandSent` with no `TurnStarted` / host
-/// observation — models GitHub #1096 (spawn/auth never starts a turn).
 pub fn issue_1096_provisioned_acp_after_agent_command_sent() -> Task {
     let mut context = CommandContext::new(
         Config {

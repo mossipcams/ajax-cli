@@ -34,13 +34,11 @@ interface Props {
   revision: number;
   sessionKey: string;
   composerRef: RefObject<HTMLTextAreaElement | null>;
-  /** Opaque activity count for the jump label — scrolling does not inspect items. */
   activityCount?: number;
   historyScroll?: HistoryScrollControl;
   children: ReactNode;
 }
 
-/** Owns pinned/history scroll state, DOM observers, and keyboard viewport geometry. */
 export default function ChatScroller({
   revision,
   sessionKey,

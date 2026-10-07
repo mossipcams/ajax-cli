@@ -1,6 +1,3 @@
-//! Tests for the training slice (split out of `mod.rs` to keep it within the
-//! Rust file-size limit).
-
 use std::sync::{Arc, Mutex};
 
 use crate::slices::training::*;
@@ -8,8 +5,6 @@ use crate::slices::training::*;
 mod test_support {
     use super::*;
 
-    /// Records every argv vector it receives. `status` returns a fixed status
-    /// JSON document; any other verb returns the configured outcome.
     pub(crate) struct FakeTrainingRunner {
         pub calls: Arc<Mutex<Vec<Vec<String>>>>,
         status_stdout: String,
@@ -25,7 +20,6 @@ mod test_support {
             }
         }
 
-        /// Configure non-status verbs to fail with the given runner error.
         pub fn failing(self, error: TrainingRunError) -> Self {
             Self {
                 result: Err(error),
@@ -103,7 +97,6 @@ fn start_is_refused_when_a_run_is_already_in_progress() {
 
 #[test]
 fn start_and_switch_are_refused_while_a_run_is_active() {
-    // lfm-eval keeps state `idle`; the busy check must come from run.running.
     let status = &status_json("idle", &json(RUN), &Value::Null);
     let runner = FakeTrainingRunner::new(status);
     assert_eq!(
@@ -117,7 +110,6 @@ fn start_and_switch_are_refused_while_a_run_is_active() {
         409
     );
 
-    // A finished run (running:false) must not block start or switch.
     let status = &status_json("idle", &json(RUN_DONE), &Value::Null);
     let runner = FakeTrainingRunner::new(status);
     assert_eq!(
@@ -144,7 +136,6 @@ fn status_parses_full_run_and_generation() {
     assert_eq!(value["run"]["running"], true);
     assert_eq!(value["generation"]["rows"], 0);
 
-    // A finished run (running:false) must still parse and pass through.
     let runner = FakeTrainingRunner::new(&status_json("idle", &json(RUN_DONE), &Value::Null));
     let value = status_of(&status_response(&runner));
     assert_eq!(value["run"]["running"], false);
@@ -291,7 +282,6 @@ fn switch_rejects_bad_profile_names() {
         assert_eq!(response.status_code, 400, "profile {name:?}");
     }
 
-    // 64 characters is the maximum allowed length.
     let long = format!("a{}", "b".repeat(63));
     let runner = FakeTrainingRunner::new(&format!(
         r#"{{"state":"idle","runtime_up":false,"active_profile":null,"profiles":["{long}"],"run":null,"generation":null}}"#
@@ -383,7 +373,6 @@ fn unreadable_host_status_maps_to_502() {
 
 #[test]
 fn argv_never_contains_browser_text() {
-    // A hostile profile is rejected before the runner is touched at all.
     let runner = FakeTrainingRunner::new(IDLE_STATUS);
     switch_response(&runner, br#"{"profile":"evil; rm -rf /","confirm":true}"#);
     start_response(

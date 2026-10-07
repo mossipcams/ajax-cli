@@ -236,8 +236,6 @@ fn test_in_dev_args_never_target_stable() {
     assert!(!args.iter().any(|arg| arg == "8787"));
 }
 
-// GitHub issue #1035: Test in Dev must invoke the restart script with the task
-// worktree and dev profile, not no-op or stable.
 #[test]
 fn issue_1035_run_test_in_dev_job_invokes_worktree_restart_with_dev_profile() {
     let root = std::env::temp_dir().join(format!("ajax-issue-1035-{}", std::process::id()));

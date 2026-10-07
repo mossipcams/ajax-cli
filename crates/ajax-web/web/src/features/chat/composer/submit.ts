@@ -27,9 +27,6 @@ export type SubmitComposerResult =
   | { action: "stop_and_send"; sendCancel: true; clearDraft: true }
   | { action: "scroll" };
 
-/** Enter with a turn in flight stages one follow-up on the host FIFO; Enter again
- * stops the turn. The host dispatches the staged prompt — the browser does not
- * resend it at turn_end. */
 export function submitComposerDraft({
   connected,
   busy,
@@ -56,9 +53,6 @@ export function submitComposerDraft({
   return { action: "send", text, clearDraft: true };
 }
 
-/** Pure composer-state transition for submit results already classified by
- * submitComposerDraft. Side effects (sendPrompt, sendCancel) belong in the
- * caller — see flushQueuedFollowUp for the same split. */
 export function applySubmitResult(
   result: SubmitComposerResult,
   composerState: ComposerState,
@@ -122,7 +116,6 @@ export type FlushQueuedFollowUpResult = {
   intents: FlushQueuedFollowUpIntent[];
 };
 
-/** The turn is over — clear stopping UI. Host-owned FIFO already holds staged prompts. */
 export function flushQueuedFollowUp(args: {
   composerState: ComposerState;
   busy: boolean;

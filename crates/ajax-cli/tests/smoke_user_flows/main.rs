@@ -21,7 +21,6 @@ use nix::{
 static NEXT_SANDBOX_ID: AtomicUsize = AtomicUsize::new(0);
 
 const PTY_DEFAULT_WAIT: Duration = Duration::from_secs(5);
-// Attach after an EINTR retry can lag under parallel CI; keep other waits tight.
 const PTY_ATTACH_WAIT: Duration = Duration::from_secs(30);
 
 fn ajax_binary() -> PathBuf {

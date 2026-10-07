@@ -12,10 +12,6 @@ const DEFAULT_FILTER: &str =
 
 static LOGGING_INIT: OnceLock<()> = OnceLock::new();
 
-/// Install a global tracing subscriber that appends to `{logs_dir}/ajax.log`.
-///
-/// Safe to call more than once; only the first successful call installs the subscriber.
-/// IO failures are reported once to stderr and otherwise ignored; failed attempts may be retried.
 pub fn init_to_logs_dir(logs_dir: &Path) {
     install_to_logs_dir_once(&LOGGING_INIT, logs_dir);
 }

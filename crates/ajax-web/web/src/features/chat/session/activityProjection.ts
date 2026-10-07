@@ -36,7 +36,6 @@ function replaceAt(
   });
 }
 
-/** ponytail: client clock — see sessionThread comment. */
 function mergeToolCall(
   state: ChatSessionReducerState,
   incoming: Omit<ToolCall, "startedAt" | "endedAt">,
@@ -78,9 +77,6 @@ function mergeToolCall(
   };
 }
 
-/** The plan belongs to the turn that produced it. Searching the whole
- * conversation made one plan row for the session, so a later turn's plan
- * rewrote the plan filed under the first turn and no turn after it got one. */
 function currentTurnPlanIndex(state: ChatSessionReducerState): number {
   const conversation = state.view.conversation;
   for (let i = conversation.length - 1; i >= 0; i -= 1) {

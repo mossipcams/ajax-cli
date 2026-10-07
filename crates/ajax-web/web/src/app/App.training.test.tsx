@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 
-// Hard file-scope stub: late microtasks must never reach jsdom's real WebSocket.
 class StubWebSocket {
   readyState = 1;
   close() {}
@@ -71,7 +70,6 @@ describe("App training modal route coupling", () => {
     const trainingStatusCalls = () =>
       fetchMock.mock.calls.filter(([path]) => String(path) === "/api/training/status").length;
 
-    // Closed modal: out of the DOM and no status polling.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trainingStatusCalls()).toBe(0);
 
@@ -79,7 +77,6 @@ describe("App training modal route coupling", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Training")).toBeInTheDocument();
-    // Polling starts only after the modal opens.
     await vi.waitFor(() => expect(trainingStatusCalls()).toBeGreaterThan(0));
 
     fireEvent.keyDown(dialog, { key: "Escape" });

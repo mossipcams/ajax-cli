@@ -54,7 +54,6 @@ function isFormControlFocused(): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-/** Session-scoped soft-keyboard metrics; does not toggle html.keyboard-open. */
 export function useMobileKeyboard() {
   const [store] = useState<KeyboardStore>(() => createKeyboardStore());
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
@@ -63,7 +62,6 @@ export function useMobileKeyboard() {
   const stableCountRef = useRef(0);
   const lastOcclusionRef = useRef(0);
   const fullHeightRef = useRef(0);
-  /** ponytail: tap-dismiss often leaves vv shrunk with no resize; ignore until refocus. */
   const ignoreShrinkRef = useRef(false);
   const lastReportedVvHRef = useRef(0);
 

@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,
@@ -31,7 +25,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
@@ -306,11 +299,7 @@ test("seeded open stays hidden until output after the seed settles, then lands a
   const surface = terminalInteractionSurface(page);
   await expect(surface).toHaveClass(/is-seed-pending/);
 
-  // The seed is scrollback only; tmux's attach repaint of the visible pane
-  // arrives in a later frame. Revealing between the two is what made the
-  // terminal visibly scroll a screenful on load.
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
-  // Stay under SEED_REVEAL_QUIET_MS (120) so the mid-gap assert still sees pending.
   await page.waitForTimeout(80);
   await expect(surface).toHaveClass(/is-seed-pending/);
 

@@ -4,7 +4,6 @@ import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
-// Hard file-scope stub: late microtasks must never reach jsdom's real WebSocket.
 class StubWebSocket {
   readyState = 1;
   close() {}
@@ -58,8 +57,6 @@ describe("App new-task sheet route coupling", () => {
     vi.unstubAllGlobals();
   });
 
-  // Found in dev: with orchestration chat on, New used to route to the session
-  // starter, which hid the sheet exactly when its ACP path matters.
   it("opens the new-task sheet from New even with orchestration chat enabled", async () => {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
     vi.stubGlobal(
@@ -160,7 +157,6 @@ describe("App new-task sheet route coupling", () => {
     expect(screen.getByTestId("new-task-sheet")).toBeInTheDocument();
 
     fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Swipe back test" } });
-    // Step one commits the harness; Start lives on the model page.
     fireEvent.submit(screen.getByRole("form", { name: "New task" }));
     await screen.findByTestId("new-task-model-page");
     fireEvent.submit(screen.getByRole("form", { name: "New task" }));
@@ -199,8 +195,6 @@ describe("App new-task sheet route coupling", () => {
     await screen.findByTestId("outlet-task");
     expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
 
-    // Late reopen while still on the task (click-through onto New) must not
-    // survive swipe-back to the dashboard.
     fireEvent.click(screen.getByRole("button", { name: "New" }));
     expect(screen.queryByTestId("new-task-sheet")).not.toBeInTheDocument();
 

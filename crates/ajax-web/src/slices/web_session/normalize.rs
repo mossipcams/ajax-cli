@@ -1,6 +1,3 @@
-//! Host-owned stream normalization: ACP delta or cumulative chunks become one
-//! full-content item update with a stable host item id.
-
 use super::output_content::OutputContentBlockWire;
 use super::SessionServerEvent;
 use std::collections::HashMap;
@@ -18,10 +15,6 @@ struct LaneState {
 }
 
 impl StreamNormalizer {
-    /// Continue item ids past those already in `events`. A fresh normalizer
-    /// restarts at `i1`; against a persisted transcript those ids collide, and
-    /// the browser upserts new replies into old rows, leaving only tool calls
-    /// at the tail.
     pub(crate) fn seeded_from(events: &[SessionServerEvent]) -> Self {
         let next_id = events
             .iter()
@@ -117,7 +110,6 @@ impl StreamNormalizer {
         }
     }
 
-    /// Close agent/thought lanes so the next reply cannot upsert into a prior bubble.
     pub(crate) fn close_reply_lanes(&mut self) {
         self.lanes.retain(|key, _| key.starts_with("user:"));
     }
@@ -132,11 +124,6 @@ impl StreamNormalizer {
     }
 }
 
-/// Events the browser renders outside the transcript. Token counts and ACP
-/// status arrive between token chunks, so closing the open lane on them would
-/// cut a streaming reply into bubbles mid-sentence. Events that do occupy a
-/// transcript row (tool call, plan, permission, error) still close it, which is
-/// what keeps prose before and after them in chronological order.
 fn is_offscreen_telemetry(event: &SessionServerEvent) -> bool {
     matches!(
         event,
@@ -174,7 +161,6 @@ fn collapse_same_item(events: Vec<SessionServerEvent>) -> Vec<SessionServerEvent
     out
 }
 
-/// True when `incoming` continues token streaming on `previous` (cumulative or delta).
 pub(crate) fn is_stream_continuation(previous: &str, incoming: &str) -> bool {
     if previous.is_empty() || incoming.is_empty() {
         return true;
@@ -188,7 +174,6 @@ pub(crate) fn is_stream_continuation(previous: &str, incoming: &str) -> bool {
     true
 }
 
-/// Resolve delta vs cumulative harness behavior into one full string.
 pub(crate) fn merge_stream_text(previous: &str, incoming: &str) -> String {
     if incoming == previous || (incoming.starts_with(previous) && incoming.len() > previous.len()) {
         incoming.to_string()

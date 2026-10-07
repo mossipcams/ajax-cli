@@ -1,5 +1,3 @@
-//! Transactional ACP child replacement after exit or intentional respawn.
-
 use super::task_session::TaskSessionState;
 use super::task_session_exit::{
     has_healthy_client, recover_prompt_ledger, try_dispatch_next_if_idle,
@@ -11,7 +9,6 @@ use crate::adapters::web_session_acp::{
 };
 use crate::adapters::web_session_store;
 
-/// JSONL meta must store Ajax pipe-form (or catalog ids), not bare handshake bases ([#1079]).
 pub(super) fn meta_model_for_persist(report: &SpawnReport, operator_model: &str) -> String {
     meta_model_from_config_options(report.config_options.as_deref(), operator_model)
 }

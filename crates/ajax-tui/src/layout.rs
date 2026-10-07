@@ -5,11 +5,9 @@ use crate::{
     App,
 };
 
-/// Compute the row range each selectable occupies in the feed,
-/// in the same order as `app.selectables`.
 pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
     let mut rows = Vec::new();
-    let mut row = 1; // blank row at the top of the feed
+    let mut row = 1;
 
     if app.selectables.is_empty()
         || matches!(
@@ -73,10 +71,8 @@ fn expanded_annotation_rows(selectable: &SelectableKind, app: &App) -> usize {
         .unwrap_or(0)
 }
 
-/// Screen row at which the feed starts. Mouse handling must use this to map
-/// terminal rows back to feed-internal coordinates.
 pub(crate) fn feed_top_row(_app: &App) -> usize {
-    1 // breadcrumb only; counts moved into the header
+    1
 }
 
 pub(crate) fn feed_screen_rows(app: &App, terminal_height: usize) -> Range<usize> {

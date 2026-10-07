@@ -1,5 +1,3 @@
-//! Spawn-level ACP reliability: optional live Cursor smoke.
-
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
 use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
@@ -129,7 +127,6 @@ fn live_cursor_prompt_and_session_load() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: parameterized picker applies Grok High as split options, not Fast.
 #[test]
 fn cursor_parameterized_picker_applies_grok_high_without_fast_issue_979() {
     let dir = scratch_dir("model-cursor-parameterized-grok-979");
@@ -194,7 +191,6 @@ fn cursor_parameterized_picker_applies_grok_high_without_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: parameterized Auto/unspecified clears Fast before refusing.
 #[test]
 fn cursor_parameterized_unspecified_clears_fast_on_attach_issue_979() {
     let dir = scratch_dir("model-cursor-parameterized-unspecified-979");
@@ -229,7 +225,6 @@ fn cursor_parameterized_unspecified_clears_fast_on_attach_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #989: operator-pin recovery must not session/new while the prior child lives.
 #[test]
 fn spawn_with_operator_pin_recovery_waits_for_prior_child_shutdown_issue_989() {
     let dir = scratch_dir("spawn-recover-exclusive-989");
@@ -268,7 +263,6 @@ fn spawn_with_operator_pin_recovery_waits_for_prior_child_shutdown_issue_989() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #991: pipe-form Cursor picks reconstruct catalog ids on spawn argv.
 #[test]
 fn cursor_spawn_pipe_form_reconstructs_catalog_id_on_argv_issue_991() {
     let launch = cursor_launch();
@@ -309,7 +303,6 @@ fn cursor_spawn_pipe_form_reconstructs_catalog_id_on_argv_issue_991() {
     );
 }
 
-// Regression for #1079: spawn argv never receives pipe-form or bracket tokens.
 #[test]
 fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
     use ajax_core::adapters::{
@@ -373,7 +366,6 @@ fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
     );
 }
 
-// Live Cursor: Product-scope stored pins and handshake currentValue must session/new.
 #[test]
 fn live_cursor_spawn_product_scope_pins_issue_1079() {
     if std::env::var("AJAX_ACP_SMOKE").ok().as_deref() != Some("1") {

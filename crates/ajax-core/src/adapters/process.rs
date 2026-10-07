@@ -401,7 +401,6 @@ mod tests {
 
     #[test]
     fn sh_wrapped_git_with_c_ignores_inherited_git_dir() {
-        // #941
         let root = std::env::temp_dir().join(format!(
             "ajax-sh-git-c-{}-{}",
             std::process::id(),

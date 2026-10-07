@@ -1,6 +1,5 @@
 import type { PromptContentBlockWire } from "@/shared/lib/promptContent";
 
-/** Browser composer queue: one editable follow-up mirrored on the host FIFO. */
 export type ComposerState =
   | { status: "idle" }
   | {
@@ -73,7 +72,6 @@ export function restoreQueuedDraft(state: ComposerState): {
   };
 }
 
-/** stopping cannot exist without queued text or attachments — enforced by the union shape. */
 export function assertComposerState(state: ComposerState): void {
   if (
     state.status === "stopping" &&

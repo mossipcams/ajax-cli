@@ -1,5 +1,3 @@
-//! Spawn and in-band model apply integration tests for [`super::client`].
-
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
 use super::operator_pin_satisfied;
 use super::{with_test_acp_extra_args, with_test_acp_program};
@@ -71,7 +69,6 @@ fn cursor_acp_args_insert_model_before_acp() {
     );
 }
 
-// The bridges take no `--model` on argv; a pinned model must not leak onto them.
 #[test]
 fn bridge_acp_args_never_carry_a_model_flag() {
     for agent in [AgentClient::Codex, AgentClient::Claude, AgentClient::Pi] {
@@ -87,8 +84,6 @@ fn bridge_acp_args_never_carry_a_model_flag() {
     }
 }
 
-// Native first: a harness that grows its own `acp` subcommand must be used
-// directly instead of its packaged adapter. Recorded per harness in core.
 #[test]
 fn every_bridge_harness_names_the_cli_that_could_speak_acp_natively() {
     use ajax_core::adapters::acp_launch_for_agent;
@@ -113,8 +108,6 @@ fn every_bridge_harness_names_the_cli_that_could_speak_acp_natively() {
     }
 }
 
-// Each harness family takes its model a different way; the bridges would
-// silently keep their own default if the client skipped the in-band call.
 #[test]
 fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
     use ajax_core::adapters::{acp_launch_for_agent, AcpModelSelection};
@@ -144,7 +137,6 @@ fn spawn_selects_the_model_in_band_for_bridge_harnesses() {
     }
 }
 
-// Regression for #952: Cursor must apply in-band when session/new advertises model.
 #[test]
 fn cursor_applies_in_band_when_model_is_advertised_issue_952() {
     let dir = scratch_dir("model-cursor-in-band-952");
@@ -175,7 +167,6 @@ fn cursor_applies_in_band_when_model_is_advertised_issue_952() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #954: Cursor spawn catalog ids must not be sent as handshake values.
 #[test]
 fn cursor_spawn_catalog_id_skips_in_band_when_not_advertised_issue_954() {
     let dir = scratch_dir("model-cursor-catalog-954");
@@ -221,7 +212,6 @@ fn cursor_spawn_catalog_id_skips_in_band_when_not_advertised_issue_954() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: mapped spawn token must run Grok High, not Composer Fast.
 #[test]
 fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let dir = scratch_dir("model-cursor-cli-default-979");
@@ -256,9 +246,6 @@ fn cursor_spawn_catalog_pin_runs_mapped_acp_model_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979, updated for #1151: a resumed session running the
-// wrong model must still satisfy the operator pin — recovered in-band on the
-// restored session, never by dropping it for a fresh session/new.
 #[test]
 fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let dir = scratch_dir("model-cursor-recover-resume-979");
@@ -267,8 +254,6 @@ fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let _mapped = cursor_catalog_to_acp_spawn_token(catalog_id);
 
     with_test_acp_program(&script, || {
-        // Seed a restorable session whose current model is the CLI default
-        // (Composer Fast), i.e. the wrong model for the pin.
         with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
             let (client, first_report) =
                 AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("seed spawn");
@@ -310,7 +295,6 @@ fn cursor_spawn_recovers_after_resume_composer_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: respawn once when spawn argv and in-band apply both leave CLI default.
 #[test]
 fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {
     let dir = scratch_dir("model-cursor-recover-979");
@@ -357,7 +341,6 @@ fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
 #[test]
 fn cursor_unspecified_spawn_recovers_onto_mapped_default_issue_979() {
     let dir = scratch_dir("model-cursor-recover-default-979");
@@ -398,7 +381,6 @@ fn cursor_unspecified_spawn_recovers_onto_mapped_default_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #979: unspecified Cursor attach must not accept Composer Fast.
 #[test]
 fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
     let dir = scratch_dir("model-cursor-unspecified-979");
@@ -426,8 +408,6 @@ fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #984: Sol High catalog pin passes catalog id on spawn argv and
-// satisfies the pin via mapped in-band ACP apply ([#989] spawn passthrough).
 #[test]
 fn cursor_spawn_catalog_pin_runs_sol_high_mapped_acp_model_issue_984() {
     let dir = scratch_dir("model-cursor-sol-high-984");
@@ -473,7 +453,6 @@ fn cursor_spawn_catalog_pin_runs_sol_high_mapped_acp_model_issue_984() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #997: live handshake without non-Fast bracket leaves typed error, child kept.
 #[test]
 fn cursor_grok_high_errors_when_live_handshake_omits_non_fast_bracket_issue_997() {
     let dir = scratch_dir("model-cursor-unadvertised-grok-997");
@@ -507,8 +486,6 @@ fn cursor_grok_high_errors_when_live_handshake_omits_non_fast_bracket_issue_997(
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for live Cursor handshake: Grok High is only `fast=true`; recover must
-// not leave Composer Fast after spawn/apply failures.
 #[test]
 fn cursor_grok_high_recovers_on_live_handshake_after_composer_fast_issue_979() {
     let dir = scratch_dir("model-cursor-live-grok-979");
@@ -556,7 +533,6 @@ fn cursor_grok_high_recovers_on_live_handshake_after_composer_fast_issue_979() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #1079: spawn argv never receives pipe-form or bracket tokens.
 #[test]
 fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
     let dir = scratch_dir("model-cursor-spawn-no-pipe-bracket-1079");
@@ -606,7 +582,6 @@ fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression for #954: ConfigOption-only harnesses still refuse unadvertised pins.
 #[test]
 fn bridge_errors_when_pin_not_advertised_issue_954() {
     let dir = scratch_dir("model-bridge-not-advertised-954");

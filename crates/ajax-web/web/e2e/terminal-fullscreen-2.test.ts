@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,
@@ -36,7 +30,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
@@ -56,10 +49,6 @@ test.beforeEach(({}, testInfo) => {
 });
 
 
-// Backspace is the one key we leave uncancelled (cancelling it kills the iOS
-// hold-to-delete repeat), so WebKit really edits the helper textarea and then
-// reveals the caret. .terminal-host is position: sticky, so that reveal used to
-// yank the wrap — and the whole terminal with it — up into scrollback.
 test("terminal Backspace input preserves scroll and keyboard-band geometry", async ({ page }) => {
   await openTaskTerminal(page);
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);

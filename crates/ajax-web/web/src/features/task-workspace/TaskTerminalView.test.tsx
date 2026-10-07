@@ -276,8 +276,6 @@ describe("TaskTerminalView", () => {
   it("renders the task outlet hook the scroll lock targets", () => {
     expect(appSource).toMatch(/renderWorkspaceStack\(/);
     expect(appSource).toMatch(/kind="task"/);
-    // `.task-detail` is the element the scroll lock targets; the terminal
-    // region is a different node and would not prove this contract.
     render(<TaskTerminalView detail={detail()} />);
     expect(screen.getByTestId("task-detail")).toBeInTheDocument();
   });
@@ -344,7 +342,6 @@ describe("TaskTerminalView", () => {
     });
     expect(onBack).toHaveBeenCalledOnce();
     expect(onOpenDiff).not.toHaveBeenCalled();
-    // Commit leaves the page translated off-screen until the route unmounts.
     expect(root.style.transform).toContain("390px");
     vi.useRealTimers();
   });
@@ -508,8 +505,6 @@ describe("TaskTerminalView projection surface", () => {
     expect(mobileBlock).toMatch(
       /\.interact-panel\s+\.action[\s\S]*?min-height:\s*(?:2[0-9]|3[0-2])px/,
     );
-    // Horizontal pad must clear half the stadium min-height (~14px) or
-    // "Tap to confirm" clips inside the rounded caps.
     expect(mobileBlock).toMatch(
       /\.interact-panel\s+\.action[\s\S]*?padding:\s*[0-4]px\s+(?:1[4-9]|[2-9]\d)px/,
     );
@@ -560,6 +555,6 @@ describe("TaskTerminalView projection surface", () => {
     expect(modelPickerBlock).toMatch(/overflow-y:\s*auto/);
     expect(modelPickerBlock).toMatch(/overscroll-behavior:\s*contain/);
     expect(modelPickerBlock).toMatch(/-webkit-overflow-scrolling:\s*touch/);
-    expect(modelPickerBlock).not.toMatch(/pointer-events:\s*none/); // #1022
+    expect(modelPickerBlock).not.toMatch(/pointer-events:\s*none/);
   });
 });

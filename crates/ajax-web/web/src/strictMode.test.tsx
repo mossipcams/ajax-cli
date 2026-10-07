@@ -12,11 +12,6 @@ import {
   transport,
 } from "@/features/chat/ChatSurface.testHarness";
 
-// StrictMode double-invokes effects in development. The Playwright suite runs
-// against the Vite dev server, so socket cardinality is covered there
-// (`e2e/terminal-behavior.test.ts`). These cases cover what Playwright cannot:
-// that the shell itself stays single-flight, and that the wrapper is not
-// quietly dropped from the entry point to make something else pass.
 
 function jsonResponse(body: unknown) {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) };
@@ -75,7 +70,6 @@ describe("StrictMode lifecycle safety", () => {
     );
 
     await waitFor(() => expect(cockpitCalls).toBeGreaterThan(0));
-    // Let any second effect invocation settle before asserting.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(cockpitCalls).toBe(1);
   });

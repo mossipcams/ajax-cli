@@ -1,5 +1,3 @@
-//! Task-scoped process facade over the official ACP Rust SDK connection actor.
-
 use ajax_core::{
     adapters::{acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv, AcpLaunch},
     models::AgentClient,
@@ -38,7 +36,6 @@ static TEST_ACP_EXTRA_ARGS_GLOBAL: Mutex<Vec<String>> = Mutex::new(Vec::new());
 #[cfg(test)]
 static TEST_ACP_LOCK: Mutex<()> = Mutex::new(());
 
-/// Run `f` with ACP spawn redirected to a test program (typically a Node fake agent).
 #[cfg(test)]
 pub(crate) fn with_test_acp_program<F, R>(path: &Path, f: F) -> R
 where
@@ -60,11 +57,6 @@ where
     })
 }
 
-/// Process-global ACP spawn override, consulted only when the thread-local one
-/// is unset. A test that drives the real session socket cannot reach the
-/// spawning thread any other way: the child is spawned on whichever runtime
-/// worker upgraded the WebSocket. The program runs directly, with no `node`
-/// wrapper, so a test can point ACP at any hanging or failing binary.
 #[cfg(test)]
 static TEST_ACP_COMMAND: Mutex<Option<(PathBuf, Vec<String>)>> = Mutex::new(None);
 
@@ -78,8 +70,6 @@ pub(crate) fn set_test_acp_command(command: Option<(&Path, &[&str])>) {
     });
 }
 
-/// Restores thread-local and global extra args when `with_test_acp_extra_args` exits,
-/// including on panic, so a failing test cannot leak argv into a later one.
 #[cfg(test)]
 struct TestAcpExtraArgsGuard {
     saved_thread: Vec<String>,
@@ -96,7 +86,6 @@ impl Drop for TestAcpExtraArgsGuard {
     }
 }
 
-/// Add argv tokens for the next test ACP spawns inside `f` (e.g. `--load-fail`).
 #[cfg(test)]
 pub(crate) fn with_test_acp_extra_args<F, R>(args: &[&str], f: F) -> R
 where
@@ -116,9 +105,6 @@ where
     })
 }
 
-/// Process-global restore-timeout override for tests, consulted by
-/// `sdk_connection::restore_handshake_timeout` so restore-budget behavior can
-/// be exercised without waiting out the real budget.
 #[cfg(test)]
 static TEST_RESTORE_TIMEOUT_MS: Mutex<Option<u64>> = Mutex::new(None);
 
@@ -145,9 +131,6 @@ where
     f()
 }
 
-/// Run `f` with the ACP restore timeout pinned to `millis` ([#1151]).
-/// Nest inside `with_test_acp_program`, which already serializes fake-ACP
-/// tests through `TEST_ACP_LOCK`.
 #[cfg(test)]
 pub(crate) fn with_test_restore_timeout<F, R>(millis: u64, f: F) -> R
 where
@@ -168,7 +151,6 @@ where
     f()
 }
 
-/// Current test override for the restore budget, if any.
 #[cfg(test)]
 pub(super) fn test_restore_timeout_override_ms() -> Option<u64> {
     *TEST_RESTORE_TIMEOUT_MS
@@ -176,8 +158,6 @@ pub(super) fn test_restore_timeout_override_ms() -> Option<u64> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
-/// Bound on the ACP handshake (initialize, session/new, config). Generous for a
-/// cold bridge, short enough that a stuck harness reports rather than hangs.
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(45);
 pub(super) const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -209,8 +189,6 @@ fn handshake_timeout() -> Duration {
     HANDSHAKE_TIMEOUT
 }
 
-/// Keep only the last few KiB: enough to explain a failure, bounded for a
-/// long-lived session.
 const STDERR_TAIL_BYTES: usize = 4096;
 
 fn drain_stderr(stderr: impl std::io::Read + Send + 'static, sink: Arc<Mutex<String>>) {
@@ -339,22 +317,17 @@ impl std::fmt::Display for RestoreFailure {
 
 pub struct SpawnReport {
     pub load_session_advertised: bool,
-    /// Harness advertised `session/resume` or `loadSession` during initialize.
     pub restore_advertised: bool,
     pub close_advertised: bool,
     pub resumed: bool,
-    /// Harness-reported model id after handshake apply ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
     pub applied_model: String,
     pub model_apply_error: Option<String>,
     pub config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
     pub prompt_capabilities: super::PromptCapabilityDescriptor,
 }
 
-/// Prefix for typed restore failures returned from spawn when a stored session
-/// id cannot be resumed or loaded ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
 pub const RESTORE_UNAVAILABLE_MARKER: &str = "ACP restore unavailable";
 
-/// Bound on ACP `session/close` during child teardown.
 const CLOSE_SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct AcpStdioClient {
@@ -364,7 +337,6 @@ pub struct AcpStdioClient {
     busy: Arc<AtomicBool>,
     session_id: String,
     close_advertised: bool,
-    /// Kept because each harness advertises its model catalog here.
     session_new_result: Value,
     child: Child,
     torn_down: bool,
@@ -372,8 +344,6 @@ pub struct AcpStdioClient {
 }
 
 impl AcpStdioClient {
-    /// Spawn the harness's ACP process. `model` is only placed on the argv for
-    /// harnesses that pin at spawn (Cursor); the bridges select in-band.
     pub fn spawn(
         agent: AgentClient,
         worktree_path: &Path,
@@ -383,7 +353,6 @@ impl AcpStdioClient {
         Self::spawn_internal(agent, worktree_path, model, model, resume_session_id)
     }
 
-    /// Spawn with operator-pin recovery when the first handshake leaves a mismatched model.
     pub fn spawn_with_operator_pin(
         agent: AgentClient,
         worktree_path: &Path,
@@ -408,11 +377,6 @@ impl AcpStdioClient {
 
         let (client, report) = attempt(resume_session_id)?;
         if report.resumed {
-            // A restored session is never dropped to satisfy a model pin: the
-            // pin apply already ran in-band on the restored session, and a
-            // fresh `session/new` would silently reset context behind the
-            // existing transcript ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
-            // Any apply failure surfaces through `report.model_apply_error`.
             return Ok((client, report));
         }
         if Self::pin_report_acceptable(operator_pin, &report, model_pins_at_spawn) {
@@ -557,15 +521,10 @@ impl AcpStdioClient {
         &self.session_id
     }
 
-    /// End the ACP session (`session/close` when advertised) and tear down stdio.
-    /// Use for task Drop, cross-harness Switch, and other terminal ends.
-    /// Accidental `Drop` of this client must call `detach` instead.
     pub fn shutdown(&mut self) -> Option<String> {
         self.tear_down(true)
     }
 
-    /// Kill stdio without `session/close` so a later spawn can resume/load.
-    /// Use for idle eviction, process restart, and same-session respawn.
     pub fn detach(&mut self) -> Option<String> {
         self.tear_down(false)
     }
@@ -601,8 +560,6 @@ impl AcpStdioClient {
         close_error
     }
 
-    /// True when the ACP OS process has exited. Reconnect must respawn, not
-    /// reattach to a dead stdio pipe.
     pub fn host_exited(&mut self) -> bool {
         match self.child.try_wait() {
             Ok(Some(_)) => true,
@@ -662,12 +619,6 @@ impl AcpStdioClient {
         }
     }
 
-    /// Cancel the in-flight turn, returning the permission requests it answered.
-    ///
-    /// ACP cancellation is a notification. Sent as a request, every installed
-    /// harness answers `Method not found` and keeps working — Stop did nothing.
-    /// The agent ends the turn with `stopReason: "cancelled"`, which settles the
-    /// prompt already in flight.
     pub(crate) fn cancel(&mut self) -> Result<super::CancelOutcome, String> {
         let (result_tx, result_rx) = mpsc::channel();
         self.commands
@@ -712,13 +663,10 @@ impl AcpStdioClient {
         })
     }
 
-    /// Raw `session/new` result, which is where each harness advertises the
-    /// models it can run. Empty until a session has been created.
     pub fn session_new_result(&self) -> &Value {
         &self.session_new_result
     }
 
-    /// Apply an operator model pin on the live ACP session without respawning.
     pub fn apply_model_pin(&self, desired_model: &str) -> Result<ApplyModelOutcome, String> {
         let (result_tx, result_rx) = mpsc::channel();
         self.commands
@@ -732,7 +680,6 @@ impl AcpStdioClient {
             .map_err(|_| "ACP apply model timed out".to_string())?
     }
 
-    /// Apply one advertised config option on the live ACP session without respawning.
     pub fn apply_config_option(
         &self,
         config_id: &str,
@@ -767,7 +714,6 @@ impl AcpStdioClient {
 
 impl Drop for AcpStdioClient {
     fn drop(&mut self) {
-        // Accidental drop must not `session/close` a session Ajax still holds.
         let _ = self.detach();
     }
 }
@@ -787,7 +733,6 @@ fn stderr_hint(stderr_tail: &Mutex<String>) -> String {
     }
 }
 
-/// Build argv for one candidate program of this harness's ACP launch.
 pub(crate) fn acp_args_for_program(
     launch: AcpLaunch,
     base_args: &[&str],
@@ -800,12 +745,6 @@ pub(crate) fn acp_args_for_program(
     )
 }
 
-/// Candidate list for this harness, native endpoint first.
-///
-/// A harness that grows its own `acp` subcommand should be used directly rather
-/// than through its packaged adapter, so the CLI is asked (once per TTL) whether
-/// it advertises one. Asking beats trying: an unknown argument is a prompt to
-/// some CLIs, which would start a real session.
 fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
     let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
     if let Some(program) = launch.native_program {
@@ -819,9 +758,6 @@ fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
             base_args.iter().map(|arg| (*arg).to_string()).collect(),
         ));
     }
-    // Last resort: run the adapter straight from npm. A machine that has it
-    // installed never reaches this, and one that does not still gets a session
-    // instead of an error — at the cost of the first fetch.
     if let Some(package) = launch.acp_package {
         candidates.push((
             "npx".to_string(),
@@ -831,8 +767,6 @@ fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
     candidates
 }
 
-/// True when `<program> --help` lists an `acp` subcommand. Cached: this runs on
-/// every session acquire and the answer only changes when the CLI is upgraded.
 fn native_acp_advertised(program: &str) -> bool {
     static CACHE: Mutex<Option<HashMap<String, (Instant, bool)>>> = Mutex::new(None);
     const TTL: Duration = Duration::from_secs(300);
@@ -945,7 +879,6 @@ fn spawn_acp_process(
     for (program, base_args) in acp_candidates(launch) {
         let base_args: Vec<&str> = base_args.iter().map(String::as_str).collect();
         let args = acp_args_for_program(launch, &base_args, model);
-        // Resolved outside the server's PATH when a version manager moved it.
         let Some(mut command) = crate::adapters::program::harness_command(&program) else {
             continue;
         };
@@ -959,7 +892,6 @@ fn spawn_acp_process(
             return Ok(child);
         }
     }
-    // Every candidate is missing: an install problem, not a runtime failure.
     Err(format!(
         "{agent:?} ACP agent is not installed — {}",
         launch.install_hint

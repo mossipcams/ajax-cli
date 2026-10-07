@@ -460,7 +460,6 @@ origin/HEAD -> origin/main
 
     #[test]
     fn delete_branch_substrate_prunes_stale_origin_tracking_ref_for_ajax_branches() {
-        // #840
         let adapter = GitAdapter::new("git");
         let command = adapter.delete_branch_substrate("/repos/web", "ajax/defect", true);
 

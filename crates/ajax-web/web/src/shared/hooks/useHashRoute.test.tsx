@@ -23,9 +23,6 @@ describe("useHashRoute", () => {
     expect(result.current).toEqual({ kind: "settings" });
   });
 
-  // App.tsx has `useEffect(..., [route])` for the document title. A route object
-  // rebuilt on every render would fire that effect on every render instead of
-  // only on navigation, so identity stability is part of this hook's contract.
   it("keeps one route identity across re-renders while the hash is unchanged", () => {
     location.hash = "#/settings";
     const { result, rerender } = renderHook(() => useHashRoute());

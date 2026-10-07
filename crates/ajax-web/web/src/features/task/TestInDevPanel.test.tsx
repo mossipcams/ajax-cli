@@ -163,8 +163,6 @@ describe("TestInDevPanel", () => {
     await waitFor(() => expect(onResult).toHaveBeenCalledWith("Test in Dev failed to start", null, true));
   });
 
-  // GitHub issue #1035: TanStack Query mount fetch must not overwrite the
-  // accepted deploy-start response and hide an in-progress Test in Dev run.
   it("issue #1035 keeps building state when a stale status fetch completes after start", async () => {
     let releaseInitialFetch!: () => void;
     fetchDevDeploy.mockImplementation((signal?: AbortSignal) =>

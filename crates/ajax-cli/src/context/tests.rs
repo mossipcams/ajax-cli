@@ -245,7 +245,6 @@ fn save_context_accepts_concurrent_task_deletion_without_conflict() {
         .expect("refreshed task")
         .title = "Refreshed by web".to_string();
 
-    // Another writer drops fix-sidebar from disk before this writer saves.
     let mut concurrent = baseline.clone();
     concurrent
         .delete_task(&TaskId::new("web/fix-sidebar"))
@@ -578,7 +577,6 @@ fn save_context_merges_concurrent_ack_and_live_status_change() {
         .save(&baseline)
         .unwrap();
 
-    // Native writer changes the same task's live status.
     let mut tracked = load_tracked_context(&paths).unwrap();
     let observed_at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_800);
     {
@@ -594,7 +592,6 @@ fn save_context_merges_concurrent_ack_and_live_status_change() {
         native_task.live_status_observed_at = Some(observed_at);
     }
 
-    // Concurrent writer records an acknowledgment and persists first.
     let acknowledged_at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_900);
     let mut web_registry = baseline.clone();
     web_registry

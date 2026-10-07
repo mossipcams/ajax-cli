@@ -12,7 +12,6 @@ fn merge_stream_text_appends_deltas_and_replaces_cumulative() {
 fn is_stream_continuation_detects_cumulative_delta_and_sentence_chunks() {
     assert!(is_stream_continuation("hel", "lo"));
     assert!(is_stream_continuation("Hello", "Hello world"));
-    // Sentence-boundary chunks without messageId stay one stream (#1141).
     assert!(is_stream_continuation("First reply.", "Second reply."));
 }
 
@@ -45,8 +44,6 @@ fn streamed_agent_updates_publish_one_complete_transcript_item() {
 
 #[test]
 fn sentence_boundary_stream_chunks_without_message_id_stay_one_item() {
-    // Regression for #1140 / fix in #1141: streamed prose must not split into new bubbles
-    // at sentence boundaries when no user prompt, turn_end, or non-message event intervenes.
     let mut normalizer = StreamNormalizer::default();
     let events = normalizer.normalize_batch(vec![
         SessionServerEvent::Message {
@@ -74,8 +71,6 @@ fn sentence_boundary_stream_chunks_without_message_id_stay_one_item() {
 
 #[test]
 fn mid_stream_telemetry_does_not_split_the_open_reply() {
-    // Regression for #1143: usage/status updates arrive between token chunks and
-    // render outside the transcript, so they must not open a second bubble.
     let mut normalizer = StreamNormalizer::default();
     let events = normalizer.normalize_batch(vec![
         SessionServerEvent::Message {

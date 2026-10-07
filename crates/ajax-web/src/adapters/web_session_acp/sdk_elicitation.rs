@@ -1,5 +1,3 @@
-//! Deferred ACP form elicitation handling for the Web Session host.
-
 use super::client::AcpClientEvent;
 use agent_client_protocol::{
     schema::v1::{

@@ -4,7 +4,6 @@ export type SlashPrefixMatch = {
   prefix: string;
 };
 
-/** First token is `/name` with no whitespace yet (args hide the menu). */
 export function parseSlashPrefix(draft: string): SlashPrefixMatch | null {
   if (!draft.startsWith("/")) return null;
   const rest = draft.slice(1);

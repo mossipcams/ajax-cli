@@ -527,8 +527,6 @@ fn drop_cleanup_resource_is_already_missing(command: &CommandSpec, output: &Comm
     }
 
     if commands::is_fast_worktree_remove_command(command) {
-        // Fast-remove wraps mkdir/mv/git; broad "no such file" matches mv failures
-        // that must remain hard failures. Only git's worktree-identity errors count.
         return stderr.contains("is not a working tree") || stderr.contains("is not a worktree");
     }
 
@@ -595,8 +593,6 @@ mod worktree_guard_tests {
         }
     }
 
-    /// Force-drop with a `worktree_path` pointing at the repository root must be
-    /// blocked by the guard before any trash/remove command is built or run.
     #[test]
     fn force_drop_refuses_worktree_path_equal_to_repo_root() {
         let nanos = std::time::SystemTime::now()
@@ -608,7 +604,6 @@ mod worktree_guard_tests {
         let repo = root.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
 
-        // worktree_path == repo path: an existing directory that is the repo root.
         let mut context = CommandContext::new(
             Config {
                 repos: vec![ManagedRepo::new("web", repo.display().to_string(), "main")],
@@ -645,7 +640,6 @@ mod worktree_guard_tests {
             "expected PlanBlocked, got {error:?}"
         );
 
-        // No trash rename and no forced worktree removal may have run.
         let commands = std::mem::take(&mut runner.commands);
         assert!(
             !commands.iter().any(|command| command.program == "sh"),

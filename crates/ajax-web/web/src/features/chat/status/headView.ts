@@ -2,7 +2,6 @@ import type { ChatSessionView, Decision, ElicitationDecision } from "../session/
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
-/** Narrow task-attention input — no BrowserTaskDetail in status presentation. */
 export interface ChatTaskAttention {
   status: "waiting" | "error";
   explanation?: string | null;
@@ -14,7 +13,6 @@ export interface ChatHeadView {
   connected: boolean;
   activityAgeMs: number;
   decision: Decision | null;
-  /** Whether the turn has produced anything the transcript can narrate yet. */
   hasActivity: boolean;
   usage: ChatSessionView["usage"]["context"];
   turnUsage: ChatSessionView["usage"]["turn"];
@@ -111,9 +109,6 @@ export function buildHeadView(input: {
     turnUsage: session.usage.turn,
     taskAttention: taskLevel ? taskAttention : null,
     attentionText: taskLevel && taskAttention ? attentionText(taskAttention) : null,
-    // Task attention replaces the head line, but `Reconnecting` has nowhere
-    // else to live — and a task waiting for review is the state most sessions
-    // rest in, so a dropped socket was invisible in the common case.
     showHeadLine: !taskLevel || !connected,
   };
 }

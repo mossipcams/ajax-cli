@@ -16,7 +16,7 @@ describe("pull-to-refresh gesture", () => {
   it("applies rubber-band resistance and caps the distance", () => {
     const state = pullMove(pullStart(0), 100);
     expect(state.distance).toBeGreaterThan(0);
-    expect(state.distance).toBeLessThan(100); // resisted
+    expect(state.distance).toBeLessThan(100);
     expect(pullMove(pullStart(0), 1000).distance).toBe(PULL_MAX);
   });
 
@@ -35,6 +35,6 @@ describe("pull-to-refresh gesture", () => {
   it("triggers on release only when armed", () => {
     expect(pullEnd(pullMove(pullStart(0), 1000)).triggered).toBe(true);
     expect(pullEnd(pullMove(pullStart(0), 20)).triggered).toBe(false);
-    expect(pullEnd(pullMove(pullStart(40), 1000)).triggered).toBe(false); // not at top
+    expect(pullEnd(pullMove(pullStart(40), 1000)).triggered).toBe(false);
   });
 });

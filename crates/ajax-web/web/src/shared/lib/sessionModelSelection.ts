@@ -1,9 +1,5 @@
 export const DEFAULT_SESSION_MODEL = "auto";
 
-/**
- * A selection is the model id plus any harness options, written
- * `opus|effort=high`. The server parses the same form.
- */
 export function encodeModelSelection(model: string, options: Record<string, string>): string {
   const extras = Object.entries(options)
     .filter(([key, value]) => key && value)

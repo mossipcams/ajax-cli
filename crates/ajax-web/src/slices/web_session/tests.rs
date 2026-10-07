@@ -37,8 +37,6 @@ fn prepare_task_session_returns_worktree_for_cursor_task() {
     let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let plan = prepare(&mut context, "web/fix-login", "auto").expect("plan");
     assert_eq!(plan.qualified_handle, "web/fix-login");
-    // A Cursor session runs the same model an interactive Cursor task launches
-    // with, not the bare `auto` sentinel.
     assert_eq!(plan.model, ajax_core::adapters::CURSOR_DEFAULT_MODEL);
     assert!(plan
         .worktree_path
@@ -54,7 +52,6 @@ fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
     std::fs::create_dir_all(&worktree).expect("worktree dir");
     task.worktree_path = worktree;
     let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-    // Dead shell pane promotes; live agent pane is covered in prepare_session_1092_tests.
     let plan = prepare(&mut context, "web/fix-login", "auto").expect("promoted attach");
     assert_eq!(plan.agent, AgentClient::Cursor);
     assert!(context
@@ -64,8 +61,6 @@ fn prepare_task_session_rejects_interactive_cursor_without_skip_bit() {
         .skip_interactive_agent());
 }
 
-// A bridge harness has no Ajax-side default: it picks for itself unless the
-// operator chose a model when the task was created.
 #[test]
 fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
     let mut task = crate::test_support::fix_login_task();
@@ -83,7 +78,6 @@ fn prepare_task_session_leaves_the_model_to_a_bridge_harness() {
 
 #[test]
 fn prepare_task_session_prefers_stored_model_over_url_pin() {
-    // https://github.com/mossipcams/ajax-cli/issues/910
     let mut task = crate::test_support::fix_login_task();
     task.selected_agent = AgentClient::Codex;
     task.set_skip_interactive_agent(true);
@@ -114,7 +108,6 @@ fn prepare_task_session_uses_the_model_chosen_when_the_task_was_created() {
     assert_eq!(plan.model, "gpt-5.6-sol[high]");
 }
 
-// Regression for #952: legacy stored `auto` must attach like unspecified.
 #[test]
 fn prepare_task_session_treats_stored_auto_like_unspecified() {
     let mut task = crate::test_support::fix_login_task();
@@ -203,7 +196,6 @@ fn map_tool_call_to_structured_event_not_raw_json() {
     );
 }
 
-/// Regression for #1090: Cursor sends the path on rawInput while locations stay empty.
 #[test]
 fn map_tool_call_derives_location_from_raw_input_path_for_1090() {
     let update = serde_json::json!({
@@ -226,7 +218,6 @@ fn map_tool_call_derives_location_from_raw_input_path_for_1090() {
     );
 }
 
-/// Regression for #1090: MCP tools can name themselves on rawInput.toolName.
 #[test]
 fn map_tool_call_derives_location_from_raw_input_tool_name() {
     let update = serde_json::json!({
@@ -246,7 +237,6 @@ fn map_tool_call_derives_location_from_raw_input_tool_name() {
     assert_eq!(locations, &vec!["gitnexus_query".to_string()]);
 }
 
-/// Regression for #1090: an empty update still derives the target from rawInput.
 #[test]
 fn map_tool_call_update_derives_location_from_raw_input_for_1090() {
     let update = serde_json::json!({
@@ -309,8 +299,6 @@ fn map_tool_call_without_id_is_dropped() {
     assert!(map_acp_session_update(&update).is_empty());
 }
 
-/// The diff a tool wrote is the substance of an edit turn. Dropping `content`
-/// left the browser able to say only that an unnamed edit happened.
 #[test]
 fn map_tool_call_carries_diff_content_to_the_browser() {
     let update = serde_json::json!({
@@ -350,8 +338,6 @@ fn map_tool_call_carries_diff_content_to_the_browser() {
     );
 }
 
-/// A new file has no `oldText`; the diff view has to show it as pure addition
-/// rather than dropping the block for want of a left side.
 #[test]
 fn map_tool_call_diff_without_old_text_is_kept() {
     let update = serde_json::json!({
@@ -375,8 +361,6 @@ fn map_tool_call_diff_without_old_text_is_kept() {
     );
 }
 
-/// `messageId` is optional in ACP v1, so it must survive when a harness sends
-/// it — that is what lets the browser split two messages the role alone joins.
 #[test]
 fn map_message_preserves_message_id_when_present() {
     let update = serde_json::json!({
@@ -501,8 +485,6 @@ fn map_usage_update_is_typed_not_an_artifact() {
     );
 }
 
-/// A zero window is a harness that does not report context, not a full one. It
-/// must not render as 0% used.
 #[test]
 fn map_usage_update_without_a_window_is_dropped() {
     let update = serde_json::json!({
@@ -572,9 +554,6 @@ fn unknown_update_body_is_pretty_printed_not_a_single_line_dump() {
     assert!(body.as_deref().unwrap_or_default().contains('\n'));
 }
 
-/// Cursor emits `current_mode_update` on some harnesses; it is superseded by
-/// config `mode` and must not reach the transcript. Slash commands are live
-/// session state, not transcript rows.
 #[test]
 fn capability_announcements_stay_out_of_transcript() {
     for kind in [
@@ -793,7 +772,6 @@ fn map_acp_client_request_session_request_permission() {
     );
 }
 
-// Regression for #880: the JSON-RPC id is on the envelope, not ACP params.
 #[test]
 fn map_standard_acp_permission_request_without_an_embedded_request_id() {
     let params = serde_json::json!({

@@ -46,9 +46,6 @@ fn install_claude_hooks(home: &Path) -> Result<&'static str, CliError> {
         "SessionStart",
         "SessionEnd",
     ];
-    // Every matcher here must have a `translate_native_event` arm; an installed
-    // hook with no arm spawns `__agent-event` per notification and drops it.
-    // `auth_success` is deliberately absent: it carries no status Ajax projects.
     let notification_matchers = [
         "permission_prompt",
         "idle_prompt",

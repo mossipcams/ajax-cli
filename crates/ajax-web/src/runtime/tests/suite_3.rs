@@ -46,8 +46,6 @@ fn committed_operation_fixture_matches_production_response_builder() {
     assert_eq!(committed, actual);
 }
 
-/// Regression for #1075: a panicked start worker must release the operation gate
-/// so later starts are not stuck on 409 until ajax-web restarts.
 #[tokio::test]
 async fn axum_start_task_panic_releases_operation_gate() {
     let (_state, cookie, app) = app_with(
@@ -330,24 +328,8 @@ async fn axum_diff_review_does_not_block_health() {
     );
 }
 
-/// Regression guard for #898.
-///
-/// Every other blocking surface in this crate was moved off the async workers
-/// and locked down by a health-isolation test (`axum_task_start_does_not_block_health`,
-/// `axum_diff_review_does_not_block_health`,
-/// `axum_health_stays_responsive_during_slow_cockpit_refresh`). The ACP session
-/// socket was never in that sweep: `bridge_task_session_socket` calls
-/// `hub.acquire` — an ACP handshake bounded only by `HANDSHAKE_TIMEOUT` (45s) —
-/// inline on the worker that upgraded the socket. A harness that never answers
-/// `initialize` therefore parks one runtime thread per open session and the
-/// whole cockpit stops serving, health included.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn axum_session_socket_does_not_block_health() {
-    // A real process that holds its stdio open and never answers `initialize`,
-    // the way a wedged harness does. It exits on its own so the runtime is not
-    // parked for the full 45s handshake timeout after the assertion. (`cat`
-    // cannot play this part: it echoes the handshake back, which fails the
-    // request fast instead of hanging it.)
     let hanging_acp = std::path::PathBuf::from("/bin/sleep");
     assert!(
         hanging_acp.exists(),
@@ -373,8 +355,6 @@ async fn axum_session_socket_does_not_block_health() {
 
     crate::adapters::web_session_acp::set_test_acp_command(Some((&hanging_acp, &["2"])));
 
-    // One session socket per runtime worker. Client I/O runs on plain threads,
-    // not the runtime, so the probe still works once every worker is parked.
     let sockets: Vec<_> = ["web/fix-login", "api/fix-auth"]
         .into_iter()
         .map(|handle| {
@@ -390,8 +370,6 @@ async fn axum_session_socket_does_not_block_health() {
         .map(|joined| joined.join().unwrap())
         .collect();
 
-    // A 101 only proves the upgrade was written; let both socket tasks reach
-    // `hub.acquire` before timing health.
     std::thread::sleep(Duration::from_millis(100));
 
     let (health, health_elapsed) = std::thread::spawn(move || {
@@ -402,8 +380,6 @@ async fn axum_session_socket_does_not_block_health() {
     .join()
     .unwrap();
 
-    // Clear the global override before asserting: a panic here must not leave
-    // every later ACP spawn in this process pointed at the hanging program.
     crate::adapters::web_session_acp::set_test_acp_command(None);
     server.abort();
     drop(sockets);
@@ -417,8 +393,6 @@ async fn axum_session_socket_does_not_block_health() {
     );
 }
 
-/// Two provisioned Cursor tasks with worktrees on disk, so `prepare_task_session`
-/// admits both session sockets.
 fn context_with_provisioned_cursor_tasks(
     worktrees: &std::path::Path,
 ) -> CommandContext<InMemoryRegistry> {
@@ -440,8 +414,6 @@ fn context_with_provisioned_cursor_tasks(
     crate::test_support::context_with_tasks(&["web", "api"], tasks)
 }
 
-/// Raw WebSocket upgrade on a blocking socket. Returns the stream so the caller
-/// keeps the connection (and the server-side socket task) alive.
 fn websocket_upgrade_blocking(
     address: std::net::SocketAddr,
     cookie: &str,
@@ -479,8 +451,6 @@ fn websocket_upgrade_blocking(
     stream
 }
 
-/// Plain-HTTP GET on a blocking socket, bounded by a read timeout so a stalled
-/// runtime fails the test instead of hanging it.
 fn http_get_blocking(
     address: std::net::SocketAddr,
     path: &str,
@@ -659,8 +629,6 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        // SAFETY: ajax-web runtime tests are not run in parallel with other
-        // env-mutating tests in this module.
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }

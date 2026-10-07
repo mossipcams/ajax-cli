@@ -20,8 +20,6 @@ function spyAnchorClick(): AnchorRecorder {
   const clickSpy = vi
     .spyOn(HTMLAnchorElement.prototype, "click")
     .mockImplementation(() => {
-      // Intentionally no-op: we don't want jsdom to attempt a real
-      // navigation when the anchor is clicked.
     });
 
   const originalAppend = document.body.appendChild.bind(document.body);
@@ -81,11 +79,8 @@ describe("createTerminalLinkService", () => {
     );
     expect(anchor!.href).toBe("https://example.com/path");
     expect(recorder.clickSpy).toHaveBeenCalledTimes(1);
-    // Successful opens must use the blank anchor only, never window.open,
-    // which can replace the Ajax document on iOS standalone PWAs.
     expect(open).not.toHaveBeenCalled();
     expect(window.location.href).toBe(initialHref);
-    // Anchor is removed from the DOM after click.
     expect(recorder.anchorCount()).toBe(0);
   });
 

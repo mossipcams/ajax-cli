@@ -87,7 +87,6 @@ describe("TaskWorkspaceHeader", () => {
     expect(screen.queryByText(longFirstPrompt)).not.toBeInTheDocument();
   });
 
-  // Regression for #1055: long task titles must not expand header chrome.
   it("clamps long task titles so header chrome stays compact (#1055)", () => {
     const titleBlock = stylesSource.match(/\.detail-title\s*\{([\s\S]*?)\}/);
     expect(titleBlock).not.toBeNull();

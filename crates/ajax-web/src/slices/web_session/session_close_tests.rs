@@ -1,5 +1,3 @@
-//! ACP `session/close` on child teardown when advertised.
-
 use super::test_support::{fake_acp_fixture, has_message, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{
@@ -160,7 +158,6 @@ fn seed_user_turn(directory: &BlockingSessionDirectory, handle: &str) {
 
 #[test]
 fn advertised_close_skipped_on_detach_and_session_resumes() {
-    // #1061: idle/restart detach must keep the agent session loadable.
     let dir = scratch_dir("detach-resumes");
     let handle = "web/detach-resumes";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -197,9 +194,6 @@ fn advertised_close_skipped_on_detach_and_session_resumes() {
 
 #[test]
 fn live_model_apply_reenter_resumes_without_session_close() {
-    // #1149: a live model-option apply re-pins the slot model to the persisted
-    // pipe form, so re-entering with that persisted form resumes the session
-    // instead of sending session/close and starting over.
     let dir = scratch_dir("live-apply-reenter-resume");
     let handle = "web/live-apply-reenter-resume";
     let directory = BlockingSessionDirectory::new(dir.clone());
@@ -235,7 +229,6 @@ fn live_model_apply_reenter_resumes_without_session_close() {
 
                 directory.release(handle);
 
-                // Re-entry hands the persisted pipe form back as the want model.
                 directory
                     .acquire(handle, &dir, &persisted, AgentClient::Cursor)
                     .expect("re-acquire");
@@ -258,7 +251,6 @@ fn live_model_apply_reenter_resumes_without_session_close() {
 
 #[test]
 fn advertised_close_on_drop_session_prevents_resume() {
-    // #1061: task Drop remains a terminal close.
     let dir = scratch_dir("close-prevents-resume");
     let handle = "web/close-prevents-resume";
     let directory = BlockingSessionDirectory::new(dir.clone());

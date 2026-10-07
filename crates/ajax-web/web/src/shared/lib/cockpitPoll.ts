@@ -7,7 +7,6 @@ export type GestureBusyGate = {
   onIdle(listener: () => void): () => void;
 };
 
-/** Refcount gate: while busy, background poll projections defer (INP). */
 export function createGestureBusyGate(): GestureBusyGate {
   let count = 0;
   const idleListeners = new Set<() => void>();
@@ -35,7 +34,6 @@ export function createGestureBusyGate(): GestureBusyGate {
 
 export const gestureBusyGate = createGestureBusyGate();
 
-// API JSON is parsed with stable key order from serde; plain stringify is enough.
 export function stableCockpitHash(view: BrowserCockpitView): string {
   return JSON.stringify(view);
 }
@@ -78,7 +76,6 @@ export function createCockpitApplyGate(): {
 }
 
 export type InFlightRunOptions = {
-  /** When true, overlapping calls schedule one trailing re-run after the flight. */
   trailing?: boolean;
 };
 
@@ -112,7 +109,6 @@ export function createInFlightGuard(): {
         const again = dirty;
         dirty = false;
         inFlight = null;
-        // Trailing overlap arrived after the loop exited but before clear.
         if (again) void run(fn, { trailing: true });
       }
     }

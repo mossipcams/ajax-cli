@@ -1,5 +1,3 @@
-// Pure speech-input state for continuous STT. No timers, browser APIs, or task truth.
-
 export const DEFAULT_SPEECH_CONFIG = {
   pauseGracePeriodMs: 9000,
 } as const;
@@ -12,22 +10,18 @@ export type SpeechInputState =
   | "finalizing"
   | "error";
 
-/** @deprecated Use `SpeechInputState`. */
 export type SpeechState = SpeechInputState;
 
 export interface SpeechInputModel {
   state: SpeechInputState;
   sessionId?: string;
   pauseGracePeriodMs: number;
-  /** Contiguous finalized text applied in sequence order (auto-insert destination). */
   finalTranscript: string;
   partialTranscript: string;
   pauseDeadlineMs?: number;
   pauseTimerToken?: number;
   errorMessage?: string;
-  /** All received finals keyed by sequence (may include buffered future seqs). */
   finalSegments: Record<number, string>;
-  /** Next sequence number that may be appended to finalTranscript. */
   nextExpectedSequence: number;
   nextPauseTimerToken: number;
 }
@@ -62,7 +56,6 @@ export function createSpeechInputModel(): SpeechInputModel {
   };
 }
 
-/** Strip trailing whitespace and terminal punctuation (ASCII + common Unicode). */
 function normalizeStandaloneCommand(text: string): string {
   return text
     .trim()
@@ -75,7 +68,6 @@ export function isStandalonePause(text: string): boolean {
   return normalizeStandaloneCommand(text) === "pause";
 }
 
-/** Standalone spoken reset: `start over` or `start fresh` (with terminal punctuation). */
 export function isStandaloneStartOver(text: string): boolean {
   const normalized = normalizeStandaloneCommand(text);
   return normalized === "start over" || normalized === "start fresh";
@@ -95,7 +87,6 @@ function buildFinalTranscript(
   return parts.join(" ").trim();
 }
 
-/** Apply newly contiguous segments; returns next expected sequence. */
 export function advanceContiguousFinals(
   finalSegments: Record<number, string>,
   nextExpectedSequence: number,
@@ -183,8 +174,6 @@ export function speechReducer(
         if (!canAcceptControl) {
           return model;
         }
-        // Drop spoken finals and skip this control sequence so later provider
-        // sequences remain contiguous after the reset.
         return {
           ...model,
           finalSegments: {},

@@ -296,10 +296,6 @@ export function settleTurn(state: ChatSessionReducerState): ChatSessionReducerSt
   });
 }
 
-/** A turn that ends leaves no command running. ACP is not obliged to send a
- * terminal update for a call the operator cancelled or the harness abandoned,
- * and an unsettled call goes on reading as in-flight for the rest of the
- * session. */
 function settleOpenToolCalls(
   state: ChatSessionReducerState,
   status: "cancelled" | "failed",
@@ -316,7 +312,6 @@ function settleOpenToolCalls(
   return bumpRevision({ ...state, view: { ...state.view, conversation } });
 }
 
-/** Walk back from the transcript tail toward the prompt that opened the turn. */
 function scanTurnTail(conversation: ConversationItem[]): {
   userPromptText: string | null;
   errorNoteId: string | null;
@@ -339,15 +334,11 @@ function scanTurnTail(conversation: ConversationItem[]): {
   return { userPromptText: null, errorNoteId: null, hasAgentProse: false };
 }
 
-/** Whether this turn already told the operator how it went. Walk back to the
- * prompt that opened it: a host error explained the failure, and an answer
- * means the turn was not silent. */
 function turnAlreadyReported(state: ChatSessionReducerState): boolean {
   const { errorNoteId, hasAgentProse } = scanTurnTail(state.view.conversation);
   return hasAgentProse || errorNoteId !== null;
 }
 
-/** Prompt text to put back in the composer after a failed turn with no answer. */
 export function failedTurnPromptToRestore(
   conversation: ConversationItem[],
 ): { promptText: string; failureKey: string } | null {
@@ -362,7 +353,6 @@ export function applyTurnEnd(
 ): ChatSessionReducerState {
   const failed = stopReason?.toLowerCase() === "error";
   const settled = settleOpenToolCalls(settleTurn(state), failed ? "failed" : "cancelled");
-  // Repeating the failure the host already named states a second, false one.
   if (failed && !turnAlreadyReported(settled)) {
     const seq = settled.seq + 1;
     return bumpRevision({

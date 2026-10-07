@@ -1,5 +1,3 @@
-//! Task-associated pull-request discovery and CI attempt reduction.
-
 use crate::{
     adapters::{
         CiChecksObservation, CiChecksReport, CiChecksState, CommandRunner, GithubChecksAdapter,
@@ -14,11 +12,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-// Minimum gap for `checks_due` while an attempt is pending or failed — not a
-// standalone poll scheduler. Live probes run only on `RefreshTier::Full`; web
-// `/api/cockpit` is Live. The web background tick already runs Full refresh
-// (including CI probes) and attention delivery every 30 seconds on the same
-// tick before `deliver_attention_pushes`.
 const ACTIVE_CHECK_INTERVAL_SECS: u64 = 10;
 const DISCOVERY_INTERVAL_SECS: u64 = 300;
 
@@ -276,17 +269,11 @@ fn apply_report(
     }
 }
 
-/// True when a prior failure episode saw checks go pending again and a rerun is
-/// still in flight. Distinct from first-attempt failure with sibling pending
-/// checks, which never sets `saw_pending_after_failure`.
 pub(crate) fn rerun_in_progress(state: &CiMonitorState) -> bool {
     state.saw_pending_after_failure
         && (state.status == CiAttemptStatus::Pending || state.has_pending)
 }
 
-/// GitHub checks are still pending or rerunning; notify only after a poll
-/// records settled failure (or cleared). First-attempt failure with sibling
-/// pending checks does not set `saw_pending_after_failure` and is not in flight.
 pub(crate) fn checks_in_flight(state: &CiMonitorState) -> bool {
     state.status == CiAttemptStatus::Pending || rerun_in_progress(state)
 }
@@ -298,8 +285,6 @@ fn apply_failed(task: &mut Task, state: &mut CiMonitorState, previous: &CiMonito
         .map(|check| check.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    // A restarted run can report the old failure alongside in-progress checks.
-    // Keep projecting "CI running" until the rerun settles.
     if !rerun_in_progress(state) {
         super::github_checks::apply_github_checks_observation(
             task,

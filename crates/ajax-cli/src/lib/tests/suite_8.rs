@@ -334,8 +334,6 @@ fn drop_execute_completes_when_branch_is_already_missing() {
         &mut runner,
     )
     .unwrap();
-    // Path-only Present still force-removes a drifted checkout even when the
-    // ajax/* branch is already gone.
     assert_eq!(runner.commands.len(), 9);
     assert_eq!(runner.commands[4].program, "sh");
     assert_eq!(runner.commands[4].args[2], "ajax-fast-worktree-remove");

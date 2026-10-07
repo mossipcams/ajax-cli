@@ -1,5 +1,3 @@
-//! Transport-neutral notifications destined for the task's owning agent.
-
 use crate::models::TaskId;
 use serde::{Deserialize, Serialize};
 

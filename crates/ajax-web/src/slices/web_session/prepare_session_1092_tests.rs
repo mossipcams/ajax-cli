@@ -1,5 +1,3 @@
-//! Promote-on-attach for #1092.
-
 use super::prepare_task_session;
 use super::SessionRouteError;
 use ajax_core::adapters::CommandRunner;

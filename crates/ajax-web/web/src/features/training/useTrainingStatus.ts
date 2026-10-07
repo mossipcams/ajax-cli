@@ -9,7 +9,6 @@ export interface UseTrainingStatus {
   refresh: () => Promise<void>;
 }
 
-/** Polls GET /api/training/status every 3000ms only while `enabled` is true. */
 export function useTrainingStatus(enabled: boolean): UseTrainingStatus {
   const [status, setStatus] = useState<TrainingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);

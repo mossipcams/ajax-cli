@@ -3,9 +3,7 @@ import type { BrowserTaskDetail } from "@/shared/lib/types";
 
 export interface TaskWorkspaceHeaderProps {
   detail?: BrowserTaskDetail | null;
-  /** Shown as the title when detail has not loaded yet. */
   handle?: string;
-  /** When false, omit the header status pill (chat live head owns task state). Default true. */
   showStatusPill?: boolean;
   onBack: () => void;
   onOpenDetails?: () => void;
@@ -14,7 +12,6 @@ export interface TaskWorkspaceHeaderProps {
   detailsTestId?: string;
 }
 
-/** Shared task identity row: back, title, details affordance, status pill. */
 export default function TaskWorkspaceHeader({
   detail,
   handle,

@@ -21,8 +21,6 @@ describe("ErrorBoundary", () => {
     expect(screen.getByText("content")).toBeInTheDocument();
   });
 
-  // A render bug used to be reported as "Incompatible server response", which
-  // pointed diagnosis at the server and hid the real message.
   it("shows the real message for a render crash, not a server-contract claim", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     render(

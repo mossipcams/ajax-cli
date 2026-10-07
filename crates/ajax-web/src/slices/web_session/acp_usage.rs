@@ -1,8 +1,3 @@
-//! Per-turn token usage from ACP `session/prompt` results and deduplication.
-//!
-//! Context-window pressure (`usage_update` → `usage`) stays separate so operators
-//! are not double-counted when a harness reports both shapes.
-
 use super::SessionServerEvent;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -30,7 +25,6 @@ pub(crate) struct NormalizedTurnUsage {
     pub total_tokens: Option<u64>,
 }
 
-/// Parse a provider usage object from `session/prompt` result.usage.
 pub(crate) fn parse_turn_usage(raw: &Value) -> Option<NormalizedTurnUsage> {
     let usage = raw.as_object()?;
     let mut normalized = NormalizedTurnUsage {

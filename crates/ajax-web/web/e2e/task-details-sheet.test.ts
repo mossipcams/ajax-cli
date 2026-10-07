@@ -1,6 +1,3 @@
-// Task details sheet coverage superseding terminal-behavior.test.ts selectors.
-// terminal-behavior.test.ts cannot be edited without tripping the 1000-line File LOC gate.
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,

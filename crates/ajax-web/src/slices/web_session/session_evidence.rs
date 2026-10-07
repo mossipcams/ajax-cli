@@ -1,5 +1,3 @@
-//! Task evidence reporting and transcript durability faults for one session slot.
-
 use super::session_activity::{activity_report_transcript_error, try_report_session_activity};
 use super::{
     ReportSessionActivity, SessionActivity, SessionActivityReporter, SessionError,
@@ -7,19 +5,13 @@ use super::{
 };
 
 pub(super) struct SessionEvidence {
-    /// Dedupes ACP run-state transitions for task evidence for this slot.
     pub activity_reporter: SessionActivityReporter,
-    /// Activity that failed to persist on a prior append; retried before new events.
     pub pending_activity_report: Option<SessionActivity>,
     pub report_activity: Option<ReportSessionActivity>,
     pub activity_report_fault: Option<String>,
-    /// Set when task activity report fails; next collect_outbound emits transcriptError.
     pub pending_activity_report_error_snapshot: bool,
-    /// Dedupes identical spawn-class transcript errors across reconnect ([#1040]).
     pub last_logged_spawn_error_id: Option<String>,
-    /// Set when transcript append fails; blocks new prompts until operator reset.
     pub transcript_durability_fault: Option<String>,
-    /// Set when transcript append fails; next collect_outbound emits transcriptError.
     pub pending_transcript_error_snapshot: bool,
     /// Stored rows that could not be read back; shown, but does not block prompts.
     pub transcript_corruption: Option<String>,
@@ -76,7 +68,6 @@ impl SessionEvidence {
         }
     }
 
-    /// Retry a deferred activity report without waiting for another transcript append ([#1132]).
     pub(super) fn retry_pending_activity_report(&mut self, qualified_handle: &str) {
         self.flush_pending_activity_report(qualified_handle);
     }

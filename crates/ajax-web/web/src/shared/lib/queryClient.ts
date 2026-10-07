@@ -28,5 +28,4 @@ export function createQueryClient(): QueryClient {
   });
 }
 
-/** Singleton for the live shell; tests use `createQueryClient()` per render. */
 export const queryClient = createQueryClient();

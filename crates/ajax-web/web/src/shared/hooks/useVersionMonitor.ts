@@ -18,7 +18,6 @@ export function useVersionMonitor(): VersionMonitor {
       if (bootVersionRef.current === null) bootVersionRef.current = version;
       else setUpdateAvailable(version !== bootVersionRef.current);
     } catch {
-      // Offline: keep the pinned version and retry later.
     }
   }, [fetchVersion]);
 

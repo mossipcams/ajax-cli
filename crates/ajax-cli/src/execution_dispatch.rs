@@ -203,9 +203,6 @@ pub(crate) fn start_plan_observation(
         .iter()
         .find(|repo| repo.name == request.repo);
     let origin_fetch_age = repo.and_then(|repo| origin_fetch_age(&repo.path));
-    // Derive the same handle the start planner would use, then form the
-    // `ajax/<handle>` branch without re-implementing slugify. The repo/handle
-    // identity is already public via `start_task_identity`.
     let branch = format!(
         "ajax/{}",
         commands::start_task_identity(&request.repo, &request.title)

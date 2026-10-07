@@ -399,8 +399,6 @@ fn authorize_empty_registry_save_for_command(matches: &ArgMatches, tracked: &mut
     }
 }
 
-// The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
-
 fn load_context_for_matches(
     paths: &CliContextPaths,
     matches: &ArgMatches,

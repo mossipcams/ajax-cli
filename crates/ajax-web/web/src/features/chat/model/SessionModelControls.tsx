@@ -12,8 +12,6 @@ import {
 } from "@/shared/lib/liveSessionConfig";
 import { DEFAULT_SESSION_MODEL } from "@/features/task/public";
 
-/** iOS shows :active on Effort / Fast then drops click when the model list's
- *  overflow layer covers those chips. Touch applies on pointerdown. */
 function activateExtrasChip(
   event: { pointerType: string; preventDefault: () => void; stopPropagation: () => void },
   apply: () => void,
@@ -32,7 +30,6 @@ interface PickerProps {
   onApply: (configId: string, value: string | boolean) => void;
 }
 
-/** Whether live model, effort, and Fast controls should be offered. */
 export function hasSessionModelControls(
   _agent: string | undefined,
   options: LiveSessionConfigOption[],
@@ -47,7 +44,6 @@ export function hasSessionModelControls(
   return showModel || showThought || showFast;
 }
 
-/** Dismissable refusal notice for config-option apply failures. */
 export function SessionModelNotice({
   message,
   onDismiss,
@@ -99,9 +95,6 @@ export function SessionModelPickers({
             data-testid="session-config-model"
           >
             {unlistedModel ? (
-              // The host reports a model it does not advertise. Show it so the list
-              // is never left with nothing selected; re-applying it is not offered
-              // because the bridge only accepts advertised values.
               <button
                 type="button"
                 className="model-option is-selected"
@@ -215,7 +208,6 @@ export interface SessionModelSheetProps {
   onApply: (configId: string, value: string | boolean) => void;
 }
 
-/** Short label for the hotbar model control when a friendly name is unavailable. */
 export function sessionModelControlLabel(
   confirmedModel: string,
   options?: LiveSessionConfigOption[],
@@ -285,8 +277,7 @@ export default function SessionModelControls({
               </div>
 
               <div className="session-model-switch-body" data-testid="model-switch-body">
-                {/* The advertised list marks the running model itself; name it in
-                    prose only when this harness advertises no model to select. */}
+                {}
                 {modelLiveOption(options)?.choices.length ? null : (
                   <p className="session-model-switch-current" data-testid="model-switch-current">
                     Current: {sessionModelControlLabel(confirmedModel, options)}

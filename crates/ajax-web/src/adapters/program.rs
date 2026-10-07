@@ -1,12 +1,3 @@
-//! Resolve harness executables for a long-lived server process.
-//!
-//! `ajax-cli web` runs under tmux or a service manager, so its `PATH` is
-//! whatever that supervisor had when it started. Version managers move
-//! binaries — an nvm switch leaves `codex`, `pi`, and the ACP bridges under a
-//! node version the daemon's `PATH` no longer names — and the operator then
-//! sees a harness that simply "has no models". Fall back to the operator's own
-//! shell, which is where those tools were installed to be visible.
-
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -17,8 +8,6 @@ use std::{
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
 static SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
 
-/// Absolute path for `program`, or `None` when it is not installed anywhere the
-/// operator's shell can see. Cached: a miss costs a login-shell spawn.
 pub fn resolve_program(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         return Some(PathBuf::from(program));
@@ -31,8 +20,6 @@ pub fn resolve_program(program: &str) -> Option<PathBuf> {
 
     let resolved = resolve_on_path(program)
         .or_else(|| resolve_via_shell(program, &["-lc"]))
-        // Version managers commonly set PATH in `.zshrc`, which a login shell
-        // skips unless it is also interactive.
         .or_else(|| resolve_via_shell(program, &["-ilc"]));
 
     if let Ok(mut guard) = RESOLVED.lock() {
@@ -50,7 +37,6 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Ask the operator's shell where the program is, with the given flags.
 fn resolve_via_shell(program: &str, flags: &[&str]) -> Option<PathBuf> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let output = Command::new(shell)
@@ -66,8 +52,6 @@ fn resolve_via_shell(program: &str, flags: &[&str]) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// `PATH` as the operator's shell sees it, cached. Empty when the shell cannot
-/// be asked.
 fn shell_path() -> Option<String> {
     if let Ok(guard) = SHELL_PATH.lock() {
         if let Some(cached) = guard.as_ref() {
@@ -93,11 +77,6 @@ fn shell_path() -> Option<String> {
     resolved
 }
 
-/// A `Command` for `program`, resolved outside the server's `PATH` when needed.
-///
-/// The child gets the operator's shell `PATH` as well: an ACP adapter spawns its
-/// own harness (`claude-agent-acp` runs `claude`), so resolving only our direct
-/// child would leave the adapter unable to find the CLI behind it.
 pub fn harness_command(program: &str) -> Option<Command> {
     let mut command = Command::new(resolve_program(program)?);
     if let Some(shell_path) = shell_path() {
@@ -135,10 +114,6 @@ mod tests {
         assert_eq!(resolve_program("ajax-not-a-real-program"), None);
     }
 
-    // nvm and friends export PATH from `.zshrc`, which a plain login shell does
-    // not read — the daemon then cannot see any harness the operator installed.
-    // An ACP adapter spawns the harness CLI itself, so it needs a PATH that
-    // names it — resolving only our own child is not enough.
     #[test]
     fn a_harness_command_carries_the_shell_path() {
         let command = harness_command("sh").expect("sh is installed");

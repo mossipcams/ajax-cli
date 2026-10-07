@@ -22,7 +22,6 @@ fn scratch_dir(label: &str) -> std::path::PathBuf {
     dir
 }
 
-// GitHub issue #977: startup must delete persisted sessions with no registry owner.
 #[test]
 fn issue_977_startup_prunes_unowned_persisted_sessions() {
     let dir = scratch_dir("startup-prune");
@@ -45,7 +44,6 @@ fn issue_977_startup_prunes_unowned_persisted_sessions() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// GitHub issue #977: recoverable registry tasks keep their transcripts.
 #[test]
 fn issue_977_startup_keeps_owned_recoverable_task_transcripts() {
     let dir = scratch_dir("startup-keep");
@@ -67,7 +65,6 @@ fn issue_977_startup_keeps_owned_recoverable_task_transcripts() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// GitHub issue #977: Removed registry rows do not own a session.
 #[test]
 fn issue_977_removed_tasks_are_not_session_owners() {
     let mut task = crate::test_support::fix_login_task();
@@ -78,7 +75,6 @@ fn issue_977_removed_tasks_are_not_session_owners() {
     assert!(owned_session_handles(&context).is_empty());
 }
 
-// GitHub issue #977: Drop/recreate must not reload a prior handle's transcript.
 #[test]
 fn issue_977_drop_cleanup_isolates_handle_reuse() {
     use super::test_support::BlockingSessionDirectory;

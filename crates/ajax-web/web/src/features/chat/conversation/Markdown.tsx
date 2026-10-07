@@ -1,11 +1,3 @@
-// Agent prose is markdown. This renders the constructs agents actually emit into
-// React nodes — fenced code, inline code, headings, lists (including nested),
-// tables, blockquotes, links, bold — and lets everything else through as text.
-//
-// Deliberately not a markdown library: the full CommonMark surface is not
-// reachable from a chat turn, and a parser that never touches innerHTML cannot
-// inject agent output into the DOM as markup.
-
 import { useMemo, type ReactNode } from "react";
 
 type ListItem = { text: string; children: ListItem[] };
@@ -168,7 +160,6 @@ function safeLink(href: string, label: string, key: string): ReactNode {
   }
 }
 
-/** Inline code, bold, and http(s) links. Anything else stays literal text. */
 export function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return text.split(INLINE).map((part, index) => {
     const key = `${keyPrefix}-${index}`;
@@ -206,9 +197,6 @@ function renderListItems(items: ListItem[], ordered: boolean, keyPrefix: string)
   );
 }
 
-// ponytail: no reveal throttle. Source changes at most once per completed
-// paragraph now, so there is nothing to smooth — the throttle existed for
-// token-by-token streaming, which the conversation no longer does.
 export default function Markdown({ source }: { source: string }) {
   const blocks = useMemo(() => parseBlocks(source), [source]);
   return (

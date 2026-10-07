@@ -19,7 +19,6 @@ function writePreferenceSet(handles: Set<string>): void {
     localStorage.setItem(TASK_TERMINAL_PREFERENCE_STORAGE_KEY, JSON.stringify([...handles]));
     window.dispatchEvent(new CustomEvent(TASK_VIEW_EVENT));
   } catch {
-    // Private mode / storage denied: preference just won't stick.
   }
 }
 

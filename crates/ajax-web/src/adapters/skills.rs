@@ -1,5 +1,3 @@
-//! Resolve Cursor/Codex skill paths on the companion host.
-
 use std::path::{Path, PathBuf};
 
 pub fn resolve_skill_path(skill_name: &str) -> Option<PathBuf> {

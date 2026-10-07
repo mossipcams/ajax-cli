@@ -1,6 +1,5 @@
 import type { PointerEvent, RefObject } from "react";
 
-/** Regions where tap-dismiss must not blur the session composer or close the keyboard. */
 export const COMPOSER_KEYBOARD_DISMISS_EXEMPT_SELECTOR =
   "button, a, input, textarea, select, [role='button'], summary, [data-testid='session-composer-hotbar']";
 
@@ -14,19 +13,15 @@ export function isComposerKeyboardDismissTarget(target: EventTarget | null): boo
 
 const HOTBAR_CAPTURE_OPTIONS: AddEventListenerOptions = { capture: true, passive: false };
 
-/** iOS keyboard retention for terminal toolbar: dead space and pointerdown on keys. */
 export function retainToolbarKeyboardOnCapture(root: HTMLElement, event: Event): void {
   if (!(event.target instanceof Node) || !root.contains(event.target)) return;
   const interactive =
     event.target instanceof HTMLElement &&
     event.target.closest(COMPOSER_HOTBAR_INTERACTIVE_SELECTOR);
-  // touchstart preventDefault on a key swallows the click; pointerdown still
-  // keeps the xterm helper focused via onToolbarPointerDown.
   if (interactive && event.type === "touchstart") return;
   if (event.cancelable) event.preventDefault();
 }
 
-/** Registers capture touchstart/pointerdown retention on a terminal toolbar root. */
 export function attachToolbarKeyboardRetention(root: HTMLElement): () => void {
   const handler = (event: Event) => retainToolbarKeyboardOnCapture(root, event);
   root.addEventListener("touchstart", handler, HOTBAR_CAPTURE_OPTIONS);
@@ -37,7 +32,6 @@ export function attachToolbarKeyboardRetention(root: HTMLElement): () => void {
   };
 }
 
-/** Blurs the composer when tapping non-interactive chat chrome above the hotbar. */
 export function blurComposerOnPointerDown(
   event: PointerEvent<HTMLElement>,
   composerRef: RefObject<HTMLTextAreaElement | null>,

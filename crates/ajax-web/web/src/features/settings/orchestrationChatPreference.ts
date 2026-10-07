@@ -17,7 +17,6 @@ export function writeOrchestrationChatEnabled(enabled: boolean): void {
     localStorage.setItem(ORCHESTRATION_CHAT_STORAGE_KEY, enabled ? "true" : "false");
     window.dispatchEvent(new CustomEvent(SESSION_MODE_EVENT));
   } catch {
-    // Private mode / storage denied: preference just won't stick.
   }
 }
 

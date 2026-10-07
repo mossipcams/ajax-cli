@@ -162,7 +162,6 @@ describe("ChatComposer", () => {
     expect(screen.getByTestId("session-queued")).toHaveTextContent("Stopping…");
   });
 
-  // ajax-cli#1081: typing a new message while a follow-up is queued replaces it without cancelling.
   it("replaces a queued follow-up when the operator types again (#1081)", () => {
     mountChat();
 

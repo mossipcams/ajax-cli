@@ -103,9 +103,6 @@ describe("createTerminalScrollSync", () => {
   });
 
   it("applyOutput pins to scrollHeight that only appears after syncSpacer forces layout", () => {
-    // Regression for #823: spacer style.height is invisible to scrollHeight until
-    // layout. Without a forced reflow, scrollInteractionToBottom pins to the old
-    // maxTop and seeded open lands above the CLI.
     const { term, scrollToBottom } = createFakeTerminal({ rows: 24, bufferLength: 80 });
     const interactionEl = createInteractionEl(200, 200);
     const spacerEl = document.createElement("div");
@@ -132,8 +129,6 @@ describe("createTerminalScrollSync", () => {
   });
 
   it("syncSpacer measures a real row instead of dividing clientHeight by ceil'd rows", () => {
-    // Geometry mode ceil()s rows, so clientHeight/rows understates the cell
-    // height and the scroll mapping drifts. A rendered row is authoritative.
     const { term } = createFakeTerminal({ rows: 40, bufferLength: 1040 });
     const interactionEl = createInteractionEl(382);
     const rows = document.createElement("div");
@@ -174,11 +169,6 @@ describe("createTerminalScrollSync", () => {
     scrollSync.refreshFollow();
     expect(onUnseenOutput).not.toHaveBeenCalled();
 
-    // followLive is private, so observe it through its only consequence:
-    // applyOutput signals unseen output instead of scrolling when not following.
-    // Without this, refreshFollow could set follow unconditionally true and
-    // nothing here would fail — onUnseenOutput is driven by atBottom, not by
-    // followLive.
     scrollSync.applyOutput();
     expect(onUnseenOutput).toHaveBeenCalledWith(true);
     onUnseenOutput.mockClear();

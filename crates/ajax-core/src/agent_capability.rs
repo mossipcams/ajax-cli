@@ -1,12 +1,5 @@
-//! Per-client capability profiles for canonical agent events.
-//!
-//! Declares which facts each client can supply natively, via wrapper, pane
-//! fallback, or not at all. Used by status projection and pane fallback to
-//! avoid inventing high-confidence wait states from silence.
-
 use crate::models::AgentClient;
 
-/// How a client supplies a canonical fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilitySupport {
     Native,
@@ -16,7 +9,6 @@ pub enum CapabilitySupport {
     Unverified,
 }
 
-/// A canonical fact whose coverage can vary per client.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityFact {
     TurnStarted,
@@ -27,7 +19,6 @@ pub enum CapabilityFact {
     SessionClosed,
 }
 
-/// Declared coverage for each canonical fact on a given client.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AgentCapabilityProfile {
     pub turn_started: CapabilitySupport,

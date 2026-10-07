@@ -32,8 +32,6 @@ const agentProse = (id: string, text: string): ConversationItem => ({
 });
 
 describe("Conversation — assistant response reveal", () => {
-  // Word-by-word reveal reflows the column under a reader. A live answer shows
-  // the paragraphs it has finished; the unfinished one waits.
   it("reveals only completed paragraphs while the turn runs", () => {
     const items = [
       userProse("u1", "Explain it"),
@@ -65,8 +63,6 @@ describe("Conversation — assistant response reveal", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent("item");
   });
 
-  // A break inside a fence is content, not a paragraph boundary; cutting there
-  // would render half a code block as prose.
   it("never cuts a live answer inside a fenced block", () => {
     const items = [
       userProse("u1", "Show me"),
@@ -79,9 +75,6 @@ describe("Conversation — assistant response reveal", () => {
     expect(message).not.toHaveTextContent("cargo test");
   });
 
-  // #1043: a one-paragraph "Let me look at the handler." has no paragraph break to
-  // wait for, so gating it on one hid the agent's own words for the whole turn
-  // — including the sentence explaining a permission ask sitting on screen.
   it("reveals a completed message once the turn moves past it", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix login"),
@@ -133,8 +126,6 @@ describe("Conversation — assistant response reveal", () => {
     expect(messages[1]).not.toHaveTextContent("Partial");
   });
 
-  // #1043: a one-paragraph agent answer followed by tool/permission activity is
-  // complete prose, not a live stream — trimming would hide the whole message.
   it("shows completed agent prose before turn_end when later activity follows", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Go"),
@@ -180,7 +171,6 @@ describe("Conversation — assistant response reveal", () => {
 });
 
 describe("Conversation — transcript event order", () => {
-  // #1042: interleaved agent prose and activity must render in arrival order.
   it("renders interleaved agent prose and activity in arrival order", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Go"),
@@ -272,16 +262,12 @@ describe("Conversation — what stays in the conversation", () => {
 
     const marker = screen.getByTestId("session-permission-marker");
     expect(marker).toHaveAttribute("data-resolved", "false");
-    // #970 A: the row uppercased label and payload alike, so `rm -rf` reached
-    // the operator as `RM -RF` at the moment they were asked to approve it.
     expect(screen.getByText("Permission requested")).toHaveClass("session-note-label");
     expect(screen.getByText("Run rm -rf target/debug")).toHaveClass("session-note-text");
     expect(stylesSource).toMatch(/\.session-note-label\s*\{[^}]*text-transform:\s*uppercase/);
     expect(stylesSource.match(/\.session-note-text\s*\{([^}]*)\}/)?.[1] ?? "").not.toMatch(
       /text-transform/,
     );
-    // The Approve/Reject pair lives in the sticky head; a second copy here
-    // would be a control that scrolls away mid-decision.
     expect(screen.queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
   });
 

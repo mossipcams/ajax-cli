@@ -1,4 +1,3 @@
-// Re-export runtime items so suite_* grandchildren can `use super::*` / `super::X`.
 pub(super) use super::{
     api_access_policy, axum_app, browser_session_json_response, log_web_listening,
     operation_success_response, operator_input_sink, refresh_cockpit_and_cache,
@@ -105,8 +104,6 @@ impl Default for TestBridge {
     }
 }
 
-/// Block the first bridge call until the test releases the gate; later
-/// calls pass straight through.
 pub(super) fn wait_for_release(release: &Option<Arc<(Mutex<bool>, Condvar)>>, call_index: usize) {
     if call_index != 0 {
         return;
@@ -378,7 +375,6 @@ pub(super) fn authenticated_request(cookie: &str, uri: &str) -> axum::http::requ
     AxumRequest::builder().uri(uri).header("cookie", cookie)
 }
 
-/// State + session cookie + router for an `OkRunner`-backed test app.
 pub(super) fn app_with(
     context: CommandContext<InMemoryRegistry>,
     bridge: TestBridge,
@@ -394,8 +390,6 @@ pub(super) fn app_with(
     (state, cookie, app)
 }
 
-/// GET without a browser-session cookie (public shell/asset routes and
-/// 401 checks).
 pub(super) async fn get_public(app: &axum::Router, path: &str) -> axum::response::Response {
     app.clone()
         .oneshot(
@@ -408,7 +402,6 @@ pub(super) async fn get_public(app: &axum::Router, path: &str) -> axum::response
         .unwrap()
 }
 
-/// The `name=value` pair of the browser-session cookie a response set.
 pub(super) fn set_cookie_pair(response: &axum::response::Response) -> String {
     response
         .headers()

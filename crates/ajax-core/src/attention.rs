@@ -7,21 +7,11 @@ use crate::ui_state::{derive_operator_status, TaskStatus};
 
 pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
 pub const LAST_NOTIFIED_AT_KEY: &str = "last_notified_at";
-/// First Running/Idle sighting after a notified episode; stamp clears once this
-/// quiet window reaches the episode-clear dwell (30s).
 pub const NOTIFY_QUIET_SINCE_KEY: &str = "notify_quiet_since";
-/// First actionable sighting after re-arm; delivery waits until this quiet
-/// window reaches the confirmation dwell (15s). One shared clock for every
-/// actionable Waiting/Error — class changes do not restart the dwell.
 pub const NOTIFY_CANDIDATE_SINCE_KEY: &str = "notify_candidate_since";
 
-/// How long Running/Idle must persist after a delivery before the detector
-/// re-arms. Brief turn-boundary Running samples stay inside one episode.
-// ponytail: 30s constant; gate on tmux client activity if still too chatty.
 const EPISODE_CLEAR_DWELL: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long any actionable Waiting/Error must persist before the first push
-/// in an episode. Shared across status classes so flaps do not reset the clock.
 pub const NOTIFY_CONFIRMATION_DWELL: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,18 +23,6 @@ pub struct AttentionTransition {
     pub client: String,
 }
 
-/// Episode detector for operator attention push. Fires once when a task
-/// enters actionable Waiting (needs input) or Error; lifecycle-only
-/// "Ready for review" stays inbox-visible but does not phone-ping. In-flight
-/// drop (`Removing` / `Removed`) never pings — teardown substrate gaps are
-/// expected; durable `TeardownIncomplete` still does. Returning to
-/// Running/Idle clears the stamp only after the episode-clear dwell (30s),
-/// so one Waiting episode interrupted by short Running bursts delivers one
-/// ping. [`silence_notify_episode`] (from acknowledge) stamps the current
-/// episode without delivering so opening a task stops further pings until new
-/// evidence.
-/// ponytail: best-effort dedup; a concurrent first observation can produce
-/// one duplicate delivery — add per-key CAS only if duplicates ever annoy.
 pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition> {
     take_attention_transition_at(task, std::time::SystemTime::now())
 }
@@ -53,9 +31,6 @@ pub fn take_attention_transition_at(
     task: &mut Task,
     now: std::time::SystemTime,
 ) -> Option<AttentionTransition> {
-    // Drop teardown intentionally removes tmux/worktree; missing substrate
-    // during `Removing`/`Removed` would otherwise project as Error and ping.
-    // `TeardownIncomplete` is a durable lifecycle error and still notifies.
     if matches!(
         task.lifecycle_status,
         LifecycleStatus::Removing | LifecycleStatus::Removed
@@ -73,7 +48,6 @@ pub fn take_attention_transition_at(
                 clear_notify_candidate(task);
                 return None;
             }
-            // Still in (or back in) attention: cancel any quiet countdown.
             task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
             let stamp = episode_stamp(&operator_status);
             if task
@@ -109,8 +83,6 @@ pub fn take_attention_transition_at(
     }
 }
 
-/// Mark the current attention episode as already delivered so ack/open stops
-/// further push deliveries until new actionable evidence appears.
 pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
     let operator_status = derive_operator_status(task);
     if !is_actionable_attention(&operator_status) {
@@ -132,19 +104,10 @@ fn episode_stamp(status: &crate::ui_state::OperatorStatus) -> String {
     status.status.as_str().to_string()
 }
 
-/// Actionable operator-attention is decided structurally by the projector
-/// (`OperatorStatus::actionable`), not by matching the explanation string.
 fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
     status.actionable
 }
 
-/// Suppress error attention while CI or merge state is still settling.
-///
-/// GitHub CI failed: suppress while [`ci_monitor::checks_in_flight`].
-/// Merge conflict: suppress while git status has not confirmed the conflict,
-/// or while [`ci_monitor::rerun_in_progress`].
-///
-/// Agent-running is not a suppress path; poll-driven CI/merge state is.
 fn should_suppress_error_attention(
     task: &Task,
     operator_status: &crate::ui_state::OperatorStatus,
@@ -397,7 +360,6 @@ fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
 }
 
 fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationKind> {
-    // Done is Waiting-class for status reduction but reads as Reviewable here.
     if status == LiveStatusKind::Done {
         return Some(AnnotationKind::Reviewable);
     }

@@ -38,7 +38,6 @@ function stubFetch(includeTask = false) {
         return Promise.resolve(jsonResponse({ models: [{ id: "auto", label: "Auto" }] }));
       }
       if (includeTask && path.startsWith("/api/tasks/")) {
-        // Chat only renders for a task the host will attach.
         return Promise.resolve(jsonResponse({ ...taskDetail, session_capable: true }));
       }
       if (path.startsWith("/api/tasks/")) {
@@ -129,9 +128,6 @@ describe("App session routing", () => {
     expect(screen.queryByTestId("session-starter")).not.toBeInTheDocument();
   });
 
-  // Found in dev: with chat on, every task opened as a session, but a task whose
-  // agent still runs in tmux is refused by the host — the operator landed on a
-  // dead socket instead of the terminal.
   it("sends a non-acp task that cannot hold a session back to the terminal", async () => {
     writeOrchestrationChatEnabled(true);
     vi.stubGlobal(
