@@ -191,10 +191,24 @@ pub fn execute_drop_task_operation<R: Registry>(
                 let already_missing = output.status_code != 0
                     && drop_cleanup_resource_is_already_missing(&command, &output);
                 if output.status_code != 0 && !already_missing {
-                    let failure_detail = format!(
-                        "{} exited with status {}: {}",
-                        command.program, output.status_code, output.stderr
-                    );
+                    // When stderr is empty but stdout carries diagnostics (e.g. `git
+                    // branch -D` reports failures on stdout), fall back to stdout so a
+                    // non-zero drop step never persists an uninformative "exited with
+                    // status N:" detail. See issue #1260.
+                    let failure_detail =
+                        if output.stderr.trim().is_empty() && !output.stdout.trim().is_empty() {
+                            format!(
+                                "{} exited with status {}: {} (stdout; stderr was empty)",
+                                command.program,
+                                output.status_code,
+                                output.stdout.trim_end()
+                            )
+                        } else {
+                            format!(
+                                "{} exited with status {}: {}",
+                                command.program, output.status_code, output.stderr
+                            )
+                        };
                     record_drop_step_failed_event(context, qualified_handle, op, &failure_detail)?;
                     let drop_error = CommandError::CommandRun(CommandRunError::NonZeroExit {
                         program: command.program.clone(),
