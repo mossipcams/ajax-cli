@@ -96,6 +96,14 @@ failed on the defect. Use only the documented untestable exception in
 not silently fix a confirmed defect or treat chat, plans, or local TODOs as the
 tracking system.
 
+## Simplicity and reuse
+
+- You are not going to need it: do not add features, abstractions, configuration
+  options, or dependencies for hypothetical future needs. Implement only what the
+  current task requires.
+- Prefer reusing existing code over writing a new equivalent. Search for an
+  existing implementation before adding one.
+
 ## Rust file-size limit
 
 Keep handwritten Rust source files near 600 lines. The hard maximum is 1,000
