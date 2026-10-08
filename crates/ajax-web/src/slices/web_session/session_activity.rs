@@ -1,6 +1,8 @@
-use super::{ReportSessionActivity, SessionError};
+use super::{acp_execution_map, ReportSessionActivity, SessionError};
 use ajax_core::{
+    acp_execution_state::{AcpExecutionEvent, RootTurnState},
     adapters::acp_launch_for_agent,
+    agent_status::{reduce_agent_status, ParentPhase, ReduceInput},
     commands::CommandContext,
     live,
     models::{LiveObservation, LiveStatusKind, TaskId},
@@ -8,12 +10,16 @@ use ajax_core::{
 };
 use std::time::SystemTime;
 
+const ROOT_RUN_ID: &str = "acp-session";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionActivity {
     TurnStarted,
     AwaitingOperator,
     TurnEnded,
     TurnFailed,
+    CommandRunning,
+    TestsRunning,
+    AwaitingInput,
 }
 
 impl SessionActivity {
@@ -27,6 +33,15 @@ impl SessionActivity {
             }
             Self::TurnEnded => LiveObservation::new(LiveStatusKind::Done, "Response ready"),
             Self::TurnFailed => LiveObservation::new(LiveStatusKind::Blocked, "Agent stopped"),
+            Self::CommandRunning => {
+                LiveObservation::new(LiveStatusKind::CommandRunning, "Running command")
+            }
+            Self::TestsRunning => {
+                LiveObservation::new(LiveStatusKind::TestsRunning, "Running tests")
+            }
+            Self::AwaitingInput => {
+                LiveObservation::new(LiveStatusKind::WaitingForInput, "Waiting for input")
+            }
         }
     }
 }
@@ -83,51 +98,43 @@ pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
     format!("task activity report failed: {error}")
 }
 
-fn activity_for_event(
-    event: &super::SessionServerEvent,
-    turn_in_flight: bool,
-) -> Option<SessionActivity> {
-    use super::SessionServerEvent as Event;
-    match event {
-        Event::PromptAccepted { .. } => Some(SessionActivity::TurnStarted),
-        Event::PermissionRequest { .. } | Event::ElicitationRequest { .. } => {
-            Some(SessionActivity::AwaitingOperator)
-        }
-        Event::PermissionResolved { .. } | Event::ElicitationResolved { .. } => {
-            Some(SessionActivity::TurnStarted)
-        }
-        Event::TurnEnd { stop_reason } => Some(
-            if stop_reason
-                .as_deref()
-                .map(str::to_ascii_lowercase)
-                .as_deref()
-                == Some("error")
-            {
-                SessionActivity::TurnFailed
-            } else {
-                SessionActivity::TurnEnded
-            },
-        ),
-        Event::Error { .. } if turn_in_flight => Some(SessionActivity::TurnFailed),
-        _ => None,
-    }
-}
-
 #[derive(Debug, Default)]
 pub(crate) struct SessionActivityReporter {
+    state: ajax_core::acp_execution_state::AcpExecutionState,
     last: Option<SessionActivity>,
 }
 
 impl SessionActivityReporter {
     pub(crate) fn activity_for_event(
-        &self,
+        &mut self,
         event: &super::SessionServerEvent,
     ) -> Option<SessionActivity> {
-        let in_flight = matches!(
-            self.last,
-            Some(SessionActivity::TurnStarted) | Some(SessionActivity::AwaitingOperator)
-        );
-        let activity = activity_for_event(event, in_flight)?;
+        let in_flight = self.state.turn() == RootTurnState::Running;
+        let now = SystemTime::now();
+        self.state
+            .apply(acp_execution_map::execution_event(event, in_flight), now);
+
+        let projection = reduce_agent_status(ReduceInput {
+            now,
+            primary_run_id: ROOT_RUN_ID.to_string(),
+            process_liveness: None,
+            observations: &self.state.observations(ROOT_RUN_ID, now),
+        });
+
+        if projection.phase == ParentPhase::Unknown {
+            return None;
+        }
+
+        let activity = match projection.live.kind {
+            LiveStatusKind::AgentRunning => SessionActivity::TurnStarted,
+            LiveStatusKind::CommandRunning => SessionActivity::CommandRunning,
+            LiveStatusKind::TestsRunning => SessionActivity::TestsRunning,
+            LiveStatusKind::WaitingForApproval => SessionActivity::AwaitingOperator,
+            LiveStatusKind::WaitingForInput => SessionActivity::AwaitingInput,
+            LiveStatusKind::Done => SessionActivity::TurnEnded,
+            LiveStatusKind::Blocked | LiveStatusKind::CommandFailed => SessionActivity::TurnFailed,
+            _ => return None,
+        };
         if self.last == Some(activity) {
             return None;
         }
@@ -135,6 +142,10 @@ impl SessionActivityReporter {
     }
 
     pub(crate) fn commit(&mut self, activity: SessionActivity) {
+        if activity == SessionActivity::TurnStarted && self.state.turn() != RootTurnState::Running {
+            self.state
+                .apply(AcpExecutionEvent::PromptAccepted, SystemTime::now());
+        }
         self.last = Some(activity);
     }
 
@@ -339,6 +350,256 @@ mod tests {
                 status: "in_progress".to_string(),
                 locations: Vec::new(),
                 content: Vec::new(),
+            }),
+            None
+        );
+    }
+
+    fn prompt() -> SessionServerEvent {
+        SessionServerEvent::PromptAccepted {
+            client_message_id: "c1".to_string(),
+        }
+    }
+
+    fn tool(call_id: &str, title: &str, kind: &str) -> SessionServerEvent {
+        SessionServerEvent::ToolCall {
+            call_id: call_id.to_string(),
+            title: title.to_string(),
+            kind: kind.to_string(),
+            status: "in_progress".to_string(),
+            locations: Vec::new(),
+            content: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_running_execute_tool_is_command_running() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&tool("c1", "ls -la", "execute")),
+            Some(SessionActivity::CommandRunning)
+        );
+    }
+
+    #[test]
+    fn a_running_test_tool_is_tests_running() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&tool("c1", "cargo test", "execute")),
+            Some(SessionActivity::TestsRunning)
+        );
+    }
+
+    #[test]
+    fn an_elicitation_is_a_wait_for_input() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::ElicitationRequest {
+                request_id: "e1".to_string(),
+                message: "Which option?".to_string(),
+                schema: serde_json::Value::Null,
+            }),
+            Some(SessionActivity::AwaitingInput)
+        );
+    }
+
+    #[test]
+    fn a_permission_over_a_command_waits_and_the_answer_resumes_it() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&tool("c1", "ls -la", "execute")),
+            Some(SessionActivity::CommandRunning)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::PermissionRequest {
+                request_id: "p1".to_string(),
+                title: None,
+                detail: None,
+            }),
+            Some(SessionActivity::AwaitingOperator)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::PermissionResolved {
+                request_id: "p1".to_string(),
+                approved: true,
+            }),
+            Some(SessionActivity::CommandRunning)
+        );
+    }
+
+    #[test]
+    fn a_cancelled_turn_ends_not_fails() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::TurnEnd {
+                stop_reason: Some("cancelled".to_string()),
+            }),
+            Some(SessionActivity::TurnEnded)
+        );
+    }
+
+    #[test]
+    fn off_turn_events_report_nothing() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Message {
+                role: "assistant".to_string(),
+                text: "hi".to_string(),
+                content_blocks: Vec::new(),
+                item_id: String::new(),
+                message_id: None,
+            }),
+            None
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Error {
+                message: "spawn failed".to_string(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn a_repeated_prompt_acceptance_reports_once() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(reporter.observe(&prompt()), None);
+    }
+
+    #[test]
+    fn an_error_after_a_recovered_turn_fails_it() {
+        let mut reporter = reporter();
+        reporter.commit(SessionActivity::TurnStarted);
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Error {
+                message: "boom".to_string(),
+            }),
+            Some(SessionActivity::TurnFailed)
+        );
+    }
+
+    #[test]
+    fn command_test_and_input_evidence_read_as_running_or_waiting() {
+        let mut context = provisioned_context();
+        record_session_activity(
+            &mut context,
+            "web/fix-login",
+            SessionActivity::CommandRunning,
+            SystemTime::now(),
+        )
+        .expect("recorded");
+
+        assert_eq!(status_of(&context), TaskStatus::Running);
+
+        let mut context = provisioned_context();
+        record_session_activity(
+            &mut context,
+            "web/fix-login",
+            SessionActivity::TestsRunning,
+            SystemTime::now(),
+        )
+        .expect("recorded");
+
+        assert_eq!(status_of(&context), TaskStatus::Running);
+
+        let mut context = provisioned_context();
+        record_session_activity(
+            &mut context,
+            "web/fix-login",
+            SessionActivity::AwaitingInput,
+            SystemTime::now(),
+        )
+        .expect("recorded");
+
+        assert_eq!(status_of(&context), TaskStatus::Waiting);
+    }
+
+    #[test]
+    fn a_running_status_starts_the_turn() {
+        assert_eq!(
+            reporter().observe(&SessionServerEvent::Status {
+                state: "running".to_string(),
+                detail: None,
+            }),
+            Some(SessionActivity::TurnStarted)
+        );
+    }
+
+    #[test]
+    fn an_uncorrelated_requires_action_never_invents_a_wait() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Status {
+                state: "requires_action".to_string(),
+                detail: None,
+            }),
+            None
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::PermissionRequest {
+                request_id: "p1".to_string(),
+                title: None,
+                detail: None,
+            }),
+            Some(SessionActivity::AwaitingOperator)
+        );
+    }
+
+    #[test]
+    fn an_idle_status_never_marks_the_turn_done() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Status {
+                state: "idle".to_string(),
+                detail: None,
+            }),
+            None
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::TurnEnd {
+                stop_reason: Some("end_turn".to_string()),
+            }),
+            Some(SessionActivity::TurnEnded)
+        );
+    }
+
+    #[test]
+    fn an_off_turn_idle_status_reports_nothing() {
+        assert_eq!(
+            reporter().observe(&SessionServerEvent::Status {
+                state: "idle".to_string(),
+                detail: None,
             }),
             None
         );

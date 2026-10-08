@@ -726,10 +726,26 @@ only the chat live head knew a turn was in flight.
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
 - Transitions are derived from the same session events the host appends to the
-  JSONL transcript: `prompt_accepted` and a resolved ask report `AgentRunning`;
-  `permission_request` / `elicitation_request` report `WaitingForApproval`;
-  `turn_end` reports `Done`, or `Blocked` when the turn errored. Detail inside a
-  turn (messages, tool calls, usage) reports nothing. The host applies each
+  JSONL transcript, but not by a hand-written table. Each event is translated
+  to a neutral fact (`web_session::acp_execution_map`), folded into one
+  per-session `ajax_core::acp_execution_state::AcpExecutionState` (root turn,
+  open tool calls by `toolCallId`, pending permission/input requests, optional
+  children), sampled as `ProviderLifecycle` observations, and reduced by
+  `agent_status::reduce_agent_status`. The reducer's projection is what the
+  host reports: `prompt_accepted` reports `AgentRunning`; a running `execute`
+  tool reports `CommandRunning`, or `TestsRunning` when its title is a test
+  command; any other active tool stays `AgentRunning`; `permission_request`
+  reports `WaitingForApproval` and `elicitation_request` reports
+  `WaitingForInput`; an answered ask resumes the derived active state;
+  `turn_end` reports `Done`, `Blocked` when the turn errored, and `Done` (never
+  `Blocked`) when it was cancelled. ACP `state_update` is supporting evidence
+  only: `running` can start work on a session with no turn recorded but never
+  reopens a finished turn, `requires_action` without a pending request projects
+  `Unknown`, and `idle` never marks a turn done. Message and thought chunks only
+  move the activity timestamp. A reducer result of `Unknown` is not reported, so
+  it never overwrites prior live evidence. Child runs are tracked only from
+  explicit lineage events; the web session stream carries none today, so a
+  harness without them degrades to coarse `AgentRunning`. The host applies each
   transition as task evidence at transcript-append time — not from the browser
   WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
   operator leaves chat mid-turn and the chat head cannot disagree with task truth.

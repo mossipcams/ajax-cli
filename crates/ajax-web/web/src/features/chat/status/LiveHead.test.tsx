@@ -28,28 +28,25 @@ function mountHead(
 describe("headState precedence", () => {
   it("prefers permission decision over agent status", () => {
     expect(
-      headState({ requestId: "1", title: "Run?", detail: "" }, null, false, null, "running"),
+      headState({ requestId: "1", title: "Run?", detail: "" }, null, false, null),
     ).toBe("decision");
   });
 
-  it("maps ACP waiting and requires_action to attention", () => {
-    expect(headState(null, null, false, null, "waiting")).toBe("attention");
-    expect(headState(null, null, false, null, "requires_action")).toBe("attention");
+  it("maps session busy to working", () => {
+    expect(headState(null, null, true, null)).toBe("working");
   });
 
-  it("maps ACP running or session busy to working", () => {
-    expect(headState(null, null, false, null, "running")).toBe("working");
-    expect(headState(null, null, true, null, "idle")).toBe("working");
+  it("does not derive state from raw ACP status", () => {
+    expect(headState(null, null, false, null)).toBe("idle");
   });
 
   it("maps task attention waiting/error to attention", () => {
-    expect(headState(null, null, false, { status: "waiting" }, "idle")).toBe("attention");
-    expect(headState(null, null, false, { status: "error" }, "idle")).toBe("attention");
+    expect(headState(null, null, false, { status: "waiting" })).toBe("attention");
+    expect(headState(null, null, false, { status: "error" })).toBe("attention");
   });
 
   it("defaults to idle when nothing else applies", () => {
-    expect(headState(null, null, false, null, "idle")).toBe("idle");
-    expect(headState(null, null, false, null, null)).toBe("idle");
+    expect(headState(null, null, false, null)).toBe("idle");
   });
 });
 

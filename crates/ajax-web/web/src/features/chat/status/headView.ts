@@ -33,25 +33,14 @@ export function headStateLabel(state: HeadState, quiet: boolean): string {
   return STATE_LABELS[state];
 }
 
-function agentNeedsYou(status: string | null): boolean {
-  const token = status?.trim().toLowerCase();
-  return token === "waiting" || token === "requires_action";
-}
-
-function agentWorking(status: string | null): boolean {
-  return status?.trim().toLowerCase() === "running";
-}
-
 export function headState(
   decision: Decision | null,
   elicitation: ElicitationDecision | null,
   busy: boolean,
   taskAttention: ChatTaskAttention | null,
-  agentStatus: string | null,
 ): HeadState {
   if (decision || elicitation) return "decision";
-  if (agentNeedsYou(agentStatus)) return "attention";
-  if (agentWorking(agentStatus) || busy) return "working";
+  if (busy) return "working";
   if (taskAttention) return "attention";
   return "idle";
 }
@@ -94,7 +83,6 @@ export function buildHeadView(input: {
     elicitation,
     session.turn.busy,
     taskAttention,
-    session.status.acpState,
   );
   const tone = headTone(state, taskAttention);
   const taskLevel = isTaskLevelAttention(state, taskAttention, decision);
