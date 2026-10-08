@@ -1,0 +1,25 @@
+{"type":"response","id":"m-state","command":"get_state","success":true,"data":{"model":"claude-sonnet-4-5","thinkingLevel":"high","isStreaming":false,"isCompacting":false,"steeringMode":"supervised","sessionFile":"session.jsonl","sessionId":"b76d42be-2e51-4155-b3ec-e59d1cd21d5b","messageCount":2,"pendingMessageCount":0}}
+{"type":"extension_ui_request","id":"d31f76a0-a6b5-4a24-8bf4-8e2dc6ad95ee","method":"setStatus"}
+{"type":"extension_ui_request","id":"e5ea0c0c-26d9-4b01-9330-3e80cf9d21f6","method":"setStatus"}
+{"type":"response","id":"a1","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","timestamp":"2025-10-08T14:18:01.488Z"}}
+{"type":"message_end","message":{"role":"system","content":"","timestamp":"2025-10-08T14:18:01.488Z"}}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Write ~300 words on ocean tides"}],"timestamp":"2025-10-08T14:18:01.488Z"}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Write ~300 words on ocean tides"}],"timestamp":"2025-10-08T14:18:01.488Z"}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"A"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" writing"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" task"}}
+{"type":"message_update","usage":{"input":12,"output":27,"cacheRead":10366,"cacheWrite":0,"reasoning":0,"totalTokens":10405,"cost":{"input":0.0000168,"output":0.0001188,"cacheRead":0.00269516,"cacheWrite":0,"total":0.00283076}},"assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"A writing task, not a coding task — no file changes, so no router needed. Just write ~300 words on ocean tides."}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"#"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" Ocean"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" T"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"A writing task, not a coding task — no file changes, so no router needed. Just write ~300 words on ocean tides.","thinkingSignature":"reasoning_content"},{"type":"text","text":"# Ocean T"}],"stopReason":"aborted","timestamp":"2025-10-08T14:18:05.119Z"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"A writing task, not a coding task — no file changes, so no router needed. Just write ~300 words on ocean tides.","thinkingSignature":"reasoning_content"},{"type":"text","text":"# Ocean T"}],"stopReason":"aborted","timestamp":"2025-10-08T14:18:05.119Z"}}
+{"type":"extension_ui_request","id":"f4a92b55-1d8e-4677-8a52-6d3cfde83f7f","method":"setWidget","widgetKey":"pi-statusline"}
+{"type":"response","id":"a2","command":"abort","success":true,"data":{}}
+{"type":"agent_settled"}

@@ -76,12 +76,40 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
 }
 
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
+    if super::session_client::uses_pi_rpc(agent) {
+        return read_pi_rpc_catalog(cwd);
+    }
     let Ok((client, _report)) = AcpStdioClient::spawn(agent, cwd, None, None) else {
         return AgentModelCatalog::empty();
     };
     let catalog = parse_session_new_catalog(client.session_new_result());
     drop(client);
     catalog
+}
+
+/// Build the model catalog for a Pi RPC agent from its handshake config
+/// options, reusing [`parse_session_new_catalog`] for the parsing instead of
+/// an ACP session/new round trip.
+pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
+    let Ok((program, extra_args)) = super::session_client::pi_program_and_args() else {
+        return AgentModelCatalog::empty();
+    };
+    let Ok(client) = super::pi_rpc_client::PiRpcClient::spawn(
+        &program,
+        &extra_args,
+        cwd,
+        None,
+        super::client::HANDSHAKE_TIMEOUT,
+    ) else {
+        return AgentModelCatalog::empty();
+    };
+    let options = client.config_options();
+    let Ok(options_value) = serde_json::to_value(&options) else {
+        client.shutdown();
+        return AgentModelCatalog::empty();
+    };
+    client.shutdown();
+    parse_session_new_catalog(&serde_json::json!({ "configOptions": options_value }))
 }
 
 pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {

@@ -171,15 +171,17 @@ the harness advertises a documented full-access `mode` select value
 so agents may stop asking entirely. Legacy `modes` and `session/set_mode` are
 intentionally unsupported.
 
-ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
-harness to its ACP entry point and to how it accepts a model:
+ACP is per harness, not Cursor-only; Pi speaks its own RPC mode instead. The
+core launch table (`AcpLaunch`) maps each harness to its transport —
+`HarnessTransport::Acp`, and `HarnessTransport::PiRpc` for Pi — and to how it
+accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
 | Cursor | `agent acp` (native) | `--model` launch hint; live switch via advertised `configOptions` |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `claude-agent-acp` | `session/set_config_option` |
-| Pi | `pi-acp` | `session/set_config_option` |
+| Pi | `pi --mode rpc` (not ACP; JSONL RPC over stdio) | RPC commands `set_model` / `set_thinking_level` |
 
 Every bridge answers `session/set_config_option { sessionId, configId, value }`,
 which carries both the model and the reasoning level those harnesses expose as a
@@ -189,12 +191,58 @@ name the level. A selection is therefore stored as `model|configId=value`, e.g.
 `opus|effort=low`, parsed by `parse_model_selection` in core and applied one
 config option at a time.
 
-Cursor is the only harness that speaks ACP itself today; the others are reached
-through their Agent Client Protocol adapters, which are separate installs:
-`@agentclientprotocol/codex-acp`, `@agentclientprotocol/claude-agent-acp`, and
-`pi-acp`. `ajax doctor` reports each one as `acp:<harness>` and names the package
-when it is missing, and the host falls back to `npx -y <package>` so a host
-without the global install still gets a session.
+Cursor is the only harness that speaks ACP itself today; Codex and Claude are
+reached through their Agent Client Protocol adapters, which are separate
+installs: `@agentclientprotocol/codex-acp` and
+`@agentclientprotocol/claude-agent-acp`. `ajax doctor` reports each one as
+`acp:<harness>` and names the package when it is missing, and the host falls back
+to `npx -y <package>` so a host without the global install still gets a session.
+
+#### Pi RPC transport
+
+Pi is not reached through ACP. Ajax launches `pi --mode rpc -na [--session <id>]`
+as a child process and speaks Pi's JSONL RPC mode over its stdio (one JSON object
+per LF-terminated line; framing splits on LF only). The core launch table selects
+the transport: `AcpLaunch.transport` is `HarnessTransport::PiRpc` for Pi and
+`HarnessTransport::Acp` for Cursor, Codex and Claude. Pi stays a chat-capable
+harness: `acp_launch_for_agent(Pi)` still returns `Some`, which is the "supports
+Ajax Chat" test across the code base.
+
+- Install: `npm install -g @earendil-works/pi-coding-agent` (provides the `pi`
+  binary). `ajax doctor` reports it as `rpc:pi` and names that install command
+  when it is missing; Codex and Claude keep `acp:codex` / `acp:claude` for their
+  bridges.
+- Handshake: on spawn Ajax sends `get_state`, `get_available_models`,
+  `get_available_thinking_levels`, and `get_commands`, correlated by id. The Pi
+  model catalog comes from this handshake, not from an ACP `session/new`. The
+  `get_state` result (with its `data.sessionId`) is required; the other three
+  degrade to empty lists when missing.
+- Session identity: Pi's own session id IS the Ajax session id — the native ids
+  the old bridge handed out were already Pi's, so stored sessions keep resuming.
+  Restore relaunches with `--session <id>` and is fail-closed: if Pi comes back
+  with a different session id, spawn fails with the typed `ACP restore
+  unavailable` error (`Retry` / `Start fresh`) and never silently starts a fresh
+  session.
+- Model and thinking level: Pi's models are advertised as one `model` select
+  whose values are `provider/id`; thinking levels come from
+  `get_available_thinking_levels` and are advertised as a `thought_level` select
+  (ThoughtLevel category). Changes go through Pi's `set_model` (provider +
+  modelId) and `set_thinking_level`. A persisted pin has the same form as for the
+  other harnesses, e.g. `provider/id|thought_level=high`. A pin that cannot be
+  applied is reported as a model-apply error and does not fail the spawn; the
+  later steps of the pin still apply.
+- Usage: after each finished prompt Ajax calls Pi's `get_session_stats` (2 second
+  cap) and emits a context-usage update (`contextUsage.tokens` /
+  `contextWindow`) before the finish event, so the live head meter works; when
+  the stats are missing, the finish is delivered without a usage update.
+- Cancel maps to Pi's `abort`, and the run ends with stopReason `cancelled`. Run
+  completion is Pi's `agent_settled` event.
+- Permissions and elicitation: Ajax launches Pi with `-na` (no approve), so Pi RPC
+  mode surfaces no permission or form-elicitation requests to the browser; the
+  Pi variant rejects permission/elicitation responses.
+- Known gaps, stated as such: image/audio prompt blocks are not forwarded to Pi
+  yet (a placeholder line is sent); Pi extension UI records (`setStatus`,
+  `setWidget`, ...) are ignored.
 
 Harness binaries are resolved through `adapters::program`: the server's own
 `PATH`, then the operator's login shell. `ajax-cli web` runs under tmux or a

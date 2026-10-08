@@ -2,7 +2,8 @@
 
 Falsifiable invariants for the optional flag-gated **Ajax Chat** orchestration
 session mode in Web Cockpit. Ajax Chat is multi-harness: Cursor speaks ACP
-natively; Codex, Claude, and Pi reach ACP through their bridge packages. Later
+natively; Codex and Claude reach ACP through their bridge packages, while Pi is
+driven over its RPC mode. Later
 PRs implement against this ledger; nothing here is implementation how-to.
 
 ## Task Workspace and Ajax Chat default
@@ -47,8 +48,9 @@ existing paths.
 ## Launch
 
 - Provisioned starts skip tmux send-keys but still create the task tmux session.
-  Every harness with an ACP entry point (Cursor native, Codex/Claude/Pi via their
-  bridges) may use that launch mode; a harness without one cannot.
+Every harness with an ACP entry point (Cursor native, Codex/Claude via their
+bridges, and Pi over its RPC transport) may use that launch mode; a harness
+without one cannot.
 - The browser routes a task to chat when its projection reports
   `session_capable`, or when orchestration chat is on and the task's agent has an
   ACP entry point (Ajax chat stays reachable before promotion). Anything else
@@ -506,8 +508,8 @@ replacement while the child is healthy.
   `ACP restore unavailable` error carrying the stored session id; the stored
   id stays persisted so a later attach can retry. `session/resume` and
   `session/load` run on a dedicated restore budget (default 5 minutes,
-  overridable via `AJAX_ACP_RESTORE_TIMEOUT_MS`) because bridges such as
-  pi-acp replay the whole transcript inside `session/load` before responding.
+overridable via `AJAX_ACP_RESTORE_TIMEOUT_MS`) because the ACP bridges replay the
+whole transcript inside `session/load` before responding.
 - A restored session is never dropped to satisfy an operator model pin: the
   pin apply runs in-band on the restored session and a refusal surfaces as the
   typed model-apply error while the restored session keeps running. The
@@ -600,8 +602,8 @@ replacement while the child is healthy.
   shows the current fraction (`Context N% full`) next to the task state or
   Reconnecting label, before the head controls. When task attention hides the
   head line, the meter appears once at the bottom of the live head instead.
-  At 90%+ the indicator uses the warning tone. Pi uses `pi-acp@0.0.34`, which
-  reports context usage after each turn and model change.
+At 90%+ the indicator uses the warning tone. Pi reports context usage from
+`get_session_stats` (2 second cap) after each finished prompt.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
   `turn_usage` wire event. Cursor reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /

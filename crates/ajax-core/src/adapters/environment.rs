@@ -16,6 +16,11 @@ pub fn doctor_probe_tools() -> Vec<String> {
                 .into_iter()
                 .map(|(_, program, _)| program.to_string()),
         )
+        .chain(
+            super::agent::rpc_harness_programs()
+                .into_iter()
+                .map(|(_, program, _)| program.to_string()),
+        )
         .collect()
 }
 

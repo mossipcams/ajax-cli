@@ -10,7 +10,7 @@ use super::transcript::{context_cleared_note, harness_switch_note, slot_must_rep
 use super::{apply_cancel_to_queue, SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
-    AcpStdioClient, SpawnReport,
+    SessionClient, SpawnReport,
 };
 use crate::adapters::web_session_store::{self, StoredSession};
 use agent_client_protocol::schema::v1::SessionConfigOptionValue;
@@ -405,11 +405,11 @@ async fn spawn_acp(
     worktree_path: &Path,
     model: &str,
     resume_id: Option<&str>,
-) -> Result<(AcpStdioClient, SpawnReport), SessionError> {
+) -> Result<(SessionClient, SpawnReport), SessionError> {
     let worktree = worktree_path.to_path_buf();
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {
-        AcpStdioClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
+        SessionClient::spawn_with_operator_pin(agent, &worktree, model, resume.as_deref())
             .map_err(SessionError::classify_spawn)
     })
 }

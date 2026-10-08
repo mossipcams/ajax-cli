@@ -657,7 +657,7 @@ fn doctor_and_status_return_basic_health() {
         "codex",
         "codex-acp",
         "claude-agent-acp",
-        "pi-acp",
+        "pi",
     ])
     .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
 
@@ -678,7 +678,6 @@ fn doctor_names_the_missing_acp_adapter_package() {
     for (agent, package) in [
         ("codex", "@agentclientprotocol/codex-acp"),
         ("claude", "@agentclientprotocol/claude-agent-acp"),
-        ("pi", "pi-acp"),
     ] {
         let check = doctor
             .checks
@@ -692,6 +691,19 @@ fn doctor_names_the_missing_acp_adapter_package() {
             check.message
         );
     }
+
+    assert!(doctor.checks.iter().all(|check| check.name != "acp:pi"));
+    let pi_check = doctor
+        .checks
+        .iter()
+        .find(|check| check.name == "rpc:pi")
+        .unwrap_or_else(|| panic!("expected an rpc:pi check"));
+    assert!(!pi_check.ok, "pi rpc check should report missing");
+    assert!(
+        pi_check.message.contains("@earendil-works/pi-coding-agent"),
+        "pi check should name the pi install hint: {}",
+        pi_check.message
+    );
 }
 
 #[test]

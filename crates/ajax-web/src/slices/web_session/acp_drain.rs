@@ -4,7 +4,7 @@ use super::{
     normalize::StreamNormalizer, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::{
-    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpStdioClient,
+    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpEventSource,
 };
 use serde_json::{json, Value};
 
@@ -53,14 +53,14 @@ pub(crate) struct AcpDrainOutcome {
 
 #[cfg(test)]
 pub(crate) fn drain_acp_events(
-    client: &AcpStdioClient,
+    client: &impl AcpEventSource,
     deduper: &mut UsageDeduper,
 ) -> AcpDrainOutcome {
     drain_acp_events_with_prompt_cancel(client, deduper, None)
 }
 
 pub(crate) fn drain_acp_events_with_prompt_cancel(
-    client: &AcpStdioClient,
+    client: &impl AcpEventSource,
     deduper: &mut UsageDeduper,
     prompt_cancel: Option<(u64, bool)>,
 ) -> AcpDrainOutcome {

@@ -4,9 +4,15 @@ mod catalog;
 mod client;
 mod config_option_descriptors;
 mod config_options;
+mod pi_rpc_client;
+mod pi_rpc_handshake;
+mod pi_rpc_map;
+mod pi_rpc_process;
+mod pi_rpc_session;
 mod prompt_capability_descriptors;
 mod sdk_connection;
 pub(crate) mod sdk_elicitation;
+mod session_client;
 
 pub use available_command_descriptors::{
     available_command_descriptors, AvailableCommandDescriptor,
@@ -37,6 +43,32 @@ mod available_commands_tests;
 mod config_options_tests;
 
 #[cfg(test)]
+mod catalog_pi_rpc_tests;
+
+#[cfg(test)]
+mod pi_rpc_client_options_tests;
+#[cfg(test)]
+mod pi_rpc_client_tests;
+#[cfg(test)]
+mod pi_rpc_client_usage_tests;
+#[cfg(test)]
+mod pi_rpc_handshake_tests;
+#[cfg(test)]
+mod pi_rpc_map_tests;
+#[cfg(test)]
+mod pi_rpc_process_tests;
+#[cfg(test)]
+mod pi_rpc_session_tests;
+
+#[cfg(test)]
+mod pi_rpc_session_request_tests;
+#[cfg(test)]
+mod session_client_pin_tests;
+#[cfg(test)]
+mod session_client_spawn_tests;
+#[cfg(test)]
+mod session_client_tests;
+#[cfg(test)]
 mod spawn_tests;
 
 pub use apply_model::{
@@ -48,6 +80,7 @@ pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
 pub(crate) use sdk_connection::CancelOutcome;
+pub use session_client::{AcpEventSource, SessionClient};
 
 #[cfg(test)]
 pub(crate) use client::{

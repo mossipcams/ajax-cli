@@ -1,6 +1,8 @@
 use super::CommandContext;
 use crate::{
-    adapters::{acp_adapter_packages, DoctorEnvironment, REQUIRED_DOCTOR_TOOLS},
+    adapters::{
+        acp_adapter_packages, rpc_harness_programs, DoctorEnvironment, REQUIRED_DOCTOR_TOOLS,
+    },
     output::{DoctorCheck, DoctorResponse},
     registry::Registry,
 };
@@ -61,6 +63,22 @@ pub fn doctor_with_environment<R: Registry>(
                         format!("{program} available")
                     } else {
                         format!("{program} not found on PATH — npm install -g {package}")
+                    },
+                }
+            }),
+    );
+    checks.extend(
+        rpc_harness_programs()
+            .into_iter()
+            .map(|(client, program, hint)| {
+                let ok = environment.has_tool(program);
+                DoctorCheck {
+                    name: format!("rpc:{}", agent_label(client)),
+                    ok,
+                    message: if ok {
+                        format!("{program} available")
+                    } else {
+                        format!("{program} not found on PATH — {hint}")
                     },
                 }
             }),
