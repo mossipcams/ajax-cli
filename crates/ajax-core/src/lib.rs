@@ -1,5 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod acp_execution_state;
 pub mod adapters;
 pub mod agent_capability;
 pub mod agent_notification;
