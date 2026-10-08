@@ -185,8 +185,9 @@ stay distinct. Runtime refresh selects the mode from observation source:
 `ProcessExit` → trusted, `ProviderLifecycle` → authoritative, otherwise ordinary.
 
 **ACP prohibition:** provisioned chat reports host transitions through
-`web_session::session_activity`, which maps each transition to
-`ObservationSource::ProviderLifecycle`, runs `reduce_agent_status`, then calls
+`web_session::session_activity`, which folds each session event into
+`acp_execution_state::AcpExecutionState`, samples it as
+`ObservationSource::ProviderLifecycle` observations, runs `reduce_agent_status`, then calls
 **`apply_authoritative_observation_at`** on the projection. ACP must not use
 trusted apply. ACP `TurnEnded` maps to `LiveStatusKind::Done` between turns of
 the same launch; trusted apply would incorrectly mark the task `Reviewable`.

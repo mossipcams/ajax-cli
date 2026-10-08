@@ -1,6 +1,7 @@
 //! Browser orchestration-chat wire protocol and per-task session runtime.
 
 mod acp_drain;
+mod acp_execution_map;
 mod acp_map;
 mod acp_slot;
 pub(crate) mod acp_usage;
