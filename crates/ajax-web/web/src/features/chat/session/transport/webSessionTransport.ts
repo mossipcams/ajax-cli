@@ -34,7 +34,6 @@ export function connectWebSessionTransport(
   const stored = readOutbox(handle);
   const pendingPrompts = stored.filter(frameFits);
   if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
-  // ponytail: cursor is in-memory only; drop any legacy sessionStorage value on attach.
   clearSessionCursor(handle);
 
   const messageListener: SocketListener = (event) => {
@@ -233,7 +232,6 @@ export function connectWebSessionTransport(
       try {
         socket?.close();
       } catch {
-        // ignore close races
       }
       socket = undefined;
     },

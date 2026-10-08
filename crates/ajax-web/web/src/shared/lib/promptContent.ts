@@ -28,19 +28,15 @@ export type ComposerAttachment = {
   blocks: PromptContentBlockWire[];
 };
 
-/** Match host `ws_bridge::MAX_SESSION_FRAME_BYTES`. */
 export const MAX_PROMPT_FRAME_BYTES = 8 * 1024 * 1024;
 
-/** Maximum inline image blocks per prompt (mirrors host `prompt_content::MAX_IMAGE_BLOCKS`). */
 export const MAX_IMAGE_BLOCKS = 8;
 
 export const ATTACHMENT_TOO_LARGE =
   "That attachment is too large to send even after compression. Remove it or choose a smaller file.";
 
-/** Headroom reserved for JSON framing outside base64 image payloads. */
 const PROMPT_FRAME_HEADROOM_BYTES = 4096;
 
-/** Longest edge before downscaling during browser-side recompression. */
 const MAX_IMAGE_DIMENSION = 4096;
 const PLACEHOLDER_CLIENT_MESSAGE_ID = "00000000-0000-4000-8000-000000000000";
 

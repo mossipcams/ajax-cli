@@ -1,6 +1,3 @@
-// Focused paste-link coverage. Lives outside terminal-behavior.test.ts so this
-// PR does not touch that already-over-LOC file (see #783 / 0eaf9094).
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,

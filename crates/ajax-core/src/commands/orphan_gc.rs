@@ -14,8 +14,6 @@ use super::{context::CommandPlan, CommandContext, CommandError};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrphanGcMode {
     AjaxShaped,
-    /// Opt-in via `tidy --orphans=all`: also remove unregistered foreign sibling
-    /// worktrees (still never deletes non-`ajax/*` branches).
     All,
 }
 

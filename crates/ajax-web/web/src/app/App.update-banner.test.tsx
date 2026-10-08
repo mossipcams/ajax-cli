@@ -80,7 +80,6 @@ describe("App update banner", () => {
     expect(banner).toHaveTextContent("Update ready — tap to reload");
   });
 
-  // #1007: production shell is GET `/` with a hash; replace(origin+hash) is a no-op.
   it("reloads only once when the update banner is multi-tapped (#1007)", async () => {
     vi.useFakeTimers();
     let versionCalls = 0;
@@ -125,7 +124,6 @@ describe("App update banner", () => {
     vi.restoreAllMocks();
   });
 
-  // #1007: post-#1008 health-gated reload looked like a dead tap when health failed.
   it("navigates on banner tap without health or cockpit refetch (#1007)", async () => {
     vi.useFakeTimers();
     let versionCalls = 0;

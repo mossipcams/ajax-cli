@@ -1,8 +1,3 @@
-// Centralized API transport. All URLs are relative and same-origin so the
-// private hostname, IP address, and any same-origin reverse proxy behave
-// identically. Callers receive typed results and normalized errors; they must
-// not parse responses or branch on raw status codes themselves.
-
 import {
   assertCockpit,
   assertDetail,
@@ -53,7 +48,6 @@ function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS, querySignal?: Ab
   };
 }
 
-/** Sent on cockpit polls only while the document is visible — same request, no extra RTT. */
 export const AJAX_FOREGROUND_HEADER = "X-Ajax-Foreground";
 
 function documentIsForeground(): boolean {
@@ -92,9 +86,6 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-/** Re-issues the browser session cookie. Concurrent callers share one in-flight
- * request. Exported for the terminal socket, which cannot see the handshake
- * status and so renews on any dial that failed to open. */
 export async function renewBrowserSession(): Promise<void> {
   if (!browserSessionRenewal) {
     browserSessionRenewal = (async () => {
@@ -320,8 +311,6 @@ function operationErrorCode(payload: OperationResponse): string | null {
   return typeof payload.code === "string" && payload.code.length > 0 ? payload.code : null;
 }
 
-/** Operations and task-start return a refreshed cockpit projection; callers
- * replace their projection with it rather than merging optimistically. */
 export interface MutationResult {
   ok: boolean;
   response: OperationResponse;
@@ -353,7 +342,6 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
   return postMutation("/api/tasks", req);
 }
 
-/** Move an existing ACP-backed task to another harness (and model). */
 export async function swapTaskAgent(
   handle: string,
   agent: string,
@@ -374,8 +362,6 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
-/** Poll health until the server answers or the deadline passes. Used after a
- * restart, where a connection drop is expected. */
 export async function waitForServerOnline(
   timeoutMs: number = RESTART_TIMEOUT_MS,
   pollMs: number = RESTART_POLL_MS,
@@ -407,8 +393,6 @@ async function peekVersion(): Promise<string | null> {
   }
 }
 
-/** Poll until the server has restarted: require a down edge or version change,
- * then two consecutive healthy checks so we do not reload into a dying process. */
 export async function waitForServerRestart(options?: {
   timeoutMs?: number;
   pollMs?: number;
@@ -497,10 +481,6 @@ export async function startDevDeploy(taskHandle: string): Promise<DevDeployRespo
   return body;
 }
 
-/** Fresh allowlisted id for one terminal connection controller lifetime.
- * Not sessionStorage: duplicated tabs copy sessionStorage and would share a
- * tmux ephemeral viewport (competing resize/input). `connectTaskTerminal`
- * calls this once and reuses the value across that controller's redials. */
 export function createTerminalClientId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);

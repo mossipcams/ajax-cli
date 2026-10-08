@@ -13,8 +13,6 @@ fn adapter_contract_drop_uses_atomic_trash_rename() {
     }
     let mut outputs = present_drop_observation_outputs();
     outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
-    // Final re-observe after successful tear-down: path must be gone (path-only
-    // presence would correctly keep TeardownIncomplete).
     outputs.extend(absent_drop_observation_outputs());
     let mut runner = RecordingQueuedRunner::new(outputs);
     let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();

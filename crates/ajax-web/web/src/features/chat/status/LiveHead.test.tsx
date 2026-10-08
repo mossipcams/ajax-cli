@@ -93,8 +93,6 @@ describe("LiveHead task attention chrome", () => {
 });
 
 describe("LiveHead connection badge", () => {
-  // #1039: the state label and the offline badge rendered together, so the
-  // head claimed Ready and Reconnecting at the same time.
   it("shows one badge: a dropped socket replaces the state label", () => {
     mountHead({ state: "idle", connected: false });
 
@@ -159,12 +157,12 @@ describe("LiveHead context usage", () => {
     mountHead({ connected, showHeadLine: true, usage: { used: 25, size: 100 } });
     const meter = screen.getByTestId("session-usage");
     const label = screen.getByText(connected ? "Ready" : "Reconnecting");
-    /* eslint-disable testing-library/no-node-access -- Placement beside the label is the presentation contract. */
-    expect(label.parentElement).toHaveClass("session-head-line");
-    expect(label.parentElement).toContainElement(meter);
-    expect(label.nextElementSibling).toBe(meter);
-    expect(meter.nextElementSibling).toHaveClass("session-head-controls");
-    /* eslint-enable testing-library/no-node-access */
+    const headLine = screen.getByTestId("session-head-line");
+    expect(headLine).toContainElement(label);
+    expect(headLine).toContainElement(meter);
+    expect(headLine).toHaveTextContent(
+      `${connected ? "Ready" : "Reconnecting"}Context 25% full`,
+    );
     expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
   });
 
@@ -176,10 +174,11 @@ describe("LiveHead context usage", () => {
       attentionText: "Waiting for review",
       usage: { used: 25, size: 100 },
     });
-    // eslint-disable-next-line testing-library/no-node-access -- The fallback must be the final child.
-    expect(screen.getByTestId("session-head").lastElementChild).toBe(
-      screen.getByTestId("session-usage"),
-    );
+    expect(screen.queryByTestId("session-head-line")).toBeNull();
+    const section = screen.getByTestId("session-head");
+    const usage = screen.getByTestId("session-usage");
+    expect(section).toContainElement(usage);
+    expect(section).toHaveTextContent("Waiting for reviewContext 25% full");
     expect(screen.getAllByTestId("session-usage")).toHaveLength(1);
   });
 
@@ -210,9 +209,6 @@ describe("LiveHead context usage", () => {
 });
 
 describe("LiveHead working quiet lines", () => {
-  // The head used to reprint the running tool and the active plan step that the
-  // turn's activity row already narrates in the transcript — the same command
-  // twice, a screen apart, with the void between them.
   it("leaves the operation to the transcript once the turn has activity", () => {
     mountHead({ state: "working", tone: "running", hasActivity: true });
     expect(screen.queryByTestId("session-head-tool")).not.toBeInTheDocument();
@@ -255,9 +251,6 @@ describe("buildHeadView", () => {
     expect(view.attentionText).toBe("Needs input");
   });
 
-  // Task attention replaces the head line, and `Reconnecting` lives on it. A
-  // task waiting for review is where most sessions rest, so a dropped socket
-  // used to be invisible in exactly the common case.
   it("keeps the head line under task attention while the socket is down", () => {
     const view = buildHeadView({
       session: {

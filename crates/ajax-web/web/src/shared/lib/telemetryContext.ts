@@ -16,26 +16,21 @@ function safeStorageSet(storage: Storage, key: string, value: string): void {
   try {
     storage.setItem(key, value);
   } catch {
-    // ponytail: storage may be unavailable in private mode; ids stay in-memory for the call.
   }
 }
 
-/** Opaque id for install/session/event correlation (not a secret). */
 export function generateId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  // Secure fallback when randomUUID is unavailable (non-secure contexts).
   if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
-  // Last resort: timestamp only — never Math.random() (CodeQL js/insecure-randomness).
   return `ajax-${Date.now().toString(36)}`;
 }
 
-/** True when running as an installed PWA (Home Screen) rather than a browser tab. */
 export function isStandaloneDisplay(): boolean {
   if (typeof window === "undefined") {
     return false;
@@ -61,7 +56,6 @@ export function getInstallId(): string {
   return id;
 }
 
-/** Tab/session scoped — sessionStorage so a new browser session gets a new id. */
 export function getSessionId(): string {
   const existing = safeStorageGet(sessionStorage, SESSION_ID_KEY);
   if (existing) {
@@ -223,13 +217,11 @@ export function buildEventContext(): EventContext {
   };
 }
 
-/** Test seam: reset persisted identity and sequence between unit tests. */
 export function resetTelemetryContextForTests(): void {
   try {
     localStorage.removeItem(INSTALL_ID_KEY);
     localStorage.removeItem(SEQUENCE_KEY);
     sessionStorage.removeItem(SESSION_ID_KEY);
   } catch {
-    // ignore
   }
 }

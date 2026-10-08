@@ -222,9 +222,6 @@ fn session_load_with_load_fail_returns_error() {
     assert!(response.get("result").is_none());
 }
 
-// Checked against every installed harness: cancel is a notification. Sent as a
-// request, Cursor, Codex, Claude, and Pi all answer "Method not found" and keep
-// working — which is how Stop stayed a no-op.
 #[test]
 fn session_cancel_as_a_request_is_rejected() {
     let Some(mut acp) = FakeAcp::spawn(&[]) else {

@@ -1,5 +1,3 @@
-//! Whether the task tmux pane is running the harness agent (vs a shell).
-
 use ajax_core::{
     adapters::{acp_launch_for_agent, CommandRunner, CommandSpec},
     models::{AgentClient, Task},

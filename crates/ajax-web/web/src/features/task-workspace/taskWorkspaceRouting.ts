@@ -2,7 +2,6 @@ import { sessionHash, taskHash } from "@/shared/lib/routes";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { readTaskTerminalPreferred } from "./taskViewPreference";
 
-/** Mirrors host `supports_acp_session` / `acp_launch_for_agent` allowlist. */
 export function isAcpCapableAgent(agent: string | null | undefined): boolean {
   if (!agent?.trim()) return false;
   switch (agent.trim().toLowerCase()) {

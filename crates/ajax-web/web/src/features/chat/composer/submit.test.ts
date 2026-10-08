@@ -98,7 +98,6 @@ describe("submitComposerDraft", () => {
     ).toEqual({ action: "stop_and_send", sendCancel: true, clearDraft: true });
   });
 
-  // ajax-cli#1081: typing while a follow-up is queued replaces it instead of cancelling.
   it("updates the queued follow-up when new text is submitted (#1081)", () => {
     const queued = queueFollowUp({ status: "idle" }, "A");
     expect(
@@ -138,7 +137,6 @@ describe("applySubmitResult", () => {
     };
   }
 
-  // ajax-cli#1081: replace queued text without session/cancel.
   it("replaces queued follow-up text without changing stopping state (#1081)", () => {
     const queued = queueFollowUp({ status: "idle" }, "A");
     const next = applySubmitResult(
@@ -150,7 +148,6 @@ describe("applySubmitResult", () => {
     expect(next).toEqual(queueFollowUp({ status: "idle" }, "B"));
   });
 
-  // ajax-cli#1081: empty submit while queued still enters stopping state.
   it("enters stopping on empty submit while queued and busy (#1081)", () => {
     const queued = queueFollowUp({ status: "idle" }, "A");
     const next = applySubmitResult(
@@ -172,7 +169,6 @@ describe("applySubmitResult", () => {
     expect(next).toEqual(queueFollowUp({ status: "idle" }, "Next", blocks));
   });
 
-  // ajax-cli#1081: naive routing must not drop queued attachments when text is replaced.
   it("preserves queued attachments when replacing follow-up text (#1081)", () => {
     const queued = queueFollowUp({ status: "idle" }, "A", blocks);
     const next = applySubmitResult(

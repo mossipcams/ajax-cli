@@ -1,17 +1,3 @@
-//! ACP session run-state as task evidence.
-//!
-//! A provisioned chat task has no agent pane, so the supervisor's pane
-//! classifier has nothing true to say about it: the dashboard, the task page,
-//! the TUI and `ajax status` all read `Waiting`/`Idle` while the agent is
-//! mid-turn. The ACP host is the only observer of that work, so it reports it
-//! on the same contract the supervisor uses — a `LiveObservation` applied to
-//! the task — rather than the browser inventing a second status.
-//!
-//! This does not change how status is derived. `LiveStatusKind::AgentRunning`
-//! already means "Agent working" and `WaitingForApproval` already means an
-//! actionable wait; this slice only supplies the evidence for tasks the pane
-//! classifier cannot see.
-
 use super::{acp_execution_map, ReportSessionActivity, SessionError};
 use ajax_core::{
     acp_execution_state::{AcpExecutionEvent, RootTurnState},
@@ -24,26 +10,15 @@ use ajax_core::{
 };
 use std::time::SystemTime;
 
-/// The ACP session's run id as seen by the status reducer.
 const ROOT_RUN_ID: &str = "acp-session";
-
-/// What the ACP session just became. One variant per transition the host can
-/// observe first-hand; nothing here is inferred from a timer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionActivity {
-    /// A prompt was accepted and a turn is in flight.
     TurnStarted,
-    /// The agent is blocked on the operator: permission or elicitation.
     AwaitingOperator,
-    /// The turn ended normally or was cancelled.
     TurnEnded,
-    /// The turn ended in a typed error.
     TurnFailed,
-    /// A shell command from the turn is executing.
     CommandRunning,
-    /// The turn's test run is in progress.
     TestsRunning,
-    /// The agent is waiting for the operator to type an answer.
     AwaitingInput,
 }
 
@@ -71,11 +46,6 @@ impl SessionActivity {
     }
 }
 
-/// Apply one ACP transition to the task behind `qualified_handle`.
-///
-/// Only session-capable (provisioned, ACP-launchable) tasks accept this
-/// evidence: an interactive tmux task is the supervisor's to observe, and two
-/// producers writing one field is how a status starts oscillating.
 pub fn record_session_activity<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
@@ -100,15 +70,12 @@ pub fn record_session_activity<R: Registry>(
         .get_task_mut(&task_id)
         .ok_or_else(|| SessionError::protocol(format!("task disappeared: {qualified_handle}")))?;
 
-    // Authoritative: the host owns the ACP child, so this is first-hand
-    // process evidence, not a guess reconciled from screen scraping.
     live::apply_authoritative_observation_at(task, activity.observation(), now);
     Ok(())
 }
 
 pub(crate) const ACTIVITY_REPORT_MAX_ATTEMPTS: usize = 3;
 
-/// Bounded retries without sleeping on the per-session command loop.
 pub(crate) fn try_report_session_activity(
     report: &Option<ReportSessionActivity>,
     qualified_handle: &str,
@@ -131,12 +98,6 @@ pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
     format!("task activity report failed: {error}")
 }
 
-/// Turns the outbound event stream into task evidence, one report per change.
-///
-/// Stateful for two reasons: `error` means "the agent stopped" only while a
-/// turn is in flight, and a repeated state is not news — each report takes the
-/// control lane and persists a registry snapshot, so re-reporting `Running` on
-/// every answered permission would be disk traffic describing nothing.
 #[derive(Debug, Default)]
 pub(crate) struct SessionActivityReporter {
     state: ajax_core::acp_execution_state::AcpExecutionState,
@@ -153,8 +114,6 @@ impl SessionActivityReporter {
         self.state
             .apply(acp_execution_map::execution_event(event, in_flight), now);
 
-        // `Unknown` never overwrites prior live evidence: with no turn in
-        // flight there is nothing true to report.
         let projection = reduce_agent_status(ReduceInput {
             now,
             primary_run_id: ROOT_RUN_ID.to_string(),
@@ -183,8 +142,6 @@ impl SessionActivityReporter {
     }
 
     pub(crate) fn commit(&mut self, activity: SessionActivity) {
-        // A recovered in-flight turn (task_session_exit records `TurnStarted`
-        // on recovery) must still count a later error as a failed turn.
         if activity == SessionActivity::TurnStarted && self.state.turn() != RootTurnState::Running {
             self.state
                 .apply(AcpExecutionEvent::PromptAccepted, SystemTime::now());
@@ -226,9 +183,6 @@ mod tests {
         derive_operator_status(task).status
     }
 
-    // Without this the dashboard, task page, TUI and `ajax status` read a
-    // pane-derived Waiting through an entire ACP turn: the pane classifier
-    // cannot see a provisioned task's agent, and nothing else reported it.
     #[test]
     fn a_turn_in_flight_makes_the_task_read_as_running() {
         let mut context = provisioned_context();
@@ -281,9 +235,6 @@ mod tests {
         assert_ne!(status_of(&context), TaskStatus::Running);
     }
 
-    // `error` carries model-pick refusals, oversized frames and spawn
-    // complaints while the child keeps running. Marking the task Blocked for
-    // one of those would report a stopped agent on an idle session.
     #[test]
     fn an_error_outside_a_turn_is_not_a_stopped_agent() {
         assert_eq!(
@@ -309,8 +260,6 @@ mod tests {
         );
     }
 
-    // Each report takes the control lane and persists a registry snapshot, so
-    // an unchanged state must not be re-reported.
     #[test]
     fn an_unchanged_state_reports_once() {
         let mut reporter = reporter();
@@ -325,8 +274,6 @@ mod tests {
         assert_eq!(reporter.observe(&accepted), None);
     }
 
-    // An interactive tmux task is the supervisor's to observe. Two producers
-    // writing one field is how a status starts oscillating.
     #[test]
     fn an_interactive_task_refuses_acp_evidence() {
         let mut context =
@@ -392,9 +339,6 @@ mod tests {
             Some(SessionActivity::TurnFailed)
         );
     }
-
-    // #1069 regression lives in `session_activity_directory_tests`: append_to_log
-    // through TaskSessionDirectory, not a hand-rolled observe+record loop.
 
     #[test]
     fn detail_inside_a_turn_reports_nothing() {

@@ -90,8 +90,6 @@ pub struct DiffJudgment {
     pub flags: Vec<DiffFlag>,
 }
 
-/// Deterministic path heuristics for vibe review: lockfiles, build output, and
-/// minified/generated artifacts are noise; everything else is signal.
 pub fn classify_diff_path(path: &str) -> DiffFileRole {
     let basename = path.rsplit('/').next().unwrap_or(path);
 
@@ -207,7 +205,6 @@ fn flag(kind: DiffFlagKind, severity: DiffFlagSeverity, path: &str) -> DiffFlag 
     }
 }
 
-/// Deterministic vibe-judgment projection over already-parsed diff files.
 pub fn assess_diff_judgment(files: &[DiffFile]) -> DiffJudgment {
     let mut signal = 0u32;
     let mut noise = 0u32;
@@ -308,7 +305,6 @@ pub struct TaskDiffProjection {
     pub source: DiffSource,
     pub files: Vec<DiffFile>,
     pub pr: Option<PullRequestRef>,
-    /// PR number requested before hybrid fallback to local base...HEAD.
     pub fell_back_from_pr: Option<u64>,
     pub judgment: DiffJudgment,
 }
@@ -473,10 +469,6 @@ fn extract_path(path_line: &str) -> Option<String> {
     Some(path.strip_prefix("b/").unwrap_or(path).to_string())
 }
 
-/// Observe live GitHub PRs for the task branch, merge with stored refs, and
-/// persist the merged list back onto the task metadata when live observation
-/// succeeds. When `gh` is unobservable, return stored refs (possibly empty)
-/// instead of failing — Diff Review can still fall back to a local diff.
 pub fn observe_task_pull_requests(
     task: &mut Task,
     runner: &mut impl CommandRunner,
@@ -492,7 +484,6 @@ pub fn observe_task_pull_requests(
     Ok(stored_pull_requests(task))
 }
 
-/// Build a structured diff for a selected PR, or the local base...HEAD fallback.
 pub fn project_task_diff(
     task: &Task,
     runner: &mut impl CommandRunner,
@@ -557,7 +548,6 @@ pub fn project_task_diff(
     let output = match output {
         Ok(output) => output,
         Err(DiffReviewError::Unobservable(_)) if !force_local => {
-            // Hybrid fallback: PR patch unavailable → local base...HEAD.
             return local_diff_with_pr_fallback(task, runner, github, number);
         }
         Err(error) => return Err(error),

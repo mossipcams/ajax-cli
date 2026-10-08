@@ -1,5 +1,3 @@
-//! Operate bridge trait and action failure helpers for the web runtime.
-
 use crate::adapters::http::{json_response, Response};
 use crate::slices::cockpit;
 use crate::{slices::actions::supported_web_action, WebError};
@@ -53,12 +51,6 @@ pub trait RuntimeBridge<C: CommandRunner> {
         runner: &mut C,
     ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
 
-    /// Acknowledge operator attention for `task_handle` (e.g. the operator typed
-    /// in the Web Cockpit terminal). Returns `true` when the acknowledgment
-    /// advanced the task state and so callers should invalidate any cached
-    /// cockpit projection; `Ok(false)` means no-ack (recently acknowledged, no
-    /// newer live evidence, etc.). Errors are dropped by the sink caller; the
-    /// default body preserves existing (pre-ack) behavior.
     fn acknowledge_operator_input(
         &mut self,
         _context: &mut CommandContext<InMemoryRegistry>,
@@ -67,8 +59,14 @@ pub trait RuntimeBridge<C: CommandRunner> {
         Ok(false)
     }
 
-    /// Persist registry mutations that are not part of operate/start/ack flows
-    /// (e.g. Diff Review PR metadata observation). Default is a no-op for tests.
+    fn needs_operator_acknowledgment(
+        &self,
+        _context: &CommandContext<InMemoryRegistry>,
+        _task_handle: &str,
+    ) -> bool {
+        true
+    }
+
     fn persist_registry_snapshot(
         &mut self,
         _context: &mut CommandContext<InMemoryRegistry>,
@@ -76,8 +74,6 @@ pub trait RuntimeBridge<C: CommandRunner> {
         Ok(())
     }
 
-    /// Force-reload authoritative registry context from disk into `context`.
-    /// Returns `true` when durable storage replaced `context`; default is `Ok(false)`.
     fn reload_registry_from_disk(
         &mut self,
         _context: &mut CommandContext<InMemoryRegistry>,
@@ -129,7 +125,6 @@ pub(crate) fn handle_action_request<C: CommandRunner>(
     }
 }
 
-/// Reattach `browser_cockpit_view` from `context` after a durable CAS recovery.
 pub(crate) fn response_with_fresh_cockpit(
     mut response: Response,
     context: &CommandContext<InMemoryRegistry>,

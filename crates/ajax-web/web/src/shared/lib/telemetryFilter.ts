@@ -69,7 +69,6 @@ function isSensitiveValue(value: TelemetryPropValue): boolean {
   return false;
 }
 
-/** Drop sensitive keys and suspicious string values before PostHog capture. */
 export function sanitizeTelemetryProps(
   props: TelemetryProps,
 ): Record<string, string | number | boolean> {

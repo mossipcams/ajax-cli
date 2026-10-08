@@ -108,7 +108,6 @@ export default function SettingsView({
         onResult?.("Test in Stable failed", null, true);
         return;
       }
-      // Stable exits mid-request; connection drop is expected (#850).
     }
     const resumeOrigin = window.location.origin;
     const resumeHash = window.location.hash;
@@ -119,7 +118,6 @@ export default function SettingsView({
       const version = await fetchVersion();
       previousVersion = version.version;
     } catch {
-      // Continue without a version baseline.
     }
     const online = await waitForServerRestart({
       timeoutMs: TEST_IN_STABLE_TIMEOUT_MS,

@@ -1,5 +1,3 @@
-//! Map normalized ACP client events into session wire events.
-
 use super::acp_usage::UsageDeduper;
 use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
@@ -34,7 +32,6 @@ pub(crate) fn classify_prompt_terminal(
     }
 }
 
-/// Request-correlated terminal result for one `session/prompt` RPC.
 #[derive(Debug, Clone)]
 pub(crate) struct PromptTerminal {
     pub request_id: u64,
@@ -187,7 +184,6 @@ pub(crate) fn normalize_session_events(
     normalizer.normalize_batch(events)
 }
 
-/// Legacy name kept for tests that assert delta coalescing behavior moved to normalize.
 #[cfg(test)]
 pub(crate) fn coalesce_session_events(events: Vec<SessionServerEvent>) -> Vec<SessionServerEvent> {
     normalize_session_events(&mut StreamNormalizer::default(), events)
@@ -211,12 +207,6 @@ pub(crate) fn map_acp_session_update_with_startup(
 pub(crate) const CONNECTION_INTERRUPTED_MESSAGE: &str =
     "The connection was interrupted. Try sending again.";
 
-/// Cursor/ACP often finish a cancelled in-flight `session/prompt` as a transport
-/// RetriableError instead of a normal result with `stopReason: "cancelled"`.
-/// Match the cancel family only: `canceled`/`cancelled` (including harness
-/// `[canceled]`/`[cancelled]` tags, `context canceled`, gRPC `Canceled`), and
-/// HTTP/2 `error code cancel` / `CANCEL (0x8)`. Untagged stream close/reset and
-/// other RST codes are transport failures, not operator cancellation.
 fn is_cancellation_shaped_prompt_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     if lower.contains("canceled") || lower.contains("cancelled") {
@@ -237,9 +227,6 @@ fn map_operator_visible_acp_error(message: &str) -> String {
     }
 }
 
-/// A finished `session/prompt` is the only signal the browser gets that the
-/// agent stopped working, so it must reach the client even when the turn
-/// succeeded. Other completed requests carry nothing the chat can show.
 pub(crate) fn map_request_finished(
     method: &'static str,
     result: Result<Value, String>,

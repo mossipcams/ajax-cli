@@ -1,11 +1,6 @@
-// Layout/viewport regression suite for Web Cockpit scroll ownership.
-// Asserts computed layout (not screenshots). API responses are mocked via
-// addInitScript before boot, matching e2e/smoke.test.ts.
-
 import { test, expect, type Page } from "@playwright/test";
 import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket, sessionSnapshotJson } from "./fixtures";
 
-/** Sane upper bound for a single compact task row (min-height + padding + subline). */
 const MAX_TASK_ROW_HEIGHT_PX = 96;
 
 function cockpitWithManyTasks(count: number) {
@@ -21,7 +16,6 @@ function cockpitWithManyTasks(count: number) {
   return { ...COCKPIT_FIXTURE, cards, inbox: { items: [] } };
 }
 
-// ---- layout probes (computed styles, not screenshots) --------------------
 
 type ShellLock = { name: string; overflowY: string; canScroll: boolean };
 
@@ -122,7 +116,6 @@ type OutletFillLayout = {
   heightDelta: number;
 };
 
-/** Cross-slide wrappers stay in the DOM; outlet flex rules must use descendant selectors. */
 async function probeOutletFillsRouteScroll(
   page: Page,
   outletKind: "task" | "session",
@@ -165,7 +158,6 @@ function expectOutletFillsRouteScroll(layout: OutletFillLayout, outletKind: "tas
   ).toBeLessThanOrEqual(2);
 }
 
-// ---- tests ---------------------------------------------------------------
 
 test("dashboard has exactly one normal route scroll owner", async ({ page }) => {
   await mockFetch(page);

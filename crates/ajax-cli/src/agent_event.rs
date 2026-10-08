@@ -158,7 +158,6 @@ pub(crate) fn translate_native_event(
         }
         ("claude", "Notification:agent_completed") => Some(turn_settled(TurnOutcome::Completed)),
         ("claude", "Stop") => Some(claude_stop(payload)),
-        // Rate-limit / API-error turn ends are not task failures; Failed would project Error.
         ("claude", "StopFailure") => Some(turn_settled(TurnOutcome::Interrupted)),
         ("claude", "SessionStart") => Some(session_opened()),
         ("claude", "SessionEnd") => Some(session_closed()),
@@ -541,7 +540,6 @@ fn cursor_identity_discovery_roots(
         roots.push(ajax_home.join("cache/agent-events"));
     }
     if let Some(home) = home {
-        // Stable/XDG cache (RuntimePaths default), then profile homes.
         roots.push(home.join(".cache/ajax/agent-events"));
         roots.push(home.join(".ajax-dev/cache/agent-events"));
         roots.push(home.join(".ajax/cache/agent-events"));

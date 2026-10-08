@@ -25,7 +25,6 @@ export function prepareSpeechInsert(
   };
 }
 
-/** Sum of plain insert text lengths; `bracketed` is metadata only for undo. */
 export function undoPayload(records: readonly SpeechInsert[]): string {
   const charCount = records.reduce((sum, record) => sum + record.text.length, 0);
   return "\x7f".repeat(charCount);

@@ -1,7 +1,3 @@
-//! Map ACP output content blocks (image, resource_link, embedded resource) to
-//! browser wire types. Text stays on `SessionServerEvent::Message::text` and
-//! `ToolContent::Text`; audio and ACP terminals are omitted.
-
 use agent_client_protocol::schema::v1::{
     BlobResourceContents, ContentBlock, EmbeddedResourceResource, ImageContent, ResourceLink,
     TextResourceContents,

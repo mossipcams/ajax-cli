@@ -43,9 +43,6 @@ pub enum LiveStatusKind {
     Unknown,
 }
 
-/// Attention class of a live-status kind. One shared classification consumed
-/// by the operator-status reducer, annotations, and the waiting-confirmation
-/// gate so their memberships cannot drift apart.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveStatusClass {
     Running,
@@ -128,7 +125,6 @@ impl AgentAttempt {
         self.finished_at.is_none()
     }
 
-    /// Close this launch-episode row with a terminal status and timestamp.
     pub fn close(&mut self, status: AgentRuntimeStatus, at: SystemTime) {
         if self.finished_at.is_some() {
             return;
@@ -138,13 +134,6 @@ impl AgentAttempt {
     }
 }
 
-/// Keep open launch-episode attempts aligned with `Task.agent_status`.
-///
-/// Close only when the launch ended: `NotStarted` (never started / spawn-auth
-/// fail, and not interactive tmux `AgentRunning`), or `Dead` / Drop. Never close
-/// on `Waiting`, `Blocked`, `Done`, or `Unknown`. Reopen the last attempt when
-/// `Running` follows a provisional `NotStarted` close (ACP turn start after
-/// `AgentCommandSent`).
 pub fn sync_open_attempts(task: &mut super::Task, at: SystemTime) {
     match task.agent_status {
         AgentRuntimeStatus::Dead => close_open_attempts(task, AgentRuntimeStatus::Dead, at),

@@ -1,5 +1,3 @@
-//! Unit tests for [`super::apply_model`].
-
 use super::apply_model::read_applied_model;
 use super::is_unspecified_model;
 use agent_client_protocol::schema::v1::{

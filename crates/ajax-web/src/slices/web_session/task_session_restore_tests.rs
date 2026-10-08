@@ -1,7 +1,3 @@
-//! Restore and respawn behavior at the session-host level: a stored ACP
-//! session id means restore — never a silent fresh session
-//! ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
-
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -85,10 +81,6 @@ fn g1_respawns_after_child_death_and_prompt_works() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1151: a failing restore is a typed error at the session-host
-// level. The stored session id survives for retry, and no fresh session —
-// and therefore no context-reset note — is created behind the transcript.
-// Pre-#1151 this test asserted the silent fresh-session fallback.
 #[test]
 fn g1_load_fail_fails_closed_and_keeps_stored_session_issue_1151() {
     let dir = scratch_dir("load-fail-closed");
@@ -123,8 +115,6 @@ fn g1_load_fail_fails_closed_and_keeps_stored_session_issue_1151() {
         });
         assert!(!log_contains_text(&directory, handle, CONTEXT_RESET_NOTE));
 
-        // The stored id is retained, so a retry without the injected failure
-        // restores the session instead of starting a fresh one.
         directory
             .acquire(handle, &dir, "auto", AgentClient::Cursor)
             .expect("retry acquire must restore");
@@ -277,8 +267,6 @@ fn g1_successful_load_drains_replay_from_transcript() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1179: ajax-web restart must restore the stored ACP session id
-// instead of appending the context-reset note behind the existing transcript.
 #[test]
 fn issue_1179_ajax_web_restart_restores_without_context_reset_note() {
     let dir = scratch_dir("issue-1179-restart");
@@ -320,8 +308,6 @@ fn issue_1179_ajax_web_restart_restores_without_context_reset_note() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1179: Cockpit reconnect must restore the stored session id when
-// the live child died during the disconnect lease.
 #[test]
 fn issue_1179_reconnect_after_child_death_restores_without_context_reset_note() {
     let dir = scratch_dir("issue-1179-reconnect");
@@ -363,8 +349,6 @@ fn issue_1179_reconnect_after_child_death_restores_without_context_reset_note() 
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1179: a live healthy child is leased on reconnect even when
-// `want_model` differs from the slot pin — no replace, no context-reset note.
 #[test]
 fn issue_1179_live_child_model_mismatch_leases_without_context_reset_note() {
     let dir = scratch_dir("issue-1179-live-lease");
@@ -398,8 +382,6 @@ fn issue_1179_live_child_model_mismatch_leases_without_context_reset_note() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1179: a stored resume id must win over a slot/want model mismatch
-// on reconnect — restore first, never silent session/new behind the transcript.
 #[test]
 fn issue_1179_reconnect_model_mismatch_still_restores_without_context_reset_note() {
     let dir = scratch_dir("issue-1179-model-mismatch");

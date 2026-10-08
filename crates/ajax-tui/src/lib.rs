@@ -31,8 +31,6 @@ use rendering::{
 pub use runtime::run_interactive_with_flash_and_refresh;
 use std::io;
 
-// ── Text renderer (watch mode) ────────────────────────────────────────────────
-
 pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxResponse) -> String {
     let mut lines = vec![
         "Ajax Cockpit".to_string(),
@@ -72,26 +70,17 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
     lines.join("\n")
 }
 
-// ── Public types ──────────────────────────────────────────────────────────────
-
-/// Returned when the TUI exits with a deferred action (e.g. open → tmux attach).
 pub struct PendingAction {
     pub task_handle: String,
     pub action: String,
     pub task_title: Option<String>,
 }
 
-/// What the `on_action` callback returns to tell the TUI what to do next.
 pub enum ActionOutcome {
-    /// Reload the TUI with fresh data.
     Refresh(CockpitSnapshot),
-    /// Reload the TUI optimistically, then exit to run a deferred action.
     RefreshAndDefer(CockpitSnapshot, PendingAction),
-    /// Exit the TUI — the CLI will run the deferred action.
     Defer(PendingAction),
-    /// Ask for a second explicit activation before running a risky action.
     Confirm(String),
-    /// Show a brief status message then stay in the TUI.
     Message(String),
 }
 
@@ -107,11 +96,7 @@ pub trait CockpitEventHandler {
     }
 }
 
-// ── Layout-coupled state helpers ──────────────────────────────────────────────
-
 impl App {
-    /// Select whichever selectable occupies the given absolute feed row.
-    /// No-op if the row falls on a section header / placeholder.
     pub fn select_at_feed_row(&mut self, feed_row: usize) {
         let layout = selectable_row_layout(self);
         if let Some((idx, _)) = layout
@@ -123,7 +108,6 @@ impl App {
         }
     }
 
-    /// Adjust viewport so the selected item is visible within `viewport_h` rows.
     fn ensure_visible(&mut self, viewport_h: usize) {
         if viewport_h == 0 {
             return;
@@ -141,8 +125,6 @@ impl App {
         }
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[path = "lib/tests.rs"]

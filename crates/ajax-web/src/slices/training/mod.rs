@@ -1,13 +1,3 @@
-//! Training-host slice for the web training modal (plan:
-//! `.planning/agent-plans/web-training-modal.md`).
-//!
-//! These routes proxy ssh verbs (`status`, `start <job>`, `stop`, `serve`,
-//! `profile-set <name>`) to a remote LLM host. The host stays authoritative:
-//! this slice validates only the request envelope (confirm flag, job name,
-//! profile name) and adds no training policy of its own. Browser-supplied
-//! text never reaches ssh argv except a profile name validated against both
-//! the host-reported profiles list and `^[a-z0-9][a-z0-9.-]{0,63}$`.
-
 pub mod runner;
 
 #[cfg(test)]
@@ -19,14 +9,12 @@ use self::runner::TrainingRunError;
 pub use self::runner::{SshTrainingRunner, TrainingCommandRunner};
 use crate::adapters::http::{json_response, response_from_web_error, Response};
 
-/// Jobs the training host accepts for `start`. Anything else is rejected.
 const TRAINING_JOBS: [&str; 4] = ["generate", "lfm-train", "lfm-eval", "wake-train"];
 
 fn is_known_job(job: &str) -> bool {
     TRAINING_JOBS.contains(&job)
 }
 
-/// Profile names: `^[a-z0-9][a-z0-9.-]{0,63}$` (no regex crate dependency).
 fn is_valid_profile_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     (1..=64).contains(&bytes.len())
@@ -36,8 +24,6 @@ fn is_valid_profile_name(name: &str) -> bool {
             .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-'))
 }
 
-/// One line of the host status object (`status` verb). Fields are mirrored to
-/// the browser; `run` and `generation` may be null.
 #[derive(Debug, Deserialize, Serialize)]
 struct HostStatus {
     state: String,
@@ -48,8 +34,6 @@ struct HostStatus {
     profiles: Vec<String>,
     run: Option<HostRun>,
     generation: Option<HostGeneration>,
-    /// Optional per-profile details (`{name: {label, model, serving, sampling}}`);
-    /// passed through verbatim and tolerant of any extra fields.
     #[serde(default)]
     profile_details: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -59,8 +43,6 @@ struct HostRun {
     kind: String,
     #[serde(default)]
     started: String,
-    /// Whether the run is still active on the host (false for finished runs);
-    /// passed through verbatim.
     #[serde(default)]
     running: bool,
     #[serde(default)]
@@ -103,9 +85,6 @@ fn bad_request(message: &str) -> Response {
     json(400, serde_json::json!({ "ok": false, "error": message }))
 }
 
-/// ssh failures/timeouts map to 502/504 with a short generic error. The runner
-/// never embeds argv, hostnames, or key paths in its errors, and this keeps it
-/// that way by construction.
 fn run_error_response(error: TrainingRunError) -> Response {
     match error {
         TrainingRunError::Timeout => json(
@@ -130,17 +109,12 @@ fn host_status(runner: &dyn TrainingCommandRunner) -> Result<HostStatus, Respons
         )
     })
 }
-/// True while the host must not start a new job or switch profiles: a
-/// `train:` gpu state, an active run (e.g. lfm-eval leaves state idle), or an
-/// in-progress generation.
 fn host_busy(status: &HostStatus) -> bool {
     status.state.starts_with("train:")
         || matches!(&status.run, Some(run) if run.running)
         || matches!(&status.generation, Some(generation) if generation.running)
 }
 
-/// Run a non-status verb whose every argument is built from constants plus, at
-/// most, the validated profile name.
 fn run_verb(runner: &dyn TrainingCommandRunner, args: &[&str]) -> Response {
     let argv: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
     match runner.run(&argv) {
@@ -149,8 +123,6 @@ fn run_verb(runner: &dyn TrainingCommandRunner, args: &[&str]) -> Response {
     }
 }
 
-/// GET /api/training/status — the host status object reshaped with an `ok`
-/// envelope; no browser input.
 pub fn status_response(runner: &dyn TrainingCommandRunner) -> Response {
     match host_status(runner) {
         Ok(status) => json(
@@ -169,7 +141,6 @@ pub fn status_response(runner: &dyn TrainingCommandRunner) -> Response {
     }
 }
 
-/// GET /api/training/models — profiles + active + running. No browser input.
 pub fn models_response(runner: &dyn TrainingCommandRunner) -> Response {
     match host_status(runner) {
         Ok(status) => json(
@@ -205,7 +176,6 @@ struct ProfileBody {
     confirm: bool,
 }
 
-/// POST /api/training/start — body `{"job":"generate|lfm-train|lfm-eval|wake-train","confirm":true}`.
 pub fn start_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Response {
     let parsed: StartBody = match serde_json::from_slice(body) {
         Ok(parsed) => parsed,
@@ -230,7 +200,6 @@ pub fn start_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Respon
     run_verb(runner, &["start", parsed.job.as_str()])
 }
 
-/// POST /api/training/stop — body `{"confirm":true}`.
 pub fn stop_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Response {
     let parsed: ConfirmBody = match serde_json::from_slice(body) {
         Ok(parsed) => parsed,
@@ -242,8 +211,6 @@ pub fn stop_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Respons
     run_verb(runner, &["stop"])
 }
 
-/// POST /api/training/serve — body `{"confirm":true}`; starts llama with the
-/// active profile. No browser input beyond the confirm flag.
 pub fn serve_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Response {
     let parsed: ConfirmBody = match serde_json::from_slice(body) {
         Ok(parsed) => parsed,
@@ -255,10 +222,6 @@ pub fn serve_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Respon
     run_verb(runner, &["serve"])
 }
 
-/// POST /api/training/models/switch — body `{"profile":"<name>","confirm":true}`.
-/// The profile must match the name regex AND be present in the profiles list
-/// last returned by the host; switching is refused (409) while a training run
-/// or an active generation run is in progress.
 pub fn switch_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Response {
     let parsed: ProfileBody = match serde_json::from_slice(body) {
         Ok(parsed) => parsed,

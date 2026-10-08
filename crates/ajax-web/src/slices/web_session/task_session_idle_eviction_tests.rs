@@ -169,10 +169,6 @@ fn idle_eviction_reclaims_finished_disconnected_sessions() {
                 })
             });
 
-            // The first pong/TurnEnd snapshot can still have `prompt_in_flight`
-            // set on the agent client, so production reports `evictable == false`.
-            // Wait until the session has drained to a true idle state before
-            // asserting eligibility, instead of racing on the first event.
             pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
                 directory
                     .eviction_snapshot(handle_a)
@@ -379,8 +375,6 @@ fn idle_disconnected_slot_pumps_host_exit_without_holder() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1181: idle LRU must not detach a slot whose harness never
-// advertised restore — evicting it would make a later restore impossible.
 #[test]
 fn issue_1181_non_restore_harness_survives_idle_cap_pressure() {
     let dir = scratch_dir("issue-1181-no-restore-evict");

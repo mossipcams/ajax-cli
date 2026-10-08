@@ -62,8 +62,6 @@ describe("status ordering (presentation only)", () => {
     const initial = sortCards([first, second]).map((c) => c.qualified_handle);
     expect(initial).toEqual(["web/b", "web/a"]);
 
-    // Poll refresh: a becomes newer than b — without sticky order the rows swap
-    // every second and taps miss. Previous order must win within the status.
     const leapfrogA = { ...card("web/a", "running"), last_activity_unix_secs: 900 };
     const leapfrogB = { ...card("web/b", "running"), last_activity_unix_secs: 300 };
     expect(

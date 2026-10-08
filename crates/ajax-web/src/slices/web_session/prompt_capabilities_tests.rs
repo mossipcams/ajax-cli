@@ -1,5 +1,3 @@
-//! Live ACP prompt capability capture and snapshot exposure.
-
 use super::prompt_content::PromptContentBlockWire;
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::{apply_client_message, SessionClientMessage, SessionServerEvent};

@@ -44,9 +44,6 @@ describe("groupConversationTurns", () => {
     expect(looseIds(turns[1])).toEqual(["a2"]);
   });
 
-  // #1042: the transcript hoisted every work item above every thing the agent said, so
-  // an agent that spoke, worked, then answered read as work-then-two-answers and
-  // the reader lost the causal order of its own turn.
   it("keeps prose and work in the order they arrived", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Fix login"),
@@ -60,7 +57,6 @@ describe("groupConversationTurns", () => {
 
     const [turn] = groupConversationTurns(items);
     expect(rowIds(turn)).toEqual(["a1", "work:t1", "a2", "work:x2", "a3"]);
-    // Adjacent work still collapses into one disclosure; prose ends the run.
     expect(turn.rows[1]).toMatchObject({ kind: "work" });
     expect(workIds(turn)).toEqual(["t1", "x1", "x2"]);
   });
@@ -76,8 +72,6 @@ describe("groupConversationTurns", () => {
     expect(looseIds(turns[0])).toEqual(["n1", "a1"]);
   });
 
-  // An ask the operator still owes an answer to is an action, so it stays in
-  // the conversation; once answered it is history and joins the timeline.
   it("routes permissions by whether they still need an answer", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Clean up"),

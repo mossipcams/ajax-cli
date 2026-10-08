@@ -114,7 +114,6 @@ function parseField(name: string, property: Record<string, unknown>, required: b
   return null;
 }
 
-/** Parse an ACP form schema into supported operator fields. Unsupported properties are skipped. */
 export function parseElicitationFormSchema(schema: unknown): ElicitationFormField[] {
   const root = asRecord(schema);
   if (!root) return [];
@@ -165,7 +164,6 @@ function fieldHasValue(
   return true;
 }
 
-/** Required fields must have values before Accept can dispatch content. */
 export function isElicitationValid(
   fields: ElicitationFormField[],
   values: Record<string, string | number | boolean | string[]>,

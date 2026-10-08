@@ -274,7 +274,6 @@ describe("speech state", () => {
     });
     expect(model.partialTranscript).toBe("Hello world");
 
-    // Future segment arrives first — must not appear in transcript yet.
     model = speechReducer(model, {
       type: "final",
       sessionId: "session-1",
@@ -387,7 +386,6 @@ describe("speech state", () => {
     });
     expect(model.state).toBe("connecting");
 
-    // Readiness gates recognition: partials before ready are ignored.
     model = speechReducer(model, {
       type: "partial",
       sessionId: "session-1",
@@ -443,7 +441,6 @@ describe("speech state", () => {
     expect(model.finalTranscript).toBe("Hello world and more");
     expect(model.pauseDeadlineMs).toBe(1_200 + 9_000);
 
-    // Speak-to-continue cancels the countdown.
     model = speechReducer(model, {
       type: "speech_started",
       sessionId: "session-1",
@@ -477,7 +474,6 @@ describe("speech state", () => {
     expect(model.sessionId).toBeUndefined();
     expect(model.finalTranscript).toBe("Hello world and more");
     expect(model.partialTranscript).toBe("");
-    // Speech never auto-submits: no trailing Enter / newline from the lifecycle.
     expect(model.finalTranscript.includes("\n")).toBe(false);
     expect(model.finalTranscript.includes("\r")).toBe(false);
   });

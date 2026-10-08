@@ -6,7 +6,6 @@ export function setSwipeEnterDirection(direction: SwipeEnterDirection): void {
   try {
     sessionStorage.setItem(STORAGE_KEY, direction);
   } catch {
-    // ponytail: sessionStorage may be unavailable; enter anim is cosmetic.
   }
 }
 
@@ -23,7 +22,6 @@ export function consumeSwipeEnterDirection(): SwipeEnterDirection | null {
       return value;
     }
   } catch {
-    // ignore
   }
   return null;
 }

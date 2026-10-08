@@ -181,7 +181,6 @@ mod tests {
 
     #[tokio::test]
     async fn git_snapshot_honors_worktree_path_when_git_dir_is_inherited() {
-        // #941
         let root = std::env::temp_dir().join(format!(
             "ajax-supervisor-git-snapshot-{}-{}",
             std::process::id(),

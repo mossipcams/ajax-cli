@@ -8,7 +8,6 @@ export interface LiveConfigOptionChoice {
   name: string;
 }
 
-/** AoE-style descriptor mirrored from protocol v2 `sessionConfigOptions`. */
 export interface LiveSessionConfigOption {
   id: string;
   category?: string;
@@ -82,7 +81,6 @@ export function thoughtLevelLiveOption(
   );
 }
 
-/** True when Fast is advertised as boolean or as a true/false select ([#1014]). */
 export function fastOptionAdvertised(option: LiveSessionConfigOption): boolean {
   if (option.type === "boolean") return true;
   if (option.type !== "select") return false;
@@ -110,7 +108,6 @@ export function readLiveBooleanCurrent(option: LiveSessionConfigOption): boolean
   return typeof option.currentValue === "boolean" ? option.currentValue : undefined;
 }
 
-/** Read Fast on/off from boolean or true/false select currentValue ([#1014]). */
 export function readLiveFastCurrent(option: LiveSessionConfigOption): boolean | undefined {
   const boolean = readLiveBooleanCurrent(option);
   if (boolean !== undefined) return boolean;
@@ -121,7 +118,6 @@ export function readLiveFastCurrent(option: LiveSessionConfigOption): boolean | 
   return undefined;
 }
 
-/** Wire value for set_config_option: boolean or select "true"/"false" ([#1014]). */
 export function fastApplyValue(
   option: LiveSessionConfigOption,
   want: boolean,
@@ -129,7 +125,6 @@ export function fastApplyValue(
   return option.type === "boolean" ? want : want ? "true" : "false";
 }
 
-/** Build the Ajax desired pin from live advertised current values. */
 export function encodeDesiredPinFromLiveOptions(options: LiveSessionConfigOption[]): string {
   const model = modelLiveOption(options);
   const base = model ? readLiveSelectCurrent(model) ?? "" : "";
@@ -149,7 +144,6 @@ export function encodeDesiredPinFromLiveOptions(options: LiveSessionConfigOption
   return encodeModelSelection(base, extras);
 }
 
-/** Encode a desired pin after the operator changes one live advertised control. */
 export function encodeDesiredPinWithLiveSelection(
   options: LiveSessionConfigOption[],
   selection: {

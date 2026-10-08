@@ -24,7 +24,6 @@ interface Props {
 
 const LAST_AGENT_KEY = "ajax.newTask.agent";
 const LAST_REPO_KEY = "ajax.newTask.repo";
-/** Model is remembered per harness — the catalogs share no ids. */
 const LAST_MODEL_KEY_PREFIX = "ajax.newTask.model.";
 
 function readPref(key: string): string | null {
@@ -47,10 +46,6 @@ function initialAgent(): string {
   return AGENTS.some((option) => option.value === remembered) ? remembered! : "codex";
 }
 
-// ponytail: 14 lines instead of @radix-ui/react-radio-group. Radix was tried and
-// discarded — inside the Dialog's focus scope its RovingFocusGroup never moved
-// selection, which left the unselected agents unreachable by keyboard. Both arrow
-// axes move because .agent-picker is a 2x2 grid.
 function agentForArrowKey(current: string, key: string): string | null {
   const index = AGENTS.findIndex((option) => option.value === current);
   const delta =
@@ -89,11 +84,6 @@ export default function NewTaskSheet({
     }
   }, [repo, repos, selectedProject]);
 
-  // Focus restore is ours, not Radix's: modal DialogContent always preventDefaults
-  // onCloseAutoFocus and focuses its triggerRef, and this sheet has no Dialog.Trigger,
-  // so FocusScope would restore nothing. Radix still supplies the focus trap and
-  // background aria-hidden. Focus lands on the container, never the repo <select> —
-  // focusing a select pops the iOS picker the moment the sheet opens.
   useEffect(() => {
     mountedRef.current = true;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -115,7 +105,6 @@ export default function NewTaskSheet({
       localStorage.setItem(LAST_REPO_KEY, repo);
       localStorage.setItem(`${LAST_MODEL_KEY_PREFIX}${agent}`, model);
     } catch {
-      // Private mode / storage denied: defaults just won't stick.
     }
   }
 
@@ -188,11 +177,9 @@ export default function NewTaskSheet({
             event.preventDefault();
           }}
         >
-          {/* Backdrop dismissal only. This element IS the Radix content node, so a
-              backdrop tap is *inside* it and onPointerDownOutside never fires; the
-              target===currentTarget guard stays ours. Escape is Radix's, so there is
-              deliberately no keyboard handler here. */}
-          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- backdrop click; Escape is Radix */}
+          {}
+          {}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */}
           <div
             id="new-task-sheet"
             data-testid="new-task-sheet"
@@ -217,8 +204,7 @@ export default function NewTaskSheet({
               >
                 <span className="sheet-grabber" />
               </div>
-              {/* No id here: Slot lets child props win, so a hand-written id would
-                  override Radix's titleId and leave aria-labelledby dangling. */}
+              {}
               <SheetTitle asChild>
                 <h2>{step === "task" ? "New task" : `Model — ${agentLabel(agent)}`}</h2>
               </SheetTitle>

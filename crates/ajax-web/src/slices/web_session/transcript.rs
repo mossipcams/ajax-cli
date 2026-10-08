@@ -1,16 +1,10 @@
-//! In-memory transcript cursor and replay filtering.
-
 use super::protocol::SessionEventEnvelope;
 use super::SessionServerEvent;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
 use std::{collections::HashSet, time::Duration};
 
-/// Per-task transcript bound. Long sessions trim from the front rather than
-/// growing without limit.
 pub(crate) const MAX_IDLE_SESSIONS: usize = 8;
 
-/// How long a disconnected slot keeps its live ACP child before idle-LRU may
-/// reclaim it. Sized for PWA / Safari background reconnect (order of minutes).
 pub(crate) const IDLE_RELEASE_GRACE: Duration = Duration::from_secs(15 * 60);
 
 pub(crate) fn idle_release_grace() -> Duration {
@@ -49,13 +43,9 @@ where
     result
 }
 
-/// Append-only transcript. Sockets hold absolute cursors into it, which is what
-/// lets a reload replay and two devices both receive every event — the ACP
-/// receiver itself is single-consumer and would otherwise split the stream.
 #[derive(Default)]
 pub(crate) struct TranscriptLog {
     pub(crate) events: Vec<SessionServerEvent>,
-    /// Events trimmed off the front, so cursors stay absolute across trimming.
     pub(crate) dropped: usize,
 }
 
@@ -77,10 +67,6 @@ impl TranscriptLog {
         }
     }
 
-    /// Events at or after `cursor`, plus the cursor to read from next. A cursor
-    /// left behind by trimming resumes at the oldest event still held.
-    /// Resolved permission requests are omitted so reconnect does not flash
-    /// already-answered prompts.
     #[cfg(test)]
     pub(crate) fn read_from(&self, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         let next = self.dropped + self.events.len();
@@ -109,9 +95,6 @@ impl TranscriptLog {
         (events, next)
     }
 
-    /// Like [`read_from`](Self::read_from), but each row keeps its absolute log
-    /// index even when resolved permission requests are filtered out.
-    /// Usage before the latest context reset is omitted from every replay.
     pub(crate) fn read_from_enveloped(&self, cursor: usize) -> (Vec<SessionEventEnvelope>, usize) {
         let next = self.absolute_next_cursor();
         let start = cursor.saturating_sub(self.dropped).min(self.events.len());
@@ -156,9 +139,6 @@ impl TranscriptLog {
     }
 }
 
-/// Host commentary, not agent output: the browser marks an `agent` message as a
-/// live turn, so a note in that role would leave the thread reading "Working"
-/// with nothing running.
 pub(crate) fn context_reset_note() -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),
@@ -193,14 +173,10 @@ pub(crate) fn context_reset_needed(resumed: bool, log: &TranscriptLog) -> bool {
     !resumed && !log.events.is_empty()
 }
 
-/// True when the log already ends with this note. Each restart would otherwise
-/// stack another identical copy on the transcript.
 pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> bool {
     log.events.last() == Some(note)
 }
 
-/// True when the live ACP child is gone and the slot must spawn or restore.
-/// Model pin mismatch does not replace a healthy child ([#1179]).
 pub(crate) fn slot_must_replace(acp_alive: bool, host_exited: bool) -> bool {
     !acp_alive || host_exited
 }

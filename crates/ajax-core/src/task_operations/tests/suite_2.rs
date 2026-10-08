@@ -649,7 +649,6 @@ fn drop_operation_force_deletes_unmerged_branch_on_confirmed_cleanup() {
 
 #[test]
 fn drop_operation_delete_branch_prunes_stale_origin_tracking_ref() {
-    // #840
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();
     outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
@@ -689,7 +688,6 @@ fn poison_repo_config_with_bare_and_worktree(repo_path: &std::path::Path, worktr
 
 #[test]
 fn drop_force_worktree_teardown_succeeds_with_poisoned_repo_config_and_inherited_git_dir() {
-    // #941
     let root = std::env::temp_dir().join(format!(
         "ajax-drop-941-{}-{}",
         std::process::id(),

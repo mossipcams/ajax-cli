@@ -40,25 +40,18 @@ pub(super) fn run_pty_task_attach(
     trace: &mut TaskSessionTrace,
     context: &TaskSessionContext,
 ) -> Result<PtyAttachResult, CliError> {
-    // SAFETY: The parent only touches the returned master fd. In the child
-    // branch, all fallible setup was prepared before fork, and the process
-    // either execs the requested command or exits immediately.
     match unsafe { forkpty(Some(&fork_config.winsize), Some(&fork_config.child_termios)) }
         .map_err(tty_error("failed to fork task PTY"))?
     {
         ForkptyResult::Child => {
             if prepared.clear_tmux_env {
-                // SAFETY: The env name is a pre-fork CString with a stable nul-terminated pointer.
                 unsafe { nix::libc::unsetenv(prepared.tmux_env_name.as_ptr()) };
             }
             if let Some(cwd) = prepared.cwd.as_ref() {
-                // SAFETY: cwd is a pre-fork CString with a stable nul-terminated pointer.
                 if unsafe { nix::libc::chdir(cwd.as_ptr()) } != 0 {
                     exit_child_after_exec_failure();
                 }
             }
-            // SAFETY: executable and argv are fully prepared before fork and
-            // remain alive in this child branch until execvp replaces the process.
             unsafe { nix::libc::execvp(prepared.executable.as_ptr(), prepared.argv.as_ptr()) };
             exit_child_after_exec_failure();
         }
@@ -89,7 +82,6 @@ pub(super) fn task_pty_fork_config(
 }
 
 pub(super) fn read_task_terminal_winsize(fd: i32) -> Result<Winsize, CliError> {
-    // SAFETY: ioctl writes into the provided winsize struct for a valid terminal fd.
     let mut raw: nix::libc::winsize = unsafe { std::mem::zeroed() };
     let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCGWINSZ, &mut raw) };
     if result != 0 {
@@ -147,19 +139,12 @@ impl TaskOperatorTerminal {
     }
 }
 
-/// Set by the SIGWINCH handler whenever the operator terminal is resized.
-/// Seeded `true` so the pump syncs the size once on attach, covering any
-/// resize that slipped between reading the winsize and forking the PTY.
 static WINCH_PENDING: AtomicBool = AtomicBool::new(true);
 
 extern "C" fn handle_winch(_: nix::libc::c_int) {
-    // Async-signal-safe: a single relaxed atomic store, nothing more.
     WINCH_PENDING.store(true, Ordering::Relaxed);
 }
 
-/// Installs a SIGWINCH handler for the duration of an attach and restores the
-/// previous disposition on drop. The handler must exist (not SIG_IGN/SIG_DFL)
-/// so the resize interrupts the pump's blocking `poll` with EINTR.
 pub(super) struct TaskWinchGuard {
     pub(super) previous: SigAction,
 }
@@ -169,11 +154,9 @@ impl TaskWinchGuard {
         WINCH_PENDING.store(true, Ordering::Relaxed);
         let action = SigAction::new(
             SigHandler::Handler(handle_winch),
-            // No SA_RESTART: we want `poll` interrupted so the loop reacts.
             SaFlags::empty(),
             SigSet::empty(),
         );
-        // SAFETY: `handle_winch` is async-signal-safe (one atomic store).
         let previous = unsafe { sigaction(Signal::SIGWINCH, &action) }
             .map_err(tty_error("failed to install resize handler"))?;
         Ok(Self { previous })
@@ -182,15 +165,11 @@ impl TaskWinchGuard {
 
 impl Drop for TaskWinchGuard {
     fn drop(&mut self) {
-        // SAFETY: restoring the disposition captured at install time.
         let _ = unsafe { sigaction(Signal::SIGWINCH, &self.previous) };
     }
 }
 
-/// Reads the operator terminal's current window size, or `None` if the ioctl
-/// fails (e.g. the descriptor is no longer a tty).
 pub(super) fn read_operator_winsize(fd: i32) -> Option<nix::libc::winsize> {
-    // SAFETY: ioctl writes into the provided winsize struct for a tty fd.
     let mut raw: nix::libc::winsize = unsafe { std::mem::zeroed() };
     let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCGWINSZ, &mut raw) };
     (result == 0).then_some(raw)
@@ -200,9 +179,6 @@ pub(super) fn winsize_changed(last: Option<(u16, u16)>, current: (u16, u16)) -> 
     last != Some(current)
 }
 
-/// Propagates a pending operator resize to the PTY master so the attached
-/// client (tmux) re-renders at the live terminal size. No-op unless SIGWINCH
-/// fired since the last call and the size actually changed.
 pub(super) fn sync_pending_winsize(
     operator_fd: i32,
     master_fd: i32,
@@ -220,7 +196,6 @@ pub(super) fn sync_pending_winsize(
     if !winsize_changed(*last, current) {
         return;
     }
-    // SAFETY: ioctl reads the winsize struct for a valid master fd.
     let result = unsafe { nix::libc::ioctl(master_fd, nix::libc::TIOCSWINSZ, &raw) };
     if result != 0 {
         trace.log(
@@ -261,7 +236,6 @@ impl Drop for TaskScreenGuard {
 }
 
 pub(super) fn duplicate_task_terminal_fd(fd: i32, context: &'static str) -> Result<File, CliError> {
-    // SAFETY: callers pass a live terminal fd for the duration of this call.
     let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
     let duplicate = dup(borrowed).map_err(tty_error(context))?;
     Ok(File::from(duplicate))
@@ -626,7 +600,5 @@ pub(super) fn pty_was_closed(error: &io::Error) -> bool {
 }
 
 pub(super) fn exit_child_after_exec_failure() -> ! {
-    // SAFETY: This is the child branch immediately after fork. Exiting through
-    // libc avoids running parent process cleanup paths in the forked process.
     unsafe { nix::libc::_exit(127) }
 }

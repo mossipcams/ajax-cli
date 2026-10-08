@@ -61,9 +61,6 @@ fn push_audio_rejects_overflow_when_channel_is_full() {
 
 #[test]
 fn cancel_does_not_hang_when_the_sidecar_never_reads_stdin() {
-    // `sleep` never drains stdin, so the writer thread ends up blocked inside
-    // write_all on a full pipe. Session cancel must not join that writer;
-    // provider shutdown kills the persistent worker to unblock it.
     let mut provider = MoonshineProvider::new(Some("sleep 30".to_string()), 20, 700);
     let mut session = provider.start_session(session_config()).expect("session");
     let pcm = vec![0u8; MAX_SIDECAR_AUDIO_PCM_BYTES];
@@ -115,7 +112,6 @@ fn expected_completion_does_not_surface_sidecar_exit_error() {
             "#!/bin/sh\n",
             "printf '%s\\n' '{\"type\":\"stt.ready\"}'\n",
             "printf '%s\\n' '{\"type\":\"stt.completed\"}'\n",
-            // Keep stdin open briefly so the parent can finish writing the start frame.
             "sleep 0.2\n",
         ),
     )
@@ -152,7 +148,6 @@ fn expected_completion_does_not_surface_sidecar_exit_error() {
     );
     assert!(session.is_completed());
 
-    // Reader disconnect after completed must not become an error.
     let drain_deadline = std::time::Instant::now() + Duration::from_secs(1);
     while std::time::Instant::now() < drain_deadline {
         match session.poll_event() {
@@ -208,7 +203,6 @@ fn sidecar_audio_frames_preserve_sequence_without_json_base64() {
     let frame = encode_sidecar_audio_frame(42, &[1, 2, 3]).expect("encode frame");
 
     assert_eq!(&frame[..5], &[1, 0, 0, 0, 42]);
-    // Length prefix keeps consecutive audio frames delimitable on the pipe.
     assert_eq!(&frame[5..9], &[0, 0, 0, 3]);
     assert_eq!(&frame[9..], &[1, 2, 3]);
 }
@@ -218,7 +212,6 @@ fn consecutive_sidecar_audio_frames_are_delimitable() {
     let mut stream = encode_sidecar_audio_frame(0, &[7; 4]).expect("first");
     stream.extend(encode_sidecar_audio_frame(1, &[9; 2]).expect("second"));
 
-    // Walk the stream the way a sidecar must: kind, sequence, length, payload.
     let mut cursor = 0usize;
     let mut decoded = Vec::new();
     while cursor < stream.len() {

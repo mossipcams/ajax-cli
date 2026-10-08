@@ -1,5 +1,3 @@
-//! Process-local web app state, control lane, and operation admission.
-
 use crate::adapters::http::{
     json_response, operation_response_with_request_id, response_from_web_error, Response,
 };
@@ -32,7 +30,6 @@ pub(crate) const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750
 pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
-/// Operator-facing copy when set_model persist hits a runtime/panic failure (#962).
 pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
     "Could not save the session model. Try again in a moment.";
 
@@ -106,12 +103,6 @@ where
     C: Clone + CommandRunner,
     B: Clone + RuntimeBridge<C>,
 {
-    /// Run `operate` against a clone of the shared state without holding the
-    /// `shared` lock across the call, then commit the result only if no other
-    /// request advanced the revision in the meantime. A losing writer leaves
-    /// shared state untouched and returns a `409` conflict unless the operate
-    /// closure reports a durable persist, in which case shared state reloads
-    /// from disk and returns the operate response with a fresh cockpit view.
     pub(crate) fn run_optimistic(
         &self,
         request_id: Option<&str>,
@@ -167,10 +158,6 @@ where
         }
     }
 
-    /// Run `operate` against a clone without holding the shared lock. The HTTP
-    /// response is always returned; when `metadata_changed` is true, observed
-    /// PR metadata is persisted best-effort and merged into shared state only
-    /// when no concurrent writer advanced the revision.
     pub(crate) fn run_read(
         &self,
         operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> (Response, bool),
@@ -199,13 +186,6 @@ where
         response
     }
 
-    /// Report an ACP turn transition as task evidence.
-    ///
-    /// A provisioned task has no agent pane, so this host is the only observer
-    /// of its work; without this the dashboard, task page, TUI and `ajax
-    /// status` show a pane-derived `Waiting` through an entire turn. Failures
-    /// are swallowed by the caller: evidence reporting must never take down a
-    /// live turn.
     pub(crate) fn report_task_session_activity(
         &self,
         handle: &str,
@@ -213,8 +193,6 @@ where
     ) -> Result<(), String> {
         let handle = handle.to_string();
         let state = self.clone();
-        // Same lane discipline as session-model persistence: called from a
-        // Tokio worker, and control_lane takes a blocking lock (#962).
         tokio::task::block_in_place(|| {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 state.report_task_session_activity_on_control_lane(&handle, activity)
@@ -230,8 +208,6 @@ where
         handle: &str,
         activity: crate::slices::web_session::SessionActivity,
     ) -> Result<(), String> {
-        // Best-effort: never block the per-task session loop waiting for a
-        // cockpit refresh that may itself be waiting on that loop (#1083).
         let _lane = self
             .control_lane
             .try_lock()
@@ -268,13 +244,10 @@ where
         let state = self.clone();
         self.task_session_directory
             .set_report_session_activity(Arc::new(move |handle, activity| {
-                // Best-effort: a lost race with another writer must not disturb
-                // the turn this evidence described (#1069).
                 state.report_task_session_activity(handle, activity).is_ok()
             }));
     }
 
-    /// Persist desired session model metadata before the host replaces an ACP child.
     pub(crate) fn persist_task_session_model(
         &self,
         handle: &str,
@@ -283,8 +256,6 @@ where
         let handle = handle.to_string();
         let model = model.to_string();
         let state = self.clone();
-        // WebSocket set_model invokes this from a Tokio worker; control_lane uses
-        // blocking_lock and must run inside block_in_place (issue #962).
         tokio::task::block_in_place(|| {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 state.persist_task_session_model_on_control_lane(&handle, &model)
@@ -321,8 +292,6 @@ where
         )
     }
 
-    /// Resolve attach plan for a session WebSocket, promoting interactive tasks
-    /// when the tmux pane is not running the harness agent (#1092).
     pub(crate) fn prepare_task_session_attach(
         &self,
         handle: &str,
@@ -557,13 +526,6 @@ impl<C, B> WebAppState<C, B> {
     }
 }
 
-/// Construct the per-attach terminal input acknowledgment sink. The sink
-/// locks shared state, split-borrows `context` and `bridge`, and calls
-/// `bridge.acknowledge_operator_input(context, task_handle)`. On `Ok(true)`
-/// it bumps `revision` (saturating) and clears `cockpit_cache` so the next
-/// cockpit fetch observes the acknowledgment. On `Ok(false)` or error,
-/// revision and cache are left untouched (errors are dropped: the terminal
-/// adapter must not propagate core failures back into the wire loop).
 pub fn operator_input_sink<C, B>(
     state: &WebAppState<C, B>,
     task_handle: String,
@@ -574,22 +536,39 @@ where
 {
     let state = state.clone();
     Arc::new(move || {
-        // Typing in the PWA terminal is active presence; refresh the notify
-        // suppress TTL even when cockpit polls have stalled.
         state.mark_browser_cockpit_seen();
+        if !{
+            let guard = state.shared();
+            guard
+                .bridge
+                .needs_operator_acknowledgment(&guard.context, &task_handle)
+        } {
+            return;
+        }
+        let (mut context, mut bridge, base_revision) = {
+            let guard = state.shared();
+            (guard.context.clone(), guard.bridge.clone(), guard.revision)
+        };
+        if !bridge
+            .acknowledge_operator_input(&mut context, &task_handle)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let mut guard = state.shared();
-        let acknowledged = {
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.bridge = bridge;
+        } else {
             let WebSharedState {
                 context, bridge, ..
             } = &mut *guard;
-            bridge
-                .acknowledge_operator_input(context, &task_handle)
-                .unwrap_or(false)
-        };
-        if acknowledged {
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
+            if !matches!(bridge.reload_registry_from_disk(context), Ok(true)) {
+                return;
+            }
         }
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
     })
 }
 
@@ -601,11 +580,8 @@ pub(crate) struct OperationCoordinator {
     pub(crate) in_flight_tasks: BTreeSet<String>,
 }
 
-/// Why a mutation could not enter the in-flight gate.
 pub(crate) enum GateRejection {
-    /// The request id already completed; replay its stored response.
     Replay(Response),
-    /// Another mutation holds the gate.
     Conflict,
 }
 
@@ -618,8 +594,6 @@ impl OperationCoordinator {
         !self.in_flight_requests.is_empty() || !self.in_flight_tasks.is_empty()
     }
 
-    /// Claim the single-mutation gate for this request/task pair, or explain
-    /// why the caller must stop: idempotent replay or a 409 conflict.
     pub(crate) fn try_begin(
         &mut self,
         request_id: Option<&str>,
@@ -647,7 +621,6 @@ impl OperationCoordinator {
         Ok(())
     }
 
-    /// Release the gate and record the response for idempotent replay.
     pub(crate) fn finish(&mut self, request_id: Option<&str>, task_key: &str, response: &Response) {
         self.in_flight_tasks.remove(task_key);
         if let Some(request_id) = request_id {

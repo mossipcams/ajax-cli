@@ -29,9 +29,7 @@ import { captureSwipe, markNavigationStart } from "@/shared/lib/telemetry";
 import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
 
 export const SWIPE_PAGE_COMMIT_MS = 220;
-/** Serial exit animation + destination enter keyframe budget cross-slide replaces. */
 export const SERIAL_SWIPE_COMMIT_BUDGET_MS = SWIPE_PAGE_COMMIT_MS * 2;
-/** ponytail: armed phase may wait for double-rAF before animating styles apply. */
 export const CROSS_SLIDE_ARMED_SLACK_MS = 80;
 const SWIPE_COMMIT_MIN_MS = 80;
 const SWIPE_COMMIT_VELOCITY_FLOOR = 0.45;
@@ -52,7 +50,6 @@ export interface SwipePageTransitionOptions {
   onLeft?: () => void;
   onRight?: () => void;
   shouldIgnoreTarget?: (target: EventTarget | null) => boolean;
-  /** Capture-phase listeners (task detail over terminal). Default true. */
   capture?: boolean;
   from_route?: string;
   to_routeLeft?: string;
@@ -65,7 +62,6 @@ export interface SwipePageTransitionResult {
   dragX: number;
   swiping: boolean;
   style: CSSProperties;
-  /** Programmatic commit — same exit+enter path as a successful swipe. */
   commit: (direction: SwipePageCommitDirection) => void;
 }
 
@@ -127,7 +123,6 @@ function readTouch(event: TouchEvent): { x: number; y: number } | null {
   return { x: touch.clientX, y: touch.clientY };
 }
 
-/** Armed styles must paint before animating styles apply (double rAF); jsdom uses setTimeout. */
 export function scheduleCrossSlideAnimatingFlip(callback: () => void): void {
   const useTimeoutPath =
     typeof requestAnimationFrame !== "function" ||
@@ -234,7 +229,6 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
       }, delayMs);
     };
 
-    // Schedule before armed→animating flip so a deferred/skipped rAF cannot leave active stuck.
     scheduleSettleFallback(commitMs + 40 + CROSS_SLIDE_ARMED_SLACK_MS);
 
     scheduleCrossSlideAnimatingFlip(() => {
@@ -481,7 +475,6 @@ export function useSwipePageTransition(
             return;
           }
           markNavigationStart(fromRouteAtCommit, "swipe");
-          // Navigating unmounts this surface; skip reset to avoid a snap-back flash.
           releaseSettleGesture();
           then();
         } else {
@@ -537,8 +530,6 @@ export function useSwipePageTransition(
         touchTargetRef.current = null;
         return;
       }
-      // Capture runs before terminal bubble: refuse to arm while selecting, or while
-      // a double-tap is pending on the terminal (second contact).
       if (shouldSuppressPageSwipe(event.target)) {
         touchTargetRef.current = null;
         return;

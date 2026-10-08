@@ -1,5 +1,3 @@
-//! Official ACP SDK connection actor behind the synchronous Web Session hub.
-
 use super::apply_model::{
     apply_config_option, apply_model_pin, sync_live_model_config, ApplyModelOutcome,
 };
@@ -72,7 +70,6 @@ pub(super) enum ClientCommand {
         result: Sender<Result<(), String>>,
     },
     Cancel {
-        /// Request ids of permission and elicitation prompts this cancel answered.
         result: Sender<Result<CancelOutcome, String>>,
     },
     RespondPermission {
@@ -97,7 +94,6 @@ pub(super) enum ClientCommand {
     CloseSession {
         result: Sender<Result<(), String>>,
     },
-    /// Resume/load handshake finished on the host; allow live transcript updates.
     InstallLiveSession,
     Shutdown,
 }
@@ -109,7 +105,6 @@ struct LiveSession {
     agent: AgentClient,
 }
 
-/// Shared runtime state for live session commands and handshake transcript gating.
 struct SessionRuntime {
     live: Mutex<Option<LiveSession>>,
     suppress_handshake_transcript: AtomicBool,
@@ -124,7 +119,6 @@ struct PendingPermission {
 
 type PendingPermissions = Arc<Mutex<HashMap<String, PendingPermission>>>;
 
-/// Capability-only `session/update` kinds that may flow during resume/load handshake.
 fn is_resume_load_capability_update(update: &SessionUpdate) -> bool {
     matches!(
         update,
@@ -144,7 +138,6 @@ pub(super) struct RunOptions {
     pub busy: Arc<AtomicBool>,
     pub agent: AgentClient,
     pub cwd: PathBuf,
-    /// Operator catalog pin used for in-band apply (may differ from spawn argv).
     pub apply_pin: Option<String>,
     pub resume_session_id: Option<String>,
     pub stderr_tail: Arc<Mutex<String>>,
@@ -152,13 +145,6 @@ pub(super) struct RunOptions {
     pub restore_timeout: Option<std::time::Duration>,
 }
 
-/// The host currently implements permission replies only. Keep filesystem and
-/// terminal capabilities false until their worktree-scoped handlers exist.
-///
-/// Advertise Cursor's vendor `parameterizedModelPicker` extra so the harness
-/// exposes apply axes. The operator surface still lists one exploded catalog
-/// id per effort, not a separate effort select
-/// ([#979](https://github.com/mossipcams/ajax-cli/issues/979)).
 pub(super) fn client_capabilities() -> ClientCapabilities {
     let mut meta = agent_client_protocol::schema::v1::Meta::new();
     meta.insert(
@@ -485,9 +471,6 @@ async fn initialize_session(
             runtime
                 .suppress_handshake_transcript
                 .store(false, Ordering::Release);
-            // A stored session id means restore: never a silent `session/new`
-            // behind the existing transcript
-            // ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
             return Err(resume_failure
                 .unwrap_or_else(|| RestoreFailure::Rejected {
                     session_id: resume_id.to_string(),
@@ -621,7 +604,6 @@ fn restore_rpc_failure(session_id: &str, method: RestoreMethod, reason: String) 
     }
 }
 
-/// Documented full-access mode select values, in preferred apply order.
 const FULL_ACCESS_MODE_VALUES: &[&str] =
     &["agent-full-access", "bypassPermissions", "agent", "code"];
 
@@ -923,8 +905,6 @@ fn respond_permission(
         .map_err(|error| error.to_string())
 }
 
-/// Answer every pending permission request with the cancelled outcome and
-/// report which ones were answered.
 fn cancel_permissions(permissions: &PendingPermissions) -> Vec<String> {
     let pending: Vec<_> = permissions.lock().unwrap().drain().collect();
     pending
@@ -942,7 +922,6 @@ fn timeout_error(method: &str) -> String {
     format!("{method} timed out after {}s", HANDSHAKE_TIMEOUT.as_secs())
 }
 
-/// `title: null` clears live chrome; omitted `title` is a no-op update.
 fn session_title_from_update(update: &SessionInfoUpdate) -> Option<Option<String>> {
     match update.title.as_opt_ref() {
         None => None,

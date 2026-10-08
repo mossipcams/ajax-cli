@@ -4,8 +4,6 @@ use crate::models::{
     RuntimeObservationSource, SideFlag, StepReceiptStatus, TaskOperationKind,
 };
 
-/// Generates a paired encoder/decoder for an enum whose persisted label is its
-/// variant name. Keeps both directions in sync from a single variant list.
 macro_rules! string_codec {
     ($to:ident, $from:ident, $ty:ty, $label:literal, [$($variant:ident),+ $(,)?]) => {
         pub(crate) fn $to(value: $ty) -> &'static str {

@@ -1,6 +1,3 @@
-// Round 8 — HIGH-severity gesture / poll truth hunts.
-// AJAX_CHAOS=1 npm run web:test -- --run src/shared/hooks/gestureBusy.severe.test.tsx
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
@@ -56,8 +53,6 @@ describe.runIf(chaos)("gestureBusy SEVERE cockpit truth", () => {
   });
 
   it("HIGH: deferred poll after mutation must not clobber fresher cockpit when gesture ends", async () => {
-    // Poll starts first (in flight / parked), mutation lands FRESH, then the older
-    // poll resolves — FRESH must remain (#801).
     let resolveFetch!: (value: BrowserCockpitView) => void;
     fetchCockpit.mockImplementation(
       () => new Promise((resolve) => {
@@ -95,20 +90,17 @@ describe.runIf(chaos)("gestureBusy SEVERE cockpit truth", () => {
     fetchCockpit.mockResolvedValue(fresh);
     const { result } = renderHook(() => useCockpitResource());
 
-    gestureBusyGate.begin(); // leak — no matching end (unmount mid-swipe hazard)
+    gestureBusyGate.begin();
 
     await act(async () => {
       await result.current.loadCockpit({ deferDuringGesture: true });
     });
 
-    // Non-deferred apply (mutation / resume) must still land.
     await act(async () => {
       result.current.applyCockpit(fresh);
     });
     expect(result.current.cockpit.data?.cards[0]?.title).toBe("FRESH");
 
-    // Background poll while leaked-busy stays deferred — dashboard truth can
-    // rot until something ends the gate. Document the freeze.
     fetchCockpit.mockResolvedValue(stale);
     await act(async () => {
       await result.current.loadCockpit({ deferDuringGesture: true });

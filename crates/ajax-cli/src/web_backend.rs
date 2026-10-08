@@ -239,8 +239,6 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        // Attention delivery is owned by ajax-web declarative push.
-        // CLI must not take_attention_transition or it would stamp without pushing.
         let _ = deliver_notifications;
         if reloaded || state_changed {
             self.persist_changed_state(context)
@@ -312,18 +310,12 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         self.persist_operate(result, context)
     }
 
-    fn acknowledge_operator_input(
-        &mut self,
-        context: &mut CommandContext<InMemoryRegistry>,
+    fn needs_operator_acknowledgment(
+        &self,
+        context: &CommandContext<InMemoryRegistry>,
         qualified_handle: &str,
-    ) -> Result<bool, WebError> {
-        // Coalesce per episode: only acknowledge when there is live waiting
-        // evidence observed strictly after the last acknowledgment, so repeat
-        // operator typing without newer evidence does not re-persist the
-        // registry. (Some(_), None) means the task has live evidence and was
-        // never acknowledged; that is actionable. No live evidence yet means
-        // there is nothing for the operator to acknowledge.
-        let needs_ack = context
+    ) -> bool {
+        context
             .registry
             .list_tasks()
             .into_iter()
@@ -335,9 +327,15 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
                     _ => false,
                 },
             )
-            .unwrap_or(false);
+            .unwrap_or(false)
+    }
 
-        if !needs_ack {
+    fn acknowledge_operator_input(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        qualified_handle: &str,
+    ) -> Result<bool, WebError> {
+        if !RuntimeBridge::<C>::needs_operator_acknowledgment(self, context, qualified_handle) {
             return Ok(false);
         }
 

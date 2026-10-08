@@ -11,7 +11,6 @@ import {
 } from "./telemetryContext";
 import { sanitizeTelemetryProps, type TelemetryProps } from "./telemetryFilter";
 
-/** Custom ignorelist replaces SDK defaults — include `.ph-no-autocapture` explicitly. */
 export const POSTHOG_AUTOCAPTURE_IGNORELIST = [
   ".ph-no-autocapture",
   "[data-ph-no-autocapture]",
@@ -26,7 +25,6 @@ export const POSTHOG_AUTOCAPTURE_IGNORELIST = [
 
 const POSTHOG_DEFAULTS = "2026-05-30";
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
-/** Ajax PostHog Cloud US project write key (browser). Override with `VITE_POSTHOG_KEY`. */
 export const DEFAULT_POSTHOG_PROJECT_KEY =
   "phc_uQFMpY3C9L9Dj4wLqudjNyJVBwAdCisMyUkZ6EqhxWxB";
 const WEB_VITALS_METRICS = [
@@ -55,7 +53,6 @@ export function isTelemetryInitialized(): boolean {
   return initialized;
 }
 
-/** Test seam: reset module init guard between unit tests. */
 export function resetTelemetryForTests(): void {
   initialized = false;
   navigationStartedAt = null;
@@ -128,7 +125,6 @@ export function initTelemetry(): void {
   }
 }
 
-/** Capture a custom event when telemetry is initialized; no-op otherwise. */
 export function track(event: string, properties?: TelemetryProps): void {
   if (!initialized) {
     return;
@@ -136,8 +132,6 @@ export function track(event: string, properties?: TelemetryProps): void {
   try {
     const context = buildEventContext();
     const sanitized = sanitizeTelemetryProps(properties ?? {});
-    // Event props may override observational context (e.g. destination route_kind);
-    // identity and sequence fields always win.
     posthog.capture(event, {
       ...context,
       ...sanitized,
@@ -152,7 +146,6 @@ export function track(event: string, properties?: TelemetryProps): void {
   }
 }
 
-/** Alias for `track` — preserves prior call-site naming. */
 export function captureEvent(event: string, properties?: TelemetryProps): void {
   track(event, properties);
 }
@@ -183,7 +176,6 @@ function resolveTapOutcome(ok: boolean, error_kind?: string): TapOutcome {
 
 const pendingInteractions = new Map<string, PendingInteraction>();
 
-/** Start a timed tap interaction; returns an id for feedback/complete ends. */
 export function beginInteraction(control: string): string {
   const id = `${control}:${generateId()}`;
   pendingInteractions.set(id, {
@@ -280,7 +272,6 @@ let navigationFromRoute: string | null = null;
 let navigationTrigger: string | null = null;
 let pwaLaunchCaptured = false;
 
-/** Mark navigation start for route-visible timing (before hash change). */
 export function markNavigationStart(fromRoute?: string, trigger?: string): void {
   navigationStartedAt = performance.now();
   navigationFromRoute = fromRoute ?? window.location.hash;
@@ -319,7 +310,6 @@ export function captureRouteVisible(props?: {
   navigationTrigger = null;
 }
 
-/** Once per cold boot — duration from navigation start to first shell visibility. */
 export function capturePwaLaunch(duration_ms?: number): void {
   if (pwaLaunchCaptured) {
     return;

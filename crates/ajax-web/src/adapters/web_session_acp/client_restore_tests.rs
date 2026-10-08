@@ -1,7 +1,3 @@
-//! Restore-contract tests for [`super::client`]: a stored session id means
-//! restore — never a silent fresh `session/new`
-//! ([#1151](https://github.com/mossipcams/ajax-cli/issues/1151)).
-
 use super::client::{
     AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
     RESTORE_UNAVAILABLE_MARKER,
@@ -31,8 +27,6 @@ fn scratch_dir(label: &str) -> PathBuf {
     dir
 }
 
-/// Count of `session/new` requests the fake agent served from the shared
-/// state dir: a restored spawn must not add to it.
 fn session_new_count(dir: &std::path::Path) -> usize {
     std::fs::read_to_string(dir.join(".fake-acp-session-new-count"))
         .ok()
@@ -40,8 +34,6 @@ fn session_new_count(dir: &std::path::Path) -> usize {
         .unwrap_or(0)
 }
 
-/// `AcpStdioClient` is not `Debug`, so `expect_err` cannot be used on spawn
-/// results; this helper keeps the failure context.
 fn spawn_error(
     result: Result<(AcpStdioClient, SpawnReport), AcpSpawnError>,
     context: &str,
@@ -85,9 +77,6 @@ fn shutdown_close_prevents_resume_when_advertised() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1151: a stored session id means restore — a failing
-// session/load must be a typed error, never a silent fresh session/new.
-// Pre-#1151 this test asserted the silent fresh-session fallback.
 #[test]
 fn fake_load_fail_errors_without_session_new_issue_1151() {
     let dir = scratch_dir("load-fail-restore");
@@ -124,9 +113,6 @@ fn fake_load_fail_errors_without_session_new_issue_1151() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1151: a harness advertising neither session/resume nor
-// loadSession cannot restore a stored id; that is a typed error, not a
-// silent fresh session.
 #[test]
 fn restore_requires_resume_or_load_capability_issue_1151() {
     let dir = scratch_dir("no-load-session");
@@ -154,9 +140,6 @@ fn restore_requires_resume_or_load_capability_issue_1151() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1151: a restored session is never dropped just because the
-// operator pin could not be proven; the apply error surfaces instead and no
-// fresh session/new runs behind the stored id.
 #[test]
 fn restored_session_survives_unproven_pin_issue_1151() {
     let dir = scratch_dir("restore-pin-refused");
@@ -197,9 +180,6 @@ fn restored_session_survives_unproven_pin_issue_1151() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1151: bridges such as pi-acp replay the whole transcript inside
-// session/load, so restore gets its own larger budget; a slow load still
-// restores within it.
 #[test]
 fn slow_session_load_still_restores_issue_1151() {
     let dir = scratch_dir("load-delay");
@@ -337,8 +317,6 @@ fn resume_transport_loss_is_typed() {
     let _ = fs::remove_dir_all(dir);
 }
 
-// Regression #1151: exceeding the restore budget is the typed error — never
-// a silent fresh session.
 #[test]
 fn restore_timeout_is_a_typed_error_issue_1151() {
     let dir = scratch_dir("load-timeout");

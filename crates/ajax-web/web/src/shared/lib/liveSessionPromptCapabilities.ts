@@ -1,4 +1,3 @@
-/** Advertised ACP prompt content capabilities from protocol v2 `promptCapabilities`. */
 export interface LivePromptCapabilities {
   image?: boolean;
   embeddedContext?: boolean;

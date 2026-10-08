@@ -257,8 +257,6 @@ async fn run_optimistic_keeps_conflict_when_cas_loss_is_not_durable() {
     assert_eq!(reload_calls.load(Ordering::SeqCst), 0);
 }
 
-// Regression for issue #962: set_model persist runs on the WebSocket Tokio worker;
-// blocking_lock on control_lane must not panic the runtime thread.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn persist_task_session_model_from_async_worker_issue_962() {
     use ajax_core::registry::Registry as _;
@@ -285,8 +283,6 @@ async fn persist_task_session_model_from_async_worker_issue_962() {
     assert_eq!(task.session_model(), Some("composer-2.5"));
 }
 
-// Regression for issue #1083: activity reporting from the session loop must not
-// blocking_lock the web control lane while cockpit refresh holds it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn report_task_session_activity_fails_fast_when_control_lane_busy_issue_1083() {
     use crate::slices::web_session::SessionActivity;

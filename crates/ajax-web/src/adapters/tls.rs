@@ -1,5 +1,3 @@
-//! Local HTTPS identity mechanisms.
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,14 +6,11 @@ use crate::WebError;
 const CERT_FILE: &str = "web-tls-cert.pem";
 const KEY_FILE: &str = "web-tls-key.pem";
 
-/// A persisted self-signed certificate and its private key, PEM-encoded.
 pub struct TlsIdentity {
     pub cert_pem: String,
     pub key_pem: String,
 }
 
-/// Loads the persisted TLS identity from `dir`, generating and persisting a
-/// fresh self-signed identity when either file is missing or empty.
 pub fn load_or_create_identity(dir: &Path) -> Result<TlsIdentity, WebError> {
     let cert_path = dir.join(CERT_FILE);
     let key_path = dir.join(KEY_FILE);
@@ -58,7 +53,6 @@ fn primary_lan_ip() -> Option<String> {
     Some(socket.local_addr().ok()?.ip().to_string())
 }
 
-/// Builds a rustls server configuration from a PEM-encoded identity.
 pub fn tls_server_config(identity: &TlsIdentity) -> Result<Arc<rustls::ServerConfig>, WebError> {
     use rustls::pki_types::pem::PemObject;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -86,7 +80,6 @@ pub fn tls_server_config(identity: &TlsIdentity) -> Result<Arc<rustls::ServerCon
     Ok(Arc::new(config))
 }
 
-/// Writes a secret file, restricting it to the owner on Unix.
 pub fn write_private(path: &Path, contents: &str) -> Result<(), WebError> {
     std::fs::write(path, contents)
         .map_err(|error| WebError::CommandFailed(format!("web tls key write failed: {error}")))?;

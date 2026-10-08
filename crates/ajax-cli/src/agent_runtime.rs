@@ -167,10 +167,6 @@ fn run_agent_runtime_with_interval(
                     message: None,
                 },
             )?;
-            // Keep cwd-index through the post-exit settle grace so Cursor
-            // stop/sessionEnd can still resolve identity without AJAX_* env.
-            // runtime_hooks_accepted rejects non-settle / stale writes.
-            // Next publish for the same cwd overwrites the entry.
             return Ok(exit_code.unwrap_or(1));
         }
 
@@ -528,7 +524,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exit_code, 0);
-        // Index remains after exit so settle hooks can resolve identity.
         assert!(cwd_index_path(&events_dir, &cwd).is_file());
 
         fs::remove_dir_all(cache_root).unwrap();

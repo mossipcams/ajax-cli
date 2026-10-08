@@ -129,14 +129,6 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
     Ok((outputs, state_changed))
 }
 
-/// Trash sweep commands that are safe to execute.
-///
-/// `commands::sweep_trash_commands` emits one `rm -rf` sweep per `.ajax-trash`
-/// directory. If a trash entry is itself a full repository (its `.git` is a
-/// directory, e.g. a repo root was mistakenly trashed), sweeping the whole
-/// directory would destroy it. In that case sweep each non-repository entry
-/// individually and skip the repository entries entirely. When no entry holds
-/// a repository, the original pinned command is returned unchanged.
 fn sweep_trash_commands_guarded<R: Registry>(context: &CommandContext<R>) -> Vec<CommandSpec> {
     commands::sweep_trash_commands(context)
         .into_iter()
@@ -218,9 +210,7 @@ mod trash_sweep_guard_tests {
         let root =
             std::env::temp_dir().join(format!("ajax-sweep-guard-{}-{nanos}", std::process::id()));
         let trash_dir = root.join(".ajax-trash");
-        // An entry that holds a full repository (`.git` is a directory).
         std::fs::create_dir_all(trash_dir.join("repo-entry/.git")).unwrap();
-        // A plain trashed worktree entry without a `.git` directory.
         std::fs::create_dir_all(trash_dir.join("plain-entry")).unwrap();
 
         let context = context_with_worktree_root(&root);

@@ -2,6 +2,39 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.59.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.2...ajax-cli-v0.59.0) (2026-10-07)
+
+
+### Features
+
+* **web:** pi context usage ([#1191](https://github.com/mossipcams/ajax-cli/issues/1191)) ([2c4f47c](https://github.com/mossipcams/ajax-cli/commit/2c4f47cbcad480dac0a61113262347e7bcf428c7))
+* **web:** training backend ([#1205](https://github.com/mossipcams/ajax-cli/issues/1205)) ([7fea427](https://github.com/mossipcams/ajax-cli/commit/7fea4274150e2eb2743f927bc73d640cf46bca45))
+* **web:** training modal ([#1208](https://github.com/mossipcams/ajax-cli/issues/1208)) ([3c298ad](https://github.com/mossipcams/ajax-cli/commit/3c298ad5f991521ac4006c5387ff677f71b2d252))
+
+
+### Bug Fixes
+
+* **core:** handle Git repositories that cannot be observed ([#1249](https://github.com/mossipcams/ajax-cli/issues/1249)) ([38f5ee4](https://github.com/mossipcams/ajax-cli/commit/38f5ee459958d1716034c64e289eb27308f1977f))
+* **core:** preserve main checkout on drop ([#1217](https://github.com/mossipcams/ajax-cli/issues/1217)) ([e411c35](https://github.com/mossipcams/ajax-cli/commit/e411c35d2b622d81ef3d273236f5d699ce5d3f60))
+* **teardown:** block repo root trash ([#1201](https://github.com/mossipcams/ajax-cli/issues/1201)) ([661e384](https://github.com/mossipcams/ajax-cli/commit/661e3844c409293a87529420fc9d80d30b8d95c9))
+* **web:** allow same-origin microphone in Permissions-Policy ([#1244](https://github.com/mossipcams/ajax-cli/issues/1244)) ([c68bc57](https://github.com/mossipcams/ajax-cli/commit/c68bc57ec24a71649f74b5b692769235d1429ee5))
+* **web:** clear context usage on harness switch ([#1195](https://github.com/mossipcams/ajax-cli/issues/1195)) ([f27959b](https://github.com/mossipcams/ajax-cli/commit/f27959b46483c35d3870617d963b414eff33ea31))
+* **web:** create push state files owner only ([#1248](https://github.com/mossipcams/ajax-cli/issues/1248)) ([16a93f2](https://github.com/mossipcams/ajax-cli/commit/16a93f2900f5c1ceb20b1f3759dd55cff74ad863))
+* **web:** deliver push in background with retry ([#1246](https://github.com/mossipcams/ajax-cli/issues/1246)) ([722c813](https://github.com/mossipcams/ajax-cli/commit/722c813b0366e4049a0d0ad3acb545a08040b028))
+* **web:** harness switch turn end ([#1192](https://github.com/mossipcams/ajax-cli/issues/1192)) ([7d991cd](https://github.com/mossipcams/ajax-cli/commit/7d991cd7c515fc1727da18e1da380684489a9b1c))
+* **web:** keep a buffered assistant reply across reconnect ([#1250](https://github.com/mossipcams/ajax-cli/issues/1250)) ([106e9d7](https://github.com/mossipcams/ajax-cli/commit/106e9d741b01ba21a2991b6097552a919b004288))
+* **web:** keep chat item ids unique across session restart and context reset ([#1215](https://github.com/mossipcams/ajax-cli/issues/1215)) ([4ad9f54](https://github.com/mossipcams/ajax-cli/commit/4ad9f548f1bd589ffb7f6c7b4ab5e9ea70b2e630))
+* **web:** keep socket-local errors off the replay cursor and reject prompts on a full outbox ([#1243](https://github.com/mossipcams/ajax-cli/issues/1243)) ([361d859](https://github.com/mossipcams/ajax-cli/commit/361d859eb77e410c90c81561fad1d666c0d49722))
+* **web:** llama.cpp Start/Stop buttons in training modal ([#1210](https://github.com/mossipcams/ajax-cli/issues/1210)) ([6524f63](https://github.com/mossipcams/ajax-cli/commit/6524f63ca159e598b8db839dd3daf11e47d5f05c))
+* **web:** rename Train button to Local and surface generation phase progress ([#1214](https://github.com/mossipcams/ajax-cli/issues/1214)) ([5107834](https://github.com/mossipcams/ajax-cli/commit/5107834d7e92326b92151c1c6db3e08259a5b595))
+* **web:** report a turn interrupted by host restart ([#1251](https://github.com/mossipcams/ajax-cli/issues/1251)) ([10c6104](https://github.com/mossipcams/ajax-cli/commit/10c6104bc3068defc756dca68d8a24ec71ed9a52))
+* **web:** report failed session and registry saves ([#1245](https://github.com/mossipcams/ajax-cli/issues/1245)) ([2b32a6e](https://github.com/mossipcams/ajax-cli/commit/2b32a6e245d6b6e018df09634e805103ec418645))
+* **web:** report host-started training and generation in gpu-ctl status ([#1213](https://github.com/mossipcams/ajax-cli/issues/1213)) ([9f1a969](https://github.com/mossipcams/ajax-cli/commit/9f1a969b4c4c2b016ca9ef0d7d7293fc56ae6d9b))
+* **web:** run terminal tmux calls off the async worker ([#1252](https://github.com/mossipcams/ajax-cli/issues/1252)) ([a086b98](https://github.com/mossipcams/ajax-cli/commit/a086b9873afaca2e87a107ee854a8d6cfb8d81d1))
+* **web:** show live training from host state when no run object is sent ([#1212](https://github.com/mossipcams/ajax-cli/issues/1212)) ([1db4a9f](https://github.com/mossipcams/ajax-cli/commit/1db4a9f6fe37015cefa32b33b02fa9ab081059c2))
+* **web:** tolerate missing run/generation progress fields from training host ([#1211](https://github.com/mossipcams/ajax-cli/issues/1211)) ([887c338](https://github.com/mossipcams/ajax-cli/commit/887c338b57cbd28fc8260a9ed29ef21f14a443aa))
+* **web:** training modal layout, close button, tap-to-switch ([#1209](https://github.com/mossipcams/ajax-cli/issues/1209)) ([f0bdeaf](https://github.com/mossipcams/ajax-cli/commit/f0bdeaf968527c631b86c8e896918affbc7d6d81))
+
 ## [0.58.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.1...ajax-cli-v0.58.2) (2026-09-17)
 
 

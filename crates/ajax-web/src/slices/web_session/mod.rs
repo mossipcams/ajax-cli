@@ -1,5 +1,3 @@
-//! Browser orchestration-chat wire protocol and per-task session runtime.
-
 mod acp_drain;
 mod acp_execution_map;
 mod acp_map;
@@ -53,8 +51,6 @@ use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 pub(crate) type PersistSessionModel = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
-/// Reports an ACP turn transition as task evidence. Returns `true` when the
-/// observation was applied; failures must never interrupt a live turn.
 pub(crate) type ReportSessionActivity = Arc<dyn Fn(&str, SessionActivity) -> bool + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,9 +106,6 @@ pub enum SessionServerEvent {
     Ready {
         #[serde(default = "default_session_model")]
         model: String,
-        /// Whether a turn is actually in flight. The transcript alone cannot say:
-        /// replayed history has no turn-start marker, so a trailing host note
-        /// would otherwise leave the browser reading "Working" forever.
         #[serde(default)]
         busy: bool,
     },
@@ -120,19 +113,14 @@ pub enum SessionServerEvent {
     Message {
         role: String,
         text: String,
-        /// Non-text ACP output blocks (image, resource_link, embedded resource).
         #[serde(
             default,
             rename = "contentBlocks",
             skip_serializing_if = "Vec::is_empty"
         )]
         content_blocks: Vec<output_content::OutputContentBlockWire>,
-        /// Stable host-generated identity for replace-by-id replay in the browser.
         #[serde(rename = "itemId", default)]
         item_id: String,
-        /// ACP v1 message identity. Chunks sharing one id are one message; a
-        /// change starts a new one. Optional in the protocol, so the browser
-        /// keeps its role-adjacency fallback for harnesses that omit it.
         #[serde(rename = "messageId", default, skip_serializing_if = "Option::is_none")]
         message_id: Option<String>,
     },
@@ -158,8 +146,6 @@ pub enum SessionServerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
     },
-    /// Operator answered a permission request. Recorded so reconnect/reload
-    /// replay does not resurrect an already-decided prompt.
     #[serde(rename = "permission_resolved")]
     PermissionResolved {
         #[serde(rename = "requestId")]
@@ -173,8 +159,6 @@ pub enum SessionServerEvent {
         message: String,
         schema: serde_json::Value,
     },
-    /// Operator answered an agent elicitation. Recorded so reconnect/reload
-    /// replay does not resurrect an already-decided prompt.
     #[serde(rename = "elicitation_resolved")]
     ElicitationResolved {
         #[serde(rename = "requestId")]
@@ -190,21 +174,15 @@ pub enum SessionServerEvent {
         status: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         locations: Vec<String>,
-        /// What the call produced: printed output, a file diff. Carried through
-        /// so the browser can render a diff as a diff instead of announcing
-        /// that an unnamed edit happened.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         content: Vec<ToolContent>,
     },
     #[serde(rename = "plan")]
     Plan { entries: Vec<PlanEntry> },
-    /// Context window pressure, from ACP `usage_update`.
     #[serde(rename = "usage")]
     Usage { used: u64, size: u64 },
-    /// Invalidate usage from the previous ACP session context.
     #[serde(rename = "usage_reset")]
     UsageReset,
-    /// Per-turn token usage, from ACP `session/prompt` result.usage.
     #[serde(rename = "turn_usage")]
     TurnUsage {
         #[serde(rename = "requestId", default, skip_serializing_if = "Option::is_none")]
@@ -263,15 +241,10 @@ fn default_session_model() -> String {
     "auto".to_string()
 }
 
-/// Model a harness runs when neither the socket nor the task pins one. Cursor
-/// gets the Ajax default (the same one an interactive Cursor task launches
-/// with); a bridge harness has none here and picks for itself.
 fn harness_default_model(agent: AgentClient) -> Option<&'static str> {
     acp_launch_for_agent(agent).and_then(|launch| launch.default_model)
 }
 
-/// Normalize a client-supplied model id for ACP spawn.
-/// Empty / whitespace → `auto`. Rejects control chars, spaces, and oversized ids.
 pub fn normalize_session_model(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -289,8 +262,6 @@ pub struct PlanEntry {
     pub status: String,
 }
 
-/// Output attached to a tool call. Mirrors ACP `ToolCallContent` minus
-/// `terminal`: Ajax advertises no `terminal/*` client capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ToolContent {
@@ -336,7 +307,6 @@ pub enum ToolContent {
     },
 }
 
-/// Cursor ACP allows one in-flight `session/prompt`; additional prompts queue here.
 pub const MAX_QUEUED_PROMPTS: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,7 +315,6 @@ pub enum PromptDispatch {
     Queued,
 }
 
-/// One validated prompt waiting behind an in-flight turn.
 #[derive(Debug, Clone)]
 pub struct QueuedPrompt {
     pub client_message_id: String,
@@ -355,11 +324,9 @@ pub struct QueuedPrompt {
     pub blocks: Vec<agent_client_protocol::schema::v1::ContentBlock>,
 }
 
-/// Queue is full; caller must reject without dropping acknowledged work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PromptQueueFull;
 
-/// Decide whether to start a prompt now or enqueue it behind the in-flight turn.
 pub fn dispatch_prompt(
     prompt_in_flight: bool,
     queued: &mut VecDeque<QueuedPrompt>,
@@ -380,7 +347,6 @@ pub fn clear_prompt_queue(queued: &mut VecDeque<QueuedPrompt>) {
     queued.clear();
 }
 
-/// Cancel clears queued prompts unless the operator asked to keep them.
 pub fn apply_cancel_to_queue(queued: &mut VecDeque<QueuedPrompt>, keep_queue: bool) {
     if !keep_queue {
         clear_prompt_queue(queued);
@@ -391,9 +357,7 @@ pub fn apply_cancel_to_queue(queued: &mut VecDeque<QueuedPrompt>, keep_queue: bo
 pub struct SessionAttachPlan {
     pub qualified_handle: String,
     pub worktree_path: PathBuf,
-    /// Normalized Cursor model id (`auto` for CLI default).
     pub model: String,
-    /// Harness whose ACP process backs this session.
     pub agent: AgentClient,
 }
 

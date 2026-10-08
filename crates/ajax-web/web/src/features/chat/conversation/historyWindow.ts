@@ -1,16 +1,13 @@
 import type { ConversationItem } from "../session/public";
 
-/** Recent rows painted on first open; full transcript stays in session reducer. */
 export const DEFAULT_HISTORY_WINDOW = 150;
 
-/** Reveal batch when scrolling up or tapping Load earlier. */
 export const HISTORY_REVEAL_BATCH = 50;
 
 function isUserTurnStart(item: ConversationItem): boolean {
   return item.kind === "prose" && item.role === "user";
 }
 
-/** Indices where a turn may start without severing grouped rows. */
 export function turnStartIndices(items: ConversationItem[]): number[] {
   if (items.length === 0) return [];
 
@@ -21,10 +18,6 @@ export function turnStartIndices(items: ConversationItem[]): number[] {
   return indices;
 }
 
-/**
- * Snap the initial window start forward to a turn boundary within the cap so
- * the first paint never opens mid-turn.
- */
 export function historyWindowStart(items: ConversationItem[], cap: number): number {
   if (items.length <= cap) return 0;
 
@@ -36,7 +29,6 @@ export function historyWindowStart(items: ConversationItem[], cap: number): numb
   return naive;
 }
 
-/** Expand backward toward `target`, snapping to the nearest turn start below the window. */
 export function snapRevealStart(
   items: ConversationItem[],
   windowStart: number,

@@ -45,18 +45,15 @@ pub(crate) fn lifetime_for(severity: Severity) -> u8 {
 #[derive(Clone)]
 pub(crate) enum SelectableKind {
     Project(RepoSummary),
-    /// Synthetic "+ new task" row, only shown inside a project.
     NewTask {
         repo: String,
     },
     Inbox(AnnotationItem),
     Task(TaskCard),
-    /// Action row inside the per-task action menu.
     TaskAction {
         task: TaskCard,
         action: String,
     },
-    /// Skill-backed remediation row (fix CI, resolve merge conflicts).
     Remediation {
         task: TaskCard,
         action: String,
@@ -73,9 +70,6 @@ pub(crate) enum AppView {
 }
 
 impl SelectableKind {
-    /// Synthesize an action item for the dispatch callback.
-    /// The CLI dispatcher decides whether an action is navigational or should
-    /// point the operator at an explicit executable command.
     pub(crate) fn as_action(&self) -> CockpitActionItem {
         match self {
             SelectableKind::Project(repo) => CockpitActionItem {
@@ -241,9 +235,6 @@ pub struct App {
     pub(crate) notices: HashMap<TaskId, Notice>,
     pub(crate) system_notice: Option<Notice>,
     pub(crate) pending_confirmation: Option<CockpitActionItem>,
-    /// Task whose inline action drawer is currently open. The drawer renders
-    /// annotation lines plus selectable action rows under the matching task
-    /// or inbox row. `None` keeps the list dense.
     pub(crate) expanded_task: Option<TaskId>,
 }
 
@@ -334,19 +325,16 @@ impl App {
         if !still_inside {
             self.expanded_task = None;
             self.invalidate_pending_confirmation();
-            // Save selection position by remembering selectable identity-ish.
             let was_idx = self.selected;
             self.rebuild_selectables();
             self.selected = was_idx.min(self.selectables.len().saturating_sub(1));
         }
     }
 
-    /// The action that Enter would dispatch right now, or None if nothing is selectable.
     pub fn selected_action(&self) -> Option<CockpitActionItem> {
         self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
-    /// Repo to use for Ctrl+T / create-task, from the current view or selection.
     pub fn repo_for_new_task(&self) -> Option<String> {
         if let Some(repo) = repo_from_view(&self.view) {
             return Some(repo);
@@ -365,7 +353,6 @@ impl App {
         })
     }
 
-    /// Open the create-task screen for `repo`, clearing any in-progress title.
     pub fn open_new_task(&mut self, repo: String) {
         self.view = AppView::NewTaskInput {
             repo,
@@ -379,8 +366,6 @@ impl App {
         self.rebuild_selectables();
     }
 
-    /// Return to the cockpit's main project list. Returns false at the top
-    /// level so callers can keep the TUI alive without treating back as quit.
     pub fn go_home(&mut self) -> bool {
         if matches!(self.view, AppView::Projects) {
             return false;
@@ -394,8 +379,6 @@ impl App {
         true
     }
 
-    /// Erase editable input, then return to the cockpit's main project list.
-    /// Returns false at the top level so back never exits the TUI.
     pub fn go_back(&mut self) -> bool {
         if self.expanded_task.is_some() {
             self.collapse_drawer();
@@ -860,7 +843,6 @@ fn same_action_identity(left: &CockpitActionItem, right: &CockpitActionItem) -> 
         && left.action == right.action
 }
 
-/// Snapshot of cockpit state passed into the TUI's refresh path.
 #[derive(Clone, Debug)]
 pub struct CockpitSnapshot {
     pub repos: ReposResponse,

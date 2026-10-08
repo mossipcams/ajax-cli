@@ -1,5 +1,3 @@
-// Authenticated orchestration-chat WebSocket transport (ACP-primary; not PTY).
-
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
 import type { LiveAvailableCommand } from "@/shared/lib/liveSessionCommands";
 import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
@@ -8,16 +6,12 @@ import type { OutputContentBlock, ToolContent } from "@/shared/lib/liveSessionOu
 
 export const SESSION_PROTOCOL_VERSION = 2;
 
-/** Match host FIFO cap (`web_session::MAX_QUEUED_PROMPTS`). */
 export const MAX_QUEUED_PROMPTS = 8;
 
-/** Match the host's per-frame ceiling (`ws_bridge::MAX_SESSION_FRAME_BYTES`). */
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
-/** Maximum inline image blocks per prompt (mirrors host `prompt_content::MAX_IMAGE_BLOCKS`). */
 export const MAX_IMAGE_BLOCKS = 8;
 
-/** Headroom reserved for JSON framing outside base64 image payloads. */
 export const PROMPT_FRAME_HEADROOM_BYTES = 4096;
 
 export const PROMPT_TOO_LONG = "That message is too long to send. Shorten it and try again.";
@@ -120,9 +114,7 @@ export type ParsedServerFrame =
 export interface WebSessionTransportCallbacks {
   onReady: (model: string) => void;
   onEvent: (event: WebSessionServerEvent) => void;
-  /** Host snapshot refresh (initial attach or applied config/model change). */
   onSnapshot?: (snapshot: SessionSnapshot) => void;
-  /** Next event cursor to request on an in-page reconnect (not persisted). */
   onCursorAdvance?: (nextToRead: number) => void;
   onClosed: () => void;
 }
@@ -133,13 +125,11 @@ export interface WebSessionTransport {
     contentBlocks?: PromptContentBlockWire[],
     clientMessageId?: string,
   ): string;
-  /** Drop a staged host-queued prompt that never reached ACP dispatch. */
   withdrawQueuedPrompt(clientMessageId: string): void;
   sendCancel(keepQueue?: boolean): void;
   sendClear(): void;
   retryRestore(): void;
   startFresh(): void;
-  /** @deprecated Use setConfigOption for live picks. */
   setModel(model: string): void;
   setConfigOption(configId: string, value: string | boolean): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;

@@ -1,4 +1,3 @@
-/** Explicit reconnect lifecycle for one mounted task session. */
 export type ConnectionState =
   | "connecting"
   | "connected"
@@ -26,7 +25,6 @@ const ALL_CONNECTION_STATES: ConnectionState[] = [
   "disposed",
 ];
 
-/** ponytail: compile-time exhaustiveness guard for ConnectionState switches. */
 export function assertConnectionState(value: ConnectionState): ConnectionState {
   if (!ALL_CONNECTION_STATES.includes(value)) {
     throw new Error(`Unknown connection state: ${String(value)}`);

@@ -1,5 +1,3 @@
-//! Web companion runtime wiring.
-
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessError, server, tls,
@@ -136,8 +134,6 @@ where
         .build()
         .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
 
-    // Kill any ephemeral per-client terminal sessions left behind by a bridge
-    // that crashed before it could tear its own session down.
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
@@ -160,8 +156,6 @@ where
     })
 }
 
-/// Background Full refresh always advances low-frequency runtime and CI
-/// evidence. Browser presence and push subscriptions gate only web push.
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -171,7 +165,7 @@ where
     let tick_state = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(period);
-        interval.tick().await; // consume the immediate first tick
+        interval.tick().await;
         loop {
             interval.tick().await;
             let (tier, deliver_push) = background_refresh_plan(
@@ -338,8 +332,6 @@ async fn axum_session_models(uri: axum::http::Uri) -> AxumResponse {
         })
         .unwrap_or("cursor")
         .to_string();
-    // Reading a bridge catalog spawns a short-lived process; keep it off the
-    // async worker so the event loop is not blocked on stdio.
     match tokio::task::spawn_blocking(move || {
         crate::slices::session_models::list_session_models(&agent)
     })
@@ -484,7 +476,6 @@ where
         )
             .into_response(),
         Err(error) => {
-            // Never return 502: Cloudflare surfaces origin 502 as a host error page.
             let status = if error.contains("subscription") || error.contains("endpoint") {
                 StatusCode::BAD_REQUEST
             } else {
@@ -507,9 +498,6 @@ async fn axum_server_test_in_stable() -> AxumResponse {
     handle_server_test_in_stable().into_axum_response()
 }
 
-/// Runs a blocking ssh training verb on the thread pool so the async runtime
-/// is never blocked; a JoinError maps to the same generic 502 body runner
-/// failures produce.
 async fn axum_training_verb<C, B>(
     state: &WebAppState<C, B>,
     body: Bytes,

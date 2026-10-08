@@ -27,33 +27,19 @@ use github_checks::{
     CI_PROBE_ERROR_KEY,
 };
 
-/// Run identity of the primary (session-level) agent run.
 pub const PRIMARY_RUN_ID: &str = "primary";
 
-/// Source of native hook-derived agent-status evidence for a task.
-///
-/// Implementors (in `ajax-cli`) own filesystem I/O: they fold the canonical
-/// JSONL event log per run into reducer observations and translate the launch
-/// wrapper's confirmed exit / liveness into a terminal observation. Core never
-/// reads files and never parses status strings; it reduces the observations
-/// this trait yields.
 pub trait AgentStatusSource {
-    /// Reducer-ready observations for the task, one or more per active run.
     fn observations_for_task(&self, task_id: &TaskId) -> Vec<StatusObservation>;
 
-    /// Confirmed launch-wrapper process liveness, if observed. Never alone
-    /// implies the agent is running.
     fn process_liveness_for_task(&self, _task_id: &TaskId) -> Option<ProcessLiveness> {
         None
     }
 }
 
-/// Controls how much substrate work a refresh pass performs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RefreshTier {
-    /// Tmux/live updates only; orphan git discovery runs when gates fire.
     Live,
-    /// Always eligible for orphan git discovery when tasks are probed.
     #[default]
     Full,
 }
@@ -344,10 +330,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
-        // Native hook-derived agent status: fold canonical events per run into
-        // reducer observations (plus confirmed wrapper exit / liveness), then
-        // reduce to one live observation. There is no string round-trip and no
-        // pane-text inference.
         let now = SystemTime::now();
         let observations = agent_status_source.observations_for_task(&task_snapshot.id);
         let process_liveness = agent_status_source.process_liveness_for_task(&task_snapshot.id);
@@ -355,11 +337,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             && process_liveness.is_none()
             && !crate::ui_state::agent_process_is_alive(&task_snapshot)
         {
-            // Zero agent evidence from every source. A leftover running claim
-            // can only be stale here: interactive provisioning sets
-            // `AgentRunning` on send-keys, but the sources that retract it are
-            // all silent, so skipping would leave the operator surfaces
-            // reporting "Agent working" forever.
             clear_stale_agent_running(context, &task_id, &task_snapshot, &mut changed);
             continue;
         }
@@ -371,12 +348,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 observations: &observations,
             });
 
-        // Precedence tier 3: a fresh wrapper heartbeat proves the process
-        // exists without asserting activity. Stamping it lets the projector
-        // report a live-but-quiet task as Idle rather than Unknown; it never
-        // becomes `AgentRunning`. Recorded before the Unknown bail below,
-        // because liveness is exactly the evidence that survives when no
-        // native event has arrived yet.
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let previous = task.clone();
             if projection.process_alive {
@@ -403,8 +374,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 agent,
                 AgentClient::Claude | AgentClient::Codex | AgentClient::Cursor | AgentClient::Pi
             );
-        // Actionable waits only — Done/"Response ready" is Waiting-class but must
-        // not open the idle reconcile capture gate (Bugbot).
         let prior_actionable_or_running =
             task_snapshot.live_status.as_ref().is_some_and(|status| {
                 matches!(
@@ -446,24 +415,16 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                                 changed |= *task != previous;
                             }
                         }
-                        // Wait chrome is visible: never fall through to apply
-                        // Working/Done from lifecycle in the same tick (Bugbot).
                         continue;
                     }
                 }
             }
         }
-        // Preserve prior live evidence when the reducer has nothing trustworthy.
-        // Claude (native waits) never takes unknown_fallback, so without this
-        // continue we would apply LiveStatusKind::Unknown and clear waiting
-        // while leaving NeedsInput — re-arming attention after ack (Bugbot).
         if projection.phase == crate::agent_status::ParentPhase::Unknown {
             continue;
         }
         let observation = projection.live.clone();
         let observed_at = projection.selected_observed_at.unwrap_or(now);
-        // Waiting/completion evidence at or before an acknowledgment is held:
-        // opening a task suppresses it until newer evidence arrives.
         if observation.kind.class() == crate::models::LiveStatusClass::Waiting
             && task_snapshot
                 .attention_acknowledged_at
@@ -488,12 +449,9 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
             task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
             match projection.selected_source {
-                // Confirmed wrapper exit is trusted process evidence and may
-                // advance lifecycle on terminal completion.
                 Some(crate::agent_status::ObservationSource::ProcessExit) => {
                     live::apply_trusted_observation_at(task, observation, observed_at);
                 }
-                // Folded native lifecycle events are authoritative for activity.
                 Some(crate::agent_status::ObservationSource::ProviderLifecycle) => {
                     live::apply_authoritative_observation_at(task, observation, observed_at);
                 }
@@ -814,16 +772,6 @@ fn refresh_cached_annotations(task: &mut Task) {
     task.annotations = crate::attention::annotate(task);
 }
 
-/// Retract a running claim that no evidence source backs any more.
-///
-/// Only the caller's zero-evidence branch may use this: it asserts absence, not
-/// death. The task is left with no running claim rather than marked dead, so a
-/// later observation is free to describe what actually happened.
-///
-/// A task that still carries a live status is left alone even here. That is a
-/// newer observation than provisioning, and the live-status machinery owns
-/// retracting it; clearing on top would flap a steady-state running task to
-/// idle on every refresh where the hook source happens to be silent.
 fn clear_stale_agent_running<R: Registry>(
     context: &mut CommandContext<R>,
     task_id: &TaskId,

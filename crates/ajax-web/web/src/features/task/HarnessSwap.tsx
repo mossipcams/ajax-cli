@@ -5,16 +5,11 @@ import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
   handle: string;
-  /** Harness the task runs on now, as reported by the task detail. */
   currentAgent: string;
   disabled?: boolean;
   onSwapped?: () => void;
 }
 
-/**
- * Cross-harness Switch changes only the harness (AoE contract).
- * Same-harness model changes use the composer-footer picker, not Switch.
- */
 export default function HarnessSwap({
   handle,
   currentAgent,

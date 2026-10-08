@@ -83,8 +83,6 @@ const TaskRow = memo(function TaskRow({
 }: TaskRowProps) {
   const meta = statusMeta(card.status);
   const wrapRef = useRef<HTMLDivElement>(null);
-  // The primary action rides behind the row as a swipe reveal; tapping the row
-  // opens the task detail where every action lives. One gesture, one surface.
   const revealAction = visibleTaskActions(card.actions)[0];
 
   useSwipeReveal(wrapRef, revealAction
@@ -353,8 +351,6 @@ export default function TaskList({
     [cockpit.repos?.repos],
   );
 
-  // Rust ranks the cards; the browser only keeps that order stable across polls
-  // so rows don't reshuffle under the operator's thumb.
   const calm = useMemo(
     () => sortCards(filterByProject(cockpit.cards, selectedProject), stableOrder),
     [cockpit.cards, selectedProject, stableOrder],
@@ -445,9 +441,6 @@ export default function TaskList({
             </section>
           ) : null}
           {idle.length > 0 ? (
-            // ponytail: ships open — a closed <details> drops its rows out of the
-            // accessibility tree. Flip to collapsed-by-default only together with
-            // the row queries in TaskList.test.tsx.
             <details className="task-band idle-band" open>
               <summary className="task-band-title">
                 <span className="task-band-label">Idle</span>

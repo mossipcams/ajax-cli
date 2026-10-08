@@ -23,8 +23,6 @@ describe("nextRepeatInterval", () => {
   });
 
   it("never repeats faster than a thumb can stop it", () => {
-    // Held hotbar keys used to bottom out at 30ms (~33/s), which overshot the
-    // intended target by several characters. Keep the floor humane.
     expect(KEY_REPEAT_MIN_INTERVAL_MS).toBeGreaterThanOrEqual(60);
     expect(nextRepeatInterval(0)).toBeGreaterThanOrEqual(120);
   });

@@ -40,7 +40,6 @@ function createController(
   return { controller, fit, sendResize, readSize };
 }
 
-/** Run frame settling and let the PTY debounce window complete. */
 function settleBurst(controller: { requestRefit: () => void }): void {
   controller.requestRefit();
   flushFrame();
@@ -53,9 +52,6 @@ beforeEach(() => {
   nextFrameId = 1;
   frameCallbacks.clear();
   stubAnimationFrames();
-  // Fake only the timeout APIs: the default useFakeTimers() also fakes
-  // requestAnimationFrame, which would silently replace the manual frame
-  // queue above and starve flushFrame().
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 });
 

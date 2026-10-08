@@ -5,8 +5,6 @@ import {
   type TerminalConnectionStatus,
 } from "./terminalConnection";
 
-// The socket renews the browser session once per disconnected episode. Stub it
-// so tests drive the outcome instead of hitting fetch.
 const renewBrowserSession = vi.fn<() => Promise<void>>();
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -102,12 +100,10 @@ describe("connectTaskTerminal", () => {
 
   async function fireCloseWithoutOpen() {
     latestSocket().fire("close");
-    // Let the one-shot session renewal settle before running backoff timers.
     await vi.advanceTimersByTimeAsync(0);
     vi.runOnlyPendingTimers();
   }
 
-  /** Spend the one-shot session-renewal redial that the first failed dial buys. */
   async function exhaustSessionRenewalRetry() {
     await fireCloseWithoutOpen();
   }
@@ -131,9 +127,6 @@ describe("connectTaskTerminal", () => {
     expect(statuses.slice(statusesBefore)).toEqual([]);
   });
 
-  // A stale session cookie fails the WebSocket upgrade with a 401 the browser
-  // never exposes. Without renewing, the socket burns its retry budget and
-  // latches to "unavailable" for good.
   it("renews the browser session and redials when the first dial never opens", async () => {
     createConnection();
     expect(MockWebSocket.instances).toHaveLength(1);
@@ -142,9 +135,7 @@ describe("connectTaskTerminal", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(renewBrowserSession).toHaveBeenCalledTimes(1);
-    // Redial is immediate — it must not wait out the backoff.
     expect(MockWebSocket.instances).toHaveLength(2);
-    // Nothing was seeded on the failed dial, so the retry still asks for history.
     expect(MockWebSocket.instances[1].url).not.toContain("seed=0");
     expect(statuses.at(-1)).toBe("connecting");
   });
@@ -174,8 +165,6 @@ describe("connectTaskTerminal", () => {
     expect(MockWebSocket.instances).toHaveLength(2);
   });
 
-  // Mobile Safari drops the socket on background; that is not an auth failure
-  // and must not cost a session renewal.
   it("does not renew when an established socket drops", async () => {
     createConnection();
     const socket = latestSocket();
@@ -188,7 +177,6 @@ describe("connectTaskTerminal", () => {
     expect(renewBrowserSession).not.toHaveBeenCalled();
   });
 
-  // A renewed session after a reconnect episode must be available again later.
   it("re-arms the renewal after a successful open", async () => {
     createConnection();
 
@@ -360,7 +348,6 @@ describe("connectTaskTerminal", () => {
     const socket = latestSocket();
     socket.readyState = MockWebSocket.OPEN;
     socket.fire("open");
-    // Stable open so the first drop still uses delay-0 reconnect.
     vi.advanceTimersByTime(1000);
 
     socket.fire("close");
@@ -725,10 +712,8 @@ describe("connectTaskTerminal", () => {
       sent.push(copy);
     };
 
-    // Build a payload exceeding 4096 encoded bytes with a multibyte character
-    // whose encoded bytes straddle the 4096 chunk boundary.
     const filler = "x".repeat(4095);
-    const boundary = "λ"; // U+03BB, 2 encoded bytes → bytes [4095, 4097) cross 4096
+    const boundary = "λ";
     const tail = "y".repeat(100);
     const payload = filler + boundary + tail;
     const expected = new TextEncoder().encode(payload);
@@ -737,12 +722,10 @@ describe("connectTaskTerminal", () => {
 
     expect(sent.length).toBeGreaterThan(1);
 
-    // Every frame must be within the bridge limit.
     for (const frame of sent) {
       expect(frame.byteLength).toBeLessThanOrEqual(4096);
     }
 
-    // Concatenated bytes must exactly equal the original encoding.
     const total = sent.reduce((sum, f) => sum + f.byteLength, 0);
     expect(total).toBe(expected.byteLength);
     const reassembled = new Uint8Array(total);
@@ -753,7 +736,6 @@ describe("connectTaskTerminal", () => {
     }
     expect(Array.from(reassembled)).toEqual(Array.from(expected));
 
-    // Round-trip through a stream decoder must reproduce the original string.
     expect(new TextDecoder().decode(reassembled)).toBe(payload);
   });
 

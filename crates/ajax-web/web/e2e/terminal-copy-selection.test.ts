@@ -1,6 +1,3 @@
-// Double-tap-hold-drag terminal copy selection. Kept separate from
-// terminal-behavior.test.ts so this PR does not touch that already-over-LOC file.
-
 import { test, expect } from "@playwright/test";
 import {
   mockFetch,
@@ -54,7 +51,6 @@ async function openTaskTerminalWithCopySpy(page: import("@playwright/test").Page
   return surface;
 }
 
-/** Double-tap hold-drag: measure coords, first tap, re-measure, second tap+drag in one turn. */
 async function doubleTapHoldDragTerminalText(
   page: import("@playwright/test").Page,
   startNeedle: string,

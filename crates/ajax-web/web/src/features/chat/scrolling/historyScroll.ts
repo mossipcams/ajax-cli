@@ -1,5 +1,3 @@
-/** History scroll restore when transcript content grows above the viewport. */
-
 export const HISTORY_PRELOAD_PX = 200;
 export const AUTO_LOAD_COOLDOWN_MS = 500;
 
@@ -12,7 +10,6 @@ export function scrollHeightDelta(beforeScrollHeight: number, afterScrollHeight:
   return afterScrollHeight - beforeScrollHeight;
 }
 
-/** Drop restore when reveal was a no-op or layout did not grow above the viewport. */
 export function anchorIsStale(
   beforeScrollHeight: number,
   afterScrollHeight: number,
@@ -22,10 +19,6 @@ export function anchorIsStale(
   return scrollHeightDelta(beforeScrollHeight, afterScrollHeight) <= 0;
 }
 
-/**
- * Near-top auto-load with overflow gate, arm/disarm, and cooldown so mount at
- * scrollTop 0 and restore nudges cannot cascade.
- */
 export function autoLoadDecision(
   thread: HTMLDivElement,
   state: AutoLoadState,
@@ -63,10 +56,6 @@ export function autoLoadDecision(
   };
 }
 
-/**
- * Preserve read position after prepend-style growth at the top of the scroller.
- * Bottom-only growth while unpinned must not adjust scrollTop.
- */
 export function restoreScrollAfterTopGrowth(
   thread: HTMLDivElement,
   beforeScrollTop: number,

@@ -20,11 +20,6 @@ interface Options {
   onRestoreLiveEdge?: () => void;
 }
 
-/**
- * Chat viewport ownership: claim geometry from global keyboard pin,
- * apply iOS Safari bottom reservation, and preserve live-edge vs history scroll
- * across keyboard and composer height changes.
- */
 export function useChatViewport({
   threadRef,
   composerRef,

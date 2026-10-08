@@ -1,9 +1,3 @@
-//! Thin multiplex for resume/review/repair/ship call sites.
-//!
-//! This module is composition glue, not a vertical operator slice. It may call
-//! the four verb slices. Prefer importing a verb slice directly when changing
-//! only one operator.
-
 use crate::{
     adapters::{CommandOutput, CommandRunner},
     commands::{CommandContext, CommandError, CommandPlan, OpenMode},

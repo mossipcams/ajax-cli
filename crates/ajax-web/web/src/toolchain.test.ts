@@ -3,8 +3,6 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Repo root lives four levels above this file:
-//   crates/ajax-web/web/src/toolchain.test.ts -> repo root
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
 
 type PackageJson = {
@@ -17,12 +15,6 @@ function readPackageJson(): PackageJson {
   return JSON.parse(raw) as PackageJson;
 }
 
-// After the TypeScript alias inversion, `node_modules/.bin/tsc` resolves to the
-// hoisted TypeScript 5 binary (it is the primary `typescript` dependency).
-// If `web:check` invokes a bare `tsc`, it silently downgrades the typechecker
-// to TS 5 with no failing signal while `web:check` believes it is running TS 7.
-// These assertions encode that contract so a regression in the wiring fails
-// loudly instead of typechecking against the wrong compiler.
 describe("web toolchain wiring", () => {
   const pkg = readPackageJson();
   const webCheck = pkg.scripts?.["web:check"] ?? "";

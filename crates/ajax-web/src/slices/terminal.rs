@@ -1,5 +1,3 @@
-//! Browser task terminal attach planning.
-
 use ajax_core::{commands::CommandContext, registry::Registry};
 
 pub use crate::adapters::terminal_pty::TerminalAttachPlan;

@@ -12,8 +12,6 @@ mod tests {
         "sweep_cleanup",
     ];
 
-    // sweep_cleanup composes drop_task teardown (tidy sweeps what drop leaves); kernel and
-    // operator_dispatch are shared/composition plumbing and are not operator slices.
     const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
 
     const KERNEL_MODULES: [&str; 11] = [
@@ -253,8 +251,6 @@ mod tests {
         let Some((parent, child)) = dependency.rsplit_once("::") else {
             return false;
         };
-        // Only expand nested parents like `task_operations::{sibling}`. Bare
-        // `crate::{ ... }` matches too many unrelated imports.
         if !parent.contains("::") {
             return false;
         }

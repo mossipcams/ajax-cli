@@ -106,8 +106,6 @@ fn apply_client_message_prompt_records_user_message_immediately() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #931: in-session set_config_option persists the model id
-// after a successful live apply; persistence failure leaves the child running.
 #[test]
 fn apply_client_message_set_config_option_persists_after_in_band_apply() {
     let dir = scratch_dir("set-model-persist");
@@ -164,7 +162,6 @@ fn apply_client_message_set_config_option_persists_after_in_band_apply() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression #1014: each live model axis refreshes the complete restart pin.
 #[test]
 fn apply_client_message_set_config_option_persists_effort_and_fast_toggles() {
     let dir = scratch_dir("set-fast-persist");
@@ -317,8 +314,6 @@ fn apply_client_message_set_config_option_surfaces_worker_stop_without_respawn_i
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for issue #942: set_config_option must publish the applied model on attach
-// and keep it after the next prompt without replacing the ACP child in-band.
 #[test]
 fn apply_client_message_set_config_option_keeps_host_model_after_prompt_issue_942() {
     let dir = scratch_dir("set-model-prompt-942");
@@ -385,7 +380,6 @@ fn apply_client_message_set_config_option_keeps_host_model_after_prompt_issue_94
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for #979: Switch to Grok High must keep the child alive and apply mapped ACP id.
 #[test]
 fn apply_client_message_set_config_option_grok_high_keeps_child_alive_issue_979() {
     use ajax_core::adapters::cursor_catalog_to_acp_in_band_token;
@@ -430,7 +424,6 @@ fn apply_client_message_set_config_option_grok_high_keeps_child_alive_issue_979(
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// In-band refusal falls back to one respawn; child id changes only on that path.
 #[test]
 fn apply_client_message_set_config_option_refusal_keeps_child_alive() {
     let dir = scratch_dir("set-model-respawn-fallback");
@@ -465,8 +458,6 @@ fn apply_client_message_set_config_option_refusal_keeps_child_alive() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for #952: snapshot.model is harness-reported applied state, not the
-// attach-plan pin when the harness refuses the operator selection.
 #[test]
 fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
     let dir = scratch_dir("snapshot-applied-952");
@@ -499,7 +490,6 @@ fn attach_snapshot_reports_applied_model_not_desired_pin_issue_952() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for #989: respawn fallback must shut down the live child before session/new.
 #[test]
 fn apply_client_message_set_config_option_respawns_dead_child_issue_989() {
     let dir = scratch_dir("set-model-respawn-transport-989");
@@ -547,7 +537,6 @@ fn apply_client_message_set_config_option_respawns_dead_child_issue_989() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-// Regression for #989: bridge harness respawn fallback also requires a lone stdio owner.
 #[test]
 fn apply_client_message_set_config_option_codex_respawns_dead_child_issue_989() {
     let dir = scratch_dir("set-model-codex-respawn-989");
@@ -611,8 +600,6 @@ fn events_contain_text(events: &[SessionServerEvent], needle: &str) -> bool {
     })
 }
 
-/// Fixture-backed product path: create pin → prompt nonce → live axes →
-/// snapshot → persist → reconnect → restart → cross-harness reset.
 #[test]
 fn product_flow_create_live_switch_reload_and_cross_harness() {
     let dir = scratch_dir("product-flow");

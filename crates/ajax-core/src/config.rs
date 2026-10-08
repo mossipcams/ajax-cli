@@ -142,8 +142,6 @@ impl RuntimePathRequest {
     }
 }
 
-/// Resolve a single tunable: a CLI value wins over an env value, and the winner
-/// reports which source it came from for `ajax runtime` to surface.
 fn pick<T>(cli: Option<T>, env: Option<T>) -> Option<(T, RuntimePathSource)> {
     cli.map(|value| (value, RuntimePathSource::Cli))
         .or_else(|| env.map(|value| (value, RuntimePathSource::Env)))

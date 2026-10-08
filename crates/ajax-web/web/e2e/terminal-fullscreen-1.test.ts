@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { test, expect } from "@playwright/test";
 import {
   terminalInteractionSurface,
@@ -28,7 +22,6 @@ import {
 } from "./terminal-behavior-helpers";
 
 
-// Playwright requires object-destructured fixtures; empty pattern is intentional.
 // eslint-disable-next-line no-empty-pattern -- Playwright beforeEach fixture contract
 test.beforeEach(({}, testInfo) => {
   const desktopOnly =
@@ -233,7 +226,6 @@ test("expand then keyboard-open still pins panel bottom to the visual viewport b
   await expand.click();
   await expect(expand).toHaveAttribute("aria-pressed", "true");
 
-  // Keyboard opens after fullscreen (tap-to-type path), not before expand.
   await simulateKeyboardBand(page);
 
   expectFlushToBand(await readBandFlushGeometry(page, '[data-testid="task-terminal-panel"]'), {
@@ -276,8 +268,6 @@ test("inline keyboard-open keeps the whole detail-header row inside the visible 
   expect(backBox).not.toBeNull();
   expect(statusBox).not.toBeNull();
 
-  // Whole chrome row (back + title + status) must sit inside the keyboard band,
-  // not above the visual viewport / under the notch.
   expect(headerBox!.y).toBeGreaterThanOrEqual(band.top - 1);
   expect(headerBox!.y + headerBox!.height).toBeLessThanOrEqual(band.bottom + 1);
   expect(boxesIntersect(backBox!, band)).toBe(true);

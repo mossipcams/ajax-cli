@@ -1,9 +1,6 @@
-//! Browser-facing snapshots of live ACP prompt capabilities from initialize.
-
 use agent_client_protocol::schema::v1::PromptCapabilities;
 use serde::{Deserialize, Serialize};
 
-/// Advertised prompt content capabilities for protocol v2 snapshots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptCapabilityDescriptor {

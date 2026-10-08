@@ -3,7 +3,6 @@ export { OPEN_FAILURE } from "./transport/contracts";
 export const CONNECTION_INTERRUPTED_MESSAGE =
   "The connection was interrupted. Try sending again.";
 
-/** Map opaque ACP error strings to operator-facing copy. Human messages pass through. */
 export function explainAcpError(message: string): string {
   if (/RetriableError:/i.test(message)) {
     return CONNECTION_INTERRUPTED_MESSAGE;
@@ -30,9 +29,6 @@ export function explainAcpError(message: string): string {
   return message;
 }
 
-/** `prepare_task_session` refuses the upgrade when the task cannot host an
- * orchestration session or its worktree is gone. Both facts are already in the
- * detail payload, so no extra request is needed to say which one it was. */
 export function explainOpenFailure(
   detail: {
     agent?: string | null;

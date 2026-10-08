@@ -14,9 +14,6 @@ fn attach_plan(handle: &str) -> TerminalAttachPlan {
     }
 }
 
-/// One configurable stand-in for a spawned PTY child: records kill/wait
-/// calls and, when gated, blocks `wait_child` until the returned sender is
-/// dropped or signalled.
 #[derive(Clone)]
 pub(crate) struct MockChild {
     killed: Arc<Mutex<bool>>,
@@ -129,9 +126,6 @@ fn browser_attach_preserves_shared_task_session_size() {
     let ephemeral = "ajax-web-fix-login-m1a2b3c";
 
     assert_eq!(isolated.ephemeral_session, ephemeral);
-    // A grouped session shares the shared session's windows but keeps an
-    // independent size, so the phone never shrinks the shared window.
-    // Quieter status options target the ephemeral session only.
     assert_eq!(
         isolated.setup,
         vec![
@@ -191,8 +185,6 @@ fn browser_attach_preserves_shared_task_session_size() {
         .collect();
     assert_eq!(set_option_targets, vec![ephemeral, ephemeral, ephemeral]);
     assert!(!set_option_targets.contains(&"ajax-web-fix-login"));
-    // Attach targets the ephemeral session's task window, never the
-    // browser handle and never the shared session directly.
     assert_eq!(
         isolated.attach.args,
         vec![
@@ -225,14 +217,11 @@ fn seed_history_query_parsing() {
 
 #[test]
 fn client_id_from_query_parsing() {
-    // Absent / empty / no client= -> None (bridge falls back to random plan).
     assert_eq!(client_id_from_query(None), None);
     assert_eq!(client_id_from_query(Some("")), None);
     assert_eq!(client_id_from_query(Some("foo=bar")), None);
-    // Empty client= value -> None.
     assert_eq!(client_id_from_query(Some("client=")), None);
     assert_eq!(client_id_from_query(Some("a=b&client=")), None);
-    // First matching client= wins.
     assert_eq!(
         client_id_from_query(Some("client=viewport-a")),
         Some("viewport-a".to_string())
@@ -245,17 +234,14 @@ fn client_id_from_query_parsing() {
         client_id_from_query(Some("client=one&client=two")),
         Some("one".to_string())
     );
-    // Allowlist: [A-Za-z0-9_-]{1,64}.
     assert_eq!(
         client_id_from_query(Some("client=Ab_1-2")),
         Some("Ab_1-2".to_string())
     );
-    // Anything outside the allowlist -> None (no Injection into tmux names).
     assert_eq!(client_id_from_query(Some("client=view/port")), None);
     assert_eq!(client_id_from_query(Some("client=view port")), None);
     assert_eq!(client_id_from_query(Some("client=view%2Fport")), None);
     assert_eq!(client_id_from_query(Some("client=;evil")), None);
-    // Over 64 chars -> None.
     let too_long = format!("client={}", "x".repeat(65));
     assert_eq!(client_id_from_query(Some(&too_long)), None);
     let just_right_src = format!("client={}", "y".repeat(64));
@@ -270,17 +256,14 @@ fn client_id_from_query_parsing() {
 fn isolated_plan_for_bridge_uses_stable_plan_when_client_id_present() {
     let plan = attach_plan("web/fix-login");
 
-    // Present client id -> stable per-client plan (reconnect reuses it).
     let a = isolated_plan_for_bridge(&plan, Some("viewport-a"));
     let b = isolated_plan_for_bridge(&plan, Some("viewport-a"));
     assert_eq!(a.ephemeral_session, b.ephemeral_session);
     assert!(a.ephemeral_session.starts_with("ajax-web-fix-login-m"));
 
-    // Different ids -> different ephemeral sessions.
     let c = isolated_plan_for_bridge(&plan, Some("viewport-b"));
     assert_ne!(a.ephemeral_session, c.ephemeral_session);
 
-    // None -> random-per-call path (unique each call, never the shared session).
     let r1 = isolated_plan_for_bridge(&plan, None).ephemeral_session;
     let r2 = isolated_plan_for_bridge(&plan, None).ephemeral_session;
     assert_ne!(r1, r2);
@@ -369,8 +352,6 @@ fn isolated_attach_plan_seeds_browser_scrollback_from_task_window() {
 fn history_capture_preserves_display_wrapping() {
     let plan = attach_plan("web/fix-login");
     let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
-    // Display-row capture must match the browser's wrap width; -J joins
-    // logical lines and re-wraps badly after seed.
     assert!(!isolated.history.args.contains(&"-J".to_string()));
 }
 
@@ -381,7 +362,6 @@ fn reaper_targets_only_ephemeral_grouped_sessions() {
         "ajax-web-x-m0123456789ab".to_string(),
         "ajax-web-main".to_string(),
         "other".to_string(),
-        // Wrong token length must not match a real session ending in -m...
         "ajax-web-x-mabc".to_string(),
     ];
 
@@ -394,14 +374,12 @@ fn reaper_targets_only_ephemeral_grouped_sessions() {
 fn disconnect_destroys_one_off_viewports_but_preserves_reconnectable_sessions() {
     let plan = attach_plan("web/fix-login");
 
-    // Random (no client id): teardown destroys — token cannot be reused.
     let random = build_isolated_attach_plan(&plan);
     assert_eq!(
         random.teardown,
         destroy_ephemeral_session_commands(&random.ephemeral_session)
     );
 
-    // Stable client id: linger empty teardown; reaper / destroy path only.
     let client = build_isolated_attach_plan_for_client(&plan, "viewport-a");
     assert!(client.teardown.is_empty());
     assert_eq!(
@@ -452,7 +430,6 @@ fn cleanup_preserves_the_session_selected_for_reconnect() {
 
 #[test]
 fn ephemeral_client_token_normalizes_stable_ids() {
-    // Same non-empty id -> same 12 lowercase hex token twice.
     let a = ephemeral_client_token("viewport-a");
     let b = ephemeral_client_token("viewport-a");
     assert_eq!(a, b);
@@ -461,20 +438,16 @@ fn ephemeral_client_token_normalizes_stable_ids() {
         .bytes()
         .all(|c| (c as char).is_ascii_hexdigit() && !c.is_ascii_uppercase()));
 
-    // Trimming means surrounding whitespace does not change the token.
     assert_eq!(
         ephemeral_client_token("viewport-a"),
         ephemeral_client_token("  viewport-a  ")
     );
 
-    // Different ids -> different tokens.
     assert_ne!(
         ephemeral_client_token("viewport-a"),
         ephemeral_client_token("viewport-b")
     );
 
-    // Empty / whitespace-only id falls back to random-looking 12-hex
-    // tokens; callers without a client id stay unique per call.
     let empty = ephemeral_client_token("");
     let ws = ephemeral_client_token("   \t");
     assert_eq!(empty.len(), 12);
@@ -516,8 +489,6 @@ fn browser_reconnect_reuses_live_tmux_session_without_destroying_it() {
     let other = build_isolated_attach_plan_for_client(&plan, "viewport-b");
     assert_ne!(first.ephemeral_session, other.ephemeral_session);
 
-    // Stable plan still uses the idempotent create-or-attach setup and an
-    // empty disconnect teardown.
     assert!(first.teardown.is_empty());
     assert_eq!(first.setup, second.setup);
     assert!(first.setup.iter().any(|cmd| {
@@ -528,7 +499,6 @@ fn browser_reconnect_reuses_live_tmux_session_without_destroying_it() {
 
 #[test]
 fn isolated_attach_sessions_are_unique_per_call_and_never_the_shared_session() {
-    // The no-client / random path must stay unique per call.
     let plan = attach_plan("web/fix-login");
 
     let first = build_isolated_attach_plan(&plan).ephemeral_session;
@@ -549,7 +519,6 @@ fn terminal_output_flush_constants_match_targets() {
 fn terminal_output_frame_bytes_returns_raw_bytes_for_binary_send() {
     let bytes = output_frame_bytes(b"hello".to_vec()).expect("non-empty bytes");
     assert_eq!(bytes, b"hello");
-    // Live path sends Message::Binary(raw); must not base64-wrap or JSON-wrap.
     assert!(!String::from_utf8_lossy(&bytes).contains("\"type\""));
     assert!(!String::from_utf8_lossy(&bytes).contains("output"));
     assert!(output_frame_bytes(Vec::new()).is_none());
@@ -557,11 +526,9 @@ fn terminal_output_frame_bytes_returns_raw_bytes_for_binary_send() {
 
 #[test]
 fn captured_history_frame_bytes_converts_lf_to_crlf_without_doubling_crlf() {
-    // Mixed ANSI, bare LF, CRLF, consecutive bare LF, and lone CR.
     let input = b"\x1b[31mred\x1b[0m\ncrlf\r\n\n\rkeep".to_vec();
     let out = captured_history_frame_bytes(input).expect("non-empty history");
     assert_eq!(out, b"\x1b[31mred\x1b[0m\r\ncrlf\r\n\r\n\rkeep");
-    // Bare LF -> CRLF; existing CRLF stays one CRLF; consecutive lines start at col 0.
     assert_eq!(&out[12..14], b"\r\n");
     assert_eq!(&out[18..20], b"\r\n");
     assert_eq!(&out[20..22], b"\r\n");
@@ -626,9 +593,6 @@ fn filter_scrollback_hostile_sequences_strips_targets_and_carries_split_sequence
 
 #[test]
 fn filter_strips_hostile_sequences_fed_one_byte_at_a_time_without_prefix_leaks() {
-    // A PTY read can split an escape sequence at any byte. Feeding the
-    // stream byte-by-byte is the worst case: every hostile sequence must
-    // still vanish completely and every normal byte must still come out.
     let stream: &[u8] = b"a\x1b[?1049h\x1b[2Jb\x1b[?1002lc\x1b[3J\x1b[31md";
     let mut carry = Vec::new();
     let mut output = Vec::new();
@@ -781,8 +745,6 @@ async fn terminal_cleanup_runs_wait_on_blocking_task() {
 
 #[tokio::test]
 async fn terminal_cleanup_does_not_wait_forever_after_kill() {
-    // The release sender is held for the whole test, so wait_child never
-    // completes on its own; only the cleanup timeout can end it.
     let (child, _release) = MockChild::gated();
     let killed = Arc::clone(&child.killed);
     let timeout = Duration::from_millis(50);
@@ -796,4 +758,28 @@ async fn terminal_cleanup_does_not_wait_forever_after_kill() {
         elapsed < Duration::from_millis(250),
         "cleanup should time out instead of waiting forever, took {elapsed:?}"
     );
+}
+
+// #1235: tmux setup, probe and history calls ran on the async worker itself.
+#[tokio::test(flavor = "current_thread")]
+async fn issue_1235_slow_tmux_command_does_not_block_the_async_worker() {
+    let slow = TmuxCommand {
+        program: "sleep".to_string(),
+        args: vec!["0.5".to_string()],
+    };
+    let command = tokio::spawn(async move { super::bridge::run_tmux_command(&slow).await });
+    let other_task = tokio::spawn(tokio::time::sleep(Duration::from_millis(20)));
+
+    let started = Instant::now();
+    other_task.await.expect("other task joins");
+    assert!(
+        started.elapsed() < Duration::from_millis(300),
+        "other tasks on this worker must run while tmux is slow"
+    );
+    assert!(command
+        .await
+        .expect("command joins")
+        .expect("command runs")
+        .status
+        .success());
 }

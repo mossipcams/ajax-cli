@@ -1,9 +1,3 @@
-// Permanent iOS-WebKit terminal behavior suite. The first test pins the
-// engine-neutral application-surface locator and a single task-terminal
-// WebSocket opening on the task route, without asserting on engine-specific
-// DOM or renderer internals.
-
-
 import { expect } from "@playwright/test";
 import {
   mockFetch,
@@ -79,8 +73,7 @@ export function hasAdjacentDuplicateSizes(frames: TerminalSize[]): boolean {
 }
 
 
-export /** scheduleBandSettle: immediate + 2 rAF + EXPAND_REWRAP_MS (280) discreteIntent. */
-const BAND_SETTLE_RESIZE_BUDGET = 4;
+export const BAND_SETTLE_RESIZE_BUDGET = 4;
 
 
 export async function waitForResizeFrameCountStable(
@@ -196,7 +189,6 @@ export async function syntheticScrollGestureOnInteractionSurface(page: import("@
   const surface = terminalInteractionSurface(page);
   const box = await surface.boundingBox();
   if (!box) throw new Error("interaction surface box missing");
-  // Playwright dragTo uses synthetic mouse events, not native iOS touch or momentum.
   await surface.dragTo(surface, {
     sourcePosition: { x: box.width / 2, y: box.height * 0.8 },
     targetPosition: { x: box.width / 2, y: box.height * 0.2 },
@@ -298,8 +290,7 @@ export async function programTerminalSelection(
 }
 
 
-export /** Wait until Copy stays visible across a short settle (survives late open fit). */
-async function waitForStableCopyButton(page: import("@playwright/test").Page) {
+export async function waitForStableCopyButton(page: import("@playwright/test").Page) {
   const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
   await expect
     .poll(
@@ -457,14 +448,12 @@ export function expectFlushToBand(
   expect(g.keyboardOpen).toBe(true);
   expect(g.expanded).toBe(options.expanded);
   expect(g.pinnedPosition).toBe(options.position ?? "fixed");
-  // Height-based pin: resolved top/height track --app-* (flush above keyboard).
   expect(g.pinnedComputedTop).toBeCloseTo(g.bandTop, 0);
   expect(g.pinnedComputedHeight).toBeCloseTo(g.bandHeight, 0);
   expect(Math.abs(g.pinnedComputedHeight - g.bandHeight)).toBeLessThanOrEqual(1);
   expect(g.pinnedTop).toBeCloseTo(g.bandTop, 0);
   expect(g.pinnedBottom).toBeCloseTo(g.bandBottom, 0);
   expect(g.pinnedHeight).toBeCloseTo(g.bandHeight, 0);
-  // Hotkeys flush to the band bottom (right above the keyboard).
   expect(g.keysBottom).toBeCloseTo(g.bandBottom, 0);
   expect(Math.abs(g.keysBottom - g.pinnedBottom)).toBeLessThanOrEqual(1);
   expect(g.keysTop).toBeGreaterThanOrEqual(g.bandTop - 1);
@@ -499,7 +488,6 @@ export async function chromeDisplayState(page: import("@playwright/test").Page) 
 }
 
 
-// Compact toolbar keys target 32px height; primary actions stay ≥ 44px.
 export const COMPACT_KEY_MIN_PX = 32;
 
 export const COMPACT_KEY_MAX_PX = 40;

@@ -93,7 +93,6 @@ describe("TrainingModal", () => {
     openModal();
     expect(await screen.findByTestId("training-state")).toBeTruthy();
     expect(screen.getByText("serving")).toBeTruthy();
-    // the descriptive serving string is rendered as text, not as the tag
     expect(screen.getByText("ctx 122880, 2 slots")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
   });
@@ -119,8 +118,6 @@ describe("TrainingModal", () => {
     expect(run).toHaveTextContent(/step 30 \/ 100/);
     expect(run).toHaveTextContent(/loss 1\.2345/);
     expect(run).toHaveTextContent(/ETA ~6 min/);
-    // log lines render as individual elements inside the log list, so
-    // "step 30" stays distinguishable from the progress summary text
     const log = screen.getByTestId("training-log");
     expect(Array.from(log.querySelectorAll("li")).map((el) => el.textContent)).toEqual([
       "loss=1.2",
@@ -151,13 +148,11 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
     openModal();
-    // tapping a model bubble switches to it directly
     fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
     await waitFor(() => expect(postCalls).toHaveLength(1));
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
 
-    // starting a job still requires a confirm step
     fireEvent.click(await screen.findByRole("button", { name: "Unsloth train" }));
     expect(postCalls).toHaveLength(1);
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Unsloth train" }));

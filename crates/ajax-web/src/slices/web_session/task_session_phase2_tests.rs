@@ -23,7 +23,6 @@ fn harness_switch_ends_interrupted_prompt_1189() {
     let dir = scratch_dir("harness-switch-terminal");
     let handle = "web/harness-switch-terminal";
     let directory = BlockingSessionDirectory::new(dir.clone());
-    // Model a child that cannot finish cancellation before teardown kills it.
     let script = dir.join("pending-cancel.js");
     std::fs::copy(fake_acp_fixture(), &script).unwrap();
     let source = std::fs::read_to_string(&script).unwrap();

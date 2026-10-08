@@ -1,11 +1,6 @@
-//! Persist the operator's desired session model on a provisioned ACP task.
-
 use super::{CommandContext, CommandError};
 use crate::{adapters::acp_launch_for_agent, models::TaskId, registry::Registry};
 
-/// Normalize operator model input before persisting on task metadata.
-///
-/// Auto and empty mean unspecified ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 pub fn normalize_persisted_session_model(model: Option<&str>) -> Option<&str> {
     match model.map(str::trim).filter(|model| !model.is_empty()) {
         Some("auto") => None,
@@ -13,7 +8,6 @@ pub fn normalize_persisted_session_model(model: Option<&str>) -> Option<&str> {
     }
 }
 
-/// Write `session_model` on `handle` before the host replaces its ACP child.
 pub fn set_task_session_model<R: Registry>(
     context: &mut CommandContext<R>,
     handle: &str,
@@ -108,7 +102,6 @@ mod tests {
         assert_eq!(task.session_model(), None);
     }
 
-    // Regression for #952: never persist the literal `auto` sentinel.
     #[test]
     fn set_session_model_persists_none_for_auto_string() {
         let mut context = context_with_task(true);

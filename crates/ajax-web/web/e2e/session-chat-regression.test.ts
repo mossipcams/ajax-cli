@@ -140,14 +140,10 @@ for (const harness of HARNESSES) {
     await page.reload();
     await expect(page.getByTestId("session-message-user")).toHaveCount(3);
     await expect(page.getByTestId("session-message-agent")).toHaveCount(3);
-    // #888: disposing the pre-open socket during reload must not append a false failure.
     await expect(page.getByTestId("session-note-error")).toHaveCount(0);
   });
 }
 
-/** A session with enough replayed history to overflow the thread, and a turn
- * that never answers on its own — so the follow-up queue and the cancel
- * handshake can be driven from the test. */
 async function mockHeldTurn(page: Page) {
   let nextCursor = 0;
 
@@ -186,8 +182,6 @@ async function mockHeldTurn(page: Page) {
         });
         return;
       }
-      // The prompt is accepted and then held: no agent output, no turn_end,
-      // exactly like a long turn. Cancel is what ends it.
       if (event.type === "cancel") send({ type: "turn_end", stopReason: "cancelled" });
     });
   });
@@ -201,9 +195,6 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
   });
   await page.addInitScript(() => {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
-    // Sample the thread's position on every frame from before it mounts: an
-    // overflowing conversation must never be observed sitting away from its
-    // latest content while the operator has not scrolled.
     const samples: { top: number; overflow: number }[] = [];
     (window as unknown as { __threadSamples: typeof samples }).__threadSamples = samples;
     const tick = () => {
@@ -240,25 +231,18 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
   await page.getByLabel("Message").press("Enter");
   await expect(page.getByTestId("session-head")).toContainText("Working");
 
-  // First Enter while busy queues one editable follow-up.
   await page.getByLabel("Message").fill("And then deploy");
   await page.getByLabel("Message").press("Enter");
   await expect(page.getByTestId("session-queued")).toContainText("Queued");
   await expect(page.getByTestId("session-queued")).toContainText("And then deploy");
   await expect(page.getByRole("button", { name: "Stop & send" })).toBeVisible();
 
-  // Second Enter cancels the live turn, and the follow-up waits for it to
-  // resolve rather than racing it.
   await page.getByLabel("Message").press("Enter");
   await expect(page.getByTestId("session-note-info")).toContainText("Stopped");
   await expect(page.getByTestId("session-queued")).toHaveCount(0);
   await expect(page.getByTestId("session-message-user").last()).toContainText("And then deploy");
 });
 
-/** One turn carrying everything ACP separates: reasoning, a plan, a tool call
- * with a diff, and a tool call with command output. The long diff line is the
- * point of the width assertions — `white-space: pre` inside a flex column is
- * exactly how a code block starts panning the whole phone surface sideways. */
 async function mockTypedTurn(page: Page) {
   const LONG = "a".repeat(400);
   let nextCursor = 0;
@@ -319,8 +303,6 @@ async function mockTypedTurn(page: Page) {
         {
           type: "message",
           role: "agent",
-          // Long enough that the thread overflows its band. The flex-shrink bug
-          // this guards only appears once the column has to give up height.
           text: `Changed the port to 2.\n\n${"The config module reads it once at startup and hands it to the listener. ".repeat(
             12,
           )}`,
@@ -350,16 +332,12 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
 
   await expect(page.getByTestId("session-head-status")).toHaveCount(0);
 
-  // The turn carries one disclosure, and a failure inside it opens the timeline
-  // without being asked. Two calls, merged by id — the update revised the edit
-  // rather than adding a row.
   await expect(page.getByTestId("session-turn-work-summary")).toHaveCount(1);
   await expect(page.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
   await expect(page.getByTestId("session-tool-card")).toHaveCount(2);
   const edit = page.getByTestId("session-tool-card").first();
   await expect(edit).toHaveAttribute("data-status", "completed");
 
-  // The failure opens itself; the success stays quiet until asked.
   await expect(page.getByTestId("session-tool-output")).toContainText("assertion failed");
   await expect(page.getByTestId("session-tool-diff")).toHaveCount(0);
   await edit.getByRole("button").click();
@@ -372,8 +350,6 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
   await page.getByTestId("session-thinking").getByRole("button").click();
   await expect(page.getByTestId("session-thinking-body")).toContainText("Deciding where the port");
 
-  // A 400-character diff line must scroll inside its own block, never widen the
-  // surface: a phone that pans sideways loses the composer off-screen.
   const overflow = await page.evaluate(() => {
     const doc = document.documentElement;
     const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
@@ -385,10 +361,6 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
   expect(overflow.page).toBe(0);
   expect(overflow.thread).toBe(0);
 
-  // The thread is a flex column and a card sets `overflow: hidden`, which zeroes
-  // a flex item's automatic minimum size. Without `flex: none` a full thread
-  // crushed these to a sliver of clipped text — vertical, so the horizontal
-  // checks above sailed past it. Assert each card still fits its own header.
   const crushed = await page.evaluate(() =>
     Array.from(document.querySelectorAll('[data-testid="session-tool-card"]')).filter((card) => {
       const head = card.querySelector("button") as HTMLElement;
@@ -397,8 +369,6 @@ test("a turn keeps its tool calls, diff, plan and reasoning one tap away", async
   );
   expect(crushed).toBe(0);
 
-  // Collapsed, the summary stays visible and completed tool rows hide behind it;
-  // thoughts and plans stay hidden too.
   await page.getByTestId("session-turn-work-summary").click();
   await expect(page.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "false");
   await expect(page.getByTestId("session-tool-card")).toHaveCount(0);

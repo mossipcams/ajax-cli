@@ -21,7 +21,6 @@ import {
   restoreScrollAfterTopGrowth,
 } from "./historyScroll";
 
-/** Re-export for callers/tests that imported the hook-local constant. */
 export const PIN_THRESHOLD_PX = SESSION_PIN_THRESHOLD_PX;
 
 export interface HistoryScrollControl {
@@ -32,11 +31,8 @@ export interface HistoryScrollControl {
 
 interface Options {
   threadRef: RefObject<HTMLDivElement | null>;
-  /** Session projection revision — content changed when this increments. */
   revision: number;
-  /** Re-subscribe layout observers when the mounted session identity changes. */
   sessionKey: string;
-  /** While true, keyboard/viewport layout settle owns scroll — do not re-pin. */
   layoutTransitionRef?: RefObject<boolean>;
   historyScroll?: HistoryScrollControl;
 }
@@ -122,7 +118,6 @@ export function useChatScroll({
     return revealed;
   }, [historyScroll, threadRef]);
 
-  // Restore read position after prepend-style window growth.
   useLayoutEffect(() => {
     const generation = historyScroll?.windowGeneration ?? 0;
     if (generation === prevWindowGenerationRef.current) return;
@@ -150,8 +145,6 @@ export function useChatScroll({
     setBehind(!atLive);
   }, [historyScroll?.windowGeneration, threadRef]);
 
-  // Session identity is separate from pin state so setPinned(true) here does not
-  // re-run this effect and cancel the layout-settle poll (#1065).
   useLayoutEffect(() => {
     const node = threadRef.current;
     if (!node || prevSessionKeyRef.current === sessionKey) return;

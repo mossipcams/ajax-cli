@@ -116,7 +116,6 @@ type ComposerContextValue = {
   attachAccept: string;
   canAttach: boolean;
   attachmentError: string | null;
-  /** Bumps when draft text is restored from storage (not typed). */
   draftRestoreGeneration: number;
 };
 

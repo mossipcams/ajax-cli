@@ -80,7 +80,6 @@ fn claude_notification_permission_vs_question() {
             attention: AttentionReason::Permission
         })
     );
-    // Bare Notification arm fallback unchanged for permission-shaped messages.
     let permission_shaped = serde_json::json!({
         "message": "Claude needs your permission to run Bash"
     });
@@ -277,7 +276,6 @@ fn cursor_post_tool_use_failure_finishes_activity() {
 #[test]
 fn four_client_event_mappings_to_canonical_kinds() {
     let payload = serde_json::json!({});
-    // Claude
     assert_eq!(
         kind("claude", "UserPromptSubmit", &payload),
         Some(CanonicalEventKind::TurnStarted)
@@ -290,7 +288,6 @@ fn four_client_event_mappings_to_canonical_kinds() {
         kind("claude", "SessionEnd", &payload),
         Some(CanonicalEventKind::SessionClosed)
     );
-    // Codex
     assert_eq!(
         kind("codex", "UserPromptSubmit", &payload),
         Some(CanonicalEventKind::TurnStarted)
@@ -303,7 +300,6 @@ fn four_client_event_mappings_to_canonical_kinds() {
         kind("codex", "PermissionRequest", &payload),
         Some(CanonicalEventKind::AttentionRequested)
     );
-    // Cursor
     assert_eq!(
         kind("cursor", "preToolUse", &payload),
         Some(CanonicalEventKind::ActivityStarted)
@@ -316,7 +312,6 @@ fn four_client_event_mappings_to_canonical_kinds() {
         kind("cursor", "sessionStart", &payload),
         Some(CanonicalEventKind::SessionOpened)
     );
-    // Pi
     assert_eq!(
         kind("pi", "before_agent_start", &payload),
         Some(CanonicalEventKind::TurnStarted)
@@ -355,7 +350,6 @@ fn run_agent_event_appends_jsonl_only_no_scalar_snapshot() {
     assert_eq!(envelope["schema_version"], 1);
     assert_eq!(envelope["kind"], "turn_started");
 
-    // The legacy scalar `{stem}.json` snapshot is no longer written.
     assert!(!dir.join(format!("{stem}.json")).exists());
 
     fs::remove_dir_all(root).unwrap();

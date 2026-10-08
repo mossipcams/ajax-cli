@@ -1,12 +1,7 @@
-//! Wave 2: live-apply contract — ban new `Task.agent_status` writers outside the
-//! Wave 0 inventory. Wave 3 routes `clear_stale_agent_running` through
-//! `live::retract_stale_agent_running_at`.
-
 use std::path::{Path, PathBuf};
 
 const CRATES: &[&str] = &["ajax-core", "ajax-web", "ajax-cli", "ajax-supervisor"];
 
-/// Production files that may assign `agent_status` today (append only with plan update).
 const ALLOWLIST_SUFFIXES: &[&str] = &[
     "live_application.rs",
     "registry/sqlite/row_codec.rs",

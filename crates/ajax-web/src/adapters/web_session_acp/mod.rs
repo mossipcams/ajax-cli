@@ -1,5 +1,3 @@
-//! Per-harness ACP stdio host for Ajax Web Session orchestration chat.
-
 mod apply_model;
 mod available_command_descriptors;
 mod catalog;

@@ -195,8 +195,6 @@ describe("Jump to latest", () => {
     return thread;
   }
 
-  // The button waited for new content to arrive while scrolled up, so a settled
-  // transcript offered no way back to the bottom but a long drag on a phone.
   it("offers the way back whenever the reader is away from the live edge", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "Only message", itemId: "a1" });

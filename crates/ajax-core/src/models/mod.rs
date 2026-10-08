@@ -1,5 +1,3 @@
-//! Domain model types layered by task authority tier.
-
 pub mod intent;
 pub mod observations;
 pub mod projection;

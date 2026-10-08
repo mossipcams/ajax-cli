@@ -52,7 +52,6 @@ describe("swipe-to-reveal gesture", () => {
   });
 
   it("reserves enough width for the confirming Drop label", () => {
-    // "Tap to confirm" + button padding + reveal padding-right must fit without clip.
     expect(SWIPE_REVEAL_WIDTH).toBeGreaterThanOrEqual(148);
   });
 

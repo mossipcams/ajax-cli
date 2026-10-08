@@ -1,5 +1,3 @@
-//! Task/cockpit/diff/terminal/STT/operate Axum handlers.
-
 use crate::runtime::bridge::{
     handle_action_request, operation_error_response, operation_success_response,
     MobileActionRequest, RuntimeBridge,
@@ -45,8 +43,6 @@ where
     if !websocket_origin_allowed(req.headers()) {
         return text_axum_response(403, "websocket origin forbidden");
     }
-    // A same-origin browser client reached the terminal socket; refresh
-    // cockpit presence so the notify tick stays suppressed while it is open.
     state.mark_browser_cockpit_seen();
 
     let plan = {
@@ -310,8 +306,6 @@ fn from_hex(byte: u8) -> Option<u8> {
     }
 }
 
-/// Move a task to another harness: `{ "agent": "codex" }`.
-/// Any other body stays a 404 so this route keeps its previous surface.
 pub(crate) async fn axum_task_post<C, B>(
     State(state): State<WebAppState<C, B>>,
     AxumPath(handle): AxumPath<String>,
@@ -556,8 +550,6 @@ where
     response.into_axum_response()
 }
 
-/// Turn a gate rejection into the route response: replay the completed
-/// response or report that a `{noun} already in progress` conflict.
 pub(crate) fn gate_rejection_response(
     rejection: GateRejection,
     request_id: Option<&str>,
@@ -615,8 +607,6 @@ where
             );
         }
     };
-    // The browser is actively driving an operate/action; refresh cockpit
-    // presence so the background notify tick stays suppressed while it works.
     state.mark_browser_cockpit_seen();
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();

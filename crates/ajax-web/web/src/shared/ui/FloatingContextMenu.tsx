@@ -51,7 +51,6 @@ function readSafeAreaInset(side: "top" | "right" | "bottom" | "left"): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-/** Viewport padding for flip/shift so the menu clears iOS Safari safe areas. */
 export function readFloatingMenuShiftPadding(): {
   top: number;
   right: number;
@@ -66,7 +65,6 @@ export function readFloatingMenuShiftPadding(): {
   };
 }
 
-/** @deprecated Prefer `readFloatingMenuShiftPadding()` so insets refresh per open. */
 export const floatingMenuShiftPadding = readFloatingMenuShiftPadding();
 
 function toVirtualElement(anchor: FloatingContextMenuAnchor): VirtualElement {
@@ -89,7 +87,6 @@ function toVirtualElement(anchor: FloatingContextMenuAnchor): VirtualElement {
   };
 }
 
-/** Ignore scroll-dismiss briefly after open so opening tap scroll does not close the menu. */
 const SCROLL_DISMISS_GRACE_MS = 800;
 
 export function FloatingContextMenu({

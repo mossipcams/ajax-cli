@@ -30,16 +30,8 @@ import {
 } from "./terminalTouchSelection";
 import { setTerminalDoubleTapPending, setTerminalSelecting } from "@/shared/lib/terminalSelecting";
 
-/**
- * Quiet time after the last seeded-open write before the terminal is revealed.
- * Floor is the bridge's 16ms output batch (TERMINAL_OUTPUT_FLUSH_MS) plus link
- * jitter; ~7 batches is enough to bridge seed → attach repaint without sitting
- * on a blank plate.
- */
 const SEED_REVEAL_QUIET_MS = 120;
-/** Hard cap so a pane streaming nonstop still reveals. */
 const SEED_REVEAL_MAX_MS = 2000;
-/** Force scrollOnErase off if no post-reveal CSI erase is seen (split-chunk safe). */
 const POST_REVEAL_ERASE_GRACE_MS = 1000;
 
 const EXPANDED_CLASS = "terminal-expanded";
@@ -135,8 +127,7 @@ export function mountTaskTerminalSession(
     return () => {};
   }
 
-  // Deferred init: closed over by fitLocal / cleanup before first assignment.
-  // eslint-disable-next-line prefer-const -- assigned once after helper closures are built
+  // eslint-disable-next-line prefer-const -- assigned once later in a closure; const needs an initializer
   let terminalAddons: ReturnType<typeof attachTerminalAddons> | undefined;
   let lastSentCols = 0;
   let lastSentRows = 0;
@@ -152,7 +143,6 @@ export function mountTaskTerminalSession(
   let longPressStartedAt = 0;
   let longPressActive = false;
   let longPressSelected = false;
-  // ponytail: one-finger held cardinal drag only; ceiling is component-local touch state
   let directionalArmed = false;
   let directionalArrow: string | undefined;
   let directionalRepeatInterval: ReturnType<typeof setInterval> | undefined;
@@ -219,8 +209,6 @@ export function mountTaskTerminalSession(
     scrollSync.refreshFollow();
   };
 
-  // Pin while still hidden, then unhide in place. Never move scrollTop after
-  // opacity returns — that is the visible "scrolls all the way down" open.
   const revealSeed = () => {
     clearSeedPendingRevealTimer();
     if (!isActive() || !isSeedPending()) return;
@@ -232,17 +220,11 @@ export function mountTaskTerminalSession(
         if (!isActive() || !isSeedPending()) return;
         snapSeedToBottom();
         interactionEl.classList.remove("is-seed-pending");
-        // Keep scrollOnEraseInDisplay true through seed-pending so a late attach
-        // CSI 2 J still pushes the seeded viewport into scrollback. Latch off on
-        // the first post-reveal erase (onOutput) or after grace if none is seen.
         armPostRevealEraseGrace();
       });
     });
   };
 
-  // The seed is scrollback only; the tmux attach repaint of the visible pane
-  // lands in later frames. Revealing after the first write means watching that
-  // repaint scroll a screenful, so hold until output goes quiet.
   const deferSeedReveal = () => {
     if (!isSeedPending()) return;
     if (seedQuietTimer) clearTimeout(seedQuietTimer);
@@ -250,8 +232,6 @@ export function mountTaskTerminalSession(
     seedCapTimer ??= setTimeout(revealSeed, SEED_REVEAL_MAX_MS);
   };
 
-  // Both timers start at the first write, not at open: a pane that has sent
-  // nothing yet is an empty grid, and hiding an empty grid looks identical.
   const beginSeedPending = () => {
     clearSeedPendingRevealTimer();
     clearPostRevealEraseGraceTimer();
@@ -270,7 +250,7 @@ export function mountTaskTerminalSession(
     }
   };
 
-  // eslint-disable-next-line prefer-const -- assigned once after fitLocal exists
+  // eslint-disable-next-line prefer-const -- assigned once later in a closure; const needs an initializer
   let refitController: ReturnType<typeof createRefitController> | undefined;
 
   const resetDedupe = () => {
@@ -299,8 +279,6 @@ export function mountTaskTerminalSession(
     termEl.style.height = "";
   };
 
-  // Pin host height in px only when the wrap's height is flex-indefinite
-  // (keyboard-open / fullscreen). Capped inline uses CSS height:100%.
   const syncHostToWrap = () => {
     if (!hostEl || !interactionEl) return;
     const needsPin =
@@ -369,9 +347,6 @@ export function mountTaskTerminalSession(
   };
 
   refitController = createRefitController({
-    // Re-check the ambient guards at frame time, not just when the refit
-    // was requested: a fit that lands mid-selection resizes the grid,
-    // clears the selection, and unmounts the Copy overlay under the tap.
     fit: () => {
       if (isKeyboardOpen()) return;
       if ((termRef.current?.getSelection() ?? "").length > 0) return;
@@ -381,8 +356,6 @@ export function mountTaskTerminalSession(
       if (!termRef.current) return null;
       return { cols: termRef.current.cols, rows: termRef.current.rows };
     },
-    // Ambient sends share the discrete path's dedupe memory and fire-time
-    // keyboard check, so the two paths can never double-send one grid.
     sendResize: (cols, rows) => {
       if (!isActive() || !connectionRef.current?.isOpen() || isKeyboardOpen()) return;
       if (cols === lastSentCols && rows === lastSentRows) return;
@@ -397,8 +370,6 @@ export function mountTaskTerminalSession(
     if (isKeyboardOpen() && !discreteIntent) {
       return;
     }
-    // term.resize clears selection; skip all fits while Copy/selection is live
-    // (including discrete open/expand settle — a late rAF must not unmount Copy).
     if ((termRef.current?.getSelection() ?? "").length > 0) {
       return;
     }
@@ -463,7 +434,6 @@ export function mountTaskTerminalSession(
     );
     if (hit) {
       setLinkMenu({ url: hit.url, x: event.clientX, y: event.clientY });
-      // Keep keyboard closed so fixed menu stays on-band / tappable.
       if (!isKeyboardOpen()) termTextarea()?.blur();
       return;
     }
@@ -472,8 +442,6 @@ export function mountTaskTerminalSession(
     if (textarea) {
       resetDocumentScroll();
       textarea.focus({ preventScroll: true });
-      // Tap opens (or keeps) the iOS keyboard; settle so inline and fullscreen
-      // bands both track the animated visual viewport.
       onBandSettle();
       return;
     }
@@ -514,7 +482,6 @@ export function mountTaskTerminalSession(
 
   const armDirectionalGesture = (arrow: string, event: TouchEvent) => {
     if (directionalArmed) return;
-    // Only steal the gesture when we can actually cancel native pan-y scroll.
     if (!event.cancelable) {
       cancelLongPress();
       return;
@@ -672,7 +639,6 @@ export function mountTaskTerminalSession(
         if (!holdMatured) {
           if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
         } else {
-          // Lock page swipe once the hold owns the finger (select or arrows).
           setTerminalSelecting(true);
           const absDx = Math.abs(dx);
           const absDy = Math.abs(dy);
@@ -716,9 +682,6 @@ export function mountTaskTerminalSession(
       cancelLongPress();
       clearDirectionalGesture();
     } else {
-      // CI WebKit can delay the 500ms timer past a short hold; still select when
-      // the finger lifted after a qualifying hold without movement cancel or
-      // directional drag.
       if (
         !directionalArmed &&
         longPressActive &&
@@ -781,12 +744,8 @@ export function mountTaskTerminalSession(
   termRef.current = liveTerm;
   onHardenTextarea();
 
-  // xterm leaves plain Space keydown uncancelled (keyCode 32 < 48), so the
-  // browser page-scrolls the wrap. Own Space here: one PTY frame, no scroll.
   liveTerm.attachCustomKeyEventHandler((event) => {
     if (event.key === "Backspace" || event.key === "Delete") {
-      // Skipping xterm's handling avoids its preventDefault, which is what lets
-      // iOS start its hold-to-delete repeat loop. beforeinput sends the DEL.
       if (event.type === "keydown" && !event.isComposing) onSeedTermSentinel();
       return false;
     }
@@ -814,11 +773,7 @@ export function mountTaskTerminalSession(
     scrollSync.onTermScroll();
   });
   const onWrapScroll = () => {
-    // Undone caret reveal: never map it onto the PTY viewport.
     if (onRestorePinnedScroll()) return;
-    // Do not gate on isSeedPending: wrapper scroll must still flip followLive
-    // off so "New output" works if the user (or a test) scrolls during the
-    // quiet window. Mid-parse yank is handled by ignoring onTermScroll above.
     scrollSync.onInteractionScroll();
   };
   interactionEl.addEventListener("scroll", onWrapScroll, { passive: true });
@@ -836,12 +791,8 @@ export function mountTaskTerminalSession(
 
   let connection: TerminalConnection | undefined;
 
-  // Hide before the first paint/dial so open never shows an empty grid or a
-  // mid-seed wrap scroll. onOpen cancels this when the dial is unseeded.
   beginSeedPending();
 
-  // ponytail: defer dial one microtask so StrictMode's setup→cleanup→setup cycle
-  // never constructs a socket on the aborted first mount; cleanup sets `disposed`.
   queueMicrotask(() => {
     if (disposed) return;
     connection = connectTaskTerminal(handle, {
@@ -849,21 +800,10 @@ export function mountTaskTerminalSession(
         const { sawErase, carry } = detectCsiEraseInDisplay(eraseCarry, text);
         eraseCarry = carry;
         termRef.current?.write(text, () => {
-          // Mid-parse xterm onScroll is ignored while seed-pending (above), so
-          // followLive stays put across the write. Do not force-follow here —
-          // that would re-pin after a wrapper scroll during the quiet window
-          // and suppress the "New output" affordance.
-          //
-          // Latch scrollOnErase off only after seed reveal: releasing at reveal
-          // raced the bridge (seed WS frame, then PTY attach ED2) and wiped
-          // history when ED2 landed with the option already false.
           if (sawErase && !isSeedPending() && termRef.current?.options.scrollOnEraseInDisplay) {
             latchScrollOnEraseOff();
           }
           if (isSeedPending()) {
-            // Grow spacer + pin xterm only. Do not touch wrap.scrollTop here —
-            // incremental wrap pins during seed are what the operator sees as
-            // "scrolls all the way down" if any frame becomes visible.
             scrollSync.syncSpacer();
             termRef.current?.scrollToBottom();
           } else {
@@ -918,9 +858,6 @@ export function mountTaskTerminalSession(
   const viewport = window.visualViewport;
   viewport?.addEventListener("resize", onViewportChange);
 
-  // Any keyboard-open class edge (open or close), in inline or fullscreen:
-  // re-run discreteIntent settle so the band tracks iOS visualViewport animation
-  // and exit-from-fullscreen-while-keyboard-up is not a frozen no-op.
   let wasKeyboardOpen = isKeyboardOpen();
   const keyboardClassObserver = new MutationObserver(() => {
     const nowOpen = isKeyboardOpen();

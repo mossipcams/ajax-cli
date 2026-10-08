@@ -1,5 +1,3 @@
-//! Terminal WebSocket frame handling and PTY bridge loop.
-
 use super::*;
 use axum::extract::ws::{Message, WebSocket};
 use portable_pty::{native_pty_system, PtySize};
@@ -25,23 +23,13 @@ struct TerminalInputFrame {
     rows: u16,
 }
 
-/// Outcome of a parsed *text* input frame. Reported by `handle_input_frame`
-/// and folded into `FrameOutcome` by `process_client_frame`. Only `InputWritten`
-/// advances operator acknowledgment: resize and ignored frames do not.
 #[derive(Debug)]
 pub enum TextFrameOutcome {
-    /// An `input` frame whose data was written to the PTY writer.
     InputWritten,
-    /// A `resize` frame with positive cols/rows.
     Resize(PtySize),
-    /// Anything else (parse failure, unsupported type, resize with zero size).
     Ignored,
 }
 
-/// Outcome of routing a single client WebSocket frame through the helper used
-/// by both socket loops. `Resize` carries the requested PTY size for the
-/// caller to apply; `Abort` requests the loop terminate; `Handled` is a no-op
-/// keeper (the frame was consumed, ignored, or successfully written).
 #[derive(Debug)]
 pub enum FrameOutcome {
     Handled,
@@ -49,8 +37,6 @@ pub enum FrameOutcome {
     Abort,
 }
 
-/// Decode a JSON text frame, write any input bytes to `writer`, and report
-/// whether it was an input write, a resize, or ignored. Errors abort the loop.
 pub fn handle_input_frame(
     text: &str,
     writer: &mut impl Write,
@@ -85,12 +71,6 @@ pub fn handle_input_frame(
     }
 }
 
-/// Route a single client WebSocket frame through the shared input path used by
-/// both socket loops: oversized binary or write error aborts; validated input
-/// frames fire `on_operator_input` exactly once; resize is returned to the
-/// caller; everything else is ignored. Only `Message::Text` and `Binary` are
-/// expected here; other frame kinds fall back to `Handled` so the loop owns
-/// their side effects (ping/pong/close) directly.
 pub fn process_client_frame(
     frame: &Message,
     writer: &mut impl Write,
@@ -150,7 +130,6 @@ pub(crate) fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[
     output
 }
 
-/// Non-empty drained batch bytes ready for `Message::Binary` (no JSON/base64 wrap).
 pub(crate) fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     if bytes.is_empty() {
         None
@@ -159,8 +138,6 @@ pub(crate) fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
-/// Captured-history seed bytes for xterm: bare LF becomes CRLF so each row
-/// starts at column zero. Live PTY output must keep using `output_frame_bytes`.
 pub(crate) fn captured_history_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     let mut normalized = Vec::with_capacity(bytes.len());
     for &byte in &bytes {
@@ -175,20 +152,12 @@ pub(crate) fn captured_history_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     Some(normalized)
 }
 
-/// `seed=0` in a WS URL query opts out of the history seed; anything else
-/// (absent query, other params, seed=1) keeps the default seed.
 pub fn seed_history_from_query(query: Option<&str>) -> bool {
     query
         .map(|query| query.split('&').all(|pair| pair != "seed=0"))
         .unwrap_or(true)
 }
 
-/// Allowlist for a `client=` token in the WS URL query. Only
-/// `[A-Za-z0-9_-]{1,64}` is accepted so the token never injects tmux name
-/// metacharacters; the token is hashed anyway but the gate keeps bad input
-/// from even reaching the hash. Anything else (absent, empty, too long,
-/// characters outside the allowlist) returns `None` so the bridge falls back
-/// to a random per-call [`build_isolated_attach_plan`].
 pub fn client_id_from_query(query: Option<&str>) -> Option<String> {
     let query = query?;
     for pair in query.split('&') {
@@ -211,10 +180,6 @@ pub fn client_id_from_query(query: Option<&str>) -> Option<String> {
     None
 }
 
-/// Select the isolated attach plan for a bridge connection. A present, validated
-/// client id routes through [`build_isolated_attach_plan_for_client`] so a
-/// reconnecting tab reuses its tmux viewport; `None` keeps the historical
-/// random-per-call [`build_isolated_attach_plan`] path.
 pub fn isolated_plan_for_bridge(
     plan: &TerminalAttachPlan,
     client_id: Option<&str>,
@@ -225,15 +190,10 @@ pub fn isolated_plan_for_bridge(
     }
 }
 
-/// Fixed reflow beat before history capture is only worth paying when we will
-/// actually seed history *and* a client resize already fired a WINCH that tmux
-/// still needs to reflow. Unseeded auto-reconnect must skip the 100ms sleep.
 pub fn should_wait_reflow_before_seed(seed_history: bool, resize_applied: bool) -> bool {
     seed_history && resize_applied
 }
 
-/// How long the bridge may keep waiting for the client's first resize frame
-/// before seeding anyway. Returns None when the deadline passed.
 pub(crate) fn remaining_resize_wait(started: Instant, now: Instant) -> Option<Duration> {
     let elapsed = now.saturating_duration_since(started);
     if elapsed >= RESIZE_WAIT_TIMEOUT {
@@ -243,8 +203,6 @@ pub(crate) fn remaining_resize_wait(started: Instant, now: Instant) -> Option<Du
     }
 }
 
-/// Remaining quiet time after the last client resize before seeding. Returns
-/// `None` once the settle window has elapsed.
 pub(crate) fn resize_settle_deadline(last_resize_at: Instant, now: Instant) -> Option<Duration> {
     let elapsed = now.saturating_duration_since(last_resize_at);
     if elapsed >= RESIZE_SETTLE_QUIET {
@@ -254,7 +212,6 @@ pub(crate) fn resize_settle_deadline(last_resize_at: Instant, now: Instant) -> O
     }
 }
 
-/// Report a bridge setup failure to the browser and close the socket.
 pub(crate) async fn send_error_and_close(socket: &mut WebSocket, error: String) {
     let _ = socket
         .send(Message::Text(
@@ -266,6 +223,17 @@ pub(crate) async fn send_error_and_close(socket: &mut WebSocket, error: String) 
     let _ = socket.send(Message::Close(None)).await;
 }
 
+/// Run a tmux command off the async worker thread. A slow or hung tmux would
+/// otherwise stall every other terminal and session task on that worker.
+pub(crate) async fn run_tmux_command(
+    command: &TmuxCommand,
+) -> std::io::Result<std::process::Output> {
+    let command = command.clone();
+    tokio::task::spawn_blocking(move || run_tmux_command_blocking(&command))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
 pub async fn bridge_task_terminal_socket(
     mut socket: WebSocket,
     plan: TerminalAttachPlan,
@@ -275,22 +243,14 @@ pub async fn bridge_task_terminal_socket(
 ) {
     let isolated = isolated_plan_for_bridge(&plan, client_id.as_deref());
 
-    // ponytail: reap only detached ephemerals (attached==0), but keep this
-    // connection's lingered target so reconnect can attach before setup runs.
-    // Ceiling: one list-sessions per connect. Upgrade: periodic background
-    // reaper if connect rate is too low to keep up.
     let keep = isolated.ephemeral_session.clone();
     let _ = tokio::task::spawn_blocking(move || {
         reap_detached_ephemeral_terminal_sessions_except(Some(&keep))
     })
     .await;
 
-    // Stand up the isolated grouped session before attaching so the phone's
-    // dimensions never shrink the shared window for other clients. If this
-    // fails the shared session is likely gone; report and bail rather than
-    // attaching to nothing.
     for command in &isolated.setup {
-        let failure = match run_tmux_command_blocking(command) {
+        let failure = match run_tmux_command(command).await {
             Ok(output) if output.status.success() => continue,
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -310,7 +270,7 @@ pub async fn bridge_task_terminal_socket(
     }
 
     let probe = task_window_probe_command(&isolated.ephemeral_session, &plan.task_window);
-    let probe_failure = match run_tmux_command_blocking(&probe) {
+    let probe_failure = match run_tmux_command(&probe).await {
         Ok(output) if output.status.success() => None,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -467,21 +427,17 @@ pub async fn bridge_task_terminal_socket(
     }
 
     if should_wait_reflow_before_seed(seed_history, resize_applied) {
-        // Fixed beat so tmux processes the WINCH and reflows history before capture.
-        // ponytail: replace with an event-driven readiness check if this ever proves flaky.
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Seed history after attach starts so output produced during capture is
-    // already queued in the PTY, then forward that live stream afterward.
     if seed_history {
-        if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
+        if let Ok(output) = run_tmux_command(&isolated.history).await {
             if output.status.success() {
                 if let Some(payload) = captured_history_frame_bytes(output.stdout) {
                     if socket.send(Message::Binary(payload.into())).await.is_err() {
                         cleanup_spawned_child_async(child).await;
                         for command in &isolated.teardown {
-                            let _ = run_tmux_command_blocking(command);
+                            let _ = run_tmux_command(command).await;
                         }
                         return;
                     }
@@ -602,9 +558,6 @@ pub async fn bridge_task_terminal_socket(
     running.store(false, Ordering::Relaxed);
     cleanup_spawned_child_async(child).await;
 
-    // Remove the ephemeral grouped session now that the client is gone. Killing
-    // a grouped session detaches only this client and never destroys the shared
-    // session's windows unless it was the last member.
     let teardown = isolated.teardown.clone();
     let _ = tokio::task::spawn_blocking(move || {
         for command in &teardown {

@@ -7,7 +7,6 @@ import {
 } from "@/shared/lib/api";
 import { isStandaloneDisplay } from "@/shared/lib/telemetry";
 
-/** Server waits this long before curl delivery so the PWA can be fully quit. */
 export const PUSH_TEST_DELAY_MS = 20_000;
 
 export type PushStatusCallback = (status: string) => void;
@@ -60,12 +59,9 @@ function unsupportedMessage(): string {
   return "Declarative push is not supported in this browser.";
 }
 
-/** Drop a stale subscription when the server VAPID key rotated after restart. */
 async function subscribeWithCurrentVapidKey(
   applicationServerKey: Uint8Array,
 ): Promise<PushSubscriptionLike> {
-  // Keep `window.pushManager.subscribe` as a property chain so the install
-  // allowlist string survives minify (a renamed local binding would not).
   const existing = await window.pushManager!.getSubscription();
   if (existing) {
     await existing.unsubscribe();
@@ -147,8 +143,6 @@ export async function disablePushNotifications(
         await existing.unsubscribe();
       }
     }
-    // Always clear the server store so a missing local PushSubscription cannot
-    // leave endpoints that keep receiving attention pushes.
     await sendPushUnsubscribe(undefined, { all: true });
     return { ok: true };
   } catch (error) {
@@ -184,8 +178,6 @@ export async function runPushNotificationTest(
       },
     });
 
-    // POST immediately with a server-side delay. A client setTimeout dies when
-    // the PWA is fully closed, so the push would never be requested.
     onStatus("Scheduled — close or background the app now");
     await sendPushTest({
       endpoint: payload.endpoint,

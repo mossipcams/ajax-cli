@@ -420,11 +420,6 @@ fn native_teardown_commands<R: Registry>(
 }
 
 impl<R: Registry> CommandContext<R> {
-    /// Issue #1216: the task's own main checkout (or a recorded path that is an
-    /// ancestor of it) has no linked git worktree to remove. Dropping such a
-    /// task removes only registry state and the tmux session, and
-    /// `task_only_drop_verification` must prove first that the task's work
-    /// landed on origin.
     pub(crate) fn task_worktree_is_preserved_checkout(&self, task: &Task) -> bool {
         let Some(repo_path_str) = task_repo_path(self, task) else {
             return false;
@@ -445,10 +440,6 @@ impl<R: Registry> CommandContext<R> {
         canonical_repo == normalized_recorded || canonical_repo.starts_with(&normalized_recorded)
     }
 
-    /// #1216: a task attached to the main checkout owns no disposable Git
-    /// resources. Preserve its checkout and branches, including checked-out
-    /// main; return the verification command that proves the task's commits
-    /// landed on origin's default branch before the drop may proceed.
     pub(crate) fn task_only_drop_verification(
         &self,
         task: &Task,
@@ -459,9 +450,6 @@ impl<R: Registry> CommandContext<R> {
             return Ok(None);
         }
 
-        // Query origin itself: local main and cached origin/HEAD are insufficient.
-        // Fetch only the advertised commit and compare exact commit ancestry.
-        // Positional arguments keep repository paths and branch names out of shell code.
         let script = r#"
 fail() {
     printf 'Cannot verify that branch %s has landed on origin default branch. Push the task branch, merge its commits into origin main (or the origin default branch), then retry ajax drop. Check origin connectivity if already merged. No task resources were removed.\n' "$2" >&2
@@ -490,9 +478,6 @@ git -C "$1" merge-base --is-ancestor "refs/heads/$2" "$tip" || fail "$@"
         ))
     }
 
-    /// Refuse teardown operations that would move a path which is not a real
-    /// linked worktree (the repo root, an ancestor of it, or a full repository
-    /// with a `.git` directory) into the trash directory.
     pub(crate) fn ensure_task_worktree_removable(&self, task: &Task) -> Result<(), CommandError> {
         let repo_path = PathBuf::from(
             task_repo_path(self, task)
@@ -510,10 +495,6 @@ git -C "$1" merge-base --is-ancestor "refs/heads/$2" "$tip" || fail "$@"
             std::fs::canonicalize(&repo_path).unwrap_or_else(|_| repo_path.clone());
 
         if canonical_worktree == canonical_repo || canonical_repo.starts_with(&canonical_worktree) {
-            // Issue #1216: the task's own main checkout is not a linked
-            // worktree and has nothing to move. Dropping it proceeds as a
-            // task-only drop gated by origin landing verification instead of
-            // being permanently blocked.
             if self.task_worktree_is_preserved_checkout(task) {
                 return Ok(());
             }
@@ -693,9 +674,6 @@ mod worktree_guard_tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    // #1216 regression: a task whose worktree path is the main checkout
-    // (a real git directory, not just any path) must be droppable as a
-    // task-only drop — the old guard moved the user's entire repo to trash.
     #[test]
     fn repo_root_checkout_with_git_dir_is_allowed() {
         let root = make_temp_dir("preserved-root");
@@ -709,9 +687,6 @@ mod worktree_guard_tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    // #1216 regression: an ancestor path that contains the repo's main
-    // checkout (e.g. /Users/matt/Desktop/Projects containing SaySo) is a
-    // preserved checkout, not a disposable worktree.
     #[test]
     fn ancestor_of_repo_with_git_dir_is_allowed() {
         let root = make_temp_dir("preserved-ancestor");

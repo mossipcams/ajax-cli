@@ -45,12 +45,6 @@ function summaryTarget(items: ConversationItem[], live: boolean, expanded: boole
   return activitySummary(items);
 }
 
-/** One disclosure per turn. Collapsed, live or settled, is the summary row only
- * (#1180). Thoughts, plans, permission markers, and tool rows stay inside until
- * expanded. The summary is the counted line once tools exist on a live turn,
- * otherwise the current operation so a thinking-only turn is not silent. States
- * that want the operator — a failure, an ask — open themselves, and a tap in
- * either direction sticks for the rest of the session. */
 export default function TurnActivity({
   items,
   live,

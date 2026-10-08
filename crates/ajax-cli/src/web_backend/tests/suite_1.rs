@@ -18,7 +18,6 @@ fn http_router_serves_mobile_shell_and_cockpit_json() {
     let shell = handle_http_request("GET", "/", "", &context).unwrap();
     assert_eq!(shell.status_code, 200);
     assert_eq!(shell.content_type, "text/html; charset=utf-8");
-    // ajax-web owns the shell's content; ajax-cli only proves it serves those bytes.
     assert_eq!(
         String::from_utf8_lossy(&shell.body),
         web_install::browser_shell()
@@ -384,8 +383,6 @@ fn web_refresh_reloads_sqlite_even_when_mtime_stays_the_same() {
         .save(&concurrent)
         .unwrap();
 
-    // Simulate a missed mtime window: the disk revision changed, but the
-    // cached timestamp still points at the rewritten file.
     bridge.last_loaded_mtime = crate::context::state_file_mtime(&paths);
 
     let mut runner = LiveRefreshRunner;
@@ -431,8 +428,6 @@ fn cockpit_refresh_recovers_when_task_is_deleted_from_disk() {
         .unwrap();
     let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
 
-    // Another writer deletes the task from disk, and the bridge misses the
-    // reload window because its recorded mtime already matches the file.
     let store = SqliteRegistryStore::new(&paths.state_file);
     let revision = store.current_revision().unwrap();
     store

@@ -155,8 +155,6 @@ async fn axum_task_terminal_marks_browser_connected_after_origin_ok() {
     )
     .await;
 
-    // The same-origin request passed the websocket origin gate; the exact
-    // upgrade outcome (101/400) is irrelevant once the handler ran past it.
     assert_ne!(response.status(), StatusCode::FORBIDDEN);
 
     assert!(state.browser_connected());
@@ -285,8 +283,6 @@ async fn post_task_rejects_a_model_field() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-// An interactive task still has its agent live in tmux; the registry must not
-// claim a harness that is not the process actually running.
 #[tokio::test]
 async fn post_task_refuses_to_swap_an_interactive_task() {
     let (state, cookie, app) = app_with(

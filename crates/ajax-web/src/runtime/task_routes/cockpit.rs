@@ -1,5 +1,3 @@
-//! Task/cockpit/diff/terminal/STT/operate Axum handlers.
-
 use crate::runtime::bridge::RuntimeBridge;
 use crate::runtime::state::{CockpitCacheEntry, WebAppState};
 use crate::{
@@ -27,8 +25,6 @@ use std::time::Instant;
 
 use super::live::{axum_task_session, axum_task_stt, axum_task_terminal};
 
-/// Cockpit polls send this only while the document is foreground-visible.
-/// Background/Simulator polls still refresh data but must not suppress push.
 pub(crate) const AJAX_FOREGROUND_HEADER: &str = "x-ajax-foreground";
 
 pub(crate) fn request_marks_foreground_presence(headers: &HeaderMap) -> bool {
@@ -49,7 +45,6 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    // Same poll path either way — presence is header-gated, not a second request.
     if request_marks_foreground_presence(&headers) {
         state.mark_browser_cockpit_seen();
     }
@@ -75,11 +70,6 @@ where
     })
 }
 
-/// Refresh the cockpit projection and cache the response, delivering
-/// declarative push as a side effect when requested. The cockpit handler,
-/// the background push tick, and task mutations/task starts all serialize on
-/// the same control lane, so a mutation cannot race an in-flight refresh and
-/// discard its committed state.
 pub(crate) async fn refresh_cockpit_and_cache<C, B>(
     state: &WebAppState<C, B>,
     tier: RefreshTier,

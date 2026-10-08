@@ -1,9 +1,3 @@
-// Typed client for the same-origin training endpoints. Transport mirrors
-// shared/lib/api.ts (same-origin credentials, 401 -> renewBrowserSession ->
-// single retry); auth itself is delegated to the shared helper, not re-implemented.
-// profile_details[name].serving on the host is a descriptive string (e.g. "ctx
-// 122880, 2 slots"), never a boolean; serve state derives from active_profile +
-// runtime_up in the UI.
 import { ApiError, renewBrowserSession } from "@/shared/lib/api";
 import { GET_REQUEST_TIMEOUT_MS } from "@/shared/lib/polling";
 
@@ -36,7 +30,6 @@ export type TrainingProfileDetails = Record<
   { label?: string; model?: string; serving?: string }
 >;
 
-/** GET /api/training/status */
 export interface TrainingStatus {
   ok: true;
   state: string;
@@ -47,7 +40,6 @@ export interface TrainingStatus {
   profile_details: TrainingProfileDetails | null;
 }
 
-/** GET /api/training/models */
 export interface TrainingModels {
   ok: true;
   profiles: string[];

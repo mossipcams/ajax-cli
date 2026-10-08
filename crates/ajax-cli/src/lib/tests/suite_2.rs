@@ -32,13 +32,6 @@ fn command_flow_fixture_records_partial_success_before_failure() {
         ]
     );
 }
-/// Working lifecycle opens the AoE running-reconcile capture gate for Codex.
-/// Runtime refresh now ends with a GitHub PR check probe for the fixture
-/// task; sequence-asserting tests append this to `tmux_live_commands()`.
-// `run_with_context_and_runner` resolves the open mode from the ambient
-// `$TMUX` env var, which makes full command-sequence assertions
-// non-deterministic across environments. Pin `Attach` through the dispatch
-// seam so expectations stay hermetic.
 #[test]
 fn cli_error_display_omits_internal_enum_wrapping() {
     let error = CliError::CommandFailed("task title is required; pass --title".to_string());

@@ -1,6 +1,3 @@
-// Diagnostics report builder. Same-origin probes only; the report is a display
-// convenience for connection debugging.
-
 export interface DiagnosticCheck {
   ok: boolean;
   status: number | null;
@@ -16,7 +13,6 @@ export async function diagnosticFetch(path: string): Promise<DiagnosticCheck> {
     try {
       body = JSON.stringify(JSON.parse(text), null, 2).slice(0, 600);
     } catch {
-      // Plain-text responses are still useful diagnostics.
     }
     return { ok: response.ok, status: response.status, error: null, body };
   } catch (error) {

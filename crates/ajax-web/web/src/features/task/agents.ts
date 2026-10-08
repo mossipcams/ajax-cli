@@ -1,4 +1,3 @@
-/** Harnesses Ajax can start. Shared by task creation and the harness swap. */
 export const AGENTS = [
   { value: "codex", label: "Codex" },
   { value: "claude", label: "Claude" },

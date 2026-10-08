@@ -1,19 +1,10 @@
-// Shell characterization e2e suite. Pins update-banner visibility/reload and
-// dashboard pull-to-refresh. Written against the pre-S7 shell and kept as the
-// invariant the React shell must still satisfy.
-// API responses are mocked via addInitScript (same pattern as
-// smoke.test.ts) so tests run without a live Rust server.
-
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { mockFetch } from "./fixtures";
 
-// Resisted pull distance is raw drag × 0.5; threshold is 64px resisted.
 const PULL_RAW_DELTA_PX = 140;
 
 async function installStatefulVersionMock(page: Page) {
   await page.addInitScript(() => {
-    // Literal strings match fixtures.VERSION_A / VERSION_B; inlined because
-    // addInitScript argument serialization breaks object identity for A vs B.
     const versionA = "0.20.5";
     const versionB = "0.21.0-new";
     let calls = 0;
@@ -106,7 +97,6 @@ test("update banner appears on version change and reloads on tap", async ({
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const banner = page.locator("button.update-banner");
-  // Boot resume + the 30s dashboard poll both call checkVersion; allow either path.
   await expect(banner).toBeVisible({ timeout: 45_000 });
   await expect(banner).toHaveText("Update ready — tap to reload");
 

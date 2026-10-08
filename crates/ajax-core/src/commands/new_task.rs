@@ -27,9 +27,7 @@ pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
-    /// When true with Cursor, create worktree + tmux but skip interactive agent send-keys.
     pub skip_interactive_agent: bool,
-    /// Operator-chosen Cursor model; `None` launches the Ajax default.
     pub model: Option<String>,
 }
 
@@ -170,8 +168,6 @@ pub fn new_task_plan_with_observation<R: Registry>(
         DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
-    // A provisioned start replaces send-keys with the harness's ACP process, so
-    // it is only offered for harnesses Ajax knows how to start over ACP.
     let skip_agent_send_keys =
         request.skip_interactive_agent && acp_launch_for_agent(selected_agent).is_some();
     if !skip_agent_send_keys {
@@ -394,8 +390,6 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
                 task.selected_agent,
                 task.worktree_path.display().to_string(),
             ));
-            // Provisioned ACP tasks have no tmux agent yet; the host reports
-            // AgentRunning only after a prompt is accepted (#1069).
             if !task.skip_interactive_agent() {
                 task.add_side_flag(SideFlag::AgentRunning);
             }

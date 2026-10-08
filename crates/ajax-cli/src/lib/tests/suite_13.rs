@@ -488,7 +488,6 @@ fn cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone() {
     let mut runner = QueuedRunner::new(tmux_live_outputs());
     crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-    // Wrapper "running" is process liveness only; idle pane has no activity.
     assert_ne!(task.agent_status, AgentRuntimeStatus::Running);
     assert_ne!(
         task.live_status.as_ref().map(|status| status.kind),
@@ -546,8 +545,6 @@ fn stale_wrapper_running_snapshot_cannot_keep_task_running() {
         task.live_status.as_ref().map(|status| status.kind),
         Some(LiveStatusKind::AgentRunning)
     );
-    // A stale wrapper-running snapshot is no longer a probe failure; core falls
-    // through to a successful agent-aware pane observation instead.
     assert_ne!(
         task.runtime_projection.observation_error.as_deref(),
         Some("agent status stale")

@@ -1,39 +1,19 @@
-//! Conservative internal agent-status observation/run model.
-//!
-//! This module owns the pure status-reduction layer that maps observational
-//! candidates onto a `StatusProjection`. The projection keeps
-//! [`crate::models::LiveStatusKind`] as a presentation projection while
-//! separating process liveness from agent activity, tracking parent/child
-//! runs, and expiring/staling observations with source+confidence so idle
-//! live processes and stale pane/hook evidence no longer produce confident
-//! false positives.
-//!
-//! See `.planning/agent-plans/agent-status-conservative.md`.
-
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use crate::models::{LiveObservation, LiveStatusKind};
 
-/// Internal live summary when the parent is idle/absent and a child is active.
 pub const SUMMARY_WAITING_ON_DELEGATED: &str = "waiting on delegated runs";
-/// Internal live summary when the primary run is terminal but children remain.
 pub const SUMMARY_DELEGATED_STILL_ACTIVE: &str = "delegated runs still active";
 
-/// Operator-facing explanation for [`SUMMARY_WAITING_ON_DELEGATED`].
 pub const EXPLANATION_WAITING_ON_DELEGATED: &str = "Waiting on delegated runs";
-/// Operator-facing explanation for [`SUMMARY_DELEGATED_STILL_ACTIVE`].
 pub const EXPLANATION_DELEGATED_STILL_ACTIVE: &str = "Delegated runs still active";
 
-/// True when a live/operator waiting summary means the parent is blocked on
-/// children rather than on the operator. These must not set `NeedsInput` or
-/// fire attention push.
 pub fn is_delegated_waiting_summary(summary: &str) -> bool {
     operator_explanation_for_summary(summary).is_some()
 }
 
-/// Map an internal delegated summary onto the operator explanation string.
 pub fn operator_explanation_for_summary(summary: &str) -> Option<&'static str> {
     let trimmed = summary.trim();
     if trimmed.eq_ignore_ascii_case(SUMMARY_WAITING_ON_DELEGATED)
@@ -49,16 +29,10 @@ pub fn operator_explanation_for_summary(summary: &str) -> Option<&'static str> {
     }
 }
 
-/// Origin of an agent-status observation, ordered by evidence precedence
-/// (lower [`ObservationSource::rank`] wins among non-expired observations).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ObservationSource {
-    /// Terminal process exit / fatal runtime error: authoritative.
     ProcessExit,
-    /// Structured native lifecycle event folded from the canonical JSONL log.
     ProviderLifecycle,
-    /// Weak visible-pane wait hint. Admissible only where the agent capability
-    /// profile reports `Unavailable` or `Unverified` for the wait fact.
     PaneEvidence,
 }
 
@@ -72,7 +46,6 @@ impl ObservationSource {
     }
 }
 
-/// Confidence of an observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Confidence {
     Low,
@@ -80,9 +53,6 @@ pub enum Confidence {
     High,
 }
 
-/// Activity-only classification carried by a `StatusObservation`. There is
-/// deliberately **no** process-alive variant: liveness is supplied via
-/// [`ProcessLiveness`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum ActivityKind {
     Working,
@@ -94,8 +64,6 @@ pub enum ActivityKind {
     TestsRunning,
 }
 
-/// Coarse activity class used for conflict detection between fresh
-/// observations of the same run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ActivityClass {
     Running,
@@ -113,8 +81,6 @@ impl ActivityKind {
     }
 }
 
-/// A single observational sample for one agent run. `expires_at` is the
-/// absolute time past which the observation is considered stale and dropped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusObservation {
     pub source: ObservationSource,
@@ -126,11 +92,8 @@ pub struct StatusObservation {
     pub kind: ActivityKind,
 }
 
-/// Freshness window for a wrapper liveness heartbeat. A heartbeat older than
-/// this proves nothing about the process now.
 pub const PROCESS_LIVENESS_FRESH_FOR: Duration = Duration::from_secs(30);
 
-/// Separately-supplied process liveness. Never alone implies activity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProcessLiveness {
     pub alive: bool,
@@ -138,8 +101,6 @@ pub struct ProcessLiveness {
 }
 
 impl ProcessLiveness {
-    /// True when the heartbeat is both alive and inside its freshness window.
-    /// This is the whole of tier 3: informational, never activity.
     pub fn is_fresh_at(&self, now: SystemTime) -> bool {
         self.alive
             && now
@@ -148,9 +109,6 @@ impl ProcessLiveness {
     }
 }
 
-/// Parent-side phase derived from primary activity plus non-detached child
-/// aggregation. Encoded separately from [`LiveStatusKind`] so the existing
-/// presentation enum is not expanded.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParentPhase {
     ActivelyWorking,
@@ -161,9 +119,6 @@ pub enum ParentPhase {
     Unknown,
 }
 
-/// Result of [`reduce_agent_status`]. `live` is the derived presentation
-/// observation; `phase` carries the richer internal phase; `process_alive`
-/// reports the separate liveness input.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusProjection {
     pub live: LiveObservation,
@@ -173,7 +128,6 @@ pub struct StatusProjection {
     pub selected_source: Option<ObservationSource>,
 }
 
-/// Pure reducer input.
 pub struct ReduceInput<'a> {
     pub now: SystemTime,
     pub primary_run_id: String,
@@ -181,8 +135,6 @@ pub struct ReduceInput<'a> {
     pub observations: &'a [StatusObservation],
 }
 
-/// Reduced result for a single run id, used internally for parent/child
-/// resolution.
 enum RunActivityResult {
     Conflict,
     Activity {
@@ -192,19 +144,6 @@ enum RunActivityResult {
     },
 }
 
-/// Resolve the activity of a single run id among fresh observations.
-///
-/// Per run: drop expired samples, finding the newest `observed_at`. A
-/// `ProcessExit` observation at the newest timestamp always wins (it is the
-/// authoritative terminal event; ProcessExit outranks ongoing activity
-/// evidence of equal-freshness tier (a stale heartbeat cannot disprove an
-/// actual exit). Tier-strict precedence applies across non-expired
-/// observations: lower [`ObservationSource::rank`] wins regardless of
-/// observed_at, tiebroken by newest `observed_at` then activity state rank
-/// (busy beats waiting beats approval). When two *non-ProcessExit* fresh
-/// observations share the same `observed_at` but come from *different*
-/// sources and disagree on activity class, the run is marked
-/// [`RunActivityResult::Conflict`] and the reducer projects `Unknown`.
 fn select_run_activity<'a>(
     fresh: &'a [&'a StatusObservation],
     run_id: &str,
@@ -218,9 +157,6 @@ fn select_run_activity<'a>(
         return None;
     }
 
-    // Conflict check among equal-timestamp, non-ProcessExit observations with
-    // differing source tiers and conflicting activity classes. ProcessExit
-    // is authoritative and never participates in the conflict projection.
     let by_observed_at = {
         let mut buckets: Vec<(&SystemTime, Vec<&StatusObservation>)> = Vec::new();
         for obs in &run_obs {
@@ -247,8 +183,6 @@ fn select_run_activity<'a>(
         }
     }
 
-    // Tier-strict precedence: lowest rank wins, then newest observed_at, then
-    // activity state rank (busy beats waiting beats approval).
     let chosen = run_obs
         .iter()
         .copied()
@@ -276,15 +210,10 @@ fn state_rank(kind: ActivityKind) -> u8 {
     }
 }
 
-/// Invert the state rank so `min_by_key` prefers the highest state rank on
-/// tiebreak. `u8::MAX - rank` keeps a stable, deterministic ordering and
-/// pairs with [`Reverse<SystemTime>`] for newest-observed_at tiebreaks.
 fn reversal(rank: u8) -> u8 {
     u8::MAX - rank
 }
 
-/// True when the run is currently active (still running) per the resolved
-/// activity.
 fn is_run_active(activity: &Option<RunActivityResult>) -> bool {
     matches!(
         activity,
@@ -295,7 +224,6 @@ fn is_run_active(activity: &Option<RunActivityResult>) -> bool {
     ) || matches!(activity, Some(RunActivityResult::Conflict))
 }
 
-/// Reduce observations + process liveness into a `StatusProjection`.
 pub fn reduce_agent_status(input: ReduceInput<'_>) -> StatusProjection {
     let now = input.now;
     let primary = input.primary_run_id.as_str();
@@ -536,8 +464,6 @@ mod tests {
 
     #[test]
     fn liveness_expires_after_its_thirty_second_window() {
-        // Tier 3 carries a 30s window: a wrapper heartbeat older than that
-        // proves nothing about the process now.
         let stale = ProcessLiveness {
             alive: true,
             observed_at: now() - Duration::from_secs(31),
@@ -565,7 +491,6 @@ mod tests {
             !projection.process_alive,
             "a stale heartbeat must not report the process alive"
         );
-        // Still never activity, fresh or stale.
         assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
     }
 
@@ -585,8 +510,6 @@ mod tests {
 
     #[test]
     fn stale_wrapper_heartbeat_then_waiting_hook() {
-        // Stale wrapper working is supplied as liveness only, not activity.
-        // A fresh wait hook then wins the activity projection.
         let observations = [obs(
             ObservationSource::ProviderLifecycle,
             ActivityKind::WaitingInput,
@@ -601,7 +524,6 @@ mod tests {
 
     #[test]
     fn parent_waiting_on_one_active_child() {
-        // Primary has no activity observation; one non-detached child Working.
         let child = obs_with_run(
             ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
@@ -618,8 +540,6 @@ mod tests {
 
     #[test]
     fn parent_complete_while_child_active() {
-        // Primary Done + non-detached child Working → CompletedLocallyChildrenActive,
-        // derived kind must not be Done.
         let primary = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let child = obs_with_run(
             ObservationSource::ProviderLifecycle,
@@ -641,8 +561,6 @@ mod tests {
 
     #[test]
     fn mixed_children_running_failed_completed() {
-        // Primary Done + children Working/Failed/Done → still not fully
-        // complete because the Working child remains non-terminal.
         let primary = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let running = obs_with_run(
             ObservationSource::ProviderLifecycle,
@@ -679,7 +597,6 @@ mod tests {
         );
         assert_eq!(projection.live.kind, LiveStatusKind::WaitingForInput);
 
-        // With all children terminal, the parent FullyCompletes.
         let projection = reduce(true, &[primary, failed, done]);
 
         assert_eq!(projection.phase, ParentPhase::FullyCompleted);
@@ -688,7 +605,6 @@ mod tests {
 
     #[test]
     fn child_completion_then_parent_resumption() {
-        // After a child completes, the primary resumes Working → ActivelyWorking.
         let primary = obs(
             ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
@@ -711,8 +627,6 @@ mod tests {
 
     #[test]
     fn orphaned_stale_delegated_run_expires() {
-        // Primary Done + child Working but the child observation has expired.
-        // The expired child is dropped, allowing the parent to FullyComplete.
         let primary = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let expired_child = {
             let observed_at = now() - Duration::from_secs(200);
@@ -734,7 +648,6 @@ mod tests {
 
     #[test]
     fn conflicting_observations_time_and_confidence() {
-        // Older High Working vs newer High Waiting, same run → newer wins.
         let older = obs(
             ObservationSource::ProviderLifecycle,
             ActivityKind::Working,
@@ -752,10 +665,6 @@ mod tests {
         assert_eq!(projection.phase, ParentPhase::WaitingForUser);
         assert_eq!(projection.live.kind, LiveStatusKind::WaitingForInput);
 
-        // Equal-timestamp disagreement within the single structured lifecycle
-        // source resolves by activity-state rank (busy beats waiting) rather
-        // than projecting Unknown: cross-source conflict is unreachable now
-        // that the only structured source is the folded native lifecycle.
         let at = |age: u64| now() - Duration::from_secs(age);
         let working = StatusObservation {
             source: ObservationSource::ProviderLifecycle,
@@ -783,7 +692,6 @@ mod tests {
 
     #[test]
     fn process_exit_beats_stale_hook() {
-        // ProcessExit Done + expired lifecycle Working → Done.
         let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 5, 120);
         let stale_hook = {
             let observed_at = now() - Duration::from_secs(200);
@@ -805,7 +713,6 @@ mod tests {
 
     #[test]
     fn no_trustworthy_evidence_yields_unknown() {
-        // Empty observations, alive or not → Unknown.
         let projection = reduce(true, &[]);
         assert_eq!(projection.phase, ParentPhase::Unknown);
         assert_eq!(projection.live.kind, LiveStatusKind::Unknown);
@@ -817,14 +724,6 @@ mod tests {
 
     #[test]
     fn fresh_process_exit_outranks_fresh_lifecycle_working() {
-        // Tier-strict precedence: a confirmed ProcessExit outranks ongoing
-        // lifecycle activity even at equal freshness — a live process's stale
-        // "working" cannot disprove an actual exit. This is safe against the
-        // resume race because the pipeline (`AgentStatusSource`) only emits a
-        // ProcessExit observation while the wrapper snapshot says `Exited*`; on
-        // resume the new wrapper rewrites it to `Running` before the agent's
-        // first native event, so a fresh exit and a fresh native turn never
-        // coexist. See `agent_status_cache` tests for that invariant.
         let exit = obs(ObservationSource::ProcessExit, ActivityKind::Done, 1, 120);
         let working = obs(
             ObservationSource::ProviderLifecycle,

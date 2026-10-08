@@ -6,7 +6,6 @@ import TestInDevPanel from "./TestInDevPanel";
 interface Props {
   detail: BrowserTaskDetail;
   embedded?: boolean;
-  /** When the sheet identity header already shows branch. */
   hideBranch?: boolean;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
 }
@@ -99,7 +98,6 @@ function evidenceLabel(type: string, variant?: string): string {
   return type.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
 }
 
-/** Mirrors ajax-core `Annotation::row_label` for Debug strings from the web API. */
 export function humanizeTaskAnnotation(note: string): string | null {
   const trimmed = note.trim();
   if (!trimmed) return null;

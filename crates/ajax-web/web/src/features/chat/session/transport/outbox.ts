@@ -44,7 +44,6 @@ export function writeOutbox(handle: string, pending: PendingPrompt[]): void {
     if (pending.length) sessionStorage.setItem(outboxKey(handle), JSON.stringify(pending));
     else sessionStorage.removeItem(outboxKey(handle));
   } catch {
-    // Private mode / storage denied: the live socket still works.
   }
 }
 
@@ -63,7 +62,6 @@ export function writeSessionCursor(handle: string, cursor: number): void {
   try {
     sessionStorage.setItem(cursorKey(handle), String(cursor));
   } catch {
-    // ignore storage failures
   }
 }
 
@@ -71,7 +69,6 @@ export function clearSessionCursor(handle: string): void {
   try {
     sessionStorage.removeItem(cursorKey(handle));
   } catch {
-    // ignore
   }
 }
 

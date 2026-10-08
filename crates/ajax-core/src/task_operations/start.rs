@@ -13,9 +13,6 @@ pub fn plan_start_task_operation<R: Registry>(
     context: &CommandContext<R>,
     request: NewTaskRequest,
 ) -> Result<(TaskIntent, CommandPlan), CommandError> {
-    // Derive the same handle the start planner would use, then form the
-    // `ajax/<handle>` branch without re-implementing slugify. The repo/handle
-    // identity is already public via `start_task_identity`.
     let branch = format!(
         "ajax/{}",
         commands::start_task_identity(&request.repo, &request.title)

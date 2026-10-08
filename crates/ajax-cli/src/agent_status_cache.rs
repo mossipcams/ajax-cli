@@ -1,12 +1,3 @@
-//! Native hook-derived agent-status evidence for runtime refresh.
-//!
-//! Reads only the two files Ajax itself writes per task: the canonical event
-//! log (`agent-events/{stem}.jsonl`) and the launch-wrapper runtime snapshot
-//! (`agent-runtime/{stem}.json`). It folds the canonical log into reducer
-//! observations and translates confirmed wrapper exit / liveness. There are no
-//! legacy `~/.cache/tmux-agent-status` reads, no pane status files, no
-//! pane-text inference, and no scalar status snapshots.
-
 use std::{
     collections::HashMap,
     fs,
@@ -29,11 +20,8 @@ use ajax_core::{
 use crate::agent_event::parse_envelopes_from_jsonl;
 use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
 
-/// Freshness window for a confirmed wrapper exit, matching the prior terminal
-/// window: the wrapper only vouches for the process it supervised.
 const WRAPPER_TERMINAL_FRESH_FOR: Duration = Duration::from_secs(120);
 
-/// On-disk metadata used to skip unchanged file reads within a process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileStamp {
     mtime: Option<SystemTime>,
@@ -56,7 +44,6 @@ struct AgentStatusCaches {
     runtime: HashMap<String, RuntimeCacheEntry>,
 }
 
-/// Filesystem source of native hook-derived agent status for a task.
 pub(crate) struct AgentStatusFiles {
     events_dir: PathBuf,
     runtime_dir: PathBuf,
@@ -175,7 +162,6 @@ impl AgentStatusSource for AgentStatusFiles {
         let mut caches = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
         let mut observations = self.jsonl_observations_for_stem(&stem, now, &mut caches);
 
-        // Confirmed wrapper exit is a terminal fallback (requirement 12).
         if let Some(snapshot) = self.runtime_snapshot_for_stem(&stem, &mut caches) {
             if let Some(observation) = wrapper_exit_observation(&snapshot) {
                 observations.push(observation);
@@ -199,8 +185,6 @@ impl AgentStatusSource for AgentStatusFiles {
     }
 }
 
-/// Translate a confirmed wrapper exit into a terminal `ProcessExit`
-/// observation. `Starting`/`Running` yield no activity — only liveness.
 fn wrapper_exit_observation(snapshot: &AgentRuntimeSnapshot) -> Option<StatusObservation> {
     let kind = match snapshot.state {
         AgentRuntimeState::ExitedSuccess => ActivityKind::Done,
@@ -219,13 +203,8 @@ fn wrapper_exit_observation(snapshot: &AgentRuntimeSnapshot) -> Option<StatusObs
     })
 }
 
-/// Fold a task's canonical log into reducer-ready observations.
 fn observations_from_jsonl(jsonl: &Path, now: SystemTime) -> Vec<StatusObservation> {
     let mut observations = Vec::new();
-    // Native lifecycle: every run appends to the one per-task log, so group
-    // by run before folding — a child's events must not move the parent's
-    // phase. Each run yields its own observation so the reducer can
-    // aggregate the run graph.
     for (run_id, parent_run_id, envelopes) in group_envelopes_by_run(jsonl) {
         let observed_at = envelopes
             .iter()
@@ -246,10 +225,6 @@ fn observations_from_jsonl(jsonl: &Path, now: SystemTime) -> Vec<StatusObservati
     observations
 }
 
-/// Group a task's canonical log into `(run_id, parent_run_id, envelopes)`,
-/// preserving append order within each run. Envelopes with no `run_id` (written
-/// before the field existed) fold into the primary run, and the primary run is
-/// always keyed [`PRIMARY_RUN_ID`] with no parent.
 fn group_envelopes_by_run(jsonl: &Path) -> Vec<(String, Option<String>, Vec<ParsedEnvelope>)> {
     let mut runs: Vec<(String, Option<String>, Vec<ParsedEnvelope>)> = Vec::new();
     for envelope in parse_envelopes_from_jsonl(jsonl) {
@@ -366,9 +341,6 @@ mod tests {
             .iter()
             .any(|o| o.source == ObservationSource::ProviderLifecycle
                 && o.kind == ActivityKind::Working));
-        // Resume-race guard: while the wrapper snapshot says Running, no
-        // terminal ProcessExit observation is produced, so a fresh native turn
-        // can never be dragged back to Done by a prior exit.
         assert!(!observations
             .iter()
             .any(|o| o.source == ObservationSource::ProcessExit));
@@ -390,7 +362,6 @@ mod tests {
         assert!(observations
             .iter()
             .any(|o| o.source == ObservationSource::ProcessExit && o.kind == ActivityKind::Done));
-        // A confirmed exit is not liveness.
         assert!(src
             .process_liveness_for_task(&TaskId::new("web/fix-login"))
             .is_none());
@@ -408,7 +379,6 @@ mod tests {
         );
 
         let src = source(&root);
-        // No native events and only a running wrapper: no activity observation.
         assert!(src
             .observations_for_task(&TaskId::new("web/fix-login"))
             .is_empty());
@@ -418,8 +388,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// Append a raw canonical envelope for an explicit run, which
-    /// `run_agent_event` cannot do (it only ever writes `primary`).
     fn append_envelope(root: &std::path::Path, task_id: &str, run: &str, kind: &str, at: u128) {
         let stem = crate::agent_runtime::task_file_stem(task_id);
         let mut envelope = serde_json::json!({
@@ -451,11 +419,6 @@ mod tests {
 
     #[test]
     fn delegated_run_events_do_not_move_the_primary_phase() {
-        // architecture.md: "Parent and delegated runs are aggregated as a run
-        // graph: a parent is not fully complete while non-detached descendants
-        // remain active." Every run appends to the one {stem}.jsonl, so the
-        // fold must be per-run — otherwise a child's TurnStarted drags the
-        // settled parent back to Working.
         let root = temp_root("per-run");
         write_runtime(
             &root,
@@ -486,7 +449,6 @@ mod tests {
         assert_eq!(child.kind, ActivityKind::Working);
         assert_eq!(child.parent_run_id.as_deref(), Some("primary"));
 
-        // The reducer can now actually see the run graph.
         let projection =
             ajax_core::agent_status::reduce_agent_status(ajax_core::agent_status::ReduceInput {
                 now: std::time::SystemTime::now(),
