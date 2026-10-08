@@ -136,5 +136,14 @@ one per-task log, `AgentStatusSource` groups envelopes by `run_id` before
 folding and emits one observation per run — a child's events never move the
 parent's phase. Malformed values never participate.
 
+ACP orchestration-chat sessions are a second structured lifecycle producer for
+provisioned tasks only. The ACP host folds session events into
+`acp_execution_state::AcpExecutionState` and feeds its `ProviderLifecycle`
+observations through the same `reduce_agent_status`; it never writes a status
+the reducer did not project, and a reducer `Unknown` is not applied. Running
+observations keep their specific kind through the reducer (`CommandRunning`,
+`TestsRunning`, otherwise `AgentRunning`); precedence, freshness, confidence,
+and child aggregation are unchanged.
+
 See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
 client mapping matrix, and migration phases.

@@ -353,13 +353,24 @@ pub fn reduce_agent_status(input: ReduceInput<'_>) -> StatusProjection {
             source,
             observed_at,
         }) => match kind.class() {
-            ActivityClass::Running => StatusProjection {
-                live: LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
-                phase: ParentPhase::ActivelyWorking,
-                process_alive,
-                selected_observed_at: Some(observed_at),
-                selected_source: Some(source),
-            },
+            ActivityClass::Running => {
+                let live = match kind {
+                    ActivityKind::CommandRunning => {
+                        LiveObservation::new(LiveStatusKind::CommandRunning, "command running")
+                    }
+                    ActivityKind::TestsRunning => {
+                        LiveObservation::new(LiveStatusKind::TestsRunning, "tests running")
+                    }
+                    _ => LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+                };
+                StatusProjection {
+                    live,
+                    phase: ParentPhase::ActivelyWorking,
+                    process_alive,
+                    selected_observed_at: Some(observed_at),
+                    selected_source: Some(source),
+                }
+            }
             ActivityClass::Waiting => {
                 let (live_kind, summary) = match kind {
                     ActivityKind::WaitingApproval => {
@@ -460,6 +471,36 @@ mod tests {
             parent_run_id: parent_run_id.map(str::to_string),
             kind,
         }
+    }
+
+    #[test]
+    fn command_running_observation_reduces_to_command_running() {
+        let projection = reduce(
+            true,
+            &[obs(
+                ObservationSource::ProviderLifecycle,
+                ActivityKind::CommandRunning,
+                0,
+                120,
+            )],
+        );
+        assert_eq!(projection.live.kind, LiveStatusKind::CommandRunning);
+        assert_eq!(projection.phase, ParentPhase::ActivelyWorking);
+    }
+
+    #[test]
+    fn tests_running_observation_reduces_to_tests_running() {
+        let projection = reduce(
+            true,
+            &[obs(
+                ObservationSource::ProviderLifecycle,
+                ActivityKind::TestsRunning,
+                0,
+                120,
+            )],
+        );
+        assert_eq!(projection.live.kind, LiveStatusKind::TestsRunning);
+        assert_eq!(projection.phase, ParentPhase::ActivelyWorking);
     }
 
     fn reduce(process_alive: bool, observations: &[StatusObservation]) -> super::StatusProjection {
