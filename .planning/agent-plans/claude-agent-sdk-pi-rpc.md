@@ -304,3 +304,59 @@ Results: none yet.
 ## Deviations
 
 None yet.
+
+
+## Claude Agent SDK transport — packet plan (2026-10-08, approved to start by Matt)
+
+Spike result (`claude-sdk-findings.md` §9): one long-lived streaming-input
+`query()` survives `interrupt()`; the next prompt works in the same process.
+Cancel = keep the sidecar and call `interrupt()`; respawn+`resume` only for
+process death. The earlier "exit code 1" came from closing input after `result`.
+
+Design (reuse Pi's stack, do not duplicate it):
+- **Sidecar** `claude_sdk_sidecar.mjs` (embedded with `include_str!`, written to the
+  Ajax state dir at spawn, run with `node`). It speaks the SAME JSONL framing as Pi
+  RPC so `PiRpcProcess` is reused unchanged: stdin commands `{id,type,...}`; stdout
+  responses `{id,type:"response",command,success,data|error}` plus raw SDK messages
+  as events (their own `type`: system/stream_event/assistant/user/result/...).
+  Commands: `init {cwd,model?,resume?,sessionId?,settingSources?}` -> response
+  `{sessionId, models, commands}` (from `initializationResult()`/`supportedModels()`/
+  `supportedCommands()`); `prompt {message}`; `abort` (-> `interrupt()`);
+  `set_model {model}`; `set_effort {level}`; `get_context_usage`; `shutdown`.
+  Permissions: `canUseTool` auto-allows (`{behavior:'allow', updatedInput:input}`),
+  matching today's trusted-local auto-approve; no `bypassPermissions`.
+  `onElicitation` declines (known gap). The SDK module is injectable via
+  `AJAX_CLAUDE_SDK_MODULE` (tests use a fake SDK module, zero tokens); otherwise it
+  resolves bare `@anthropic-ai/claude-agent-sdk`, then `npm root -g`, then the copy
+  nested in `@agentclientprotocol/claude-agent-acp`.
+- **Rust**: `claude_sdk_map.rs` (pure SDK message -> `AcpClientEvent`, fixtures from
+  the real spike transcripts), session/client mirroring `PiRpcSession`/`PiRpcClient`
+  (generalize the session over its mapper rather than copy it), a third
+  `SessionClient` variant, fail-closed restore (`resume` must return the same id),
+  model/effort options from `supportedModels()`, usage from the `result` message
+  (`modelUsage.contextWindow`) / `get_context_usage`.
+- **Core**: `HarnessTransport::ClaudeSdk`, Claude launch entry keeps `Some(..)`,
+  doctor `sdk:claude` (node + the SDK package + `claude`), web selector follows the
+  launch table, Claude model catalog from `init`.
+
+Packets (each: inlined facts, gate = fmt + clippy + whole-workspace nextest, parent
+re-runs the gate and reads the diff):
+- [x] C1 sidecar + fake SDK module + Rust-driven tests (spawned through `PiRpcProcess`) — GLM, 10 tests, 2565/2565 (before Matt's no-GLM instruction); sidecar 358 lines, no bypassPermissions
+- [x] C1b security review finding on commit a70105d4 (unbounded stdout line in `read_stdout_lines`): `read_stdout_lines_bounded` with a 16 MiB `take(max+1)` cap on the READ, one Error then discard-to-LF; 8 tests in `pi_rpc_process_bound_tests.rs`; Qwen needed 3 rounds (reader correct first time; its tests deadlocked on a live sender in `drain`, then one wrong expected value `"\u{2028}"` -> `"a\u{2028}b"` in a brand-new test); parent gate 2573/2573. NOTE: this host has no `timeout` binary, use `perl -e 'alarm N; exec @ARGV' --` for bounded runs (an unwrapped `timeout cargo ...` silently ran nothing)
+- [ ] C2 `claude_sdk_map.rs` pure mapper + trimmed real-transcript fixtures + tests
+- [ ] C3 generalize `PiRpcSession` over a mapper fn (no behavior change for Pi)
+- [ ] C4 `ClaudeSdkClient` (spawn via embedded sidecar, init handshake, prompt/cancel/
+      events, usage, options, resume fail-closed) + tests with the fake SDK
+- [ ] C5 `SessionClient::Claude` variant + spawn path + catalog (test-gated like Pi)
+- [ ] C6 core `HarnessTransport::ClaudeSdk` + doctor `sdk:claude` + selector flip.
+      NEEDS MATT'S APPROVAL FIRST: tests pin `claude-agent-acp`
+      (`adapters.rs` acp_launch test, `suite_1.rs` doctor tests, CLI smoke fake,
+      `every_bridge_harness_names_the_cli...`). The earlier approval covered only the
+      four `pi-acp` expectations.
+- [ ] C7 docs (web-cockpit, web-session-behavior, README)
+- [ ] C8 live smoke against the REAL SDK (not part of CI): confirms `initializationResult()`
+      shape, sidecar SDK resolution on this machine, one prompt + one interrupt
+
+Open questions to settle inside the packets, not by guessing: which `settingSources`
+the sidecar should default to (the spike loaded ALL global user settings: 322 tools,
+13 MCP servers); whether `initializationResult()` works before the first prompt.

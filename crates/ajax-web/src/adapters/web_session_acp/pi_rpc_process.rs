@@ -29,6 +29,11 @@ const STDERR_TAIL_BYTES: usize = 4 * 1024;
 /// How long `Drop` gives an already-closing child before killing it.
 const DROP_GRACE: Duration = Duration::from_secs(2);
 
+/// Maximum bytes (not including the terminating LF) one stdout line may hold
+/// before the reader discards it as an over-sized record. Bounds the reader's
+/// in-flight buffer so a child that never sends an LF cannot grow memory.
+const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
+
 /// One item delivered by the stdout reader thread of [`PiRpcProcess`].
 #[derive(Debug)]
 pub enum PiRpcRecord {
@@ -191,16 +196,39 @@ impl Drop for PiRpcProcess {
 
 /// Stream stdout as LF-delimited JSONL onto `sender`, delivering exactly one
 /// [`PiRpcRecord::Exited`] at EOF, then dropping the sender so receivers see
-/// a disconnected channel.
+/// a disconnected channel. Line length is bounded by [`MAX_RECORD_BYTES`].
 fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<PiRpcRecord>) {
+    read_stdout_lines_bounded(stdout, sender, MAX_RECORD_BYTES);
+}
+
+/// The bounded form of [`read_stdout_lines`] with an explicit per-line limit,
+/// exposed for tests that exercise the over-sized path with a small cap.
+///
+/// The bound is applied *on the read*: each line is read through
+/// `take(max_bytes + 1)`, so the buffer can never grow past one byte more than
+/// the limit. A line with no LF within the first `max_bytes + 1` bytes yields
+/// exactly one [`PiRpcRecord::Error`]; the remainder of that line is drained
+/// from the buffered reader without being buffered, so normal parsing resumes
+/// on the next line.
+pub(super) fn read_stdout_lines_bounded(
+    stdout: impl Read + Send,
+    sender: &mpsc::Sender<PiRpcRecord>,
+    max_bytes: usize,
+) {
     let mut reader = BufReader::new(stdout);
     let mut bytes: Vec<u8> = Vec::new();
 
     loop {
         bytes.clear();
-        match reader.read_until(b'\n', &mut bytes) {
+        match (&mut reader)
+            .take(max_bytes as u64 + 1)
+            .read_until(b'\n', &mut bytes)
+        {
             Ok(0) => break, // EOF: nothing more will arrive on this pipe
-            Ok(_) => {
+            Ok(_) if bytes.last() == Some(&b'\n') || bytes.len() <= max_bytes => {
+                // A complete line within the limit — `take` counts the LF in
+                // `max_bytes + 1`, so at most `max_bytes` content bytes are
+                // read — or a final line at EOF without a trailing LF.
                 // Byte-level framing: split on LF only, then strip one optional
                 // preceding CR. Decoding with `from_utf8_lossy` means U+2028 /
                 // U+2029 and invalid bytes can never break the frame.
@@ -223,6 +251,34 @@ fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<PiRpcRecord
                 };
                 if sender.send(record).is_err() {
                     break; // receiver gone: stop draining this pipe
+                }
+            }
+            Ok(_) => {
+                // Over-sized: no LF within the first `max_bytes + 1` bytes.
+                // Deliver exactly one Error, then discard the rest of this
+                // line without buffering it, so the buffer never grows.
+                let oversized = format!("pi rpc line exceeds {max_bytes} bytes; discarded");
+                if sender.send(PiRpcRecord::Error(oversized)).is_err() {
+                    break; // receiver gone: stop draining this pipe
+                }
+                let drained_to_eof = loop {
+                    match reader.fill_buf() {
+                        Ok(buf) => {
+                            if buf.is_empty() {
+                                break true; // EOF while discarding
+                            }
+                            if let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+                                reader.consume(pos + 1);
+                                break false; // line discarded; resume normal reads
+                            }
+                            let len = buf.len();
+                            reader.consume(len); // no LF in view: consume and keep draining
+                        }
+                        Err(_) => break true, // read error while discarding: like EOF
+                    }
+                };
+                if drained_to_eof {
+                    break;
                 }
             }
             Err(_) => break, // underlying read error: treat like EOF below

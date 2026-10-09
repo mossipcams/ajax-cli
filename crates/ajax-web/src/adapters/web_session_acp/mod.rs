@@ -1,6 +1,7 @@
 mod apply_model;
 mod available_command_descriptors;
 mod catalog;
+mod claude_sdk_map;
 mod client;
 mod config_option_descriptors;
 mod config_options;
@@ -26,6 +27,12 @@ pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapa
 
 #[cfg(test)]
 mod apply_model_tests;
+
+#[cfg(test)]
+mod claude_sidecar_tests;
+
+#[cfg(test)]
+mod claude_sdk_map_tests;
 
 #[cfg(test)]
 mod client_restore_tests;
@@ -55,6 +62,9 @@ mod pi_rpc_client_usage_tests;
 mod pi_rpc_handshake_tests;
 #[cfg(test)]
 mod pi_rpc_map_tests;
+
+#[cfg(test)]
+mod pi_rpc_process_bound_tests;
 #[cfg(test)]
 mod pi_rpc_process_tests;
 #[cfg(test)]
