@@ -1,7 +1,8 @@
 use super::CommandContext;
 use crate::{
     adapters::{
-        acp_adapter_packages, rpc_harness_programs, DoctorEnvironment, REQUIRED_DOCTOR_TOOLS,
+        acp_adapter_packages, rpc_harness_programs, sdk_harness_programs, DoctorEnvironment,
+        REQUIRED_DOCTOR_TOOLS,
     },
     output::{DoctorCheck, DoctorResponse},
     registry::Registry,
@@ -16,6 +17,28 @@ fn agent_label(client: crate::models::AgentClient) -> &'static str {
         crate::models::AgentClient::Pi => "pi",
         crate::models::AgentClient::Other => "other",
     }
+}
+
+fn transport_checks(
+    prefix: &str,
+    programs: Vec<(crate::models::AgentClient, &'static str, &'static str)>,
+    environment: &DoctorEnvironment,
+) -> Vec<DoctorCheck> {
+    programs
+        .into_iter()
+        .map(|(client, program, hint)| {
+            let ok = environment.has_tool(program);
+            DoctorCheck {
+                name: format!("{prefix}:{}", agent_label(client)),
+                ok,
+                message: if ok {
+                    format!("{program} available")
+                } else {
+                    format!("{program} not found on PATH — {hint}")
+                },
+            }
+        })
+        .collect()
 }
 
 pub fn doctor<R: Registry>(context: &CommandContext<R>) -> DoctorResponse {
@@ -67,22 +90,8 @@ pub fn doctor_with_environment<R: Registry>(
                 }
             }),
     );
-    checks.extend(
-        rpc_harness_programs()
-            .into_iter()
-            .map(|(client, program, hint)| {
-                let ok = environment.has_tool(program);
-                DoctorCheck {
-                    name: format!("rpc:{}", agent_label(client)),
-                    ok,
-                    message: if ok {
-                        format!("{program} available")
-                    } else {
-                        format!("{program} not found on PATH — {hint}")
-                    },
-                }
-            }),
-    );
+    checks.extend(transport_checks("rpc", rpc_harness_programs(), environment));
+    checks.extend(transport_checks("sdk", sdk_harness_programs(), environment));
     checks.push(repo_name_check(context));
     for repo in &context.config.repos {
         let repo_path_exists = environment.path_exists(&repo.path);

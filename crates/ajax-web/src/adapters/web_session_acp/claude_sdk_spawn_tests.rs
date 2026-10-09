@@ -25,6 +25,21 @@ fn with_fake_sdk<R>(f: impl FnOnce(&Path) -> R) -> R {
     with_test_claude_sdk_module(&fake_sdk(), || f(dir))
 }
 
+#[test]
+fn missing_sdk_error_names_the_install_command() {
+    let dir = manifest_dir();
+    let missing = dir.join("tests/fixtures/does-not-exist.mjs");
+    let result = with_test_claude_sdk_module(&missing, || spawn_claude_sdk(dir, "default", None));
+    match result {
+        Err(AcpSpawnError::Message(text)) => {
+            assert!(text.contains("no loadable claude-agent-sdk module"));
+            assert!(text.contains("npm install -g @anthropic-ai/claude-agent-sdk"));
+        }
+        Ok(_) => panic!("expected a spawn error for the missing SDK module"),
+        Err(_) => panic!("expected a message spawn error for the missing SDK module"),
+    }
+}
+
 /// The current value of one select config option, panicking when it is absent.
 fn current_value(options: &[SessionConfigOption], id: &str) -> String {
     let option = options

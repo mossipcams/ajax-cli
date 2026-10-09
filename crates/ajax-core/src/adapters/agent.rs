@@ -264,6 +264,7 @@ pub fn parse_model_selection(raw: &str) -> Option<ModelSelection> {
 pub enum HarnessTransport {
     Acp,
     PiRpc,
+    ClaudeSdk,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -304,18 +305,18 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             transport: HarnessTransport::Acp,
         }),
         AgentClient::Claude => Some(AcpLaunch {
-            candidates: &[("claude-agent-acp", &[])],
-            native_program: Some("claude"),
+            candidates: &[("node", &[])],
+            native_program: None,
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
-            acp_package: Some("@agentclientprotocol/claude-agent-acp"),
-            install_hint: "npm install -g @agentclientprotocol/claude-agent-acp",
-            transport: HarnessTransport::Acp,
+            acp_package: None,
+            install_hint:
+                "install Node.js 20 or newer, then run: npm install -g @anthropic-ai/claude-agent-sdk",
+            transport: HarnessTransport::ClaudeSdk,
         }),
         AgentClient::Pi => Some(AcpLaunch {
             candidates: &[("pi", &[])],
-            // unused for HarnessTransport::PiRpc; kept so the native-CLI preference table stays uniform.
-            native_program: Some("pi"),
+            native_program: None,
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
             acp_package: None,
@@ -342,7 +343,9 @@ pub fn acp_adapter_packages() -> Vec<(AgentClient, &'static str, &'static str)> 
     .collect()
 }
 
-pub fn rpc_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
+fn programs_for_transport(
+    transport: HarnessTransport,
+) -> Vec<(AgentClient, &'static str, &'static str)> {
     [
         AgentClient::Codex,
         AgentClient::Claude,
@@ -352,13 +355,21 @@ pub fn rpc_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> 
     .into_iter()
     .filter_map(|client| {
         let launch = acp_launch_for_agent(client)?;
-        if launch.transport == HarnessTransport::PiRpc {
+        if launch.transport == transport {
             Some((client, launch.candidates[0].0, launch.install_hint))
         } else {
             None
         }
     })
     .collect()
+}
+
+pub fn rpc_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
+    programs_for_transport(HarnessTransport::PiRpc)
+}
+
+pub fn sdk_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
+    programs_for_transport(HarnessTransport::ClaudeSdk)
 }
 
 pub fn is_unspecified_acp_model(raw: Option<&str>) -> bool {

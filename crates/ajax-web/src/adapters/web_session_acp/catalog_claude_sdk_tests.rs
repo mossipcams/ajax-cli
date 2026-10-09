@@ -59,6 +59,9 @@ fn claude_sdk_catalog_with_missing_module_is_empty() {
 }
 
 #[test]
-fn production_claude_does_not_take_the_sdk_path() {
-    assert!(!uses_claude_sdk(AgentClient::Claude));
+fn claude_needs_the_module_override_in_the_test_build() {
+    assert!(
+        !uses_claude_sdk(AgentClient::Claude),
+        "the test build only takes the SDK path inside with_test_claude_sdk_module"
+    );
 }

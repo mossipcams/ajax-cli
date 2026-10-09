@@ -10,20 +10,20 @@ use super::claude_sdk_client::ClaudeSdkClient;
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::PromptCapabilityDescriptor;
 
-/// Whether `agent` spawns a Claude Agent SDK session.
-///
-/// Gated off in production: no agent takes the SDK path until the core launch
-/// table supports it. Tests opt in with [`with_test_claude_sdk_module`].
+/// Whether `agent` spawns a Claude Agent SDK session. The selector follows the
+/// core launch table: Claude takes the SDK path in production. The test build
+/// additionally requires the module override from
+/// [`with_test_claude_sdk_module`] so existing ACP-based tests keep their path.
 pub(super) fn uses_claude_sdk(agent: AgentClient) -> bool {
+    let claude_sdk = ajax_core::adapters::acp_launch_for_agent(agent)
+        .is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::ClaudeSdk);
     #[cfg(not(test))]
     {
-        // ponytail: the core launch-table transport for Claude lands in a later packet; until then no agent takes the SDK path
-        _ = agent;
-        false
+        claude_sdk
     }
     #[cfg(test)]
     {
-        matches!(agent, AgentClient::Claude) && claude_sdk_module_override().is_some()
+        claude_sdk && claude_sdk_module_override().is_some()
     }
 }
 
@@ -76,6 +76,11 @@ pub(super) fn spawn_claude_sdk(
                     reason: text,
                 });
             }
+        }
+        if text.contains("no loadable claude-agent-sdk module") {
+            return AcpSpawnError::Message(format!(
+                "{text} - npm install -g @anthropic-ai/claude-agent-sdk"
+            ));
         }
         AcpSpawnError::Message(text)
     })?;
