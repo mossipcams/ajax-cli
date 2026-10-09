@@ -166,3 +166,51 @@ fn uses_claude_sdk_gating() {
         assert!(!uses_claude_sdk(AgentClient::Pi));
     });
 }
+
+#[test]
+fn sdk_module_prefers_the_direct_package_under_a_npm_root() {
+    let root = manifest_dir().join("tests/fixtures/npm_roots/direct");
+    let module = super::claude_sdk_spawn::sdk_module_from_npm_root(&root)
+        .expect("direct fixture must resolve");
+    assert_eq!(
+        module,
+        root.join("@anthropic-ai")
+            .join("claude-agent-sdk")
+            .join("sdk.mjs")
+    );
+}
+
+#[test]
+fn sdk_module_falls_back_to_the_acp_nested_package() {
+    let root = manifest_dir().join("tests/fixtures/npm_roots/nested_only");
+    let module = super::claude_sdk_spawn::sdk_module_from_npm_root(&root)
+        .expect("nested fixture must resolve");
+    assert_eq!(
+        module,
+        root.join("@agentclientprotocol")
+            .join("claude-agent-acp")
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-agent-sdk")
+            .join("sdk.mjs")
+    );
+}
+
+#[test]
+fn sdk_module_prefers_direct_over_nested() {
+    let root = manifest_dir().join("tests/fixtures/npm_roots/both");
+    let module = super::claude_sdk_spawn::sdk_module_from_npm_root(&root)
+        .expect("both fixture must resolve");
+    assert_eq!(
+        module,
+        root.join("@anthropic-ai")
+            .join("claude-agent-sdk")
+            .join("sdk.mjs")
+    );
+}
+
+#[test]
+fn sdk_module_is_none_when_nothing_exists() {
+    let root = manifest_dir().join("tests/fixtures/npm_roots/empty");
+    assert!(super::claude_sdk_spawn::sdk_module_from_npm_root(&root).is_none());
+}

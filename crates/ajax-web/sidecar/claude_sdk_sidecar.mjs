@@ -20,7 +20,6 @@
 // Permissions auto-approve locally (canUseTool always allows; no
 // bypassPermissions flag) and MCP elicitation is declined.
 
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { argv, exit, stderr, stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
@@ -102,9 +101,10 @@ function makeInput() {
 }
 
 // ---------------------------------------------------------------------------
-// SDK module resolution. An explicit `--sdk-module` argv override is
-// exclusive: if it cannot load, init fails instead of silently loading the
-// installed SDK. Without it, try 1) package import, 2) + 3) npm root -g.
+// SDK module loading. The sidecar never resolves a module itself: the host
+// resolves the Claude Agent SDK from a trusted location and passes its absolute
+// path as an explicit `--sdk-module`, which is exclusive: if it cannot load,
+// init fails instead of silently loading anything else.
 
 function flagValue(name) {
   const index = argv.indexOf(name);
@@ -119,18 +119,12 @@ async function resolveSdk() {
     // Explicit override: try only this module, never fall back to the SDK.
     specs.push({ spec: fromArg, via: "argv --sdk-module", file: true });
   } else {
-    specs.push({ spec: "@anthropic-ai/claude-agent-sdk", via: "package import", file: false });
-    try {
-      const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-      specs.push({ spec: `${root}/@anthropic-ai/claude-agent-sdk/sdk.mjs`, via: "npm root -g", file: true });
-      specs.push({
-        spec: `${root}/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`,
-        via: "npm root -g (acp)",
-        file: true,
-      });
-    } catch (error) {
-      log(`npm root -g failed: ${error?.message ?? error}`);
-    }
+    // The sidecar never resolves a module itself; the host resolves the SDK and passes it.
+    return {
+      mod: null,
+      error:
+        "no --sdk-module given; the host resolves the Claude Agent SDK and passes its absolute path",
+    };
   }
   for (const { spec, via, file } of specs) {
     const label = `${spec} (${via})`;

@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use ajax_core::models::AgentClient;
 
@@ -46,9 +47,76 @@ pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
         AcpSpawnError::Message("node is not installed - install Node.js 20 or newer".to_string())
     })?;
-    Ok((program, super::claude_sdk_client::sidecar_launch_args(None)))
+    // Resolve the SDK from a trusted location (the user's global npm root,
+    // queried from the home directory) and load it only as an explicit
+    // absolute path, so a repository .npmrc or node_modules in a task
+    // worktree can never redirect module resolution.
+    let root = global_npm_root().ok_or_else(|| {
+        AcpSpawnError::Message(
+            "no loadable claude-agent-sdk module: npm root -g failed - npm install -g @anthropic-ai/claude-agent-sdk".into(),
+        )
+    })?;
+    let module = sdk_module_from_npm_root(&root).ok_or_else(|| {
+        AcpSpawnError::Message(format!(
+            "no loadable claude-agent-sdk module under {} - npm install -g @anthropic-ai/claude-agent-sdk",
+            root.display()
+        ))
+    })?;
+    Ok((
+        program,
+        super::claude_sdk_client::sidecar_launch_args(Some(&module.to_string_lossy())),
+    ))
 }
 
+/// The first existing Claude Agent SDK entry point under a global npm root:
+/// the direct package location, then the copy nested under the ACP bundle.
+/// Pure; returns None when neither exists.
+pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
+    const DIRECT: &[&str] = &["@anthropic-ai", "claude-agent-sdk", "sdk.mjs"];
+    const NESTED: &[&str] = &[
+        "@agentclientprotocol",
+        "claude-agent-acp",
+        "node_modules",
+        "@anthropic-ai",
+        "claude-agent-sdk",
+        "sdk.mjs",
+    ];
+    for parts in [DIRECT, NESTED] {
+        let mut path = root.to_path_buf();
+        for part in parts.iter().copied() {
+            path.push(part);
+        }
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// The user's global npm root, resolved by running `npm root -g` from the home
+/// directory so that no repository-controlled `.npmrc` (task worktree or
+/// process cwd) is ever read. Returns None on any failure or a non-absolute result.
+fn global_npm_root() -> Option<PathBuf> {
+    let npm = crate::adapters::program::resolve_program("npm")?;
+    let home = std::env::var_os("HOME")?;
+    let home_path = Path::new(&home);
+    if !home_path.is_dir() {
+        return None;
+    }
+    let output = Command::new(npm)
+        .args(["root", "-g"])
+        .current_dir(home_path)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    let path = PathBuf::from(root);
+    path.is_absolute().then_some(path)
+}
 /// Claude Agent SDK spawn path. The `operator_pin` is applied after the
 /// restore check and the report is built from the post-pin client; a pin error
 /// never fails the spawn, it is surfaced as `model_apply_error`.
@@ -77,7 +145,9 @@ pub(super) fn spawn_claude_sdk(
                 });
             }
         }
-        if text.contains("no loadable claude-agent-sdk module") {
+        if text.contains("no loadable claude-agent-sdk module")
+            && !text.contains("npm install -g @anthropic-ai/claude-agent-sdk")
+        {
             return AcpSpawnError::Message(format!(
                 "{text} - npm install -g @anthropic-ai/claude-agent-sdk"
             ));

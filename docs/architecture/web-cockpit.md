@@ -257,11 +257,14 @@ Claude (still `Some` from `acp_launch_for_agent`, which is the "supports Ajax
 Chat" test).
 
 - Install: Node.js 20 or newer on `PATH` plus
-  `npm install -g @anthropic-ai/claude-agent-sdk`. The sidecar finds the SDK by
-  package import, then under `$(npm root -g)`, then the copy nested in
+`npm install -g @anthropic-ai/claude-agent-sdk`. The host resolves the SDK
+  from the user's global npm root (queried from the home directory, never
+  from a task worktree), preferring the direct `@anthropic-ai/claude-agent-sdk`
+  package and falling back to the copy nested in
   `@agentclientprotocol/claude-agent-acp` (how it kept working on machines with
-  the old bridge still installed); a missing SDK fails the spawn with an error
-  naming that install command. `ajax doctor` reports it as `sdk:claude`
+  the old bridge still installed) and passes its absolute path to the sidecar; a
+  missing SDK fails the spawn with an error naming that install command.
+  `ajax doctor` reports it as `sdk:claude`
   (checking `node`) and no longer reports an ACP check for Claude; Codex keeps
   `acp:codex` and Pi keeps `rpc:pi`.
 - Auth: the SDK uses the operator's existing Claude login — Ajax configures no API key. It also loads the operator's Claude settings (user, project, local), so hooks, plugins, MCP servers, and CLAUDE.md apply to Ajax-started sessions as in the Claude CLI.
@@ -271,7 +274,7 @@ Chat" test).
 - Usage: text and thinking arrive as stream deltas (repeated text inside `assistant` messages is ignored so nothing shows twice); tool calls open from the stream and complete from the `tool_result` message. The `result` message ends the turn and carries the usage, which becomes a context-usage update (used = input + cache creation + cache read + output tokens, window = the model's `contextWindow`) delivered before the finish; an aborted turn's all-zero usage is skipped so cancelling does not reset the context meter.
 - Cancel maps to the SDK's `interrupt()`: the interrupted turn ends with a result whose stopReason is `cancelled`, and the same sidecar process accepts the next prompt — no respawn.
 - Permissions and elicitation: the sidecar auto-allows every tool permission request (trusted-local, equivalent to the host auto-approve) and always declines MCP elicitation requests (a known gap — the ACP path showed them as a form); the Claude variant rejects permission/elicitation responses.
-- Security notes: an explicit `--sdk-module` override (tests only) is exclusive and never falls back to the installed SDK; the sidecar does not read an SDK module path from the environment; child stdout lines are capped at 16 MiB for both the Pi and Claude children, with the overflow discarded as an error record.
+- Security notes: the sidecar never resolves an SDK module itself — the host resolves the SDK from the user's global npm root queried from the home directory, so a repository `.npmrc` or `node_modules` in a task worktree cannot redirect module loading; the sidecar loads only the explicit absolute `--sdk-module` it is given (exclusive: if that fails to load nothing else is tried; with none given it refuses); child stdout lines are capped at 16 MiB for both the Pi and Claude children, with the overflow discarded as an error record.
 - Known gaps, stated as such: image/audio prompt blocks are not forwarded (a placeholder line is sent); sub-agent (nested tool) traffic is dropped; effort levels are a fixed list.
 
 Harness binaries are resolved through `adapters::program`: the server's own

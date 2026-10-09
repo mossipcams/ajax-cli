@@ -37,6 +37,8 @@ mod claude_sidecar_tests;
 
 #[cfg(test)]
 mod claude_sidecar_override_tests;
+#[cfg(test)]
+mod claude_sidecar_resolution_tests;
 
 #[cfg(test)]
 mod claude_sidecar_resume_tests;
