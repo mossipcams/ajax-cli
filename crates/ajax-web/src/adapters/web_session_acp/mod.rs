@@ -35,7 +35,13 @@ mod apply_model_tests;
 mod claude_sidecar_tests;
 
 #[cfg(test)]
+mod claude_sidecar_resume_tests;
+
+#[cfg(test)]
 mod claude_sdk_client_tests;
+
+#[cfg(test)]
+mod claude_sdk_hardening_tests;
 #[cfg(test)]
 mod claude_sdk_map_tests;
 

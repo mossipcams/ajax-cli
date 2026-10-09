@@ -22,7 +22,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { argv, env, exit, stderr, stdin, stdout } from "node:process";
+import { argv, exit, stderr, stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
 const OPTIONAL_CALL_TIMEOUT_MS = 15_000;
@@ -102,7 +102,7 @@ function makeInput() {
 }
 
 // ---------------------------------------------------------------------------
-// SDK module resolution: 1) --sdk-module argv / env, 2) package import,
+// SDK module resolution: 1) --sdk-module argv, 2) package import,
 // 3) + 4) npm root -g locations.
 
 function flagValue(name) {
@@ -115,9 +115,6 @@ async function resolveSdk() {
   const specs = [];
   const fromArg = flagValue("--sdk-module");
   if (fromArg) specs.push({ spec: fromArg, via: "argv --sdk-module", file: true });
-  if (env.AJAX_CLAUDE_SDK_MODULE) {
-    specs.push({ spec: env.AJAX_CLAUDE_SDK_MODULE, via: "env AJAX_CLAUDE_SDK_MODULE", file: true });
-  }
   specs.push({ spec: "@anthropic-ai/claude-agent-sdk", via: "package import", file: false });
   try {
     const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
@@ -156,7 +153,7 @@ const state = {
   shuttingDown: false,
 };
 
-async function canUseTool(toolName, input) {
+async function canUseTool(_toolName, input) {
   return { behavior: "allow", updatedInput: input };
 }
 
@@ -198,6 +195,24 @@ async function handleInit(cmd) {
   }
   const { mod, error } = await resolveSdk();
   if (!mod) return fail("init", cmd.id, error);
+  // Resume fails closed: verify the session exists before resuming. A lookup
+  // that throws or times out is NOT proof of absence; degrade and resume.
+  if (typeof cmd.resume === "string" && cmd.resume && typeof mod.getSessionInfo === "function") {
+    let notFound = false;
+    try {
+      let clearTimer = () => {};
+      const timeout = new Promise((resolve) => {
+        const handle = setTimeout(() => resolve("timeout"), OPTIONAL_CALL_TIMEOUT_MS);
+        clearTimer = () => clearTimeout(handle);
+      });
+      const info = await Promise.race([Promise.resolve(mod.getSessionInfo(cmd.resume, { dir: cmd.cwd })), timeout]);
+      clearTimer();
+      notFound = info === undefined || info === null;
+    } catch (error) {
+      log(`resume session lookup failed for ${cmd.resume}: ${error?.message ?? error}`);
+    }
+    if (notFound) return fail("init", cmd.id, `session not found: ${cmd.resume}`);
+  }
   const sessionId = cmd.resume || cmd.sessionId || randomUUID();
   const options = { cwd: cmd.cwd, includePartialMessages: true, canUseTool, onElicitation };
   if (cmd.model) options.model = cmd.model;

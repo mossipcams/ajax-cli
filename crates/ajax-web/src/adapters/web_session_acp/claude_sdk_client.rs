@@ -226,6 +226,13 @@ impl ClaudeSdkClient {
     }
 
     pub fn set_model(&self, value: &str) -> Result<(), String> {
+        let unknown = {
+            let state = self.state.lock().expect("claude_sdk_client mutex poisoned");
+            !state.models.is_empty() && !state.models.iter().any(|(m, _)| m == value)
+        };
+        if unknown {
+            return Err(format!("unknown model: {value}"));
+        }
         self.core.with_session(|s| {
             s.request(
                 "set_model",

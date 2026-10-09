@@ -236,3 +236,12 @@ export function query({ prompt, options = {} }) {
     },
   };
 }
+
+// Session lookup used by the sidecar's fail-closed resume check: `undefined`
+// when the session is missing, throws for boom- ids (lookup failure),
+// otherwise a small metadata object echoing the project directory.
+export async function getSessionInfo(sessionId, options) {
+  if (sessionId?.startsWith("missing-")) return undefined;
+  if (sessionId?.startsWith("boom-")) throw new Error("lookup exploded");
+  return { sessionId, summary: "fake", cwd: options?.dir };
+}
