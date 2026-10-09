@@ -1,4 +1,5 @@
 use super::client::AcpStdioClient;
+use agent_client_protocol::schema::v1::SessionConfigOption;
 use ajax_core::adapters::parse_cursor_model_intent;
 use ajax_core::models::AgentClient;
 use serde_json::Value;
@@ -76,6 +77,9 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
 }
 
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
+    if super::claude_sdk_spawn::uses_claude_sdk(agent) {
+        return read_claude_sdk_catalog(cwd);
+    }
     if super::session_client::uses_pi_rpc(agent) {
         return read_pi_rpc_catalog(cwd);
     }
@@ -104,12 +108,39 @@ pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
         return AgentModelCatalog::empty();
     };
     let options = client.config_options();
-    let Ok(options_value) = serde_json::to_value(&options) else {
-        client.shutdown();
+    client.shutdown();
+    catalog_from_config_options(&options)
+}
+
+/// Serialise handshake config options and parse them through the shared
+/// [`parse_session_new_catalog`] path, returning an empty catalog when
+/// serialisation fails.
+fn catalog_from_config_options(options: &[SessionConfigOption]) -> AgentModelCatalog {
+    let Ok(options_value) = serde_json::to_value(options) else {
         return AgentModelCatalog::empty();
     };
-    client.shutdown();
     parse_session_new_catalog(&serde_json::json!({ "configOptions": options_value }))
+}
+
+/// Build the model catalog for a Claude Agent SDK agent from its handshake
+/// config options, reusing [`parse_session_new_catalog`] for the parsing.
+pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
+    let Ok((program, extra_args)) = super::claude_sdk_spawn::claude_launch() else {
+        return AgentModelCatalog::empty();
+    };
+    let Ok(client) = super::claude_sdk_client::ClaudeSdkClient::spawn(
+        &program,
+        &extra_args,
+        cwd,
+        None,
+        None,
+        super::client::HANDSHAKE_TIMEOUT,
+    ) else {
+        return AgentModelCatalog::empty();
+    };
+    let options = client.config_options();
+    client.shutdown();
+    catalog_from_config_options(&options)
 }
 
 pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {

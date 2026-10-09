@@ -1,6 +1,7 @@
 //! Unified session client for the web session slice.
 //!
-//! Wraps either an ACP stdio client or a Pi RPC client behind exactly the
+//! Wraps an ACP stdio client, a Pi RPC client, or a Claude Agent SDK
+//! client behind exactly the
 //! method set the web session slice already uses on `AcpStdioClient`.
 //! Spawning routes through [`SessionClient::spawn_with_operator_pin`].
 
@@ -15,6 +16,8 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, ElicitationAction, SessionConfigOptionValue,
 };
 
+use super::claude_sdk_client::ClaudeSdkClient;
+use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
 use super::client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
     HANDSHAKE_TIMEOUT,
@@ -24,15 +27,23 @@ use super::{ApplyModelOutcome, CancelOutcome, PromptCapabilityDescriptor};
 
 use ajax_core::models::AgentClient;
 
-/// One live session transport: ACP stdio or Pi RPC.
+/// One live session transport: ACP stdio, Pi RPC, or Claude Agent SDK.
 pub enum SessionClient {
     Acp(AcpStdioClient),
     Pi(PiSession),
+    Claude(ClaudeSession),
 }
 
 /// State for the Pi RPC variant of [`SessionClient`].
 pub struct PiSession {
     client: PiRpcClient,
+    session_id: String,
+    session_new_result: serde_json::Value,
+}
+
+/// State for the Claude Agent SDK variant of [`SessionClient`].
+pub struct ClaudeSession {
+    client: ClaudeSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
 }
@@ -78,17 +89,32 @@ impl SessionClient {
         })
     }
 
+    pub fn from_claude(client: ClaudeSdkClient) -> Self {
+        let session_id = client.session_id();
+        let session_new_result = serde_json::json!({ "sessionId": session_id });
+        SessionClient::Claude(ClaudeSession {
+            client,
+            session_id,
+            session_new_result,
+        })
+    }
+
     /// Spawn the live session for `agent` at `worktree_path`, resuming
-    /// `resume_session_id` when given. Agents selected for Pi RPC by the core
-    /// launch table take the Pi path (Pi in production); every other agent goes
-    /// through the ACP stdio spawn unchanged.
+    /// `resume_session_id` when given. Agents selected for the Claude Agent
+    /// SDK take the SDK path (unreachable in production until the core launch
+    /// table supports it); agents selected for Pi RPC by the core launch table
+    /// take the Pi path (Pi in production); every other agent goes through the
+    /// ACP stdio spawn unchanged.
     pub fn spawn_with_operator_pin(
         agent: AgentClient,
         worktree_path: &Path,
         operator_pin: &str,
         resume_session_id: Option<&str>,
     ) -> Result<(SessionClient, SpawnReport), AcpSpawnError> {
-        if uses_pi_rpc(agent) {
+        if uses_claude_sdk(agent) {
+            spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
+                .map(|(client, report)| (SessionClient::from_claude(client), report))
+        } else if uses_pi_rpc(agent) {
             SessionClient::spawn_pi_rpc(worktree_path, operator_pin, resume_session_id)
         } else {
             AcpStdioClient::spawn_with_operator_pin(
@@ -154,6 +180,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.session_id(),
             SessionClient::Pi(session) => &session.session_id,
+            SessionClient::Claude(session) => &session.session_id,
         }
     }
 
@@ -161,6 +188,8 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.shutdown(),
             SessionClient::Pi(session) => session.client.shutdown(),
+            // Claude SDK has no detached-host semantics; shutting down is the only exit.
+            SessionClient::Claude(session) => session.client.shutdown(),
         }
     }
 
@@ -169,6 +198,8 @@ impl SessionClient {
             SessionClient::Acp(client) => client.detach(),
             // Pi RPC has no detached-host semantics; shutting down is the only exit.
             SessionClient::Pi(session) => session.client.shutdown(),
+            // Claude SDK has no detached-host semantics; shutting down is the only exit.
+            SessionClient::Claude(session) => session.client.shutdown(),
         }
     }
 
@@ -176,6 +207,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.host_exited(),
             SessionClient::Pi(session) => session.client.host_exited(),
+            SessionClient::Claude(session) => session.client.host_exited(),
         }
     }
 
@@ -187,6 +219,10 @@ impl SessionClient {
             SessionClient::Pi(session) => {
                 session.client.shutdown();
             }
+            // Claude SDK mirrors the Pi arm: no kill hook, use shutdown.
+            SessionClient::Claude(session) => {
+                session.client.shutdown();
+            }
         }
     }
 
@@ -196,6 +232,8 @@ impl SessionClient {
             SessionClient::Acp(client) => client.child_id(),
             // ponytail: PiRpcClient exposes no pid yet; follow up to surface one.
             SessionClient::Pi(_) => 0,
+            // Claude SDK mirrors the Pi arm: no pid exposed, report 0.
+            SessionClient::Claude(_) => 0,
         }
     }
 
@@ -203,6 +241,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.poll_event(),
             SessionClient::Pi(session) => session.client.poll_event(),
+            SessionClient::Claude(session) => session.client.poll_event(),
         }
     }
 
@@ -210,6 +249,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.wait_event(timeout),
             SessionClient::Pi(session) => session.client.wait_event(timeout),
+            SessionClient::Claude(session) => session.client.wait_event(timeout),
         }
     }
 
@@ -217,6 +257,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
             SessionClient::Pi(session) => session.client.begin_prompt(blocks),
+            SessionClient::Claude(session) => session.client.begin_prompt(blocks),
         }
     }
 
@@ -227,6 +268,10 @@ impl SessionClient {
                 permissions: vec![],
                 elicitations: vec![],
             }),
+            SessionClient::Claude(session) => session.client.cancel().map(|()| CancelOutcome {
+                permissions: vec![],
+                elicitations: vec![],
+            }),
         }
     }
 
@@ -234,6 +279,7 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.prompt_in_flight(),
             SessionClient::Pi(session) => session.client.prompt_in_flight(),
+            SessionClient::Claude(session) => session.client.prompt_in_flight(),
         }
     }
 
@@ -248,6 +294,9 @@ impl SessionClient {
             SessionClient::Pi(_) => {
                 Err("Pi RPC mode has no permission or elicitation requests".to_string())
             }
+            SessionClient::Claude(_) => Err(
+                "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
+            ),
         }
     }
 
@@ -262,6 +311,9 @@ impl SessionClient {
             SessionClient::Pi(_) => {
                 Err("Pi RPC mode has no permission or elicitation requests".to_string())
             }
+            SessionClient::Claude(_) => Err(
+                "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
+            ),
         }
     }
 
@@ -269,12 +321,21 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.session_new_result(),
             SessionClient::Pi(session) => &session.session_new_result,
+            SessionClient::Claude(session) => &session.session_new_result,
         }
     }
 
     pub fn apply_model_pin(&self, desired_model: &str) -> Result<ApplyModelOutcome, String> {
         match self {
             SessionClient::Acp(client) => client.apply_model_pin(desired_model),
+            SessionClient::Claude(session) => {
+                let error = apply_pin_to_claude(&session.client, desired_model);
+                Ok(ApplyModelOutcome {
+                    applied_model: session.client.applied_model(),
+                    config_options: Some(session.client.config_options()),
+                    error,
+                })
+            }
             SessionClient::Pi(session) => {
                 let error = apply_pin_to_pi(&session.client, desired_model);
                 Ok(ApplyModelOutcome {
@@ -293,6 +354,22 @@ impl SessionClient {
     ) -> Result<ApplyModelOutcome, String> {
         match self {
             SessionClient::Acp(client) => client.apply_config_option(config_id, value),
+            SessionClient::Claude(session) => {
+                let error = match (config_id, &value) {
+                    ("model", SessionConfigOptionValue::ValueId { value }) => {
+                        session.client.set_model(value.0.as_ref()).err()
+                    }
+                    ("effort", SessionConfigOptionValue::ValueId { value }) => {
+                        session.client.set_effort(value.0.as_ref()).err()
+                    }
+                    _ => Some(format!("unsupported Claude option {config_id}")),
+                };
+                Ok(ApplyModelOutcome {
+                    applied_model: session.client.applied_model(),
+                    config_options: Some(session.client.config_options()),
+                    error,
+                })
+            }
             SessionClient::Pi(session) => {
                 let error = match (config_id, &value) {
                     ("model", SessionConfigOptionValue::ValueId { value }) => {

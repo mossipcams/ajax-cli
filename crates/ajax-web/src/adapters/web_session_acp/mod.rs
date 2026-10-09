@@ -3,6 +3,7 @@ mod available_command_descriptors;
 mod catalog;
 mod claude_sdk_client;
 mod claude_sdk_map;
+mod claude_sdk_spawn;
 mod client;
 mod config_option_descriptors;
 mod config_options;
@@ -35,6 +36,9 @@ mod apply_model_tests;
 mod claude_sidecar_tests;
 
 #[cfg(test)]
+mod claude_sidecar_override_tests;
+
+#[cfg(test)]
 mod claude_sidecar_resume_tests;
 
 #[cfg(test)]
@@ -56,9 +60,14 @@ mod client_tests;
 
 #[cfg(test)]
 mod available_commands_tests;
+#[cfg(test)]
+mod claude_sdk_spawn_tests;
 
 #[cfg(test)]
 mod config_options_tests;
+
+#[cfg(test)]
+mod catalog_claude_sdk_tests;
 
 #[cfg(test)]
 mod catalog_pi_rpc_tests;
@@ -85,6 +94,9 @@ mod rpc_session_tests;
 
 #[cfg(test)]
 mod rpc_session_request_tests;
+
+#[cfg(test)]
+mod session_client_claude_tests;
 #[cfg(test)]
 mod session_client_pin_tests;
 #[cfg(test)]

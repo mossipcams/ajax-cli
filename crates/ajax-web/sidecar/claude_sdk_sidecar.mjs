@@ -102,8 +102,9 @@ function makeInput() {
 }
 
 // ---------------------------------------------------------------------------
-// SDK module resolution: 1) --sdk-module argv, 2) package import,
-// 3) + 4) npm root -g locations.
+// SDK module resolution. An explicit `--sdk-module` argv override is
+// exclusive: if it cannot load, init fails instead of silently loading the
+// installed SDK. Without it, try 1) package import, 2) + 3) npm root -g.
 
 function flagValue(name) {
   const index = argv.indexOf(name);
@@ -114,18 +115,22 @@ async function resolveSdk() {
   const tried = [];
   const specs = [];
   const fromArg = flagValue("--sdk-module");
-  if (fromArg) specs.push({ spec: fromArg, via: "argv --sdk-module", file: true });
-  specs.push({ spec: "@anthropic-ai/claude-agent-sdk", via: "package import", file: false });
-  try {
-    const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-    specs.push({ spec: `${root}/@anthropic-ai/claude-agent-sdk/sdk.mjs`, via: "npm root -g", file: true });
-    specs.push({
-      spec: `${root}/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`,
-      via: "npm root -g (acp)",
-      file: true,
-    });
-  } catch (error) {
-    log(`npm root -g failed: ${error?.message ?? error}`);
+  if (fromArg) {
+    // Explicit override: try only this module, never fall back to the SDK.
+    specs.push({ spec: fromArg, via: "argv --sdk-module", file: true });
+  } else {
+    specs.push({ spec: "@anthropic-ai/claude-agent-sdk", via: "package import", file: false });
+    try {
+      const root = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+      specs.push({ spec: `${root}/@anthropic-ai/claude-agent-sdk/sdk.mjs`, via: "npm root -g", file: true });
+      specs.push({
+        spec: `${root}/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs`,
+        via: "npm root -g (acp)",
+        file: true,
+      });
+    } catch (error) {
+      log(`npm root -g failed: ${error?.message ?? error}`);
+    }
   }
   for (const { spec, via, file } of specs) {
     const label = `${spec} (${via})`;
