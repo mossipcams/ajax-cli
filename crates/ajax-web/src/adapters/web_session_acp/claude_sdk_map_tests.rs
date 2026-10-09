@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::claude_sdk_map::map_sdk_message;
 use super::client::AcpClientEvent;
-use super::pi_rpc_map::PiRpcMapping;
+use super::rpc_session::RpcMapping;
 
 const SESSION_ID: &str = "acp-session-1";
 
@@ -28,7 +28,7 @@ fn fixture(name: &str) -> Vec<Value> {
 
 /// Map every record of one transcript, keeping the per-message mappings so a
 /// test can reason about which message produced which events.
-fn replay(records: &[Value]) -> Vec<PiRpcMapping> {
+fn replay(records: &[Value]) -> Vec<RpcMapping> {
     records
         .iter()
         .map(|record| map_sdk_message(record, SESSION_ID))
@@ -36,7 +36,7 @@ fn replay(records: &[Value]) -> Vec<PiRpcMapping> {
 }
 
 /// All events of all mappings, flattened in order.
-fn all_events(mappings: &[PiRpcMapping]) -> Vec<&AcpClientEvent> {
+fn all_events(mappings: &[RpcMapping]) -> Vec<&AcpClientEvent> {
     mappings
         .iter()
         .flat_map(|mapping| mapping.events.iter())
@@ -230,7 +230,7 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
 fn interrupt_transcript_aborts_then_restarts_with_usage() {
     let records = fixture("interrupt.jsonl");
     let mappings = replay(&records);
-    let finished: Vec<&PiRpcMapping> = mappings.iter().filter(|mapping| mapping.finished).collect();
+    let finished: Vec<&RpcMapping> = mappings.iter().filter(|mapping| mapping.finished).collect();
     assert_eq!(finished.len(), 2, "expected exactly two finished mappings");
 
     // The interrupted run is aborted and must not emit a zero usage update.

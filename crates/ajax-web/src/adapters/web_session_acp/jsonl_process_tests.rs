@@ -1,4 +1,4 @@
-//! Integration tests for [`super::pi_rpc_process`], driving the fake
+//! Integration tests for [`super::jsonl_process`], driving the fake
 //! `pi --mode rpc` child in `tests/fixtures/fake_pi_rpc.js` through a real
 //! spawned `node` process (std threads + std::sync::mpsc, no tokio).
 
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::pi_rpc_process::{PiRpcProcess, PiRpcRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
 
 /// How long any single wait for a record (or stderr output) may take before
 /// the test panics.
@@ -21,16 +21,16 @@ fn fixture_path() -> PathBuf {
 
 /// Spawn the fake pi RPC child under `node`, passing `extra_args` to the
 /// fixture script. Fails loudly (panics) when `node` is missing.
-fn spawn_fake(extra_args: &[&str]) -> PiRpcProcess {
+fn spawn_fake(extra_args: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![fixture_path().to_string_lossy().into_owned()];
     args.extend(extra_args.iter().map(|arg| (*arg).to_owned()));
     let cwd = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    PiRpcProcess::spawn(Path::new("node"), &args, &cwd)
+    JsonlProcess::spawn(Path::new("node"), &args, &cwd)
         .expect("spawn `node` with the fake pi rpc fixture (is node installed?)")
 }
 
 /// Receive the next record, waiting up to [`RECV_TIMEOUT`] for it.
-fn recv_within(process: &PiRpcProcess) -> PiRpcRecord {
+fn recv_within(process: &JsonlProcess) -> JsonlRecord {
     let deadline = Instant::now() + RECV_TIMEOUT;
     loop {
         match process.try_recv() {
@@ -50,16 +50,16 @@ fn recv_within(process: &PiRpcProcess) -> PiRpcRecord {
 
 /// Unwrap a received record as JSON, panicking with context otherwise. Takes
 /// ownership so the caller never borrows a temporary record.
-fn as_json(record: PiRpcRecord) -> Value {
+fn as_json(record: JsonlRecord) -> Value {
     match record {
-        PiRpcRecord::Record(value) => value,
+        JsonlRecord::Record(value) => value,
         other => panic!("expected a JSON record, got {other:?}"),
     }
 }
 
 /// Wait until the stderr tail contains `needle`; the stderr reader thread may
 /// still be draining when the stdout EOF record arrives.
-fn stderr_tail_containing(process: &PiRpcProcess, needle: &str) -> String {
+fn stderr_tail_containing(process: &JsonlProcess, needle: &str) -> String {
     let deadline = Instant::now() + RECV_TIMEOUT;
     loop {
         let tail = process.stderr_tail();
@@ -222,7 +222,7 @@ fn line_separator_u2028_inside_a_string_stays_one_record() {
     // Nothing more was emitted, so the next record is EOF, not a second
     // fragment of the U+2028 line.
     process.close_stdin();
-    assert!(matches!(recv_within(&process), PiRpcRecord::Exited));
+    assert!(matches!(recv_within(&process), JsonlRecord::Exited));
 }
 
 #[test]
@@ -230,13 +230,13 @@ fn non_json_stdout_line_is_delivered_as_error_record() {
     let mut process = spawn_fake(&["--emit-garbage"]);
 
     match recv_within(&process) {
-        PiRpcRecord::Error(text) => assert_eq!(text, "this line is not json"),
+        JsonlRecord::Error(text) => assert_eq!(text, "this line is not json"),
         other => panic!("expected an Error record, got {other:?}"),
     }
 
     // The reader survives the bad line: closing stdin still yields EOF.
     process.close_stdin();
-    assert!(matches!(recv_within(&process), PiRpcRecord::Exited));
+    assert!(matches!(recv_within(&process), JsonlRecord::Exited));
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn close_stdin_exits_child_and_delivers_exited_exactly_once() {
     let mut other = 0_usize;
     loop {
         match process.try_recv() {
-            Ok(PiRpcRecord::Exited) => exited += 1,
+            Ok(JsonlRecord::Exited) => exited += 1,
             Ok(_) => other += 1,
             Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {
@@ -279,7 +279,7 @@ fn stderr_never_enters_the_record_channel() {
     process.close_stdin();
 
     // Only the stdout EOF record may arrive; stderr must not leak into it.
-    assert!(matches!(recv_within(&process), PiRpcRecord::Exited));
+    assert!(matches!(recv_within(&process), JsonlRecord::Exited));
     assert!(process.recv().is_err());
 
     let tail = stderr_tail_containing(&process, "fake pi rpc stderr noise");
@@ -290,7 +290,7 @@ fn stderr_never_enters_the_record_channel() {
 fn stderr_tail_is_bounded_to_the_last_4k() {
     let mut process = spawn_fake(&["--emit-stderr-noise"]);
     process.close_stdin();
-    assert!(matches!(recv_within(&process), PiRpcRecord::Exited));
+    assert!(matches!(recv_within(&process), JsonlRecord::Exited));
 
     let tail = stderr_tail_containing(&process, "STDERR-TAIL-END");
     assert!(tail.contains("STDERR-TAIL-END"), "tail was: {tail:?}");
@@ -316,7 +316,7 @@ fn dropping_the_process_reaps_the_child() {
 
     process.close_stdin();
     // EOF means the child exited; until Drop waits it is unreaped.
-    assert!(matches!(recv_within(&process), PiRpcRecord::Exited));
+    assert!(matches!(recv_within(&process), JsonlRecord::Exited));
 
     let pid = process.child_id();
     drop(process);

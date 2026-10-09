@@ -3,7 +3,7 @@
 //!
 //! The Claude client connection loop (a later packet) calls
 //! [`map_sdk_message`] once per parsed message and folds the returned
-//! [`PiRpcMapping`] values: each emitted event is forwarded to the session in
+//! [`RpcMapping`] values: each emitted event is forwarded to the session in
 //! order, and `finished` / `ended_aborted` track whether the run settled and
 //! whether it ended aborted. Messages that carry no adapter meaning (`system`,
 //! `rate_limit_event`, unknown types) map to an empty result and never panic
@@ -20,7 +20,7 @@ use agent_client_protocol::schema::v1::{
 use serde_json::Value;
 
 use super::client::AcpClientEvent;
-use super::pi_rpc_map::PiRpcMapping;
+use super::rpc_session::RpcMapping;
 
 /// Map one parsed Claude Agent SDK message to adapter events and run state.
 ///
@@ -28,7 +28,7 @@ use super::pi_rpc_map::PiRpcMapping;
 /// notification carries it. The mapping is total: any message — including
 /// non-objects, `system` records, and unknown types — returns an empty result
 /// instead of panicking.
-pub fn map_sdk_message(message: &Value, session_id: &str) -> PiRpcMapping {
+pub fn map_sdk_message(message: &Value, session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     // ponytail: sub-agent traffic (non-null `parent_tool_use_id`) is a known
     // gap; drop it wholesale until sub-agent sessions are supported.
@@ -36,7 +36,7 @@ pub fn map_sdk_message(message: &Value, session_id: &str) -> PiRpcMapping {
         .get("parent_tool_use_id")
         .is_some_and(|id| !id.is_null())
     {
-        return PiRpcMapping {
+        return RpcMapping {
             events,
             finished: false,
             ended_aborted: false,
@@ -58,7 +58,7 @@ pub fn map_sdk_message(message: &Value, session_id: &str) -> PiRpcMapping {
         // `rate_limit_event`, and unknown message types produce no events.
         _ => (false, false),
     };
-    PiRpcMapping {
+    RpcMapping {
         events,
         finished,
         ended_aborted,

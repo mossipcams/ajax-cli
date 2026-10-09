@@ -7,14 +7,14 @@ use std::sync::mpsc;
 
 use serde_json::json;
 
-use super::pi_rpc_process::{read_stdout_lines_bounded, PiRpcRecord};
+use super::jsonl_process::{read_stdout_lines_bounded, JsonlRecord};
 
 /// Small cap so the over-sized path is exercised with tiny inputs.
 const CAP: usize = 16;
 
 /// Feed `input` through the bounded reader on a detached channel and collect
 /// every record (dropping the sender explicitly so the iterator can end).
-fn drain(input: Vec<u8>) -> Vec<PiRpcRecord> {
+fn drain(input: Vec<u8>) -> Vec<JsonlRecord> {
     let (sender, receiver) = mpsc::channel();
     read_stdout_lines_bounded(Cursor::new(input), &sender, CAP);
     drop(sender);
@@ -27,14 +27,14 @@ fn short_valid_lines_still_arrive_as_records_then_exited() {
     let records = drain(input);
     assert_eq!(records.len(), 3);
     match &records[0] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
         other => panic!("expected Record, got {other:?}"),
     }
     match &records[1] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "b": 2 })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "b": 2 })),
         other => panic!("expected Record, got {other:?}"),
     }
-    assert!(matches!(records[2], PiRpcRecord::Exited));
+    assert!(matches!(records[2], JsonlRecord::Exited));
 }
 
 #[test]
@@ -50,19 +50,19 @@ fn oversized_line_between_short_lines_yields_one_error_and_keeps_parsing() {
     let records = drain(input);
     assert_eq!(records.len(), 4, "got {records:?}");
     match &records[0] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
         other => panic!("expected Record, got {other:?}"),
     }
     match &records[1] {
-        PiRpcRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
+        JsonlRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
         other => panic!("expected Error, got {other:?}"),
     }
     // The line after the discarded one is still parsed.
     match &records[2] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
         other => panic!("expected Record, got {other:?}"),
     }
-    assert!(matches!(records[3], PiRpcRecord::Exited));
+    assert!(matches!(records[3], JsonlRecord::Exited));
 }
 
 #[test]
@@ -74,10 +74,10 @@ fn line_of_exactly_cap_bytes_is_a_record() {
     let records = drain(input);
     assert_eq!(records.len(), 2);
     match &records[0] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "a": "12345678" })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "a": "12345678" })),
         other => panic!("expected Record, got {other:?}"),
     }
-    assert!(matches!(records[1], PiRpcRecord::Exited));
+    assert!(matches!(records[1], JsonlRecord::Exited));
 }
 
 #[test]
@@ -89,10 +89,10 @@ fn line_of_cap_plus_one_bytes_is_an_error() {
     let records = drain(input);
     assert_eq!(records.len(), 2);
     match &records[0] {
-        PiRpcRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
+        JsonlRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
         other => panic!("expected Error, got {other:?}"),
     }
-    assert!(matches!(records[1], PiRpcRecord::Exited));
+    assert!(matches!(records[1], JsonlRecord::Exited));
 }
 
 #[test]
@@ -102,10 +102,10 @@ fn final_oversized_line_without_trailing_lf_yields_one_error_then_exited() {
     let records = drain(input);
     assert_eq!(records.len(), 2, "got {records:?}");
     match &records[0] {
-        PiRpcRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
+        JsonlRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
         other => panic!("expected Error, got {other:?}"),
     }
-    assert!(matches!(records[1], PiRpcRecord::Exited));
+    assert!(matches!(records[1], JsonlRecord::Exited));
 }
 
 #[test]
@@ -119,11 +119,11 @@ fn two_consecutive_oversized_lines_yield_two_errors() {
     assert_eq!(records.len(), 3, "got {records:?}");
     for record in &records[..2] {
         match record {
-            PiRpcRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
+            JsonlRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
             other => panic!("expected Error, got {other:?}"),
         }
     }
-    assert!(matches!(records[2], PiRpcRecord::Exited));
+    assert!(matches!(records[2], JsonlRecord::Exited));
 }
 
 #[test]
@@ -133,10 +133,10 @@ fn crlf_terminated_short_line_still_parses() {
     let records = drain(input);
     assert_eq!(records.len(), 2);
     match &records[0] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "c": 3 })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "c": 3 })),
         other => panic!("expected Record, got {other:?}"),
     }
-    assert!(matches!(records[1], PiRpcRecord::Exited));
+    assert!(matches!(records[1], JsonlRecord::Exited));
 }
 
 #[test]
@@ -149,8 +149,8 @@ fn u2028_inside_record_shorter_than_cap_is_one_record() {
     let records = drain(input);
     assert_eq!(records.len(), 2, "got {records:?}");
     match &records[0] {
-        PiRpcRecord::Record(value) => assert_eq!(value, &json!({ "s": "a\u{2028}b" })),
+        JsonlRecord::Record(value) => assert_eq!(value, &json!({ "s": "a\u{2028}b" })),
         other => panic!("expected Record, got {other:?}"),
     }
-    assert!(matches!(records[1], PiRpcRecord::Exited));
+    assert!(matches!(records[1], JsonlRecord::Exited));
 }

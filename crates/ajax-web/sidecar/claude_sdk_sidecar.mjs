@@ -1,7 +1,7 @@
 // Claude Agent SDK sidecar speaking Pi-style JSONL framing.
 //
 // Protocol (same framing as the Pi RPC child, so the existing Rust
-// `PiRpcProcess` can drive this process unchanged):
+// `JsonlProcess` can drive this process unchanged):
 //   stdin:  one JSON command per LF-terminated line: {"id", "type", ...}.
 //           Lines are split on "\n" ONLY (U+2028/U+2029 are NOT separators);
 //           one optional preceding "\r" is stripped. A line that is not valid

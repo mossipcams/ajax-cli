@@ -13,9 +13,10 @@ use agent_client_protocol::schema::v1::{
 };
 
 use super::client::AcpClientEvent;
+use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
-use super::pi_rpc_process::PiRpcProcess;
-use super::pi_rpc_session::{PiRpcSession, PiStep};
+use super::pi_rpc_map::map_record;
+use super::rpc_session::{RpcSession, RpcStep};
 
 /// Timeout for the `get_session_stats` request sent before a prompt finish.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -27,8 +28,8 @@ pub struct PiRpcClient {
 }
 
 struct Inner {
-    session: Option<PiRpcSession>,
-    /// Remainder of a `PiStep::Events` batch not yet consumed by callers.
+    session: Option<RpcSession>,
+    /// Remainder of a `RpcStep::Events` batch not yet consumed by callers.
     event_queue: VecDeque<AcpClientEvent>,
     /// The request id assigned by the most recent `begin_prompt`, cleared on finish.
     active_request_id: Option<u64>,
@@ -105,13 +106,13 @@ impl PiRpcClient {
         }
         args.extend_from_slice(extra_args);
 
-        let mut process = PiRpcProcess::spawn(program, &args, cwd)
+        let mut process = JsonlProcess::spawn(program, &args, cwd)
             .map_err(|e| format!("failed to spawn pi rpc process: {e}"))?;
 
         let hs = handshake(&mut process, handshake_timeout)
             .map_err(|e| format!("pi rpc handshake failed: {e}"))?;
 
-        // `PiRpcSession::new` consumes the handshake record, so copy out the
+        // `RpcSession::new` consumes the handshake record, so copy out the
         // model / thinking-level state before handing it over.
         let models: Vec<ModelEntry> = hs
             .models
@@ -130,7 +131,7 @@ impl PiRpcClient {
             .map(|m| m.provider.clone());
         let current_thinking_level = hs.thinking_level.clone();
 
-        let session = PiRpcSession::new(process, hs);
+        let session = RpcSession::new(process, hs, map_record);
 
         Ok(PiRpcClient {
             inner: Mutex::new(Inner {
@@ -342,13 +343,13 @@ impl PiRpcClient {
         let session = g.session.as_mut()?;
 
         match session.next_step(timeout) {
-            PiStep::Events(evs) => {
+            RpcStep::Events(evs) => {
                 for ev in evs {
                     g.event_queue.push_back(ev);
                 }
                 g.event_queue.pop_front()
             }
-            PiStep::RunFinished { aborted } => {
+            RpcStep::RunFinished { aborted } => {
                 let id = g.active_request_id.take().unwrap_or(0);
                 let stop_reason = if aborted { "cancelled" } else { "end_turn" };
 
@@ -384,7 +385,7 @@ impl PiRpcClient {
                     None => Some(finished),
                 }
             }
-            PiStep::PromptRejected(e) => {
+            RpcStep::PromptRejected(e) => {
                 let _id = g.active_request_id.take();
                 Some(AcpClientEvent::RequestFinished {
                     id: _id.unwrap_or(0),
@@ -392,12 +393,12 @@ impl PiRpcClient {
                     result: Err(e),
                 })
             }
-            PiStep::Error(t) => Some(AcpClientEvent::Error(t)),
-            PiStep::Exited => {
+            RpcStep::Error(t) => Some(AcpClientEvent::Error(t)),
+            RpcStep::Exited => {
                 g.host_exited = true;
                 Some(AcpClientEvent::Exited)
             }
-            PiStep::Idle => None,
+            RpcStep::Idle => None,
         }
     }
 

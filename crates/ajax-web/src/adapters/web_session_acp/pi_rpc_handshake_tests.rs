@@ -1,7 +1,7 @@
 //! Integration tests for [`super::pi_rpc_handshake`], running the real `node`
 //! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
 //! and asserting that the four discovery commands are id-correlated into a
-//! typed [`PiHandshake`] — including pending-record collection, failure and
+//! typed [`RpcHandshake`] — including pending-record collection, failure and
 //! degradation paths, and the pre-get_state timeout path with stderr tail.
 
 use std::path::Path;
@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::pi_rpc_handshake::{handshake, PiHandshake};
-use super::pi_rpc_process::PiRpcProcess;
+use super::jsonl_process::JsonlProcess;
+use super::pi_rpc_handshake::handshake;
+use super::rpc_handshake::RpcHandshake;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Generous bound for "this must not hang" negative tests.
@@ -20,14 +21,14 @@ const DEADLINE_TEST_TIMEOUT: Duration = Duration::from_millis(1_500);
 
 /// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
 /// fixture script. Fails loudly (panics) when `node` is missing.
-fn spawn_fake_pi(extra_flags: &[&str]) -> PiRpcProcess {
+fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
         .to_string_lossy()
         .into_owned()];
     args.extend(extra_flags.iter().copied().map(str::to_owned));
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    PiRpcProcess::spawn(Path::new("node"), &args, cwd)
+    JsonlProcess::spawn(Path::new("node"), &args, cwd)
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
@@ -36,7 +37,7 @@ fn handshake_full_success_types_all_four_responses() {
     let mut process = spawn_fake_pi(&[]);
     let started = Instant::now();
 
-    let handshake: PiHandshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
+    let handshake: RpcHandshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
 
     assert!(started.elapsed() < Duration::from_secs(5), "handshake hung");
     assert_eq!(handshake.session_id, "fake-pi-rpc-session-1");

@@ -1,22 +1,18 @@
-//! The Pi RPC session driver core on top of [`PiRpcProcess`] and
-//! [`pi_rpc_map`]. A [`PiRpcSession`] owns a handshaken child process, sends
-//! `prompt` and `abort` commands through the id-correlated transport, and
-//! turns the record stream (handshake pending records first, then live stdout)
-//! into [`PiStep`] values for the caller. It keeps only run state — no usage
-//! stats, no restore — and is not wired into the live session path yet; the
-//! connection-loop task builds on this surface.
+//! The transport-neutral session driver core on top of [`JsonlProcess`].
+//! A [`RpcSession`] owns a handshaken child process, sends `prompt` and `abort`
+//! commands through the id-correlated transport, and turns the record stream
+//! (handshake pending records first, then live stdout) into [`RpcStep`] values
+//! for the caller. It keeps only run state — no usage stats, no restore.
 //!
 //! Step rules: a `response` record whose id matches the active prompt decides
-//! that run (`success:false` rejects it with pi's error text,
-//! `data.disposition == "handled"` finishes it), every other record is folded
-//! through [`map_record`] — events are surfaced in order, and an `agent_settled`
-//! finish ends the run with the remembered aborted flag. `next_step` returns at
-//! most one step per call; records that carry no adapter meaning are consumed
-//! inside the same call until a step-worthy result arrives or the timeout
-//! elapses ([`PiStep::Idle`]).
+//! that run (`success:false` rejects it with the response's error text,
+//! `data.disposition == "handled"` finishes it). Every other record is folded
+//! through the injected record mapper — events are surfaced in order, and a
+//! mapper-reported finish ends the run with the remembered aborted flag.
+//! `next_step` returns at most one step per call; records that carry no adapter
+//! meaning are consumed inside the same call until a step-worthy result arrives
+//! or the timeout elapses ([`RpcStep::Idle`]).
 
-// Not yet reachable from the crate surface: nothing wires this in until the
-// connection-loop task lands, so every public item is dead code for now.
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
@@ -26,21 +22,33 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::client::AcpClientEvent;
-use super::pi_rpc_handshake::PiHandshake;
-use super::pi_rpc_map::{map_record, PiRpcMapping};
-use super::pi_rpc_process::{PiRpcProcess, PiRpcRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::rpc_handshake::RpcHandshake;
 
 /// How long each `try_recv` gap sleeps before re-polling the record channel.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// One step of a Pi RPC run as seen by the session driver.
+/// Maps one transport record into adapter events and run state.
+pub type RecordMapper = fn(&Value, &str) -> RpcMapping;
+
+/// What one inbound transport record means for the web session adapter.
+pub struct RpcMapping {
+    /// Adapter events to forward, in order. Empty for non-mappable records.
+    pub events: Vec<AcpClientEvent>,
+    /// The agent run has settled.
+    pub finished: bool,
+    /// The run was reported aborted.
+    pub ended_aborted: bool,
+}
+
+/// One step of a run as seen by the session driver.
 #[derive(Debug)]
-pub enum PiStep {
+pub enum RpcStep {
     /// Adapter events to forward, in order.
     Events(Vec<AcpClientEvent>),
-    /// The agent run has settled; `aborted` reflects pi's stop reason.
+    /// The agent run has settled; `aborted` reflects the injected record mapper's stop reason.
     RunFinished { aborted: bool },
-    /// The prompt was rejected before any run started; carries pi's error text.
+    /// The prompt was rejected before any run started; carries the response's error text.
     PromptRejected(String),
     /// A stdout line that was not valid JSON; carries the raw text.
     Error(String),
@@ -50,9 +58,10 @@ pub enum PiStep {
     Idle,
 }
 
-/// A handshaken `pi --mode rpc` session: prompt/abort commands in, [`PiStep`]s out.
-pub struct PiRpcSession {
-    process: PiRpcProcess,
+/// A handshaken JSONL session: prompt/abort commands in, [`RpcStep`]s out.
+pub struct RpcSession {
+    mapper: RecordMapper,
+    process: JsonlProcess,
     session_id: String,
     /// Handshake pending records, replayed before any live stdout record.
     queued: VecDeque<Value>,
@@ -60,19 +69,20 @@ pub struct PiRpcSession {
     prompt_id: Option<String>,
     run_active: bool,
     /// Set when a record in the current run reports an aborted stop reason;
-    /// folded into the next [`PiStep::RunFinished`] and reset on every run end.
+    /// folded into the next [`RpcStep::RunFinished`] and reset on every run end.
     ended_aborted: bool,
     /// Set when `Exited` was read while a [`Self::request`] was in flight; the
     /// next [`Self::next_step`] reports it exactly once and clears this flag.
     exited: bool,
 }
 
-impl PiRpcSession {
+impl RpcSession {
     /// Adopt a handshaken process. `handshake.session_id` binds every generated
     /// notification and `handshake.pending` is queued so those records are
     /// processed first, in order, by [`Self::next_step`].
-    pub fn new(process: PiRpcProcess, handshake: PiHandshake) -> Self {
+    pub fn new(process: JsonlProcess, handshake: RpcHandshake, mapper: RecordMapper) -> Self {
         Self {
+            mapper,
             session_id: handshake.session_id,
             queued: VecDeque::from(handshake.pending),
             process,
@@ -139,7 +149,7 @@ impl PiRpcSession {
                 // consumed, so this is a terminal no-response path.
                 Err(mpsc::TryRecvError::Disconnected) => break,
                 Ok(record) => match record {
-                    PiRpcRecord::Record(value)
+                    JsonlRecord::Record(value)
                         if value.get("type").and_then(Value::as_str) == Some("response")
                             && value.get("id").and_then(Value::as_str) == Some(id.as_str()) =>
                     {
@@ -155,16 +165,16 @@ impl PiRpcSession {
                         };
                     }
                     // Not this command's response: preserve it for `next_step`.
-                    PiRpcRecord::Record(value) => self.queued.push_back(value),
-                    PiRpcRecord::Error(text) => {
+                    JsonlRecord::Record(value) => self.queued.push_back(value),
+                    JsonlRecord::Error(text) => {
                         return Err(format!(
                             "request {command_type} hit a transport error: {text}"
                         ));
                     }
-                    PiRpcRecord::Exited => {
+                    JsonlRecord::Exited => {
                         self.exited = true;
                         return Err(format!(
-                            "pi child exited during request {command_type}; stderr tail: {}",
+                            "child exited during request {command_type}; stderr tail: {}",
                             self.process.stderr_tail()
                         ));
                     }
@@ -187,10 +197,10 @@ impl PiRpcSession {
     /// [`Self::request`] is reported first (exactly once), then queued pending
     /// records, then the process stream, polling `try_recv` every 5 ms until
     /// `timeout` elapses.
-    /// Returns at most one [`PiStep`] per call ([`PiStep::Idle`] on timeout);
+    /// Returns at most one [`RpcStep`] per call ([`RpcStep::Idle`] on timeout);
     /// records without adapter meaning are consumed inside this call so the
     /// caller never sees them.
-    pub fn next_step(&mut self, timeout: Duration) -> PiStep {
+    pub fn next_step(&mut self, timeout: Duration) -> RpcStep {
         // A child exit observed inside a `request` is reported here exactly
         // once, before any queued record could mask it.
         if self.exited {
@@ -198,29 +208,29 @@ impl PiRpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
-            return PiStep::Exited;
+            return RpcStep::Exited;
         }
 
         let deadline = Instant::now() + timeout;
 
         loop {
             let Some(record) = self.next_record(deadline) else {
-                return PiStep::Idle;
+                return RpcStep::Idle;
             };
 
             match record {
                 // Transport-level anomalies surface immediately; a prompt in
                 // flight cannot settle after the child is gone.
-                PiRpcRecord::Error(text) => return PiStep::Error(text),
-                PiRpcRecord::Exited => {
+                JsonlRecord::Error(text) => return RpcStep::Error(text),
+                JsonlRecord::Exited => {
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
-                    return PiStep::Exited;
+                    return RpcStep::Exited;
                 }
                 // No adapter meaning keeps the loop consuming within this
                 // call; only a step-worthy fold stops it.
-                PiRpcRecord::Record(value) => {
+                JsonlRecord::Record(value) => {
                     if let Some(step) = self.step_for_record(&value) {
                         return step;
                     }
@@ -228,19 +238,19 @@ impl PiRpcSession {
             }
 
             if Instant::now() >= deadline {
-                return PiStep::Idle;
+                return RpcStep::Idle;
             }
         }
     }
 
     /// Fold one parsed record into a step. `None` means the record carries no
     /// adapter meaning for this session and the loop keeps consuming.
-    fn step_for_record(&mut self, value: &Value) -> Option<PiStep> {
+    fn step_for_record(&mut self, value: &Value) -> Option<RpcStep> {
         if let Some(step) = self.prompt_response_step(value) {
             return Some(step);
         }
 
-        let mapping: PiRpcMapping = map_record(value, self.session_id());
+        let mapping: RpcMapping = (self.mapper)(value, self.session_id());
         if mapping.ended_aborted {
             self.ended_aborted = true;
         }
@@ -250,18 +260,18 @@ impl PiRpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
-            return Some(PiStep::RunFinished { aborted });
+            return Some(RpcStep::RunFinished { aborted });
         }
         if !mapping.events.is_empty() {
-            return Some(PiStep::Events(mapping.events));
+            return Some(RpcStep::Events(mapping.events));
         }
         None
     }
 
     /// The outcome of the active prompt's `response` record, when this is one.
     /// Responses to other commands (handshake leftovers, `abort`) pass through
-    /// to the mapper, which gives them no adapter meaning.
-    fn prompt_response_step(&mut self, value: &Value) -> Option<PiStep> {
+    /// to the injected record mapper.
+    fn prompt_response_step(&mut self, value: &Value) -> Option<RpcStep> {
         if value.get("type").and_then(Value::as_str) != Some("response") {
             return None;
         }
@@ -280,15 +290,15 @@ impl PiRpcSession {
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
-                Some(PiStep::PromptRejected(detail))
+                Some(RpcStep::PromptRejected(detail))
             }
             _ => {
                 if value.pointer("/data/disposition").and_then(Value::as_str) == Some("handled") {
-                    // Pi reports the prompt fully handled: the run is over.
+                    // The response reports the prompt fully handled: the run is over.
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
-                    Some(PiStep::RunFinished { aborted: false })
+                    Some(RpcStep::RunFinished { aborted: false })
                 } else {
                     // e.g. `disposition: "started"` — acknowledgement only; the
                     // run keeps going, so keep the prompt id for correlation.
@@ -300,9 +310,9 @@ impl PiRpcSession {
 
     /// The next record to process: a queued pending record (no waiting) or the
     /// first live stdout record before `deadline`; `None` on timeout.
-    fn next_record(&mut self, deadline: Instant) -> Option<PiRpcRecord> {
+    fn next_record(&mut self, deadline: Instant) -> Option<JsonlRecord> {
         if let Some(value) = self.queued.pop_front() {
-            return Some(PiRpcRecord::Record(value));
+            return Some(JsonlRecord::Record(value));
         }
 
         loop {

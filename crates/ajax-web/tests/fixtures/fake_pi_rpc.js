@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Minimal `pi --mode rpc` stand-in for pi_rpc_process tests. Reads LF-delimited
+// Minimal `pi --mode rpc` stand-in for jsonl_process tests. Reads LF-delimited
 // JSONL commands from stdin, emits JSONL records on stdout in scripted order,
 // and exits 0 when stdin closes (the documented orderly-shutdown path).
 'use strict';
@@ -36,7 +36,7 @@ function emit(record) {
 const flags = new Set(process.argv.slice(2));
 
 // Handshake-mode switches. Each flag is independent; defaults keep the
-// original fixture behavior for pi_rpc_process tests unchanged.
+// original fixture behavior for jsonl_process tests unchanged.
 const stateFail = flags.has('--state-fail'); // get_state answers success:false
 const noSessionId = flags.has('--no-session-id'); // get_state data lacks sessionId
 const silentState = flags.has('--silent-state'); // get_state is never answered

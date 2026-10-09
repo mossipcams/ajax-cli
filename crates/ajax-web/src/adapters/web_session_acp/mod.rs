@@ -5,12 +5,13 @@ mod claude_sdk_map;
 mod client;
 mod config_option_descriptors;
 mod config_options;
+mod jsonl_process;
 mod pi_rpc_client;
 mod pi_rpc_handshake;
 mod pi_rpc_map;
-mod pi_rpc_process;
-mod pi_rpc_session;
 mod prompt_capability_descriptors;
+mod rpc_handshake;
+mod rpc_session;
 mod sdk_connection;
 pub(crate) mod sdk_elicitation;
 mod session_client;
@@ -64,14 +65,16 @@ mod pi_rpc_handshake_tests;
 mod pi_rpc_map_tests;
 
 #[cfg(test)]
-mod pi_rpc_process_bound_tests;
+mod jsonl_process_bound_tests;
 #[cfg(test)]
-mod pi_rpc_process_tests;
+mod jsonl_process_tests;
 #[cfg(test)]
-mod pi_rpc_session_tests;
+mod rpc_session_mapper_tests;
+#[cfg(test)]
+mod rpc_session_tests;
 
 #[cfg(test)]
-mod pi_rpc_session_request_tests;
+mod rpc_session_request_tests;
 #[cfg(test)]
 mod session_client_pin_tests;
 #[cfg(test)]

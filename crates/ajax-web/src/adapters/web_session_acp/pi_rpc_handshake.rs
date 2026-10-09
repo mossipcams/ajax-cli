@@ -1,23 +1,23 @@
 //! The Pi RPC handshake: the four state-discovery commands issued to a freshly
-//! spawned [`PiRpcProcess`] and their id-correlated responses, typed into
-//! [`PiHandshake`]. This module is pure transport-plus-parsing on top of the
-//! `pi_rpc_process` surface (std only, no tokio): it writes all four commands
+//! spawned [`JsonlProcess`] and their id-correlated responses, typed into
+//! [`RpcHandshake`]. This module is pure transport-plus-parsing on top of the
+//! `jsonl_process` surface (std only, no tokio): it writes all four commands
 //! before waiting for any answer, then drains stdout records until every
 //! expected response has arrived or the deadline passes. It does not wire into
 //! the live session path and does not interpret event semantics beyond
 //! capturing non-response records as pending replay material.
 //!
 //! Correlation rules: each response is a `{"type":"response","id":…}` record
-//! echoing the id [`PiRpcProcess::send`] allocated for its command, so the four
+//! echoing the id [`JsonlProcess::send`] allocated for its command, so the four
 //! replies are matched by id, never by arrival order. Any record that is not
 //! one of those four responses (events such as `extension_ui_request`, other
 //! in-flight responses) is preserved, in arrival order, in
-//! [`PiHandshake::pending`] for the caller to replay — none are dropped.
+//! [`RpcHandshake::pending`] for the caller to replay — none are dropped.
 //!
 //! Failure policy: a failing or missing `get_state` (including an absent
 //! `data.sessionId`) fails the whole handshake; failures of the other three
 //! commands degrade to empty lists so a partial discovery state still yields a
-//! usable [`PiHandshake`]. A timeout, non-JSON stdout line, or child exit
+//! usable [`RpcHandshake`]. A timeout, non-JSON stdout line, or child exit
 //! *before* `get_state` completes returns an error that carries the process
 //! stderr tail for diagnostics.
 
@@ -30,58 +30,19 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::pi_rpc_process::{PiRpcProcess, PiRpcRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::rpc_handshake::{RpcCommand, RpcHandshake, RpcModel};
 
 /// How long each `try_recv` gap sleeps before re-polling the record channel.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// The four discovery commands and the handshake response that completes them.
-#[derive(Debug)]
-pub struct PiHandshake {
-    /// `get_state.data.sessionId`; required, its absence fails the handshake.
-    pub session_id: String,
-    /// `get_state.data.sessionFile`, when pi reports a persisted session path.
-    pub session_file: Option<String>,
-    /// `get_state.data.model.id`, when a model is selected.
-    pub model_id: Option<String>,
-    /// `get_state.data.thinkingLevel`, when present.
-    pub thinking_level: Option<String>,
-    /// `get_available_models.data.models`, empty on failure or degradation.
-    pub models: Vec<PiModel>,
-    /// `get_available_thinking_levels.data.levels`.
-    pub thinking_levels: Vec<String>,
-    /// `get_commands.data.commands`.
-    pub commands: Vec<PiCommand>,
-    /// `get_state.data.model.contextWindow`, when a model is selected.
-    pub context_window: Option<u64>,
-    /// Every non-handshake record (events, other responses) captured in order
-    /// while the handshake ran; the caller replays these.
-    pub pending: Vec<Value>,
-}
-
-/// One entry of `get_available_models.data.models`.
-#[derive(Debug)]
-pub struct PiModel {
-    pub id: String,
-    pub name: String,
-    pub provider: String,
-    pub reasoning: bool,
-}
-
-/// One entry of `get_commands.data.commands`.
-#[derive(Debug)]
-pub struct PiCommand {
-    pub name: String,
-    pub description: Option<String>,
-}
-
 /// Issue the four discovery commands and collect their responses.
 ///
-/// All four commands are written to stdin (via [`PiRpcProcess::send`]) before
+/// All four commands are written to stdin (via [`JsonlProcess::send`]) before
 /// any record is read, then records are consumed until all four matching-id
 /// responses have arrived or `timeout` (measured from the first send) elapses.
 /// See the module docs for the correlation and failure policy.
-pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHandshake, String> {
+pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHandshake, String> {
     let state_id = process.send("get_state", json!({}))?;
     let models_id = process.send("get_available_models", json!({}))?;
     let levels_id = process.send("get_available_thinking_levels", json!({}))?;
@@ -101,7 +62,7 @@ pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHand
 
         match process.try_recv() {
             Ok(record) => match record {
-                PiRpcRecord::Record(value) => {
+                JsonlRecord::Record(value) => {
                     let id = value
                         .get("id")
                         .and_then(Value::as_str)
@@ -136,7 +97,7 @@ pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHand
                         _ => pending.push(value),
                     }
                 }
-                PiRpcRecord::Error(text) => {
+                JsonlRecord::Error(text) => {
                     if state.is_none() {
                         return Err(format!(
                             "pi child emitted a non-JSON stdout line before get_state \
@@ -148,7 +109,7 @@ pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHand
                     // preserve the raw line rather than dropping it.
                     pending.push(Value::String(text));
                 }
-                PiRpcRecord::Exited => {
+                JsonlRecord::Exited => {
                     if state.is_none() {
                         return Err(format!(
                             "pi child exited before get_state completed (stderr tail: {})",
@@ -208,7 +169,7 @@ pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHand
         .ok_or_else(|| "get_state response is missing data.sessionId".to_owned())?;
 
     let model = data.and_then(|d| d.get("model"));
-    Ok(PiHandshake {
+    Ok(RpcHandshake {
         session_id: session_id.to_owned(),
         session_file: string_field(data, "sessionFile"),
         model_id: model
@@ -236,7 +197,7 @@ fn string_field(data: Option<&Value>, key: &str) -> Option<String> {
 /// Parse `get_available_models`'s response into typed model entries. A failed,
 /// missing, or malformed response degrades to an empty list; individual
 /// entries lacking the required fields are skipped.
-fn parse_models(response: Option<&Value>) -> Vec<PiModel> {
+fn parse_models(response: Option<&Value>) -> Vec<RpcModel> {
     let Some(array) = success_data_list(response, "models") else {
         return Vec::new();
     };
@@ -244,9 +205,9 @@ fn parse_models(response: Option<&Value>) -> Vec<PiModel> {
 }
 
 /// Parse one `data.models` entry.
-fn parse_model(value: &Value) -> Option<PiModel> {
+fn parse_model(value: &Value) -> Option<RpcModel> {
     let id = value.get("id")?.as_str()?.to_owned();
-    Some(PiModel {
+    Some(RpcModel {
         id,
         name: value
             .get("name")
@@ -277,7 +238,7 @@ fn parse_thinking_levels(response: Option<&Value>) -> Vec<String> {
 }
 
 /// Parse `get_commands`'s `data.commands`; entries without a name are skipped.
-fn parse_commands(response: Option<&Value>) -> Vec<PiCommand> {
+fn parse_commands(response: Option<&Value>) -> Vec<RpcCommand> {
     let Some(array) = success_data_list(response, "commands") else {
         return Vec::new();
     };
@@ -285,9 +246,9 @@ fn parse_commands(response: Option<&Value>) -> Vec<PiCommand> {
 }
 
 /// Parse one `data.commands` entry.
-fn parse_command(value: &Value) -> Option<PiCommand> {
+fn parse_command(value: &Value) -> Option<RpcCommand> {
     let name = value.get("name")?.as_str()?.to_owned();
-    Some(PiCommand {
+    Some(RpcCommand {
         name,
         description: value
             .get("description")

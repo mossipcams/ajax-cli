@@ -1,7 +1,7 @@
-//! Integration tests for [`super::pi_rpc_session`], running the real `node`
+//! Integration tests for [`super::rpc_session`], running the real `node`
 //! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
-//! and asserting that a [`PiRpcSession`] on top of the real handshake turns the
-//! record stream into [`PiStep`]s: prompt and abort runs, guard errors, prompt
+//! and asserting that a [`RpcSession`] on top of the real handshake turns the
+//! record stream into [`RpcStep`]s: prompt and abort runs, guard errors, prompt
 //! rejection, handshake pending records first, and child exit.
 
 use std::path::Path;
@@ -10,9 +10,11 @@ use std::time::Duration;
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 
 use super::client::AcpClientEvent;
-use super::pi_rpc_handshake::{handshake, PiHandshake};
-use super::pi_rpc_process::PiRpcProcess;
-use super::pi_rpc_session::{PiRpcSession, PiStep};
+use super::jsonl_process::JsonlProcess;
+use super::pi_rpc_handshake::handshake;
+use super::pi_rpc_map::map_record;
+use super::rpc_handshake::RpcHandshake;
+use super::rpc_session::{RpcSession, RpcStep};
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -23,19 +25,19 @@ const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
 /// fixture script. Fails loudly (panics) when `node` is missing.
-fn spawn_fake_pi(extra_flags: &[&str]) -> PiRpcProcess {
+fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
         .to_string_lossy()
         .into_owned()];
     args.extend(extra_flags.iter().copied().map(str::to_owned));
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    PiRpcProcess::spawn(Path::new("node"), &args, cwd)
+    JsonlProcess::spawn(Path::new("node"), &args, cwd)
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
 /// Spawn the fake and run the real four-command handshake.
-fn handshaken(extra_flags: &[&str]) -> (PiRpcProcess, PiHandshake) {
+fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     let mut process = spawn_fake_pi(extra_flags);
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
     (process, handshake)
@@ -69,7 +71,7 @@ fn agent_message_chunk_text(events: &[AcpClientEvent]) -> Option<&str> {
 #[test]
 fn prompt_flow_surfaces_events_then_finishes() {
     let (process, handshake) = handshaken(&[]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     assert_eq!(session.session_id(), "fake-pi-rpc-session-1");
     assert!(!session.run_active());
@@ -86,14 +88,14 @@ fn prompt_flow_surfaces_events_then_finishes() {
     // first `message_update` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, PiStep::Events(events) if contains_agent_message_chunk(events)),
+        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
         "first step must carry an AgentMessageChunk: {step:?}"
     );
     assert!(session.run_active(), "run stays active until agent_settled");
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::RunFinished { aborted: false }),
+        matches!(step, RpcStep::RunFinished { aborted: false }),
         "agent_settled must end the run without abort"
     );
     assert!(!session.run_active(), "run is inactive after RunFinished");
@@ -102,7 +104,7 @@ fn prompt_flow_surfaces_events_then_finishes() {
 #[test]
 fn abort_flow_finishes_with_aborted() {
     let (process, handshake) = handshaken(&["--hold-run"]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     session
         .begin_prompt("hello fake pi")
@@ -110,7 +112,7 @@ fn abort_flow_finishes_with_aborted() {
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, PiStep::Events(events) if contains_agent_message_chunk(events)),
+        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
         "first step must carry an AgentMessageChunk: {step:?}"
     );
 
@@ -122,7 +124,7 @@ fn abort_flow_finishes_with_aborted() {
     // `agent_settled` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::RunFinished { aborted: true }),
+        matches!(step, RpcStep::RunFinished { aborted: true }),
         "abort must end the run flagged aborted: {step:?}"
     );
     assert!(!session.run_active());
@@ -131,7 +133,7 @@ fn abort_flow_finishes_with_aborted() {
 #[test]
 fn begin_prompt_twice_while_active_is_an_error() {
     let (process, handshake) = handshaken(&[]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     session
         .begin_prompt("first")
@@ -150,7 +152,7 @@ fn begin_prompt_twice_while_active_is_an_error() {
 #[test]
 fn abort_while_idle_is_an_error() {
     let (process, handshake) = handshaken(&[]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     let error = session.abort().expect_err("abort with no run must fail");
     assert!(
@@ -162,13 +164,13 @@ fn abort_while_idle_is_an_error() {
 #[test]
 fn rejected_prompt_surfaces_pi_error_text() {
     let (process, handshake) = handshaken(&["--reject-prompt"]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     session.begin_prompt("nope").expect("prompt must be sent");
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::PromptRejected(ref detail) if detail == "rejected for test"),
+        matches!(step, RpcStep::PromptRejected(ref detail) if detail == "rejected for test"),
         "prompt response success:false must reject with pi's text: {step:?}"
     );
     assert!(
@@ -180,20 +182,20 @@ fn rejected_prompt_surfaces_pi_error_text() {
 #[test]
 fn handshake_pending_records_are_processed_first() {
     let (process, handshake) = handshaken(&["--interleave-text"]);
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     // No command has been sent: the only record that can arrive is the pending
     // `message_update` captured during the handshake.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, PiStep::Events(events) if agent_message_chunk_text(events) == Some("pending-text")),
+        matches!(&step, RpcStep::Events(events) if agent_message_chunk_text(events) == Some("pending-text")),
         "pending text record must come out first: {step:?}"
     );
 
     // The queue is drained; nothing else is on the wire.
     let step = session.next_step(IDLE_TIMEOUT);
     assert!(
-        matches!(step, PiStep::Idle),
+        matches!(step, RpcStep::Idle),
         "nothing left to report: {step:?}"
     );
 }
@@ -204,11 +206,11 @@ fn closed_child_surfaces_exited() {
 
     // Closing stdin is pi's documented orderly shutdown.
     process.close_stdin();
-    let mut session = PiRpcSession::new(process, handshake);
+    let mut session = RpcSession::new(process, handshake, map_record);
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::Exited),
+        matches!(step, RpcStep::Exited),
         "child exit must surface: {step:?}"
     );
     assert!(!session.run_active());

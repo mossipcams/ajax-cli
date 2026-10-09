@@ -1,15 +1,10 @@
-//! Standalone Pi RPC-mode (`pi --mode rpc`) child-process plumbing for the web
-//! session adapter. This module owns only process lifetime and transport: it
-//! spawns the child with piped stdio (no shell), streams its stdout as strict
-//! LF-delimited JSONL onto an `std::sync::mpsc` channel, keeps a bounded tail
-//! of stderr, and writes id-correlated command lines to stdin. It does not
-//! interpret records (`pi_rpc_map` owns that) and it does not run a connection
-//! loop — the later wiring task builds on this surface.
+//! Transport for a generic child process speaking LF-delimited JSONL over
+//! stdin and stdout.
 //!
 //! Framing rules: stdout splits on LF only; one optional preceding CR is
 //! stripped per line (CRLF children work). U+2028 and U+2029 inside string
 //! values are valid JSONL content and must not split a record. A line that is
-//! not valid JSON is delivered as [`PiRpcRecord::Error`] rather than dropped.
+//! not valid JSON is delivered as [`JsonlRecord::Error`] rather than dropped.
 
 // Not yet reachable from the crate surface: nothing wires this in until the
 // connection-loop task lands, so every public item is dead code for now.
@@ -34,9 +29,9 @@ const DROP_GRACE: Duration = Duration::from_secs(2);
 /// in-flight buffer so a child that never sends an LF cannot grow memory.
 const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
-/// One item delivered by the stdout reader thread of [`PiRpcProcess`].
+/// One item delivered by the stdout reader thread of [`JsonlProcess`].
 #[derive(Debug)]
-pub enum PiRpcRecord {
+pub enum JsonlRecord {
     /// A stdout line that parsed as JSON.
     Record(Value),
     /// A stdout line that was not valid JSON; carries the raw (lossily decoded)
@@ -46,21 +41,21 @@ pub enum PiRpcRecord {
     Exited,
 }
 
-/// A spawned `pi --mode rpc` child with its JSONL transport wiring in place.
-pub struct PiRpcProcess {
+/// A spawned child process with its JSONL transport wiring in place.
+pub struct JsonlProcess {
     // `Option` so `close_stdin` can take (and drop) the handle: `ChildStdin`
     // has no `close()`, dropping it closes the pipe.
     stdin: Option<ChildStdin>,
-    records: mpsc::Receiver<PiRpcRecord>,
+    records: mpsc::Receiver<JsonlRecord>,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
     child: Child,
     next_id: u64,
 }
 
-impl PiRpcProcess {
-    /// Spawn `program` with `args` (for the real pi this is `--mode rpc …`) in
+impl JsonlProcess {
+    /// Spawn `program` with `args` (for example `--mode rpc …` for the Pi RPC child) in
     /// `cwd`, piped on all three std streams and without any shell. Stdout
-    /// starts feeding [`PiRpcRecord`]s as soon as the child writes lines.
+    /// starts feeding [`JsonlRecord`]s as soon as the child writes lines.
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
         let mut child = Command::new(program)
             .args(args)
@@ -74,9 +69,9 @@ impl PiRpcProcess {
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
 
-        let (sender, records) = mpsc::channel::<PiRpcRecord>();
+        let (sender, records) = mpsc::channel::<JsonlRecord>();
         std::thread::Builder::new()
-            .name("pi-rpc-stdout".to_owned())
+            .name("jsonl-stdout".to_owned())
             .spawn(move || {
                 read_stdout_lines(stdout, &sender);
             })?;
@@ -84,7 +79,7 @@ impl PiRpcProcess {
         let stderr_tail: Arc<Mutex<Vec<u8>>> = Arc::default();
         let tail_guard = Arc::clone(&stderr_tail);
         std::thread::Builder::new()
-            .name("pi-rpc-stderr".to_owned())
+            .name("jsonl-stderr".to_owned())
             .spawn(move || {
                 drain_stderr(stderr, &tail_guard);
             })?;
@@ -104,13 +99,13 @@ impl PiRpcProcess {
     }
 
     /// Wait for the next stdout record. A `RecvError` means the reader thread
-    /// finished (EOF already delivered [`PiRpcRecord::Exited`]).
-    pub fn recv(&self) -> Result<PiRpcRecord, mpsc::RecvError> {
+    /// finished (EOF already delivered [`JsonlRecord::Exited`]).
+    pub fn recv(&self) -> Result<JsonlRecord, mpsc::RecvError> {
         self.records.recv()
     }
 
     /// Poll for the next stdout record without blocking.
-    pub fn try_recv(&self) -> Result<PiRpcRecord, mpsc::TryRecvError> {
+    pub fn try_recv(&self) -> Result<JsonlRecord, mpsc::TryRecvError> {
         self.records.try_recv()
     }
 
@@ -138,7 +133,7 @@ impl PiRpcProcess {
         };
 
         self.next_id += 1;
-        let id = format!("ajax-pi-rpc-{}", self.next_id);
+        let id = format!("ajax-rpc-{}", self.next_id);
         // Ours wins: never let the caller clobber the framing keys.
         object.insert("type".to_owned(), Value::String(command_type.to_owned()));
         object.insert("id".to_owned(), Value::String(id.clone()));
@@ -149,19 +144,19 @@ impl PiRpcProcess {
 
         let stdin = match self.stdin.as_mut() {
             Some(stdin) => stdin,
-            None => return Err("pi child stdin is already closed".to_owned()),
+            None => return Err("child stdin is already closed".to_owned()),
         };
         stdin
             .write_all(line.as_bytes())
             .and_then(|()| stdin.flush())
-            .map_err(|error| format!("write to pi child stdin: {error}"))?;
+            .map_err(|error| format!("write to child stdin: {error}"))?;
 
         Ok(id)
     }
 
-    /// Close the child's stdin to request orderly shutdown. The real pi exits
+    /// Close the child's stdin to request orderly shutdown. A well-behaved child exits
     /// cleanly with code 0 once its stdin closes; the reader thread then
-    /// delivers [`PiRpcRecord::Exited`] exactly once. Safe to call more than
+    /// delivers [`JsonlRecord::Exited`] exactly once. Safe to call more than
     /// once: after the first call the stdin handle is simply gone.
     pub fn close_stdin(&mut self) {
         // Dropping the handle closes the pipe; there is no explicit `close()`.
@@ -169,7 +164,7 @@ impl PiRpcProcess {
     }
 }
 
-impl Drop for PiRpcProcess {
+impl Drop for JsonlProcess {
     fn drop(&mut self) {
         // Close stdin (idempotent), give a child that is already exiting a
         // brief grace period, then kill. `Child::wait` reaps the process in
@@ -195,9 +190,9 @@ impl Drop for PiRpcProcess {
 }
 
 /// Stream stdout as LF-delimited JSONL onto `sender`, delivering exactly one
-/// [`PiRpcRecord::Exited`] at EOF, then dropping the sender so receivers see
+/// [`JsonlRecord::Exited`] at EOF, then dropping the sender so receivers see
 /// a disconnected channel. Line length is bounded by [`MAX_RECORD_BYTES`].
-fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<PiRpcRecord>) {
+fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<JsonlRecord>) {
     read_stdout_lines_bounded(stdout, sender, MAX_RECORD_BYTES);
 }
 
@@ -207,12 +202,12 @@ fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<PiRpcRecord
 /// The bound is applied *on the read*: each line is read through
 /// `take(max_bytes + 1)`, so the buffer can never grow past one byte more than
 /// the limit. A line with no LF within the first `max_bytes + 1` bytes yields
-/// exactly one [`PiRpcRecord::Error`]; the remainder of that line is drained
+/// exactly one [`JsonlRecord::Error`]; the remainder of that line is drained
 /// from the buffered reader without being buffered, so normal parsing resumes
 /// on the next line.
 pub(super) fn read_stdout_lines_bounded(
     stdout: impl Read + Send,
-    sender: &mpsc::Sender<PiRpcRecord>,
+    sender: &mpsc::Sender<JsonlRecord>,
     max_bytes: usize,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -242,11 +237,11 @@ pub(super) fn read_stdout_lines_bounded(
                 let text = String::from_utf8_lossy(line);
 
                 let record = match serde_json::from_str::<Value>(&text) {
-                    Ok(value) => PiRpcRecord::Record(value),
+                    Ok(value) => JsonlRecord::Record(value),
                     Err(_) => {
                         // Non-JSON output is a protocol anomaly, not data loss:
                         // deliver it as an Error record for the caller to judge.
-                        PiRpcRecord::Error(text.into_owned())
+                        JsonlRecord::Error(text.into_owned())
                     }
                 };
                 if sender.send(record).is_err() {
@@ -257,8 +252,8 @@ pub(super) fn read_stdout_lines_bounded(
                 // Over-sized: no LF within the first `max_bytes + 1` bytes.
                 // Deliver exactly one Error, then discard the rest of this
                 // line without buffering it, so the buffer never grows.
-                let oversized = format!("pi rpc line exceeds {max_bytes} bytes; discarded");
-                if sender.send(PiRpcRecord::Error(oversized)).is_err() {
+                let oversized = format!("jsonl line exceeds {max_bytes} bytes; discarded");
+                if sender.send(JsonlRecord::Error(oversized)).is_err() {
                     break; // receiver gone: stop draining this pipe
                 }
                 let drained_to_eof = loop {
@@ -287,7 +282,7 @@ pub(super) fn read_stdout_lines_bounded(
 
     // EOF delivers Exited exactly once; if the receiver is already gone this
     // send fails and that is fine.
-    let _ = sender.send(PiRpcRecord::Exited);
+    let _ = sender.send(JsonlRecord::Exited);
 }
 
 /// Drain the child's stderr into `tail`, retaining only the last

@@ -1,7 +1,7 @@
-//! Integration tests for [`PiRpcSession::request`], running the real `node`
+//! Integration tests for [`RpcSession::request`], running the real `node`
 //! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
 //! and asserting that a one-shot request correlates its response by id, keeps
-//! every unrelated record queued for the next [`PiStep`] call, and surfaces
+//! every unrelated record queued for the next [`RpcStep`] call, and surfaces
 //! failures (rejected model, silent command, child exit).
 
 use std::path::Path;
@@ -11,9 +11,10 @@ use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 use serde_json::json;
 
 use super::client::AcpClientEvent;
+use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
-use super::pi_rpc_process::PiRpcProcess;
-use super::pi_rpc_session::{PiRpcSession, PiStep};
+use super::pi_rpc_map::map_record;
+use super::rpc_session::{RpcSession, RpcStep};
 
 /// Generous bound: node startup plus one scripted record burst.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -26,22 +27,22 @@ const SILENT_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
 /// fixture script. Fails loudly (panics) when `node` is missing.
-fn spawn_fake_pi(extra_flags: &[&str]) -> PiRpcProcess {
+fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
         .to_string_lossy()
         .into_owned()];
     args.extend(extra_flags.iter().copied().map(str::to_owned));
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    PiRpcProcess::spawn(Path::new("node"), &args, cwd)
+    JsonlProcess::spawn(Path::new("node"), &args, cwd)
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
 /// Spawn the fake, run the real four-command handshake, and build a session.
-fn handshaken_session(extra_flags: &[&str]) -> PiRpcSession {
+fn handshaken_session(extra_flags: &[&str]) -> RpcSession {
     let mut process = spawn_fake_pi(extra_flags);
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
-    PiRpcSession::new(process, handshake)
+    RpcSession::new(process, handshake, map_record)
 }
 
 #[test]
@@ -123,10 +124,10 @@ fn request_preserves_interleaved_events_for_next_step() {
     // nothing may be dropped, and they surface in order.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::Events(_)),
+        matches!(step, RpcStep::Events(_)),
         "events must not be dropped: {step:?}"
     );
-    if let PiStep::Events(events) = &step {
+    if let RpcStep::Events(events) = &step {
         assert_eq!(
             events.len(),
             1,
@@ -169,7 +170,7 @@ fn request_after_child_exit_errors_and_next_step_exits_once() {
 
     // Closing stdin is pi's documented orderly shutdown.
     process.close_stdin();
-    let mut session = PiRpcSession::new(process, handshake_result);
+    let mut session = RpcSession::new(process, handshake_result, map_record);
 
     let err = session
         .request("get_session_stats", json!({}), REQUEST_TIMEOUT)
@@ -183,12 +184,12 @@ fn request_after_child_exit_errors_and_next_step_exits_once() {
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(step, PiStep::Exited),
+        matches!(step, RpcStep::Exited),
         "first step after exit: {step:?}"
     );
     let step2 = session.next_step(SILENT_TIMEOUT);
     assert!(
-        matches!(step2, PiStep::Idle),
+        matches!(step2, RpcStep::Idle),
         "exit must be reported exactly once: {step2:?}"
     );
 }

@@ -1,7 +1,7 @@
 //! Integration tests for the Claude Agent SDK sidecar
 //! (`crates/ajax-web/sidecar/claude_sdk_sidecar.mjs`), running the real `node`
 //! child behind the fake SDK fixture (`crates/ajax-web/tests/fixtures/
-//! fake_claude_sdk.mjs`) through the existing [`PiRpcProcess`] JSONL framing:
+//! fake_claude_sdk.mjs`) through the existing [`JsonlProcess`] JSONL framing:
 //! init/session ids, prompt/abort/tool/model/effort/context flows, guard
 //! errors, U+2028 line framing, and shutdown/exit.
 
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::pi_rpc_process::{PiRpcProcess, PiRpcRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
 
 /// Generous per-step bound: node startup plus one scripted turn.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -20,7 +20,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Spawn the sidecar under `node`, pointing it at the fake SDK fixture.
-fn spawn_sidecar() -> PiRpcProcess {
+fn spawn_sidecar() -> JsonlProcess {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let args: Vec<String> = vec![
         manifest
@@ -33,14 +33,14 @@ fn spawn_sidecar() -> PiRpcProcess {
             .to_string_lossy()
             .into_owned(),
     ];
-    PiRpcProcess::spawn(Path::new("node"), &args, manifest)
+    JsonlProcess::spawn(Path::new("node"), &args, manifest)
         .expect("claude sdk sidecar must spawn (is node installed?)")
 }
 
 /// A spawned sidecar plus every record drained from it so far, so later
 /// assertions can search records that earlier waits already consumed.
 struct Sidecar {
-    process: PiRpcProcess,
+    process: JsonlProcess,
     records: Vec<Value>,
 }
 
@@ -64,11 +64,11 @@ impl Sidecar {
         let deadline = Instant::now() + STEP_TIMEOUT;
         while !predicate(&self.records) {
             match self.process.try_recv() {
-                Ok(PiRpcRecord::Record(value)) => self.records.push(value),
-                Ok(PiRpcRecord::Error(text)) => {
+                Ok(JsonlRecord::Record(value)) => self.records.push(value),
+                Ok(JsonlRecord::Error(text)) => {
                     panic!("sidecar protocol error while waiting for {label}: {text}");
                 }
-                Ok(PiRpcRecord::Exited) => panic!(
+                Ok(JsonlRecord::Exited) => panic!(
                     "sidecar exited while waiting for {label}; stderr: {}",
                     self.process.stderr_tail()
                 ),
@@ -445,9 +445,9 @@ fn shutdown_responds_then_child_exits_once() {
     let mut exited = 0;
     loop {
         match sidecar.process.try_recv() {
-            Ok(PiRpcRecord::Record(_)) => {}
-            Ok(PiRpcRecord::Error(text)) => panic!("protocol error after shutdown: {text}"),
-            Ok(PiRpcRecord::Exited) => exited += 1,
+            Ok(JsonlRecord::Record(_)) => {}
+            Ok(JsonlRecord::Error(text)) => panic!("protocol error after shutdown: {text}"),
+            Ok(JsonlRecord::Exited) => exited += 1,
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => break,
         }

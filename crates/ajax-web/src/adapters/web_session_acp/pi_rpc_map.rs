@@ -3,7 +3,7 @@
 //!
 //! The connection loop that reads the JSONL stream (a later task) calls
 //! [`map_record`] once per parsed record and folds the returned
-//! [`PiRpcMapping`] values: each emitted event is forwarded to the session in
+//! [`RpcMapping`] values: each emitted event is forwarded to the session in
 //! order, and `finished` / `ended_aborted` track whether the run settled and
 //! whether it ended aborted. Records that carry no adapter meaning (`response`,
 //! `extension_ui_request`, unknown types) map to an empty result and never
@@ -20,16 +20,7 @@ use agent_client_protocol::schema::v1::{
 use serde_json::Value;
 
 use super::client::AcpClientEvent;
-
-/// What one Pi RPC stdout record means for the web session adapter.
-pub struct PiRpcMapping {
-    /// Adapter events to forward, in order. Empty for non-mappable records.
-    pub events: Vec<AcpClientEvent>,
-    /// The agent run has settled (`agent_settled` record).
-    pub finished: bool,
-    /// The run was reported aborted (`message.stopReason == "aborted"`).
-    pub ended_aborted: bool,
-}
+use super::rpc_session::RpcMapping;
 
 /// Map one parsed Pi RPC stdout record to adapter events and run state.
 ///
@@ -37,7 +28,7 @@ pub struct PiRpcMapping {
 /// notification carries it. The mapping is total: any record — including
 /// `extension_ui_request` (`setStatus`, `setWidget`) and unknown types —
 /// returns an empty result instead of panicking.
-pub fn map_record(record: &Value, session_id: &str) -> PiRpcMapping {
+pub fn map_record(record: &Value, session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     let finished = match record.get("type").and_then(Value::as_str).unwrap_or("") {
         "message_update" => map_message_update(record, session_id, &mut events),
@@ -71,7 +62,7 @@ pub fn map_record(record: &Value, session_id: &str) -> PiRpcMapping {
         // unknown record types produce no events.
         _ => false,
     };
-    PiRpcMapping {
+    RpcMapping {
         events,
         finished,
         ended_aborted: record_reports_aborted(record),
