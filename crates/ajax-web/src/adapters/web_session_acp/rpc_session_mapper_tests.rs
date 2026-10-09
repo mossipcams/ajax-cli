@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::rpc_handshake::RpcHandshake;
@@ -78,4 +79,45 @@ fn empty_mapper_keeps_run_active() {
 fn provider_mappers_match_record_mapper_type() {
     let _: RecordMapper = super::claude_sdk_map::map_sdk_message;
     let _: RecordMapper = super::pi_rpc_map::map_record;
+}
+
+fn events_and_finish_on_agent_start(record: &Value, _id: &str) -> RpcMapping {
+    if record["type"] == "agent_start" {
+        RpcMapping {
+            events: vec![AcpClientEvent::Error("usage-and-finish".to_string())],
+            finished: true,
+            ended_aborted: false,
+        }
+    } else {
+        RpcMapping {
+            events: Vec::new(),
+            finished: false,
+            ended_aborted: false,
+        }
+    }
+}
+
+#[test]
+fn finishing_record_with_events_yields_events_then_finish() {
+    let (process, handshake) = handshaken(&[]);
+    let mut session = RpcSession::new(process, handshake, events_and_finish_on_agent_start);
+    session.begin_prompt("hello").expect("prompt");
+
+    match session.next_step(Duration::from_secs(10)) {
+        RpcStep::Events(events) => {
+            assert_eq!(events.len(), 1);
+            match &events[0] {
+                AcpClientEvent::Error(text) => assert_eq!(text, "usage-and-finish"),
+                other => panic!("expected Error event, got {other:?}"),
+            }
+        }
+        other => panic!("expected Events step first, got {other:?}"),
+    }
+    assert!(session.run_active());
+
+    assert!(matches!(
+        session.next_step(Duration::from_secs(10)),
+        RpcStep::RunFinished { aborted: false }
+    ));
+    assert!(!session.run_active());
 }

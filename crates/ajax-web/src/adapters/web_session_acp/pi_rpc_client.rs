@@ -2,21 +2,21 @@
 //! Thin client over the Pi RPC building blocks, exposing the prompt/cancel/event/shutdown
 //! shape the web session slice uses from `AcpStdioClient`.
 
-use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ResourceLink, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionNotification, SessionUpdate, TextContent, UsageUpdate,
+    ContentBlock, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+    SessionNotification, SessionUpdate, UsageUpdate,
 };
 
 use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
-use super::rpc_session::{RpcSession, RpcStep};
+use super::rpc_client::RpcClientCore;
+use super::rpc_session::RpcSession;
 
 /// Timeout for the `get_session_stats` request sent before a prompt finish.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -24,22 +24,9 @@ const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
 /// A thin client wrapping the Pi RPC process + session behind a `Mutex` so that
 /// event and prompt methods can all take `&self`.
 pub struct PiRpcClient {
-    inner: Mutex<Inner>,
-}
-
-struct Inner {
-    session: Option<RpcSession>,
-    /// Remainder of a `RpcStep::Events` batch not yet consumed by callers.
-    event_queue: VecDeque<AcpClientEvent>,
-    /// The request id assigned by the most recent `begin_prompt`, cleared on finish.
-    active_request_id: Option<u64>,
-    /// Monotonically increasing counter for request ids (starts at 1).
-    next_request_id: u64,
-    /// True once `Exited` was observed or `shutdown` removed the session.
-    host_exited: bool,
-    /// Model / thinking-level state copied out of the handshake (boxed: the
-    /// client sits inside an enum whose variants must stay size-comparable).
-    catalog: Box<Catalog>,
+    core: RpcClientCore,
+    /// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).
+    catalog: Box<Mutex<Catalog>>,
 }
 
 /// Model and thinking-level state snapshotted from the Pi handshake and kept
@@ -85,6 +72,22 @@ fn current_level_value(levels: &[String], current_level: Option<&str>) -> String
         .or_else(|| levels.first())
         .expect("levels was checked non-empty")
         .clone()
+}
+
+fn pi_usage_hook(session: &mut RpcSession) -> Option<AcpClientEvent> {
+    let data = session
+        .request("get_session_stats", serde_json::json!({}), USAGE_TIMEOUT)
+        .ok()?;
+    let context = data.get("contextUsage")?;
+    let tokens = context.get("tokens")?.as_u64()?;
+    let window = context.get("contextWindow")?.as_u64()?;
+    let session_id = session.session_id().to_string();
+    Some(AcpClientEvent::SessionUpdate(Box::new(
+        SessionNotification::new(
+            session_id,
+            SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)),
+        ),
+    )))
 }
 
 impl PiRpcClient {
@@ -134,31 +137,21 @@ impl PiRpcClient {
         let session = RpcSession::new(process, hs, map_record);
 
         Ok(PiRpcClient {
-            inner: Mutex::new(Inner {
-                session: Some(session),
-                event_queue: VecDeque::new(),
-                active_request_id: None,
-                next_request_id: 1,
-                host_exited: false,
-                catalog: Box::new(Catalog {
-                    models,
-                    thinking_levels,
-                    current_model_id,
-                    current_model_provider,
-                    current_thinking_level,
-                }),
-            }),
+            core: RpcClientCore::new(session, Some(pi_usage_hook)),
+            catalog: Box::new(Mutex::new(Catalog {
+                models,
+                thinking_levels,
+                current_model_id,
+                current_model_provider,
+                current_thinking_level,
+            })),
         })
     }
 
     /// The Pi session id assigned during handshake. Returns an empty string if the
     /// session has been shut down.
     pub fn session_id(&self) -> String {
-        let g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        g.session
-            .as_ref()
-            .map(|s| s.session_id().to_string())
-            .unwrap_or_default()
+        self.core.session_id()
     }
 
     /// The Pi model and thinking-level options in the ACP config-option shape.
@@ -167,8 +160,7 @@ impl PiRpcClient {
     /// the thinking option (id "thought_level") when no levels were reported.
     /// Both reflect the latest successful `set_model` / `set_thinking_level`.
     pub fn config_options(&self) -> Vec<SessionConfigOption> {
-        let g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        let c = &g.catalog;
+        let c = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         let mut options = Vec::new();
 
         if !c.models.is_empty() {
@@ -212,14 +204,11 @@ impl PiRpcClient {
     /// The currently applied Pi model as "provider/id", or an empty string when
     /// there is no model catalog or no current model.
     pub fn applied_model(&self) -> String {
-        let g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        if g.catalog.models.is_empty() {
+        let g = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
+        if g.models.is_empty() {
             return String::new();
         }
-        match (
-            &g.catalog.current_model_id,
-            &g.catalog.current_model_provider,
-        ) {
+        match (&g.current_model_id, &g.current_model_provider) {
             (Some(id), Some(provider)) => format!("{provider}/{id}"),
             _ => String::new(),
         }
@@ -232,37 +221,33 @@ impl PiRpcClient {
             return Err("model must be provider/id".to_string());
         };
 
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        let session = g
-            .session
-            .as_mut()
-            .ok_or_else(|| "session not available (shut down)".to_string())?;
-        session.request(
-            "set_model",
-            serde_json::json!({ "provider": provider, "modelId": model_id }),
-            Duration::from_secs(10),
-        )?;
+        self.core.with_session(|s| {
+            s.request(
+                "set_model",
+                serde_json::json!({ "provider": provider, "modelId": model_id }),
+                Duration::from_secs(10),
+            )
+        })??;
+        let mut g = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
 
-        g.catalog.current_model_id = Some(model_id.to_string());
-        g.catalog.current_model_provider = Some(provider.to_string());
+        g.current_model_id = Some(model_id.to_string());
+        g.current_model_provider = Some(provider.to_string());
         Ok(())
     }
 
     /// Apply a thinking-level selection through Pi's `set_thinking_level`
     /// command, storing it as the current level on success.
     pub fn set_thinking_level(&self, level: &str) -> Result<(), String> {
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        let session = g
-            .session
-            .as_mut()
-            .ok_or_else(|| "session not available (shut down)".to_string())?;
-        session.request(
-            "set_thinking_level",
-            serde_json::json!({ "level": level }),
-            Duration::from_secs(10),
-        )?;
+        self.core.with_session(|s| {
+            s.request(
+                "set_thinking_level",
+                serde_json::json!({ "level": level }),
+                Duration::from_secs(10),
+            )
+        })??;
+        let mut g = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
 
-        g.catalog.current_thinking_level = Some(level.to_string());
+        g.current_thinking_level = Some(level.to_string());
         Ok(())
     }
 
@@ -271,153 +256,38 @@ impl PiRpcClient {
     /// Text blocks are joined with `"\n\n"`; ResourceLink blocks contribute their URI as a line;
     /// all other block kinds produce a short placeholder. Returns the request id for tracking.
     pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        let mut parts: Vec<String> = Vec::new();
-
-        for block in blocks {
-            match block {
-                ContentBlock::Text(tc @ TextContent { .. }) => {
-                    parts.push(tc.text.clone());
-                }
-                ContentBlock::ResourceLink(rl @ ResourceLink { .. }) => {
-                    parts.push(rl.uri.clone());
-                }
-                // ponytail: images are not forwarded yet — only a placeholder is emitted
-                _ => {
-                    parts.push("[image omitted]".to_string());
-                }
-            }
-        }
-
-        let message = parts.join("\n\n");
-        if message.is_empty() {
-            return Err("empty prompt content: no blocks supplied".to_string());
-        }
-
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        let session = g
-            .session
-            .as_mut()
-            .ok_or_else(|| "session not available (shut down)".to_string())?;
-        session
-            .begin_prompt(&message)
-            .map_err(|e| format!("begin_prompt failed: {e}"))?;
-
-        let id = g.next_request_id;
-        g.next_request_id += 1;
-        g.active_request_id = Some(id);
-
-        Ok(id)
+        self.core.begin_prompt(blocks)
     }
 
     /// Abort the active prompt run. Returns `Err` when no run is in flight.
     pub fn cancel(&self) -> Result<(), String> {
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        let session = g
-            .session
-            .as_mut()
-            .ok_or_else(|| "session not available (shut down)".to_string())?;
-        session.abort().map_err(|e| format!("cancel failed: {e}"))
+        self.core.cancel()
     }
 
     /// True while a prompt run is active.
     pub fn prompt_in_flight(&self) -> bool {
-        let g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        g.session.as_ref().is_some_and(|s| s.run_active())
+        self.core.prompt_in_flight()
     }
 
     /// Non-blocking: returns the next queued event, or `None` if the queue is empty and no
     /// new step is immediately available. Uses `Duration::ZERO`.
     pub fn poll_event(&self) -> Option<AcpClientEvent> {
-        self.wait_event(Duration::ZERO)
+        self.core.poll_event()
     }
 
     /// Block up to `timeout` for the next event. Returns `None` on timeout with no events.
     pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-
-        // Drain the remainder of a previous Events batch first.
-        if let Some(ev) = g.event_queue.pop_front() {
-            return Some(ev);
-        }
-
-        let session = g.session.as_mut()?;
-
-        match session.next_step(timeout) {
-            RpcStep::Events(evs) => {
-                for ev in evs {
-                    g.event_queue.push_back(ev);
-                }
-                g.event_queue.pop_front()
-            }
-            RpcStep::RunFinished { aborted } => {
-                let id = g.active_request_id.take().unwrap_or(0);
-                let stop_reason = if aborted { "cancelled" } else { "end_turn" };
-
-                // Ask Pi for the final context usage ahead of the finish, the
-                // way ACP agents report usage before the request result.
-                let usage = g.session.as_mut().and_then(|session| {
-                    let data = session
-                        .request("get_session_stats", serde_json::json!({}), USAGE_TIMEOUT)
-                        .ok()?;
-                    let context = data.get("contextUsage")?;
-                    let tokens = context.get("tokens")?.as_u64()?;
-                    let window = context.get("contextWindow")?.as_u64()?;
-                    let session_id = session.session_id().to_string();
-                    Some(AcpClientEvent::SessionUpdate(Box::new(
-                        SessionNotification::new(
-                            session_id,
-                            SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)),
-                        ),
-                    )))
-                });
-
-                let finished = AcpClientEvent::RequestFinished {
-                    id,
-                    method: "session/prompt",
-                    result: Ok(serde_json::json!({ "stopReason": stop_reason })),
-                };
-
-                match usage {
-                    Some(usage_event) => {
-                        g.event_queue.push_back(finished);
-                        Some(usage_event)
-                    }
-                    None => Some(finished),
-                }
-            }
-            RpcStep::PromptRejected(e) => {
-                let _id = g.active_request_id.take();
-                Some(AcpClientEvent::RequestFinished {
-                    id: _id.unwrap_or(0),
-                    method: "session/prompt",
-                    result: Err(e),
-                })
-            }
-            RpcStep::Error(t) => Some(AcpClientEvent::Error(t)),
-            RpcStep::Exited => {
-                g.host_exited = true;
-                Some(AcpClientEvent::Exited)
-            }
-            RpcStep::Idle => None,
-        }
+        self.core.wait_event(timeout)
     }
 
     /// Take the session out of its `Option`, dropping it (which closes stdin and reaps the
     /// child). Returns the session id on first call, `None` thereafter.
     pub fn shutdown(&self) -> Option<String> {
-        let mut g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        if let Some(session) = g.session.take() {
-            let id = session.session_id().to_string();
-            g.host_exited = true;
-            Some(id)
-        } else {
-            None
-        }
+        self.core.shutdown()
     }
 
     /// True once `Exited` was observed from the event stream or `shutdown` removed the session.
     pub fn host_exited(&self) -> bool {
-        let g = self.inner.lock().expect("pi_rpc_client mutex poisoned");
-        g.host_exited || g.session.is_none()
+        self.core.host_exited()
     }
 }

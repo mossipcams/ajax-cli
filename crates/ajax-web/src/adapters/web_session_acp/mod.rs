@@ -1,6 +1,7 @@
 mod apply_model;
 mod available_command_descriptors;
 mod catalog;
+mod claude_sdk_client;
 mod claude_sdk_map;
 mod client;
 mod config_option_descriptors;
@@ -10,6 +11,7 @@ mod pi_rpc_client;
 mod pi_rpc_handshake;
 mod pi_rpc_map;
 mod prompt_capability_descriptors;
+mod rpc_client;
 mod rpc_handshake;
 mod rpc_session;
 mod sdk_connection;
@@ -32,6 +34,8 @@ mod apply_model_tests;
 #[cfg(test)]
 mod claude_sidecar_tests;
 
+#[cfg(test)]
+mod claude_sdk_client_tests;
 #[cfg(test)]
 mod claude_sdk_map_tests;
 

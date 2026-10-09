@@ -74,6 +74,8 @@ pub struct RpcSession {
     /// Set when `Exited` was read while a [`Self::request`] was in flight; the
     /// next [`Self::next_step`] reports it exactly once and clears this flag.
     exited: bool,
+    /// Set when a finishing record also carried events; the [`RpcStep::RunFinished`] it implies is delivered on the next call, after those events.
+    deferred_finish: Option<bool>,
 }
 
 impl RpcSession {
@@ -90,6 +92,7 @@ impl RpcSession {
             run_active: false,
             ended_aborted: false,
             exited: false,
+            deferred_finish: None,
         }
     }
 
@@ -211,6 +214,14 @@ impl RpcSession {
             return RpcStep::Exited;
         }
 
+        // A deferred finish is delivered before any new record is read.
+        if let Some(aborted) = self.deferred_finish.take() {
+            self.run_active = false;
+            self.prompt_id = None;
+            self.ended_aborted = false;
+            return RpcStep::RunFinished { aborted };
+        }
+
         let deadline = Instant::now() + timeout;
 
         loop {
@@ -256,11 +267,17 @@ impl RpcSession {
         }
         if mapping.finished {
             let aborted = self.ended_aborted;
-            // The run has settled: clear it so a later prompt starts fresh.
-            self.run_active = false;
-            self.prompt_id = None;
-            self.ended_aborted = false;
-            return Some(RpcStep::RunFinished { aborted });
+            if mapping.events.is_empty() {
+                // The run has settled: clear it so a later prompt starts fresh.
+                self.run_active = false;
+                self.prompt_id = None;
+                self.ended_aborted = false;
+                return Some(RpcStep::RunFinished { aborted });
+            }
+            // A finishing record that also carries events surfaces the
+            // events first; the finish is delivered on the next call.
+            self.deferred_finish = Some(aborted);
+            return Some(RpcStep::Events(mapping.events));
         }
         if !mapping.events.is_empty() {
             return Some(RpcStep::Events(mapping.events));
