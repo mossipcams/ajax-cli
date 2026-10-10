@@ -1,0 +1,35 @@
+{
+  "task_id": "sdk-rpc-slice3e",
+  "agent": "pi",
+  "model": "opencode-go/glm-5.2",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_usage_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/session_client_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/session_client_spawn_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "In PiRpcClient::wait_event, the PiStep::RunFinished arm first calls `session.request(\"get_session_stats\", json!({}), USAGE_TIMEOUT)` with a new `const USAGE_TIMEOUT: Duration = Duration::from_secs(2)`. If it returns Ok(data) with unsigned-integer data.contextUsage.tokens AND data.contextUsage.contextWindow, build the usage event `AcpClientEvent::SessionUpdate(Box::new(SessionNotification::new(session_id, SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)))))`, push the RequestFinished event (built exactly as before, still taking active_request_id) onto the BACK of event_queue, and RETURN the usage event now. If the request fails or the numbers are missing/null, return RequestFinished directly exactly as today",
+    "Order guarantee: the consumer sees ...message events, then UsageUpdate, then RequestFinished (usage before the finish, the way ACP agents report it). An aborted run also reports usage the same way; a rejected prompt (PromptRejected) does NOT request stats",
+    "pi_rpc_client_usage_tests.rs (declared in mod.rs as its own `#[cfg(test)]` line directly followed by `mod pi_rpc_client_usage_tests;`, inserted between existing pairs) tests: prompt flow event order is AgentMessageChunk, UsageUpdate{used 10362, size 1000000}, RequestFinished(end_turn); with `--silent-stats` the RequestFinished still arrives (no UsageUpdate before it) and the wait that covers the 2s timeout uses generous (10s) per-event waits; an aborted run (`--hold-run`, cancel) yields UsageUpdate then RequestFinished(cancelled); `--reject-prompt` yields RequestFinished(Err) with NO UsageUpdate",
+    "Existing tests: only the ones whose event sequence now includes the usage event are edited, minimally, as described in the facts; the full `cargo nextest run -p ajax-web` has 0 failures; no assertion deleted or loosened beyond allowing the one UsageUpdate; list every edited test in CONCERNS",
+    "pi_rpc_session.rs, the fake, all other source files and tests are NOT edited; production behavior elsewhere unchanged; Rust files under 600 lines; `cargo check --workspace --all-targets` passes"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo check --workspace --all-targets",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web"
+  ],
+  "fallback": "CODEX",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.MnTDYKFm6l",
+  "user_request": "Emit a context-usage update from Pi's get_session_stats before each finished prompt (approved by the user, who also approved minimally editing the existing event-order tests it affects).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase or any command that changes the index, the stash stack, or other worktrees' state; compare against baselines by reading files. Do NOT touch crates/ajax-web/web/. DO NOT EXPLORE: read ONLY pi_rpc_client.rs, the first 45 lines of pi_rpc_client_tests.rs, mod.rs, and the specific failing tests the suite reports after your change. FIRST substantive action: edit pi_rpc_client.rs. When you edit mod.rs every `mod *_tests;` line must stay directly preceded by its own #[cfg(test)]; re-read after editing. Then run the suite, fix the event-order tests minimally, add the usage tests, run all verify commands, confirm the new usage tests are LISTED and pass. Do not commit.\n\nFACTS (verified; do not re-derive by reading the repo). All files are in crates/ajax-web/src/adapters/web_session_acp/.\n\npi_rpc_client.rs (YOU EDIT): `PiRpcClient { inner: Mutex<Inner> }`; `Inner { session: Option<PiRpcSession>, event_queue: VecDeque<AcpClientEvent>, active_request_id: Option<u64>, ... }`. `wait_event(&self, timeout)` locks inner, pops event_queue first, then calls `session.next_step(timeout)` and maps `PiStep`; its `PiStep::RunFinished { aborted }` arm currently builds and RETURNS `AcpClientEvent::RequestFinished { id, method: \"session/prompt\", result: Ok(json!({\"stopReason\": ..})) }` (taking active_request_id).\n\nPiRpcSession (pi_rpc_session.rs, do not edit): `request(&mut self, command_type: &str, fields: serde_json::Value, timeout: Duration) -> Result<serde_json::Value, String>` returns the response `data`; `session_id(&self) -> &str`.\n\nget_session_stats response data (Pi docs): { ..., \"tokens\": {\"input\":..,\"output\":..,\"total\":10362}, \"cost\": 0.0035, \"contextUsage\": {\"tokens\": 10362, \"contextWindow\": 1000000, \"percent\": 1.0362} }. `contextUsage` can be absent, and `tokens` / `percent` can be null right after compaction.\n\nACP schema (agent_client_protocol::schema::v1): `UsageUpdate::new(used: u64, size: u64)`, `SessionUpdate::UsageUpdate(UsageUpdate)`, `SessionNotification::new(session_id: String, update: SessionUpdate)`; wrap as `AcpClientEvent::SessionUpdate(Box::new(notification))` (AcpClientEvent from super::client).\n\nfake_pi_rpc.js already answers get_session_stats (tokens 10362, contextWindow 1000000) and has `--silent-stats` (never answers it), `--hold-run`, `--reject-prompt`. Tests spawn it via PiRpcClient::spawn(&fixture_path, &extra_args, cwd, None, Duration::from_secs(10)); see pi_rpc_client_tests.rs lines 1-45 for the helper.\n\nEXISTING TESTS THAT SEE THE NEW EVENT (you may edit ONLY these, minimally): pi_rpc_client_tests.rs::prompt_flow_streams_chunk_then_finishes_end_turn and any other test in pi_rpc_client_tests.rs, session_client_tests.rs or session_client_spawn_tests.rs that now observes a UsageUpdate between the last message chunk and RequestFinished (find them by running the suite after your change). The edit for each is: allow ONE `AcpClientEvent::SessionUpdate` whose update is `SessionUpdate::UsageUpdate(_)` to appear before RequestFinished (e.g. skip it in the event loop) and, where the test asserts the exact event list, include it. Do NOT delete or loosen any other assertion. List every edited test by name in CONCERNS.\n"
+}

@@ -1,0 +1,32 @@
+{
+  "task_id": "sdk-rpc-commit1",
+  "agent": "pi",
+  "model": "opencode-go/glm-5.2",
+  "risk": "low",
+  "allowed_files": [
+    "crates/",
+    "docs/",
+    "README.md",
+    "architecture.md",
+    ".planning/agent-plans/"
+  ],
+  "acceptance": [
+    "Exactly ONE local commit is created on the current branch (ajax/claude-agent-sdk) containing ONLY the paths listed below (git add each path explicitly; `git add -A`, `git add .` and `git commit -a` are forbidden). The pre-existing untracked directories .planning/packets/ and .planning/router-runs/ must NOT be staged",
+    "The commit message is exactly the message given below (subject on the first line, a blank line, then the body). It contains NO Co-Authored-By line, NO 'Generated with' line and no mention of Claude, Anthropic, Cursor or AI assistance",
+    "The repo's own hooks run and pass: do NOT use --no-verify. If the pre-commit hook fails, report the exact output and STOP (do not work around it; do not edit code). No push, no PR, no amend of existing commits, no branch changes",
+    "After committing, `git status --porcelain` must show no remaining modified or untracked files other than .planning/packets/ and .planning/router-runs/, and `git log -1 --stat` is reported in the DELEGATE_REPORT DETAILS"
+  ],
+  "verify": [
+    "git log -1 --format=%s%n%b",
+    "git show --stat --oneline -1",
+    "git status --porcelain"
+  ],
+  "fallback": "CODEX",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.4Xq8VUzJLj",
+  "user_request": "Create one local checkpoint commit of the Pi RPC work (user explicitly approved: local commit only, hooks on, no push, no PR, no co-author lines).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit --amend, git commit -a, git add -A or git add . . Do NOT touch crates/ajax-web/web/ and do NOT edit any file. Run `git add -- <path>` for EACH of these paths (and only these):\nREADME.md\ncrates/ajax-cli/tests/smoke_user_flows/main.rs\ncrates/ajax-core/src/adapters.rs\ncrates/ajax-core/src/adapters/agent.rs\ncrates/ajax-core/src/adapters/environment.rs\ncrates/ajax-core/src/commands/doctor.rs\ncrates/ajax-core/src/commands/tests/suite_1.rs\ncrates/ajax-web/src/adapters/web_session_acp/catalog.rs\ncrates/ajax-web/src/adapters/web_session_acp/mod.rs\ncrates/ajax-web/src/slices/web_session/acp_drain.rs\ncrates/ajax-web/src/slices/web_session/acp_slot.rs\ncrates/ajax-web/src/slices/web_session/task_session_replacement.rs\ncrates/ajax-web/src/slices/web_session/task_session_spawn.rs\ndocs/architecture/web-cockpit.md\ndocs/architecture/web-session-behavior.md\n.planning/agent-plans/claude-agent-sdk-pi-rpc.md\ncrates/ajax-web/src/adapters/web_session_acp/catalog_pi_rpc_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_client.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_options_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_usage_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_handshake.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_handshake_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_map.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_map_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_process.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_process_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_session.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_session_request_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_session_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/session_client.rs\ncrates/ajax-web/src/adapters/web_session_acp/session_client_pin_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/session_client_spawn_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/session_client_tests.rs\ncrates/ajax-web/tests/fixtures/fake_pi_rpc.js\ncrates/ajax-web/tests/fixtures/pi_rpc\n\nThen run `git status --porcelain` and confirm the staged set equals that list (plus nothing under .planning/packets or .planning/router-runs). Then commit with the message file approach: write the message below to a file INSIDE the repo working tree is NOT allowed, so pass it with multiple -m flags: first -m the subject line, second -m the body (keep its line breaks). The message is:\n\nfeat(web): drive Pi over its RPC mode instead of the pi-acp bridge\n\nAjax Chat now runs Pi as `pi --mode rpc -na [--session <id>]` and speaks its\nJSONL RPC protocol directly. Cursor, Codex and Claude stay on ACP.\n\n- adapters: Pi RPC process, handshake, session driver, record mapper and\n  PiRpcClient, behind a SessionClient enum (Acp | Pi) that the web session\n  slot and spawn path now use; AcpEventSource lets the drain accept either\n- restore is fail-closed: a different session id from Pi is a typed\n  `ACP restore unavailable` error; model/thinking pins apply through\n  set_model / set_thinking_level; usage comes from get_session_stats\n- core: HarnessTransport on the launch table (Pi = PiRpc), doctor reports\n  `rpc:pi`; the Pi model catalog is read from the RPC handshake\n- docs: web-cockpit, web-session-behavior and README describe the transport\n- tests use a fake Pi child; four pi-acp expectations were updated, and a few\n  session_client tests were adjusted for the new usage/pin behavior\n"
+}

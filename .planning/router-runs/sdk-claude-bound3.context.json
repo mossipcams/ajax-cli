@@ -1,0 +1,27 @@
+{
+  "task_id": "sdk-claude-bound-r3",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_process_bound_tests.rs"
+  ],
+  "acceptance": [
+    "In pi_rpc_process_bound_tests.rs, test `u2028_inside_record_shorter_than_cap_is_one_record`: its input is the JSON line {\"s\":\"a<U+2028>b\"} but the assertion expects {\"s\":\"<U+2028>\"} (an expected-value typo). Change ONLY the expected value to `json!({ \"s\": \"a\\u{2028}b\" })`. Also correct the comment's byte count: the line is 13 content bytes (7 + 3 + 3), not 14, still below CAP = 16. Nothing else in the file changes",
+    "All 7 tests in the file pass: `timeout 300 cargo nextest run -p ajax-web pi_rpc_process_bound` shows 7 passed; then `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass. No other file is edited"
+  ],
+  "verify": [
+    "timeout 300 cargo nextest run -p ajax-web pi_rpc_process_bound",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.Ib8FceDxVh",
+  "user_request": "Correct one wrong expected value in a brand-new test (the reader is right; the test's expectation is a typo).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. There may be no `timeout` binary on this host: if `timeout` is missing use `perl -e 'alarm 300; exec @ARGV' -- <command>` instead. Do NOT explore: open pi_rpc_process_bound_tests.rs, make the one change near the end of the file, run the verify commands. Do not commit."
+}

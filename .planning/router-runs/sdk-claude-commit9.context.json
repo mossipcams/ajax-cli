@@ -1,0 +1,29 @@
+{
+  "task_id": "sdk-claude-commit9",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/ajax-web/tests/fixtures/npm_roots/"
+  ],
+  "acceptance": [
+    "Create exactly ONE new file: crates/ajax-web/tests/fixtures/npm_roots/.gitignore whose entire content is these two lines: `# These fixture roots intentionally contain node_modules directories (they mirror a real global npm root).` and `!node_modules/`. No other file is created or edited",
+    "After creating it, `git check-ignore -v crates/ajax-web/tests/fixtures/npm_roots/both/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs crates/ajax-web/tests/fixtures/npm_roots/nested_only/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs` prints NOTHING (both files are no longer ignored); report that output",
+    "Stage exactly these three paths with `git add -- <path>` (no -f, no -A, no .): crates/ajax-web/tests/fixtures/npm_roots/.gitignore, crates/ajax-web/tests/fixtures/npm_roots/both/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs, crates/ajax-web/tests/fixtures/npm_roots/nested_only/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs. `git status --porcelain` before committing must show exactly those three as added and nothing else staged",
+    "Create ONE local commit with subject `chore(test): track the nested-bridge SDK fixture roots that .gitignore was hiding` and body (second -m): `The npm_roots fixtures mirror a real global npm root, including the copy nested under claude-agent-acp/node_modules. The repo-wide node_modules/ rule silently dropped those two sdk.mjs files from the previous commit, so a clean checkout would fail the nested-only and direct-preferred path tests. A fixtures-local .gitignore re-includes node_modules/ so they are tracked.` NO Co-Authored-By line, NO 'Generated with' line. Hooks run (no --no-verify); if a hook fails report its output and STOP. No push, no amend",
+    "Afterwards `git status --porcelain` shows only entries under .planning/packets/ and .planning/router-runs/; `git ls-tree -r --name-only HEAD crates/ajax-web/tests/fixtures/npm_roots` lists FIVE sdk.mjs/.gitkeep files plus the .gitignore (report the list)"
+  ],
+  "verify": [
+    "git check-ignore -v crates/ajax-web/tests/fixtures/npm_roots/both/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs",
+    "git ls-tree -r --name-only HEAD crates/ajax-web/tests/fixtures/npm_roots",
+    "git status --porcelain"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.pV0vbOQ0gW",
+  "user_request": "Fix a defect in the previous commit (local only, hooks on, no push, no attribution lines): two fixture files were silently excluded by the repo-wide node_modules/ ignore rule.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit --amend, git commit -a, git add -A, git add . , git add -f, git rm or git mv. Create only the one .gitignore file described; do not edit anything else. Do NOT write to /tmp. Do NOT explore. Do the steps in the order of the acceptance list.\n"
+}

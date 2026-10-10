@@ -1,0 +1,29 @@
+{
+  "task_id": "sdk-rpc-slice0b-r2",
+  "agent": "claude",
+  "model": "claude-haiku-5-5",
+  "risk": "high",
+  "allowed_files": [
+    ".planning/packets/claude-agent-sdk-pi-rpc/"
+  ],
+  "acceptance": [
+    ".planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-prompt.jsonl holds every SDKMessage (one JSON per line) of one streaming-input query() turn through its result message, with includePartialMessages on",
+    ".planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-toolcall.jsonl holds a turn in which a tool ran and canUseTool was invoked (record each canUseTool call as its own line)",
+    ".planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-interrupt.jsonl holds a turn ended by query.interrupt()",
+    ".planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-resume.jsonl holds a second process using options.resume with the session id from the first, plus the getSessionMessages() output for that id",
+    ".planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-findings.md states with evidence: the init message shape, the supportedModels() and supportedCommands() results, where usage and context-window numbers appear, which message ends a turn, what an interrupted turn looks like, and whether a session id created by claude-agent-acp is the same kind of id that options.resume accepts (check ~/.claude/projects/ session files and the claude-agent-acp source)"
+  ],
+  "verify": [
+    "ls -l .planning/packets/claude-agent-sdk-pi-rpc/",
+    "every claude-sdk-*.jsonl file is non-empty and each line parses as JSON"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.7O36UEvYrE",
+  "user_request": "Read-only protocol spike. Drive @anthropic-ai/claude-agent-sdk query() in streaming-input mode from a throwaway Node script and record what it really emits. Do not edit any repository source file; write only inside .planning/packets/claude-agent-sdk-pi-rpc/ and do not modify the pi-rpc-* files already there.",
+  "instructions": "The SDK is installed at $(npm root -g)/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk (import it by absolute path; types in sdk.d.ts). The bridge source is $(npm root -g)/@agentclientprotocol/claude-agent-acp/dist. Read ONLY those, not the repository. Write a driver .mjs inside the allowed directory. Use cwd = the allowed directory, model 'haiku', and trivial prompts to keep spend small ('Reply with the single word ok'; 'Run the bash command: echo hi'; a long counting prompt for the interrupt). Do not use bypassPermissions; allow tools through canUseTool. Do not write to /tmp. Do not commit. If the SDK cannot authenticate, stop and report BLOCKED with the error text."
+}

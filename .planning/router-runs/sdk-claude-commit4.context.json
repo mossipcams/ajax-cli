@@ -1,0 +1,29 @@
+{
+  "task_id": "sdk-claude-commit4",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/",
+    ".planning/agent-plans/"
+  ],
+  "acceptance": [
+    "Exactly ONE new local commit on the current branch containing ONLY the listed paths: `git add -- <path>` for EACH listed path (`git add -A`, `git add .`, `git commit -a`, `git rm`, `git mv` forbidden). .planning/packets/ and .planning/router-runs/ must NOT be staged",
+    "Commit message is exactly the given subject and body; NO Co-Authored-By line, NO 'Generated with' line",
+    "Hooks run (no --no-verify). If a hook fails, report its output and STOP. No push, no amend, no branch change, no file edits",
+    "Afterwards `git status --porcelain` shows only entries under .planning/packets/ and .planning/router-runs/"
+  ],
+  "verify": [
+    "git log -1 --format=%s%n%b",
+    "git show --stat --format= HEAD",
+    "git status --porcelain"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.cqnx0iljPx",
+  "user_request": "Create one local commit (user approved the pattern: local only, hooks on, no push, no attribution lines).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit --amend, git commit -a, git add -A, git add . , git rm or git mv. Do NOT edit any file. Run `git add -- <path>` for EACH of these paths and only these:\ncrates/ajax-web/src/adapters/web_session_acp/mod.rs\ncrates/ajax-web/src/adapters/web_session_acp/pi_rpc_client.rs\ncrates/ajax-web/src/adapters/web_session_acp/rpc_session.rs\ncrates/ajax-web/src/adapters/web_session_acp/rpc_session_mapper_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_client.rs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_client_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/rpc_client.rs\n\nCheck `git status --porcelain` shows exactly those staged. Then commit with two -m flags: first the subject, second the body (keep line breaks).\nSUBJECT:\nfeat(web): add the Claude Agent SDK client on a shared RPC client core\nBODY:\nClaude still runs over ACP; nothing selects the new client yet.\n\n- rpc_client: extract the transport-neutral client core (session, event queue,\n  prompt request ids, cancel, shutdown) out of PiRpcClient; Pi's usage lookup\n  after a finished prompt becomes an optional run-finished hook\n- claude_sdk_client: ClaudeSdkClient drives the Node sidecar through the shared\n  JSONL process, session and core; init handshake builds an RpcHandshake,\n  model/effort config options keep the ids the ACP bridge used (model, effort)\n  so persisted pins keep working, the embedded sidecar runs under\n  `node --input-type=module -e`, resume fails closed on a different session id\n- rpc_session: a record that both carries events and finishes the run now\n  yields its events first and the finish on the next call (Claude's result\n  message carries the usage update and the finish together)\n- pi client: catalog stays boxed so the SessionClient enum variants stay\n  size-comparable\n- tests: client tests against the fake SDK including the production launch\n  path; one mapper-injection test for the deferred finish; existing tests\n  unchanged\n"
+}

@@ -1,0 +1,30 @@
+{
+  "task_id": "sdk-claude-c6a2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-core/src/adapters/agent.rs",
+    "crates/ajax-core/src/adapters.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/client_spawn_model_tests.rs"
+  ],
+  "acceptance": [
+    "agent.rs: the Claude and Pi literals get `native_program: None,` and BOTH 'unused for ... kept so the native-CLI preference table stays uniform.' comment lines are deleted. Nothing else in agent.rs changes",
+    "adapters.rs: the assertion becomes `assert_eq!(claude.native_program, None);` and nothing else in that test changes",
+    "client_spawn_model_tests.rs: in `every_bridge_harness_names_the_cli_that_could_speak_acp_natively` keep the Cursor assertion and keep the loop but with ONLY the Codex row ((AgentClient::Codex, \"codex\")); then ADD, after the loop, a second check that for each of `AgentClient::Claude` and `AgentClient::Pi` `acp_launch_for_agent(agent).expect(\"launch\").native_program` is `None` with the message `\"{agent:?} is not an ACP harness, so it has no native ACP program\"`. No other test in that file changes (leave spawn_selects_the_model_in_band_for_bridge_harnesses untouched)",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass and `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 2626 tests, 0 failures (the known flaky tests failing once and passing alone are acceptable; report them). No other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.8SIZyu9Xjk",
+  "user_request": "Remove the ACP leftovers for Claude and Pi from the launch table (user-approved): native_program becomes None for both, and the one native-CLI table test is updated to say so.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. DO NOT EXPLORE: edit only the three named spots. Do not commit.\n\nFACTS (verified; do not explore). Claude and Pi no longer use ACP, so the ACP-only `native_program` field (the 'native CLI that could speak ACP' table) must be None for both.\n\ncrates/ajax-core/src/adapters/agent.rs, in `acp_launch_for_agent`: the Claude literal has `native_program: Some(\"claude\"),` (about line 310) preceded by the comment line `// unused for HarnessTransport::ClaudeSdk; kept so the native-CLI preference table stays uniform.`; the Pi literal has `native_program: Some(\"pi\"),` (about line 321) preceded by `// unused for HarnessTransport::PiRpc; kept so the native-CLI preference table stays uniform.`. Codex keeps `Some(\"codex\")` and Cursor keeps `None`: do not touch them.\ncrates/ajax-core/src/adapters.rs (test module), test `acp_launch_maps_every_supported_harness_to_its_entry_point`, about line 580: `assert_eq!(claude.native_program, Some(\"claude\"));`.\ncrates/ajax-web/src/adapters/web_session_acp/client_spawn_model_tests.rs lines 88-109, test `every_bridge_harness_names_the_cli_that_could_speak_acp_natively`: asserts Cursor's native_program is None, then loops `for (agent, program) in [(Codex,\"codex\"),(Claude,\"claude\"),(Pi,\"pi\")] { assert_eq!(acp_launch_for_agent(agent).expect(\"bridge\").native_program, Some(program), \"{agent:?} should prefer its own CLI once it advertises acp\"); }`.\nUSER-APPROVED test edits (disclose every edited line in CONCERNS): this loop test and the adapters.rs assertion, and only those.\n"
+}

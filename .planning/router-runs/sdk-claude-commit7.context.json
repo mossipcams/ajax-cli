@@ -1,0 +1,32 @@
+{
+  "task_id": "sdk-claude-commit7",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/",
+    "docs/",
+    "README.md",
+    "architecture.md",
+    ".planning/agent-plans/"
+  ],
+  "acceptance": [
+    "Exactly ONE new local commit on the current branch containing ONLY the listed paths: `git add -- <path>` for EACH listed path (`git add -A`, `git add .`, `git commit -a`, `git rm`, `git mv` forbidden). .planning/packets/ and .planning/router-runs/ must NOT be staged",
+    "Commit message is exactly the given subject and body; NO Co-Authored-By line, NO 'Generated with' line",
+    "Hooks run (no --no-verify). If a hook fails, report its output and STOP. No push, no amend, no branch change, no file edits",
+    "Afterwards `git status --porcelain` shows only entries under .planning/packets/ and .planning/router-runs/"
+  ],
+  "verify": [
+    "git log -1 --format=%s%n%b",
+    "git show --stat --format= HEAD",
+    "git status --porcelain"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.EXDhd2Py7k",
+  "user_request": "Create one local commit (user approved the pattern: local only, hooks on, no push, no attribution lines).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit --amend, git commit -a, git add -A, git add . , git rm or git mv. Do NOT edit any file. Run `git add -- <path>` for EACH of these paths and only these:\nREADME.md\narchitecture.md\ncrates/ajax-cli/tests/smoke_user_flows/main.rs\ncrates/ajax-core/src/adapters.rs\ncrates/ajax-core/src/adapters/agent.rs\ncrates/ajax-core/src/adapters/environment.rs\ncrates/ajax-core/src/commands/doctor.rs\ncrates/ajax-core/src/commands/tests/suite_1.rs\ncrates/ajax-web/src/adapters/web_session_acp/catalog_claude_sdk_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn.rs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/client_spawn_model_tests.rs\ndocs/architecture/web-cockpit.md\ndocs/architecture/web-session-behavior.md\n\nCheck `git status --porcelain` shows exactly those staged. Then commit with two -m flags: first the subject, second the body (keep line breaks).\nSUBJECT:\nfeat(web): drive Claude over the Agent SDK instead of the claude-agent-acp bridge\nBODY:\nClaude chat sessions now run through the Node sidecar and the Claude Agent\nSDK; the claude-agent-acp bridge is no longer used. Cursor stays on native\nACP, Codex on its ACP adapter, Pi on its RPC mode.\n\n- core launch table: new HarnessTransport::ClaudeSdk; Claude launches `node`\n  with the install hint `npm install -g @anthropic-ai/claude-agent-sdk` and\n  stays chat-capable; native_program is None for Claude and Pi because\n  neither is an ACP harness\n- doctor: `sdk:claude` (checks node) replaces `acp:claude`; one shared helper\n  builds the `rpc:` and `sdk:` checks\n- web: the Claude selector follows the launch table; a missing SDK fails the\n  spawn with an error that names the install command\n- docs: web-cockpit, web-session-behavior, README and architecture describe\n  the Claude SDK transport and no longer call Claude or Pi ACP bridges\n- tests (expectation updates, user-approved): launch-mapping test drops the\n  Claude bridge row and asserts the SDK transport; two core doctor tests\n  swap claude-agent-acp for node / sdk:claude; the CLI smoke fake installs\n  `node`; the native-CLI table test keeps Codex and asserts Claude and Pi\n  have no native ACP program; a stale test name about production gating is\n  corrected\n"
+}

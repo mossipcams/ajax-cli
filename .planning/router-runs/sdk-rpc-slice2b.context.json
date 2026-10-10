@@ -1,0 +1,45 @@
+{
+  "task_id": "sdk-rpc-slice2b-r2",
+  "agent": "pi",
+  "model": "opencode-go/glm-5.2",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_process.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_process_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "pi_rpc_process.rs exposes PiRpcProcess::spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<PiRpcProcess> that starts the child with piped stdin/stdout/stderr and does not use a shell",
+    "A reader thread splits stdout on LF only (strip one optional preceding CR; do NOT split on U+2028/U+2029), parses each line as serde_json::Value, and delivers records on a std::sync::mpsc channel; a non-JSON line is delivered as an Error variant, not dropped and not a panic; EOF delivers an Exited variant once",
+    "A stderr reader keeps a bounded tail (last 4 KiB) readable via a method, and never feeds stderr into the record channel",
+    "send(&mut self, command_type: &str, fields: serde_json::Value) -> Result<String, String> writes one JSON object plus LF with a fresh unique string id and returns the id; the caller correlates the matching {type:response,id} record itself",
+    "close_stdin() requests orderly shutdown; Drop closes stdin, waits briefly, then kills the child, and never leaves a zombie",
+    "tests/fixtures/fake_pi_rpc.js is a small node script that behaves like pi --mode rpc: for get_state echoes a success response with the same id and a fixed sessionId; for prompt replies {started} then emits agent_start, one message_update text_delta, agent_end, agent_settled; for abort replies success then emits a message_end with stopReason aborted then agent_settled; exits 0 when stdin closes; one scripted line containing U+2028 inside a JSON string must arrive as ONE record",
+    "pi_rpc_process_tests.rs spawns the fake via node and covers: response id correlation, event order through agent_settled, U+2028 stays one record, non-JSON line becomes Error, stdin close exits the child with Exited delivered exactly once, Drop reaps the child",
+    "mod.rs only gains module declarations; #![allow(dead_code)] with a comment at the top of pi_rpc_process.rs as in pi_rpc_map.rs; no existing item changed; no existing test file modified"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc_process"
+  ],
+  "fallback": "CODEX",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.AC9pfayPA9",
+  "user_request": "Add a standalone Pi RPC process module for the web session adapter: spawn pi --mode rpc as a child, read its stdout as strict LF-delimited JSONL onto a channel, write id-correlated commands to stdin, and ship a fake pi child script for tests. No wiring into the live session path; a later task builds the connection loop on top.",
+  "instructions": "Read AGENTS.md and docs/agent/rust.md first, then read ONLY these for context: crates/ajax-web/src/adapters/web_session_acp/pi_rpc_map.rs (sibling module, same style), crates/ajax-web/src/adapters/web_session_acp/client.rs (how AcpStdioClient spawns/reaps its child and uses threads and std mpsc), crates/ajax-web/tests/fixtures/fake_acp.js (existing fake child style), and .planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-findings.md (real Pi RPC protocol). Use std threads and std::sync::mpsc like client.rs, not tokio. Keep every Rust file under 600 lines. Do not commit. Stop and report BLOCKED if a file outside scope is needed.",
+  "revision_findings": [
+    "A previous Qwen round left pi_rpc_process.rs, pi_rpc_process_tests.rs and tests/fixtures/fake_pi_rpc.js in the tree. Continue from them; fix rather than rewrite where they are sound.",
+    "mod.rs does NOT declare the new modules, so pi_rpc_process.rs has never been compiled. Add `mod pi_rpc_process;` and `#[cfg(test)] mod pi_rpc_process_tests;` next to the existing pi_rpc_map lines.",
+    "pi_rpc_process.rs will not compile: `object.insert(\"id\".to_owned(), Value::String(id.clone())));` has an extra `)`; `ChildStdin` has no `.close()` (hold stdin in an Option<ChildStdin> and `take()`/drop it to close); `mpsc::Sender::is_closed()` does not exist on std mpsc (just ignore send errors, and break the loop when send returns Err).",
+    "Framing bug: `line.strip_suffix('\\n').and_then(|r| r.strip_suffix('\\r')).unwrap_or(&line)` returns the line WITH its trailing '\\n' whenever there is no '\\r'. Strip '\\n' first, then an optional '\\r' separately. read_line must also not be used if it can fail on invalid UTF-8; use read_until(b'\\n') on bytes and String::from_utf8_lossy so U+2028/U+2029 and bad bytes never break framing.",
+    "pi_rpc_process_tests.rs contains NO tests: its require_node() calls std::process::abort() and which_node() always returns None. Delete that scaffolding. Write real #[test]s that spawn `node` (std::process::Command::new(\"node\")) with args [path-to-fake_pi_rpc.js] where the path is built from env!(\"CARGO_MANIFEST_DIR\"). If node is missing the tests should fail loudly, not abort or silently skip.",
+    "Required tests (all must exist and pass): response id correlation (send get_state -> the Record with the same id and type response); prompt event order through agent_settled; a U+2028 inside a JSON string stays ONE record; a non-JSON line is delivered as PiRpcRecord::Error; close stdin -> Exited delivered exactly once and the channel then disconnects; dropping the process reaps the child (verify the pid is gone after drop, e.g. via `kill -0` through Command, or by checking try_wait before drop on a child that exited).",
+    "Check fake_pi_rpc.js against the acceptance list (get_state, prompt, abort, exits on stdin close, one scripted U+2028 line) and fix gaps; run `node --check` on it.",
+    "Do not leave `#![allow(dead_code)]`-style placeholders other than the single documented one at the top of pi_rpc_process.rs. Keep every Rust file under 600 lines. Run the full verify list and report real results."
+  ]
+}

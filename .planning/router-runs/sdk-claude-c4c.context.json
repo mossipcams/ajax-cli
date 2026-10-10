@@ -1,0 +1,35 @@
+{
+  "task_id": "sdk-claude-c4c",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "crates/ajax-web/tests/fixtures/fake_claude_sdk.mjs",
+    "crates/ajax-web/tests/fixtures/fake_claude_sdk_legacy.mjs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sidecar_resume_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "The sidecar change is exactly the behavior above and nothing else in the sidecar changes (no other handler, no protocol change); `node --check` passes on the sidecar and both fixtures; the sidecar stays under 420 lines",
+    "claude_sidecar_resume_tests.rs has these #[test]s, all passing and LISTED in nextest output: (1) sidecar: init with resume \"r-1\" (known id) answers success with sessionId \"r-1\" (the existing behavior survives); (2) sidecar: init with resume \"missing-1\" answers success:false with an error containing \"session not found\" and the sidecar is still usable: a following init WITHOUT resume answers success:true; (3) sidecar: init with resume \"boom-1\" (lookup throws) still answers success:true with sessionId \"boom-1\" (degrade) ; (4) sidecar launched with the LEGACY fake (no getSessionInfo): init with resume \"missing-1\" answers success:true (check skipped); (5) client: ClaudeSdkClient::spawn with resume Some(\"missing-1\") returns Err containing \"session not found\"; with resume Some(\"r-1\") it succeeds and session_id() == \"r-1\"",
+    "No existing test, fixture behavior or source file other than the five allowed files is edited; claude_sidecar_tests and claude_sdk_client_tests still pass unedited",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 0 failures (2595 existing plus the 5 new tests = 2600; one known flaky test failing once and passing alone is acceptable; report it)"
+  ],
+  "verify": [
+    "node --check crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "node --check crates/ajax-web/tests/fixtures/fake_claude_sdk.mjs",
+    "node --check crates/ajax-web/tests/fixtures/fake_claude_sdk_legacy.mjs",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.KeI54i1Bmn",
+  "user_request": "Claude Agent SDK transport, packet C4c: make the sidecar's resume fail closed. Before resuming, look the session up through the SDK; an unknown session id answers init with 'session not found' instead of echoing the id.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: read ONLY the sidecar's handleInit/optional/fail/respond/log helpers, the fake SDK, the first 80 lines of claude_sidecar_tests.rs, the first 60 lines of claude_sdk_client_tests.rs, and mod.rs. FIRST action: edit the sidecar. When you edit mod.rs every `mod *_tests;` line must stay directly preceded by its own #[cfg(test)]; re-read after editing. Do not commit.\n\nFACTS (verified; do not explore).\n\nSIDECAR TODAY (crates/ajax-web/sidecar/claude_sdk_sidecar.mjs, `async function handleInit(cmd)`, about lines 193-217): after resolving the SDK module (`const { mod, error } = await resolveSdk(); if (!mod) return fail(...)`) it sets `const sessionId = cmd.resume || cmd.sessionId || randomUUID();`, builds options (`options.resume = cmd.resume` when resuming, else `options.sessionId = sessionId`), creates the query and answers `respond(\"init\", cmd.id, true, { sessionId, models, commands, initialization })`. It ECHOES any resume id without checking that the session exists. There is an existing helper `optional(fn, fallback)` that awaits a call and returns the fallback on throw (read it before writing the new check; reuse its style) and a `fail(command, id, text)` / `respond(command, id, success, data)` pair.\n\nTHE SDK LOOKUP: `mod.getSessionInfo(sessionId, { dir })` (exported by the real SDK) returns a Promise of the session metadata object, or `undefined` when the session file is not found / is a sidechain / has no summary. `dir` is the project directory; pass `cmd.cwd` so the lookup uses the same project directory the resumed query will use.\n\nREQUIRED BEHAVIOR (exact): in handleInit, AFTER resolving the module and BEFORE creating the query or touching `state`, when `cmd.resume` is a non-empty string AND `typeof mod.getSessionInfo === \"function\"`: run the lookup with a 15 second timeout (Promise.race with a timer that you clear). Result `undefined`/`null` -> `return fail(\"init\", cmd.id, `session not found: ${cmd.resume}`)` and leave the sidecar UNINITIALISED so a later `init` (for example without resume) can still succeed. A lookup that THROWS or TIMES OUT is not proof of absence: log one line to stderr (the sidecar's existing log helper) and continue with the resume (degrade). When `mod.getSessionInfo` is not a function (older SDK), skip the check silently. A non-resume init is unchanged.\n\nFAKE SDK (crates/ajax-web/tests/fixtures/fake_claude_sdk.mjs, ESM, already exports `query`): add `export async function getSessionInfo(sessionId, options)` that returns `undefined` when `sessionId` starts with \"missing-\", throws `new Error(\"lookup exploded\")` when it starts with \"boom-\", and otherwise returns `{ sessionId, summary: \"fake\", cwd: options?.dir }`. Add a SECOND fixture file crates/ajax-web/tests/fixtures/fake_claude_sdk_legacy.mjs containing only `export { query } from \"./fake_claude_sdk.mjs\";` (an SDK without getSessionInfo).\n\nTEST FILE: new claude_sidecar_resume_tests.rs in the adapter directory, declared in mod.rs as its own `#[cfg(test)]` line directly followed by `mod claude_sidecar_resume_tests;` inserted BETWEEN existing pairs. Copy the process-spawning helper style from the first 80 lines of claude_sidecar_tests.rs (it spawns `node <sidecar> --sdk-module <fake>` through JsonlProcess and reads records with 10s deadlines); the client tests use ClaudeSdkClient::spawn(Path::new(\"node\"), &[sidecar_path, \"--sdk-module\", fake_path], cwd, None, Some(<resume>), Duration::from_secs(10)) (see the first 60 lines of claude_sdk_client_tests.rs).\n"
+}

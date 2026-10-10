@@ -1,0 +1,36 @@
+{
+  "task_id": "sdk-rpc-slice3b-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/session_client.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs",
+    "crates/ajax-web/src/slices/web_session/acp_drain.rs",
+    "crates/ajax-web/src/slices/web_session/acp_slot.rs",
+    "crates/ajax-web/src/slices/web_session/task_session_replacement.rs",
+    "crates/ajax-web/src/slices/web_session/task_session_spawn.rs"
+  ],
+  "acceptance": [
+    "Keep the type switch already made in acp_slot.rs, task_session_replacement.rs and task_session_spawn.rs exactly as it is (slot holds Option<SessionClient>; spawn_acp wraps with SessionClient::from_acp)",
+    "In adapters/web_session_acp/session_client.rs add `pub trait AcpEventSource { fn session_new_result(&self) -> &serde_json::Value; fn poll_event(&self) -> Option<AcpClientEvent>; }` and implement it for BOTH `AcpStdioClient` and `SessionClient` by delegating to their existing inherent methods of the same names (for SessionClient the inherent methods already exist; call them, do not recurse into the trait). Export it from adapters/web_session_acp/mod.rs next to `pub use session_client::SessionClient;` (e.g. `pub use session_client::{AcpEventSource, SessionClient};`)",
+    "In slices/web_session/acp_drain.rs, `drain_acp_events` and `drain_acp_events_with_prompt_cancel` become generic over the trait: `client: &impl AcpEventSource` (import `AcpEventSource` from crate::adapters::web_session_acp in place of the SessionClient import there if SessionClient is no longer used in that file). Bodies are unchanged. The production caller in task_session.rs (passes the slot's SessionClient) and the two existing tests (available_commands_tests.rs, session_info_tests.rs pass a bare AcpStdioClient) must compile UNCHANGED",
+    "NO test file and NO file outside the six allowed files is edited. NO behavior change; Pi is not selected anywhere",
+    "`cargo check --workspace --all-targets` passes; `cargo clippy -p ajax-web --all-targets --all-features -- -D warnings` passes; `cargo nextest run -p ajax-web` reports 0 failures (the architecture guard tests included; if a guard fails because of a token you introduced, STOP and report BLOCKED with the guard text, do NOT edit the guard)"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo check --workspace --all-targets",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.amDpVFJ6hK",
+  "user_request": "Finish the SessionClient call-site switch. The previous round switched the slot/spawn/replacement types but the drain functions in acp_drain.rs now take &SessionClient, which breaks two existing tests that pass a bare &AcpStdioClient. Fix the implementation, not the tests: make the drain functions generic over a tiny trait implemented by both client types.",
+  "instructions": "Do NOT explore. Read only: acp_drain.rs lines 1-80 and session_client.rs and mod.rs of adapters/web_session_acp (to add the trait and export it). The drain bodies use only `client.session_new_result()` and `client.poll_event()`. Make the edits, run the verify commands in order, fix errors by adjusting only the six allowed files. Do not commit."
+}

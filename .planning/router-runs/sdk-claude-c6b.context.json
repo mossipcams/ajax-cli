@@ -1,0 +1,33 @@
+{
+  "task_id": "sdk-claude-c6b",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/catalog_claude_sdk_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_client_tests.rs"
+  ],
+  "acceptance": [
+    "claude_sdk_spawn.rs: `uses_claude_sdk` becomes transport-driven exactly like uses_pi_rpc: `let claude_sdk = ajax_core::adapters::acp_launch_for_agent(agent).is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::ClaudeSdk);` then `#[cfg(not(test))] { claude_sdk }` and `#[cfg(test)] { claude_sdk && claude_sdk_module_override().is_some() }`; delete the 'ponytail ... until then no agent takes the SDK path' comment and the `_ = agent;` line; add a doc comment saying the selector follows the core launch table (Claude in production) and the test build additionally needs the module override so existing ACP-based tests keep their path",
+    "claude_sdk_spawn.rs: in spawn_claude_sdk, when the client spawn error text contains \"no loadable claude-agent-sdk module\" the returned `AcpSpawnError::Message` text is the original text followed by ` - npm install -g @anthropic-ai/claude-agent-sdk` (plain hyphen). Every other mapping (restore rejected, other messages) is unchanged",
+    "claude_sdk_spawn_tests.rs: ADD one test `missing_sdk_error_names_the_install_command`: inside `with_test_claude_sdk_module(<CARGO_MANIFEST_DIR>/tests/fixtures/does-not-exist.mjs, ...)` call spawn_claude_sdk(cwd, \"default\", None) (copy the call style from the other tests in that file) and assert it returns Err(AcpSpawnError::Message(text)) where text contains both \"no loadable claude-agent-sdk module\" and \"npm install -g @anthropic-ai/claude-agent-sdk\". Do not edit the existing tests there",
+    "catalog_claude_sdk_tests.rs: RENAME the stale test `production_claude_does_not_take_the_sdk_path` to `claude_needs_the_module_override_in_the_test_build` and replace its assertion line with `assert!(!uses_claude_sdk(AgentClient::Claude), \"the test build only takes the SDK path inside with_test_claude_sdk_module\");` (same logic, honest name/message); nothing else in that file changes",
+    "claude_sdk_client_tests.rs: this is only allowed to be touched for ONE thing: if (and only if) clippy reports it, nothing. Otherwise do not edit it",
+    "Other agents' paths are unchanged; every existing test passes; `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 0 failures (2626 existing plus 1 new = 2627; the known flaky tests failing once and passing alone are acceptable; report them). If any OTHER existing test fails because Claude now takes the SDK path in production code, STOP and report BLOCKED naming it"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.i7nfvDdCvc",
+  "user_request": "Web side of the Claude flip (user-approved): the selector follows the core launch table so Claude takes the Agent SDK path in production, and a missing SDK produces a spawn error that names the install command.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. DO NOT EXPLORE: read ONLY claude_sdk_spawn.rs, the first 40 lines of claude_sdk_spawn_tests.rs, and catalog_claude_sdk_tests.rs. FIRST action: edit claude_sdk_spawn.rs. Do not commit.\n\nFACTS (verified; do not explore). All files are in crates/ajax-web/src/adapters/web_session_acp/.\n\nclaude_sdk_spawn.rs (YOU EDIT): `pub(super) fn uses_claude_sdk(agent: AgentClient) -> bool` today is:\n    #[cfg(not(test))] { // ponytail: the core launch-table transport for Claude lands in a later packet; until then no agent takes the SDK path\n                        _ = agent; false }\n    #[cfg(test)] { matches!(agent, AgentClient::Claude) && claude_sdk_module_override().is_some() }\nThe core launch table now gives Claude `transport == ajax_core::adapters::HarnessTransport::ClaudeSdk` (Pi has PiRpc, Cursor and Codex have Acp). The Pi selector in session_client.rs is the model:\n    pub(super) fn uses_pi_rpc(agent: AgentClient) -> bool { let pi_rpc = ajax_core::adapters::acp_launch_for_agent(agent).is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::PiRpc); #[cfg(not(test))] { pi_rpc } #[cfg(test)] { pi_rpc && pi_program_override().is_some() } }\nIn `spawn_claude_sdk` (about lines 60-84) the client spawn error is mapped: on Err(text) with a resume id and text containing \"session not found\" or \"resumed a different session\" -> Restore(Rejected{..}); otherwise `AcpSpawnError::Message(text)` (about line 80).\nThe live smoke against the real SDK showed the SDK may be installed only as a dependency of the old claude-agent-acp bridge; when the sidecar cannot load any SDK its init error text is `no loadable claude-agent-sdk module; tried: ...` and ClaudeSdkClient::spawn wraps it as `claude sdk init failed: no loadable claude-agent-sdk module; tried: ...`.\n\nTests that already exist: claude_sdk_spawn_tests.rs has `fn uses_claude_sdk_gating()` (asserts false for Claude outside with_test_claude_sdk_module, true for Claude inside, false for Cursor/Codex/Pi inside) which keeps passing under the new selector because the TEST build still requires the override. catalog_claude_sdk_tests.rs (about line 61) has `fn production_claude_does_not_take_the_sdk_path() { assert!(!uses_claude_sdk(AgentClient::Claude)); }` -- after this change that name is WRONG (in production Claude does take the SDK path; only the TEST build needs the override).\n"
+}

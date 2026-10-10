@@ -1,0 +1,26 @@
+{
+  "task_id": "sdk-claude-c4a-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client.rs"
+  ],
+  "acceptance": [
+    "In pi_rpc_client.rs the field `catalog: Mutex<Catalog>` of `pub struct PiRpcClient` becomes `catalog: Box<Mutex<Catalog>>`, and its construction in `spawn` becomes `Box::new(Mutex::new(Catalog { ... }))` (same Catalog contents). Add this doc comment on the field: `/// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).` Every `.lock()` use compiles unchanged through auto-deref. No other change",
+    "`cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass (the large_enum_variant error on SessionClient is gone) and `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 2584 tests, 0 failures (one known flaky test failing once and passing alone is acceptable; report it). No other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.JGaHHskRuk",
+  "user_request": "Restore the Box around PiRpcClient's catalog that the extraction dropped; clippy::large_enum_variant fires on SessionClient without it.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: open pi_rpc_client.rs, grep -n catalog, make the change, run the verify commands. Do not commit."
+}

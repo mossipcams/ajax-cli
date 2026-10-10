@@ -1,0 +1,28 @@
+{
+  "task_id": "sdk-rpc-slice4a-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-core/src/adapters/agent.rs"
+  ],
+  "acceptance": [
+    "In crates/ajax-core/src/adapters/agent.rs the AgentClient::Pi literal of acp_launch_for_agent has `native_program: Some(\"pi\")` (it was changed to None by the previous round; restore it). Add a one-line comment above that field: `// unused for HarnessTransport::PiRpc; kept so the native-CLI preference table stays uniform.` Nothing else changes",
+    "`cargo nextest run --workspace` reports 0 failures (about 2552 tests), fmt and `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass",
+    "No test file is edited; no other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo nextest run --workspace"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.mcskA1Ni6l",
+  "user_request": "One-field restore: Pi's AcpLaunch.native_program must be Some(\"pi\") so the existing ajax-web test every_bridge_harness_names_the_cli_that_could_speak_acp_natively keeps passing unedited.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT explore. Open agent.rs, find the AgentClient::Pi arm, change `native_program: None` to `native_program: Some(\"pi\")` with the comment, then run the verify commands. Do not commit."
+}

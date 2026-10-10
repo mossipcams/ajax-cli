@@ -1,0 +1,32 @@
+{
+  "task_id": "sdk-rpc-slice2d-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_session_tests.rs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "`cargo nextest run -p ajax-web pi_rpc` passes fully (all pi_rpc_map, pi_rpc_process, pi_rpc_handshake and pi_rpc_session tests) and the output lists both abort_flow_finishes_with_aborted and handshake_pending_records_are_processed_first as PASS",
+    "fake_pi_rpc.js gains two NEW switches, additive only; no existing switch or existing output shape changes: `--hold-run` makes `prompt` answer {success:true,data:{disposition:\"started\"}} then emit agent_start and ONE message_update text_delta and then STOP (no agent_end, no agent_settled) until an `abort` command arrives; in --hold-run mode `abort` answers success, then emits `message_end` in the REAL Pi shape `{type:'message_end', message:{role:'assistant', stopReason:'aborted'}}`, then agent_end, then agent_settled. `--interleave-text` makes the handshake emit one record `{type:'message_update', assistantMessageEvent:{type:'text_delta', delta:'pending-text'}}` mid-handshake (same position the existing --interleave-event record is emitted)",
+    "abort_flow_finishes_with_aborted uses --hold-run: begin_prompt, first next_step is Events containing an AgentMessageChunk, then abort(), then next_step is RunFinished{aborted:true}, and run_active() is false",
+    "handshake_pending_records_are_processed_first uses --interleave-text and asserts the first next_step is Events containing an AgentMessageChunk whose text is exactly \"pending-text\"; the second next_step with the short idle timeout is Idle",
+    "No other test is changed; pi_rpc_session.rs, pi_rpc_map.rs, pi_rpc_process.rs, pi_rpc_handshake.rs and all other test files are NOT modified; no assertion weakened; nothing #[ignore]d"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc",
+    "node --check crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.xPAKmyzjd0",
+  "user_request": "Fix the two failing session tests by fixing their fixtures, not the driver. Diagnosis (parent-verified): (1) the fake emits the entire prompt run including agent_settled in one burst, so the run is already finished before abort() is called, and the fake's existing abort handler puts stopReason at the top level of message_end while real Pi nests it under `message` (the mapper reads message.stopReason); (2) the pending-records test expects an UnknownSessionUpdate event, but the mapper never produces one and the interleaved extension_ui_request record maps to nothing. Add the two new switches described in the acceptance list and point the two tests at them.",
+  "instructions": "Read ONLY pi_rpc_session_tests.rs, fake_pi_rpc.js and (for reference, do not edit) pi_rpc_session.rs, pi_rpc_map.rs. Mirror how existing switches (--silent-state, --reject-prompt, --interleave-event) are parsed in the fake and how tests pass them via the `handshaken(&[...])` helper. Make the smallest edits. You MUST run all verify commands and paste the nextest lines proving the two named tests PASS. Do not commit. Stop and report BLOCKED if another file is needed."
+}
