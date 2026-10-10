@@ -1,0 +1,25 @@
+{
+  "task_id": "sdk-claude-c7b",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "docs/architecture/web-cockpit.md"
+  ],
+  "acceptance": [
+    "In docs/architecture/web-cockpit.md, in the `#### Claude Agent SDK transport` subsection: (1) the Install bullet (lines ~259-266) no longer says the sidecar finds the SDK 'by package import, then under `$(npm root -g)`, then the copy nested in ...'; rewrite that sentence (and only it) to say the host resolves the SDK from the user's global npm root (queried from the home directory, never from the worktree) preferring the direct `@anthropic-ai/claude-agent-sdk` package and falling back to the copy nested in `@agentclientprotocol/claude-agent-acp` (how it kept working on machines with the old bridge still installed), and passes the absolute path to the sidecar; keep the rest of the bullet (Node 20+, the install command, the error naming the install command, the `sdk:claude`/`acp:codex`/`rpc:pi` doctor sentence) exactly as is. (2) The `Security notes` bullet (line ~274): replace its first two clauses (the `--sdk-module` override 'tests only ... never falls back' and 'does not read an SDK module path from the environment') with: the sidecar never resolves a module itself \u2014 the host resolves the SDK from the global npm root queried from the home directory, so a repository `.npmrc` or `node_modules` in a task worktree cannot redirect module loading, and the sidecar loads only the explicit absolute `--sdk-module` it is given (exclusive: if that fails to load nothing else is tried; with none given it refuses); keep the 16 MiB stdout-line-cap clause exactly as it is",
+    "Only those two passages change. `grep -n 'package import' docs/architecture/web-cockpit.md` prints nothing afterwards. `cargo fmt --check` still passes and `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` still shows 2634 tests, 0 failures (the known flaky tests failing once and passing alone are acceptable; report them). No other file is edited"
+  ],
+  "verify": [
+    "grep -n 'package import' docs/architecture/web-cockpit.md",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.gEhDDVfFNS",
+  "user_request": "Update the one doc subsection that still describes the old sidecar-side SDK lookup, after the security fix moved resolution into the host.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. DO NOT EXPLORE: read ONLY docs/architecture/web-cockpit.md lines 240-280. Edit in your first action, then run the verify commands. Do not commit.\n\nFACTS (verified in code): the Claude sidecar no longer resolves the SDK itself. The Rust host (claude_sdk_spawn.rs) runs `npm root -g` FROM THE USER'S HOME DIRECTORY (never the task worktree or the process cwd, so a repository `.npmrc` or `node_modules` can never redirect module resolution), picks the first existing file of `<root>/@anthropic-ai/claude-agent-sdk/sdk.mjs` then `<root>/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs` (the nested copy that exists on machines that still have the old bridge installed), and passes that ABSOLUTE path to the sidecar as `--sdk-module`. The sidecar loads only that explicit module: it has no bare package import, runs no npm, reads no environment variable for a module path, and with no `--sdk-module` it refuses to initialise (`no --sdk-module given; the host resolves the Claude Agent SDK and passes its absolute path`). An explicit `--sdk-module` that cannot load fails init; nothing else is tried. If no SDK file is found under the global root the spawn fails with `no loadable claude-agent-sdk module under <root> - npm install -g @anthropic-ai/claude-agent-sdk`; if `npm root -g` itself fails the error says so and carries the same install hint.\n"
+}

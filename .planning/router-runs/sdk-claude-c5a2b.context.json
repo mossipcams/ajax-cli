@@ -1,0 +1,28 @@
+{
+  "task_id": "sdk-claude-c5a2-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/session_client_claude_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/session_client.rs"
+  ],
+  "acceptance": [
+    "In session_client_claude_tests.rs fix exactly these five compile errors and change nothing else: (1) around line 60 `session.client.session_id()` accesses a PRIVATE field of ClaudeSession from a sibling module: use the public `SessionClient::session_id()` on the enum value instead (do NOT make any field pub); (2) around line 194 `.client` is the same private-field problem: use a public SessionClient method instead (read the 8 lines around it to see what is being called); (3) line ~159 `client.cancel().expect_err(...)` needs Debug on CancelOutcome, which it does not implement: replace with `assert!(client.cancel().is_err(), \"cancel with no run must fail\")`; (4) lines ~82 and ~166: `client` must be declared `mut` (`let (mut client, _report) = ...` / `let mut client = ...`) because begin_prompt and cancel take &mut self. Do not change any assertion's meaning or remove any test",
+    "Run `cargo fmt` (formatting only; it should only touch these two files: the Claude arm of `cancel` in session_client.rs needs its rustfmt reflow). No other source change in session_client.rs",
+    "`cargo clippy --workspace --all-targets --all-features -- -D warnings` passes; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 0 failures with all tests of session_client_claude_tests LISTED (2612 existing plus the new ones; the known flaky tests failing once and passing alone are acceptable; report them)"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.Ao7lsnaVCc",
+  "user_request": "Fix the five compile errors left in the new Claude session-client tests and apply rustfmt. Production code is already correct.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: open session_client_claude_tests.rs only. Do not commit."
+}

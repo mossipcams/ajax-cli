@@ -1,0 +1,29 @@
+{
+  "task_id": "sdk-neutral-t1",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/jsonl_process.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_session.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_handshake.rs"
+  ],
+  "acceptance": [
+    "Exactly these literal replacements are made, and nothing else changes (these are runtime strings and doc comments of the transport-neutral modules, which the Claude sidecar will share; no test depends on them): in jsonl_process.rs: line ~44 doc `/// A spawned `pi --mode rpc` child with its JSONL transport wiring in place.` -> `/// A spawned child process with its JSONL transport wiring in place.`; line ~56 doc `(for the real pi this is `--mode rpc \u2026`)` -> `(for example `--mode rpc \u2026` for the Pi RPC child)`; line ~74 `.name(\"pi-rpc-stdout\".to_owned())` -> `.name(\"jsonl-stdout\".to_owned())`; line ~82 `.name(\"pi-rpc-stderr\".to_owned())` -> `.name(\"jsonl-stderr\".to_owned())`; line ~136 `format!(\"ajax-pi-rpc-{}\", self.next_id)` -> `format!(\"ajax-rpc-{}\", self.next_id)`; line ~147 `\"pi child stdin is already closed\"` -> `\"child stdin is already closed\"`; line ~152 `format!(\"write to pi child stdin: {error}\")` -> `format!(\"write to child stdin: {error}\")`; line ~157 doc: change `The real pi exits` to `A well-behaved child exits` (keep the rest of that sentence); line ~255 `format!(\"pi rpc line exceeds {max_bytes} bytes; discarded\")` -> `format!(\"jsonl line exceeds {max_bytes} bytes; discarded\")`. In rpc_session.rs line ~177: `\"pi child exited during request {command_type}; stderr tail: {}\"` -> `\"child exited during request {command_type}; stderr tail: {}\"`. In rpc_handshake.rs: line 12 `when pi reports a persisted session path` -> `when the harness reports a persisted session path`; leave lines 2-3 as they are (they intentionally name the two transports)",
+    "After editing, `grep -nE '\\bpi\\b|pi-rpc|pi_rpc' crates/ajax-web/src/adapters/web_session_acp/jsonl_process.rs crates/ajax-web/src/adapters/web_session_acp/rpc_session.rs` prints only the one doc line ~56 that says 'Pi RPC child' (case 'Pi' capital) or nothing; report the exact output",
+    "The tests that assert on these messages still pass: the bound tests only check the substring \"exceeds\". `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` pass with 2584 tests, 0 failures. No other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.f4z2COdz6W",
+  "user_request": "Neutral shared layer tidy: make the runtime error strings, thread names and id prefix of the shared JSONL process and session transport-neutral (they still say 'pi'), because the Claude sidecar will run on them too.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: open the three files, apply the literal replacements (use grep -n to find each line), run the verify commands. Do not commit."
+}

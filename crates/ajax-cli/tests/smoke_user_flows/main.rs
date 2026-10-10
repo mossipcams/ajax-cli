@@ -186,8 +186,8 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         self.write_executable("tmux", FAKE_TMUX);
         self.write_executable("codex", FAKE_CODEX);
         self.write_executable("codex-acp", FAKE_CODEX);
-        self.write_executable("claude-agent-acp", FAKE_CODEX);
-        self.write_executable("pi-acp", FAKE_CODEX);
+        self.write_executable("node", FAKE_CODEX);
+        self.write_executable("pi", FAKE_CODEX);
     }
 
     fn write_executable(&self, name: &str, contents: &str) {

@@ -1,0 +1,33 @@
+{
+  "task_id": "sdk-rpc-slice2f",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "fake_pi_rpc.js: when its argv contains `--session` followed by an id, `get_state` reports that id as sessionId instead of the fixed one (additive; with no --session the behavior is unchanged); the file mode becomes executable (chmod +x)",
+    "pi_rpc_client_tests.rs (declared in mod.rs as `#[cfg(test)] mod pi_rpc_client_tests;` next to the other pi_rpc test modules) contains these #[test]s, all passing: (1) spawn yields session_id() == \"fake-pi-rpc-session-1\"; (2) prompt flow: begin_prompt returns 1, wait_event yields an AgentMessageChunk SessionUpdate, then RequestFinished{id:1, method:\"session/prompt\", Ok stopReason end_turn}, and prompt_in_flight() is false afterwards; (3) abort flow with `--hold-run`: begin_prompt, first event is an AgentMessageChunk, cancel() is Ok, then RequestFinished with stopReason cancelled and the same id; (4) begin_prompt twice while a run is active -> second is Err; (5) cancel with no run -> Err; (6) `--reject-prompt` -> RequestFinished with result Err(\"rejected for test\"); (7) resume: spawn with Some(\"resumed-session-9\") -> session_id() == \"resumed-session-9\"; (8) shutdown() returns Some(session id) once then None, and host_exited() is true; (9) an empty block list -> begin_prompt Err; (10) second prompt after the first finished gets request id 2",
+    "Every wait uses a generous Duration (10s) so slow node startup cannot flake; no test sleeps blindly",
+    "pi_rpc_client.rs and every other Rust file are NOT modified; no existing test modified or weakened; nothing #[ignore]d"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc_client",
+    "cargo nextest run -p ajax-web pi_rpc",
+    "node --check crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.kCei8ZSxMF",
+  "user_request": "Add the tests for PiRpcClient against the fake Pi child, plus the one small fake change they need. Test file and fake only.",
+  "instructions": "Do NOT explore the repository. Read ONLY crates/ajax-web/tests/fixtures/fake_pi_rpc.js (to make the small edit and learn the switches) and the first 60 lines of crates/ajax-web/src/adapters/web_session_acp/pi_rpc_session_tests.rs (for test style and the SessionUpdate matching helper; copy what you need). Write pi_rpc_client_tests.rs in your FIRST substantive action, declare it in mod.rs, then run the verify commands and fix errors. Use std only. You MUST confirm in the nextest output that all ten pi_rpc_client tests are LISTED and PASS. Keep the file under 400 lines. Do not commit.\n\nAPI UNDER TEST (pi_rpc_client.rs, complete; do not edit it):\n  pub struct PiRpcClient;\n  PiRpcClient::spawn(program: &Path, extra_args: &[String], cwd: &Path, resume_session_id: Option<&str>, handshake_timeout: Duration) -> Result<PiRpcClient, String>   // child argv = [\"--mode\",\"rpc\",\"-na\"] + ([\"--session\", id] if resuming) + extra_args\n  fn session_id(&self) -> String;  fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String>;  fn cancel(&self) -> Result<(), String>;  fn prompt_in_flight(&self) -> bool;  fn poll_event(&self) -> Option<AcpClientEvent>;  fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent>;  fn shutdown(&self) -> Option<String>;  fn host_exited(&self) -> bool;\n  Events: AcpClientEvent::SessionUpdate(Box<SessionNotification>) (notification.update is a SessionUpdate, e.g. SessionUpdate::AgentMessageChunk(_)), AcpClientEvent::RequestFinished{ id: u64, method: &'static str, result: Result<serde_json::Value,String> } (Ok value has \"stopReason\": \"end_turn\" or \"cancelled\"), AcpClientEvent::Error(String), AcpClientEvent::Exited.\n  Prompt content: agent_client_protocol::schema::v1::{ContentBlock, TextContent}; build a text block with `ContentBlock::Text(TextContent::new(\"hello\"))`.\nFAKE CHILD: crates/ajax-web/tests/fixtures/fake_pi_rpc.js has a `#!/usr/bin/env node` shebang but is mode 0644. Make it executable (`chmod +x`) and spawn it DIRECTLY as the program: `PiRpcClient::spawn(&fixture_path, &extra_flags_as_strings, cwd, resume, timeout)` with fixture_path = Path::new(env!(\"CARGO_MANIFEST_DIR\")).join(\"tests/fixtures/fake_pi_rpc.js\") and cwd = Path::new(env!(\"CARGO_MANIFEST_DIR\")). Its switches are read from process.argv.slice(2) as a Set (`--hold-run`, `--reject-prompt`, `--interleave-text`, ...), so the client's extra_args are the switches (the leading `--mode rpc -na` are harmless extra members of that set). The fake's fixed session id is 'fake-pi-rpc-session-1'.\n"
+}

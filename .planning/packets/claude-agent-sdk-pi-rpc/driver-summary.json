@@ -1,0 +1,49 @@
+{
+  "first": {
+    "sessionId": "01a11bd7-d94a-7275-883a-469e65d71842",
+    "sessionFile": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk/.planning/packets/claude-agent-sdk-pi-rpc/sessions/2026-10-08T14-08-13-131Z_01a11bd7-d94a-7275-883a-469e65d71842.jsonl",
+    "modelId": "glm-5.2",
+    "exit": {
+      "code": 0,
+      "signal": null
+    },
+    "lines": 27
+  },
+  "second": {
+    "toolEvents": [
+      "tool_execution_start",
+      "tool_execution_update",
+      "tool_execution_update",
+      "tool_execution_end"
+    ],
+    "exit": {
+      "code": 0,
+      "signal": null
+    },
+    "lines": 75
+  },
+  "third": {
+    "abortResp": {
+      "id": "a2",
+      "type": "response",
+      "command": "abort",
+      "success": true
+    },
+    "settledAfterAbort": {
+      "type": "agent_settled"
+    },
+    "exit": {
+      "code": 0,
+      "signal": null
+    },
+    "lines": 59
+  },
+  "fourth": {
+    "mode": "session-id",
+    "exit": {
+      "code": 0,
+      "signal": null
+    },
+    "lines": 87
+  }
+}

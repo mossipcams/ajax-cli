@@ -1,0 +1,30 @@
+{
+  "task_id": "sdk-claude-commit8",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "low",
+  "allowed_files": [
+    "crates/",
+    "docs/",
+    ".planning/agent-plans/"
+  ],
+  "acceptance": [
+    "Exactly ONE new local commit on the current branch containing ONLY the listed paths: `git add -- <path>` for EACH listed path (`git add -A`, `git add .`, `git commit -a`, `git rm`, `git mv` forbidden). .planning/packets/ and .planning/router-runs/ must NOT be staged",
+    "Commit message is exactly the given subject and body; NO Co-Authored-By line, NO 'Generated with' line",
+    "Hooks run (no --no-verify). If a hook fails, report its output and STOP. No push, no amend, no branch change, no file edits",
+    "Afterwards `git status --porcelain` shows only entries under .planning/packets/ and .planning/router-runs/"
+  ],
+  "verify": [
+    "git log -1 --format=%s%n%b",
+    "git show --stat --format= HEAD",
+    "git status --porcelain"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.DUOzpu8Kru",
+  "user_request": "Create one local commit (user approved the pattern: local only, hooks on, no push, no attribution lines).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit --amend, git commit -a, git add -A, git add . , git rm or git mv. Do NOT edit any file. Run `git add -- <path>` for EACH of these paths and only these:\ncrates/ajax-web/sidecar/claude_sdk_sidecar.mjs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn.rs\ncrates/ajax-web/src/adapters/web_session_acp/claude_sdk_spawn_tests.rs\ncrates/ajax-web/src/adapters/web_session_acp/mod.rs\ndocs/architecture/web-cockpit.md\ncrates/ajax-web/src/adapters/web_session_acp/claude_sidecar_resolution_tests.rs\ncrates/ajax-web/tests/fixtures/npm_roots/both/@anthropic-ai/claude-agent-sdk/sdk.mjs\ncrates/ajax-web/tests/fixtures/npm_roots/direct/@anthropic-ai/claude-agent-sdk/sdk.mjs\ncrates/ajax-web/tests/fixtures/npm_roots/empty/.gitkeep\n\nCheck `git status --porcelain` shows exactly those staged. Then commit with two -m flags: first the subject, second the body (keep line breaks).\nSUBJECT:\nfix(web): resolve the Claude SDK from the host, never from the task worktree\nBODY:\nSecurity review finding: the Claude sidecar ran with the task worktree as its\nworking directory and resolved the SDK itself, so a repository could get its\nown code loaded.\n\n- the bare package import resolved from the worktree, so a repo-supplied\n  node_modules/@anthropic-ai/claude-agent-sdk would have been imported and run\n  inside the Ajax server\n- `npm root -g` ran inside the worktree, where a project .npmrc can redirect the\n  global root to an attacker-chosen directory\n\nThe host now runs `npm root -g` from the home directory, picks the direct\nglobal SDK path (falling back to the copy nested under the old claude-agent-acp\nbridge), and passes the absolute path as --sdk-module. The sidecar loads only\nthat module: no package import, no npm, no child_process; with no --sdk-module\nit refuses to initialise. A missing SDK fails the spawn with an error that\nnames the install command.\n\n- tests: path picker (direct, nested only, both, none) against static fixture\n  roots; the sidecar refuses to resolve anything itself; a source check that\n  the forbidden strings are gone\n- docs: the Claude section describes host-side resolution\n"
+}

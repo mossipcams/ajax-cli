@@ -1,0 +1,33 @@
+{
+  "task_id": "sdk-rpc-slice2e-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_client.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "pi_rpc_client.rs defines `pub struct PiRpcClient` (state behind one std::sync::Mutex<Inner> so event methods take &self) with: `pub fn spawn(program: &Path, extra_args: &[String], cwd: &Path, resume_session_id: Option<&str>, handshake_timeout: Duration) -> Result<PiRpcClient, String>`; `pub fn session_id(&self) -> String`; `pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String>`; `pub fn cancel(&self) -> Result<(), String>`; `pub fn prompt_in_flight(&self) -> bool`; `pub fn poll_event(&self) -> Option<AcpClientEvent>`; `pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent>`; `pub fn shutdown(&self) -> Option<String>`; `pub fn host_exited(&self) -> bool`",
+    "spawn args are exactly [\"--mode\",\"rpc\",\"-na\"] then, if resume_session_id is Some(id), [\"--session\", id], then extra_args; it calls PiRpcProcess::spawn, then handshake(&mut process, handshake_timeout), then PiRpcSession::new; every failure is an Err(String) with context",
+    "begin_prompt: Text blocks' text joined with \"\\n\\n\" is the message; ResourceLink blocks contribute their uri as a line; every other block kind contributes a short line like `[image omitted]` (put a `// ponytail:` comment naming the gap: images are not forwarded yet); an empty result is an Err; it calls the session's begin_prompt, increments a u64 counter starting at 1, remembers it as the active request id, and returns it",
+    "poll_event and wait_event return ONE AcpClientEvent per call using an internal VecDeque for the remainder of a PiStep::Events batch. Mapping: Events(evs) -> push all, return front; RunFinished{aborted} -> AcpClientEvent::RequestFinished{ id: <active request id>, method: \"session/prompt\", result: Ok(serde_json::json!({\"stopReason\": if aborted {\"cancelled\"} else {\"end_turn\"}})) } and clear the active id; PromptRejected(e) -> RequestFinished{ ..., result: Err(e) } and clear the active id; Error(t) -> AcpClientEvent::Error(t); Exited -> AcpClientEvent::Exited exactly once and mark host exited; Idle -> None. poll_event uses Duration::ZERO. Queued events are returned before reading a new step",
+    "cancel calls the session's abort (Err when no run is active). prompt_in_flight is session.run_active(). shutdown takes the session out of its Option and drops it, returning Some(session_id) the first time and None after. host_exited is true once Exited was observed or the session was shut down",
+    "mod.rs gains only `mod pi_rpc_client;` next to the existing pi_rpc_* lines; one explanatory #![allow(dead_code)] at the top of pi_rpc_client.rs like pi_rpc_session.rs (nothing calls it yet); NO other file is modified; the file stays under 400 lines",
+    "No tests in this packet (the next packet adds them). `cargo clippy` must pass and `cargo nextest run -p ajax-web pi_rpc` must still be 31/31"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.YK9dQ2QXOu",
+  "user_request": "Write ONE new file, pi_rpc_client.rs: PiRpcClient, a thin client over the existing Pi RPC building blocks that exposes the prompt/cancel/event/shutdown shape the web session slice uses from AcpStdioClient. Declare it in mod.rs. Nothing else.",
+  "instructions": "Do NOT explore the repository. Do NOT read any file except mod.rs (to place the one `mod` line next to the existing pi_rpc_* lines). Everything you need is in the signatures below. Write pi_rpc_client.rs in your FIRST action, then run the verify commands and fix compile errors. Use std only. Do not commit. If a signature below turns out wrong, read only that one file section, fix, and continue.\n\nEXISTING API YOU BUILD ON (all in crates/ajax-web/src/adapters/web_session_acp/, already compiled and tested; do NOT read or edit these files, the signatures below are complete):\n\npi_rpc_process.rs:\n  pub struct PiRpcProcess;  impl PiRpcProcess { pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<PiRpcProcess> /* no shell */; pub fn close_stdin(&mut self); }   // Drop closes stdin and reaps the child\n\npi_rpc_handshake.rs:\n  pub fn handshake(process: &mut PiRpcProcess, timeout: Duration) -> Result<PiHandshake, String>;\n  pub struct PiHandshake { pub session_id: String, pub session_file: Option<String>, pub model_id: Option<String>, pub thinking_level: Option<String>, pub models: Vec<PiModel>, pub thinking_levels: Vec<String>, pub commands: Vec<PiCommand>, pub context_window: Option<u64>, pub pending: Vec<serde_json::Value> }\n\npi_rpc_session.rs:\n  pub struct PiRpcSession;\n  pub enum PiStep { Events(Vec<AcpClientEvent>), RunFinished { aborted: bool }, PromptRejected(String), Error(String), Exited, Idle }\n  impl PiRpcSession { pub fn new(process: PiRpcProcess, handshake: PiHandshake) -> Self; pub fn session_id(&self) -> &str; pub fn run_active(&self) -> bool; pub fn begin_prompt(&mut self, text: &str) -> Result<(), String>; pub fn abort(&mut self) -> Result<(), String>; pub fn next_step(&mut self, timeout: Duration) -> PiStep; }   // Dropping it drops the process (stdin closed, child reaped)\n\nclient.rs (import as `use super::client::AcpClientEvent;`):\n  pub enum AcpClientEvent { ..., SessionUpdate(Box<SessionNotification>), RequestFinished { id: u64, method: &'static str, result: Result<serde_json::Value, String> }, Error(String), Exited, ... }\n\nACP content type: `use agent_client_protocol::schema::v1::ContentBlock;` -- enum with variants Text(TextContent) (field `.text: String`), Image(..), Audio(..), ResourceLink(..) (field `.uri: String`), Resource(..); it is #[non_exhaustive] so match with a `_ =>` arm.\n"
+}

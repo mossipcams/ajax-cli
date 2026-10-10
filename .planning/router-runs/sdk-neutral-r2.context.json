@@ -1,0 +1,35 @@
+{
+  "task_id": "sdk-neutral-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_handshake.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_handshake.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_handshake_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_session.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_session_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_map.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_map.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_map_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "rpc_handshake.rs exists with the module doc, the `use serde_json::Value;` and the three type definitions moved byte-for-byte; pi_rpc_handshake.rs no longer defines RpcHandshake/RpcModel/RpcCommand and imports them from rpc_handshake; RpcMapping is defined in rpc_session.rs (with the neutral doc comments) and no longer in pi_rpc_map.rs",
+    "Every import path update listed above is made and no other line changes except what `cargo fmt` does and imports the compiler reports unused/missing. No assertion, test body, logic or string changes; the only test-file edits are the import lines listed",
+    "`grep -rn 'pi_rpc_handshake::\\(RpcHandshake\\|RpcModel\\|RpcCommand\\)\\|pi_rpc_map::RpcMapping' crates` prints nothing; `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 2581 tests, 0 failures (same count as before)"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.WQGqVtue5x",
+  "user_request": "Neutral shared layer, packet R2: move the transport-generic types (RpcHandshake/RpcModel/RpcCommand and RpcMapping) out of the Pi-named modules into neutral ones, so Claude code never imports through a Pi module for them. Pure move, zero behavior change.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: read ONLY the files named, around the lines named. FIRST action: create rpc_handshake.rs by moving the three types. Do not commit.\n\nFACTS (verified; this is a pure MOVE, change no logic). All files are in crates/ajax-web/src/adapters/web_session_acp/.\n\nMOVE 1 -> new file rpc_handshake.rs. In pi_rpc_handshake.rs there are exactly three type definitions, each with its doc comments and #[derive(Debug)]: `pub struct RpcHandshake { session_id, session_file, model_id, thinking_level, models: Vec<RpcModel>, thinking_levels, commands: Vec<RpcCommand>, context_window, pending: Vec<Value> }`, `pub struct RpcModel { id, name, provider, reasoning }`, `pub struct RpcCommand { name, description }` (about lines 38-82, between the `POLL_INTERVAL` const and the `pub fn handshake` doc comment). CUT those three definitions out of pi_rpc_handshake.rs and PASTE them BYTE-FOR-BYTE (same fields, same doc comments, same derives) into the new rpc_handshake.rs, which begins with this module doc and import:\n   //! Transport-neutral result of the start-up discovery every RPC-style harness\n   //! transport performs (the Pi RPC child today, the Claude SDK sidecar next).\n   //! The Pi-specific command exchange that fills it lives in `pi_rpc_handshake`.\n   use serde_json::Value;\n In pi_rpc_handshake.rs add `use super::rpc_handshake::{RpcCommand, RpcHandshake, RpcModel};` (keep its other imports; remove none unless the compiler reports one unused).\n\nMOVE 2 -> rpc_session.rs. In pi_rpc_map.rs the struct is: \n   /// What one Pi RPC stdout record means for the web session adapter.\n   pub struct RpcMapping { pub events: Vec<AcpClientEvent>, pub finished: bool, pub ended_aborted: bool }  (with a doc comment on each field)\n CUT it from pi_rpc_map.rs and PASTE it into rpc_session.rs just above `pub enum RpcStep` (or the first pub item), with the same fields, but change ONLY its doc comments to be transport-neutral: struct doc `/// What one inbound transport record means for the web session adapter.`; `finished` doc `/// The agent run has settled.`; `ended_aborted` doc `/// The run was reported aborted.`; `events` doc unchanged. In pi_rpc_map.rs add `use super::rpc_session::RpcMapping;`.\n\nIMPORT PATH UPDATES (every one, nothing else): \n - rpc_session.rs line ~30 `use super::pi_rpc_handshake::RpcHandshake;` -> `use super::rpc_handshake::RpcHandshake;`; line ~31 `use super::pi_rpc_map::{map_record, RpcMapping};` -> `use super::pi_rpc_map::map_record;` (RpcMapping is now defined in this file; the temporary map_record import is removed by the NEXT packet, leave it).\n - claude_sdk_map.rs line ~23 `use super::pi_rpc_map::RpcMapping;` -> `use super::rpc_session::RpcMapping;`\n - claude_sdk_map_tests.rs line ~11 `use super::pi_rpc_map::RpcMapping;` -> `use super::rpc_session::RpcMapping;`\n - pi_rpc_handshake_tests.rs line ~13 `use super::pi_rpc_handshake::{handshake, RpcHandshake};` -> two lines `use super::pi_rpc_handshake::handshake;` and `use super::rpc_handshake::RpcHandshake;`\n - rpc_session_tests.rs line ~14 same change as above.\n - mod.rs: add the single non-test line `mod rpc_handshake;` next to `mod rpc_session;` (alphabetical among the non-test `mod` lines). No test module is added.\n Do NOT use `pub use` re-exports to avoid import edits; the point is that neutral code no longer reaches through Pi modules.\n"
+}

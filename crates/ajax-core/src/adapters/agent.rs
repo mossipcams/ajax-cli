@@ -261,6 +261,13 @@ pub fn parse_model_selection(raw: &str) -> Option<ModelSelection> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HarnessTransport {
+    Acp,
+    PiRpc,
+    ClaudeSdk,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AcpLaunch {
     pub candidates: &'static [(&'static str, &'static [&'static str])],
     pub native_program: Option<&'static str>,
@@ -268,6 +275,7 @@ pub struct AcpLaunch {
     pub default_model: Option<&'static str>,
     pub acp_package: Option<&'static str>,
     pub install_hint: &'static str,
+    pub transport: HarnessTransport,
 }
 
 impl AcpLaunch {
@@ -285,6 +293,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: Some(CURSOR_DEFAULT_MODEL),
             acp_package: None,
             install_hint: "install the Cursor CLI (`agent`)",
+            transport: HarnessTransport::Acp,
         }),
         AgentClient::Codex => Some(AcpLaunch {
             candidates: &[("codex-acp", &[])],
@@ -293,22 +302,26 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             default_model: None,
             acp_package: Some("@agentclientprotocol/codex-acp"),
             install_hint: "npm install -g @agentclientprotocol/codex-acp",
+            transport: HarnessTransport::Acp,
         }),
         AgentClient::Claude => Some(AcpLaunch {
-            candidates: &[("claude-agent-acp", &[])],
-            native_program: Some("claude"),
+            candidates: &[("node", &[])],
+            native_program: None,
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
-            acp_package: Some("@agentclientprotocol/claude-agent-acp"),
-            install_hint: "npm install -g @agentclientprotocol/claude-agent-acp",
+            acp_package: None,
+            install_hint:
+                "install Node.js 20 or newer, then run: npm install -g @anthropic-ai/claude-agent-sdk",
+            transport: HarnessTransport::ClaudeSdk,
         }),
         AgentClient::Pi => Some(AcpLaunch {
-            candidates: &[("pi-acp", &[])],
-            native_program: Some("pi"),
+            candidates: &[("pi", &[])],
+            native_program: None,
             model_selection: AcpModelSelection::ConfigOption,
             default_model: None,
-            acp_package: Some("pi-acp@0.0.34"),
-            install_hint: "npm install -g pi-acp@0.0.34",
+            acp_package: None,
+            install_hint: "npm install -g @earendil-works/pi-coding-agent",
+            transport: HarnessTransport::PiRpc,
         }),
         AgentClient::Other => None,
     }
@@ -328,6 +341,35 @@ pub fn acp_adapter_packages() -> Vec<(AgentClient, &'static str, &'static str)> 
         Some((client, launch.candidates[0].0, package))
     })
     .collect()
+}
+
+fn programs_for_transport(
+    transport: HarnessTransport,
+) -> Vec<(AgentClient, &'static str, &'static str)> {
+    [
+        AgentClient::Codex,
+        AgentClient::Claude,
+        AgentClient::Pi,
+        AgentClient::Cursor,
+    ]
+    .into_iter()
+    .filter_map(|client| {
+        let launch = acp_launch_for_agent(client)?;
+        if launch.transport == transport {
+            Some((client, launch.candidates[0].0, launch.install_hint))
+        } else {
+            None
+        }
+    })
+    .collect()
+}
+
+pub fn rpc_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
+    programs_for_transport(HarnessTransport::PiRpc)
+}
+
+pub fn sdk_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
+    programs_for_transport(HarnessTransport::ClaudeSdk)
 }
 
 pub fn is_unspecified_acp_model(raw: Option<&str>) -> bool {

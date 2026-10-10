@@ -1,0 +1,31 @@
+{
+  "task_id": "sdk-claude-c5b-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sidecar_override_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "The sidecar change is exactly the strict-override behavior above and nothing else in the sidecar changes; `node --check` passes; the sidecar stays under 420 lines",
+    "claude_sidecar_override_tests.rs has the three tests, all passing and LISTED; catalog_claude_sdk_tests::claude_sdk_catalog_with_missing_module_is_empty passes UNEDITED and no longer loads the real SDK",
+    "No existing test file is edited; claude_sidecar_tests, claude_sidecar_resume_tests, claude_sdk_client_tests, claude_sdk_hardening_tests still pass",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 0 failures (2623 existing plus 3 = 2626; the known flaky tests failing once and passing alone are acceptable; report them)"
+  ],
+  "verify": [
+    "node --check crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.gpymMqCChQ",
+  "user_request": "Make an explicit --sdk-module override exclusive in the Claude sidecar: if it cannot load, init fails instead of silently loading the installed SDK.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore beyond the named reads (resolveSdk, the first 80 lines of claude_sidecar_tests.rs, mod.rs). FIRST action: edit the sidecar. When you edit mod.rs every `mod *_tests;` line must stay directly preceded by its own #[cfg(test)]; re-read after editing. Do not commit.\n\nFACTS (verified; do not explore). crates/ajax-web/sidecar/claude_sdk_sidecar.mjs `async function resolveSdk()` (about lines 110-140) builds a list `specs`: first `{spec: fromArg, via: \"argv --sdk-module\", file: true}` when `--sdk-module` is on argv, THEN always the package import and two `npm root -g` locations, and tries them in order until one exports a `query` function. BUG: when the caller gave an EXPLICIT `--sdk-module` and that module fails to load, resolution silently falls through to the real installed SDK. An explicit override that cannot load must fail, not silently load a different module (a catalog test with a missing override path loaded the real Claude SDK on this machine in 2.7s).\n\nREQUIRED CHANGE (exact): in resolveSdk, when `fromArg` is truthy, ONLY that spec is tried: do not add the package-import or npm-root specs (and do not run `npm root -g`). The returned error text stays in the existing shape: `no loadable claude-agent-sdk module; tried: <spec> (argv --sdk-module)` (plus the existing ` [no query export]` suffix when applicable). When `--sdk-module` is absent, behavior is exactly as today (package import, then npm root locations). Update the comment above the function to say an explicit argv module is exclusive.\n\nTEST: new file claude_sidecar_override_tests.rs in crates/ajax-web/src/adapters/web_session_acp/, declared in mod.rs as its own `#[cfg(test)]` line directly followed by `mod claude_sidecar_override_tests;` inserted BETWEEN existing pairs. Copy the process-spawning helper style from the first 80 lines of claude_sidecar_tests.rs. Tests: (1) launching `node <sidecar> --sdk-module <CARGO_MANIFEST_DIR>/tests/fixtures/does-not-exist.mjs` and sending `init` {cwd} answers success:false with an `error` that contains \"does-not-exist.mjs\" and does NOT contain \"package import\" and does NOT contain \"npm root\"; (2) a following second `init` on the same child ALSO fails the same way (the sidecar stays uninitialised and does not fall back); (3) the normal override (the existing fake_claude_sdk.mjs) still answers init success:true (regression guard). The existing catalog test `claude_sdk_catalog_with_missing_module_is_empty` (in catalog_claude_sdk_tests.rs) must now pass UNEDITED and quickly (well under a second).\n"
+}

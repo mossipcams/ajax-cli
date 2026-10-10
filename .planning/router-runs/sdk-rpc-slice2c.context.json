@@ -1,0 +1,31 @@
+{
+  "task_id": "sdk-rpc-slice2c-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_handshake_tests.rs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "pi_rpc_handshake_tests.rs compiles and every test in it passes under `cargo nextest run -p ajax-web pi_rpc_handshake`, and the nextest output LISTS those tests (not just pi_rpc_map / pi_rpc_process)",
+    "Tests cover: full handshake success with exact field values (session_id, session_file, model_id, thinking_level, context_window, models, thinking_levels, commands); an interleaved event ends up in `pending` in order; get_state success:false returns Err containing the error text; get_state without data.sessionId returns Err; a silent child (the fake's env switch) times out with Err mentioning the stderr tail; optional commands failing (the fake's degrade switch) still returns Ok with empty lists",
+    "pi_rpc_handshake.rs is NOT modified; no assertion is weakened; no test is #[ignore]d"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc_handshake",
+    "cargo nextest run -p ajax-web pi_rpc",
+    "node --check crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.m4Fx4y3lrs",
+  "user_request": "Fix and complete the handshake test file left by a previous round. pi_rpc_handshake.rs (the module under test) is correct and out of scope. Only pi_rpc_handshake_tests.rs (and the fake child, only if a test needs a switch it lacks) may change.",
+  "instructions": "Compile errors today: (1) `PiRpcProcess::spawn(\"node\", &args)` at pi_rpc_handshake_tests.rs:31 takes 2 arguments but the real signature is `spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<PiRpcProcess>` in pi_rpc_process.rs; pass Path::new(\"node\"), the args as Vec<String>, and a cwd such as env!(\"CARGO_MANIFEST_DIR\"). Look at how pi_rpc_process_tests.rs spawns the fake and mirror it, including how it passes env switches to the child. (2) unused imports `std::path::Path` and `PiRpcRecord` at lines 7 and 13: remove or use them. Then make sure every test in the acceptance list exists (read the file, add the missing ones, keep it under 600 lines). Read ONLY pi_rpc_handshake.rs, pi_rpc_handshake_tests.rs, pi_rpc_process.rs, pi_rpc_process_tests.rs and fake_pi_rpc.js. You MUST run the verify commands and paste the nextest lines showing the handshake tests ran. Do not commit. Stop and report BLOCKED if another file is needed."
+}

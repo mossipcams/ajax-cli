@@ -28,7 +28,7 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 | Surface | Role |
 | --- | --- |
 | **Task Workspace composition** | Mode selection, per-task view preference, capability fallback, Back and Diff routing, one shared task header, one shared task-details sheet, and composition of task actions, metadata, and harness switching |
-| **Ajax Chat** | Multi-harness ACP orchestration chat (Cursor native; Codex, Claude, and Pi via their ACP bridges). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
+| **Ajax Chat** | Multi-harness orchestration chat (Cursor native ACP; Codex via its ACP adapter, Pi over its RPC mode, Claude over the Claude Agent SDK sidecar). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
 | **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
 
 **Training modal.** The bottom-nav **Train** button replaced the former
@@ -171,17 +171,19 @@ the harness advertises a documented full-access `mode` select value
 so agents may stop asking entirely. Legacy `modes` and `session/set_mode` are
 intentionally unsupported.
 
-ACP is per harness, not Cursor-only. `acp_launch_for_agent` in core maps each
-harness to its ACP entry point and to how it accepts a model:
+ACP is per harness, not Cursor-only; Pi speaks its own RPC mode instead. The
+core launch table (`AcpLaunch`) maps each harness to its transport —
+`HarnessTransport::Acp`, and `HarnessTransport::PiRpc` for Pi — and to how it
+accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
 | Cursor | `agent acp` (native) | `--model` launch hint; live switch via advertised `configOptions` |
 | Codex | `codex-acp` | `session/set_config_option` |
-| Claude | `claude-agent-acp` | `session/set_config_option` |
-| Pi | `pi-acp` | `session/set_config_option` |
+| Claude | `node` sidecar over `@anthropic-ai/claude-agent-sdk` (not ACP; JSONL over stdio) | RPC commands `set_model` / `set_effort` through the sidecar |
+| Pi | `pi --mode rpc` (not ACP; JSONL RPC over stdio) | RPC commands `set_model` / `set_thinking_level` |
 
-Every bridge answers `session/set_config_option { sessionId, configId, value }`,
+The ACP bridge (Codex) answers `session/set_config_option { sessionId, configId, value }`,
 which carries both the model and the reasoning level those harnesses expose as a
 **separate** option (`effort`, `reasoning_effort`, `thought_level` — matched by
 its `thought_level` category). Cursor has no second axis: its model ids already
@@ -189,12 +191,91 @@ name the level. A selection is therefore stored as `model|configId=value`, e.g.
 `opus|effort=low`, parsed by `parse_model_selection` in core and applied one
 config option at a time.
 
-Cursor is the only harness that speaks ACP itself today; the others are reached
-through their Agent Client Protocol adapters, which are separate installs:
-`@agentclientprotocol/codex-acp`, `@agentclientprotocol/claude-agent-acp`, and
-`pi-acp`. `ajax doctor` reports each one as `acp:<harness>` and names the package
-when it is missing, and the host falls back to `npx -y <package>` so a host
-without the global install still gets a session.
+Cursor is the only harness that speaks ACP itself; Codex is reached through its
+Agent Client Protocol adapter, a separate install:
+`@agentclientprotocol/codex-acp`. `ajax doctor` reports it as `acp:codex` and
+names the package when it is missing, and the host falls back to
+`npx -y <package>` so a host without the global install still gets a session.
+
+#### Pi RPC transport
+
+Pi is not reached through ACP. Ajax launches `pi --mode rpc -na [--session <id>]`
+as a child process and speaks Pi's JSONL RPC mode over its stdio (one JSON object
+per LF-terminated line; framing splits on LF only). The core launch table selects
+the transport: `AcpLaunch.transport` is `HarnessTransport::PiRpc` for Pi and
+`HarnessTransport::Acp` for Cursor and Codex. Pi stays a chat-capable
+harness: `acp_launch_for_agent(Pi)` still returns `Some`, which is the "supports
+Ajax Chat" test across the code base.
+
+- Install: `npm install -g @earendil-works/pi-coding-agent` (provides the `pi`
+  binary). `ajax doctor` reports it as `rpc:pi` and names that install command
+  when it is missing; Codex keeps `acp:codex` for its bridge.
+- Handshake: on spawn Ajax sends `get_state`, `get_available_models`,
+  `get_available_thinking_levels`, and `get_commands`, correlated by id. The Pi
+  model catalog comes from this handshake, not from an ACP `session/new`. The
+  `get_state` result (with its `data.sessionId`) is required; the other three
+  degrade to empty lists when missing.
+- Session identity: Pi's own session id IS the Ajax session id — the native ids
+  the old bridge handed out were already Pi's, so stored sessions keep resuming.
+  Restore relaunches with `--session <id>` and is fail-closed: if Pi comes back
+  with a different session id, spawn fails with the typed `ACP restore
+  unavailable` error (`Retry` / `Start fresh`) and never silently starts a fresh
+  session.
+- Model and thinking level: Pi's models are advertised as one `model` select
+  whose values are `provider/id`; thinking levels come from
+  `get_available_thinking_levels` and are advertised as a `thought_level` select
+  (ThoughtLevel category). Changes go through Pi's `set_model` (provider +
+  modelId) and `set_thinking_level`. A persisted pin has the same form as for the
+  other harnesses, e.g. `provider/id|thought_level=high`. A pin that cannot be
+  applied is reported as a model-apply error and does not fail the spawn; the
+  later steps of the pin still apply.
+- Usage: after each finished prompt Ajax calls Pi's `get_session_stats` (2 second
+  cap) and emits a context-usage update (`contextUsage.tokens` /
+  `contextWindow`) before the finish event, so the live head meter works; when
+  the stats are missing, the finish is delivered without a usage update.
+- Cancel maps to Pi's `abort`, and the run ends with stopReason `cancelled`. Run
+  completion is Pi's `agent_settled` event.
+- Permissions and elicitation: Ajax launches Pi with `-na` (no approve), so Pi RPC
+  mode surfaces no permission or form-elicitation requests to the browser; the
+  Pi variant rejects permission/elicitation responses.
+- Known gaps, stated as such: image/audio prompt blocks are not forwarded to Pi
+  yet (a placeholder line is sent); Pi extension UI records (`setStatus`,
+  `setWidget`, ...) are ignored.
+
+#### Claude Agent SDK transport
+
+Claude is not reached through ACP and no longer needs the old
+`claude-agent-acp` bridge package. Ajax runs a small Node sidecar (embedded in
+the `ajax-web` binary, started with `node --input-type=module -e`, so no file is
+written to disk) that wraps the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) in one
+long-lived streaming-input `query()` per chat session. The sidecar speaks the same
+LF-delimited JSONL command/response framing the Pi RPC child uses, so the Rust
+side shares the same process wrapper, session driver, and client core; Claude's
+Rust layer maps SDK messages to adapter events. The transport is chosen by the
+core launch table: `AcpLaunch.transport` is `HarnessTransport::ClaudeSdk` for
+Claude (still `Some` from `acp_launch_for_agent`, which is the "supports Ajax
+Chat" test).
+
+- Install: Node.js 20 or newer on `PATH` plus
+`npm install -g @anthropic-ai/claude-agent-sdk`. The host resolves the SDK
+  from the user's global npm root (queried from the home directory, never
+  from a task worktree), preferring the direct `@anthropic-ai/claude-agent-sdk`
+  package and falling back to the copy nested in
+  `@agentclientprotocol/claude-agent-acp` (how it kept working on machines with
+  the old bridge still installed) and passes its absolute path to the sidecar; a
+  missing SDK fails the spawn with an error naming that install command.
+  `ajax doctor` reports it as `sdk:claude`
+  (checking `node`) and no longer reports an ACP check for Claude; Codex keeps
+  `acp:codex` and Pi keeps `rpc:pi`.
+- Auth: the SDK uses the operator's existing Claude login — Ajax configures no API key. It also loads the operator's Claude settings (user, project, local), so hooks, plugins, MCP servers, and CLAUDE.md apply to Ajax-started sessions as in the Claude CLI.
+- Handshake: on spawn Ajax sends `init {cwd, model?, resume?}`, whose response carries the session id, the models advertised by `supportedModels()`, the commands, and the SDK initialization result. The turn commands are then `prompt`, `abort`, `set_model`, `set_effort`, `get_context_usage`, and `shutdown`; every SDK message the query yields is forwarded verbatim as an event.
+- Session identity: the Claude session id IS the SDK session id — sessions created under the old bridge keep resuming. Restore relaunches with `resume: <id>` and is fail-closed twice: the sidecar looks the session up with the SDK's `getSessionInfo(id, { dir: cwd })` before resuming (a throwing or timed-out lookup degrades to resuming; an SDK without `getSessionInfo` skips the check), and the client rejects a resume that answers with a different session id. Both surface as the typed `ACP restore unavailable` error (`Retry` / `Start fresh`) and never silently start a fresh session.
+- Model and effort: the model select is the SDK's advertised models (`default`, `opus`, `sonnet`, `haiku`, variants like `claude-fable-5-1[1m]`); the effort select (ThoughtLevel category, id `effort`) offers low, medium, high, xhigh, and max — a fixed list for now. The option ids `model` and `effort` are the same ids the old ACP bridge advertised, so persisted pins such as `opus|effort=low` keep working. `set_model` rejects a value the SDK did not advertise; `set_effort` rejects levels outside the list. A pin that cannot be applied is reported as a model-apply error and does not fail the spawn; later steps of the pin still apply.
+- Usage: text and thinking arrive as stream deltas (repeated text inside `assistant` messages is ignored so nothing shows twice); tool calls open from the stream and complete from the `tool_result` message. The `result` message ends the turn and carries the usage, which becomes a context-usage update (used = input + cache creation + cache read + output tokens, window = the model's `contextWindow`) delivered before the finish; an aborted turn's all-zero usage is skipped so cancelling does not reset the context meter.
+- Cancel maps to the SDK's `interrupt()`: the interrupted turn ends with a result whose stopReason is `cancelled`, and the same sidecar process accepts the next prompt — no respawn.
+- Permissions and elicitation: the sidecar auto-allows every tool permission request (trusted-local, equivalent to the host auto-approve) and always declines MCP elicitation requests (a known gap — the ACP path showed them as a form); the Claude variant rejects permission/elicitation responses.
+- Security notes: the sidecar never resolves an SDK module itself — the host resolves the SDK from the user's global npm root queried from the home directory, so a repository `.npmrc` or `node_modules` in a task worktree cannot redirect module loading; the sidecar loads only the explicit absolute `--sdk-module` it is given (exclusive: if that fails to load nothing else is tried; with none given it refuses); child stdout lines are capped at 16 MiB for both the Pi and Claude children, with the overflow discarded as an error record.
+- Known gaps, stated as such: image/audio prompt blocks are not forwarded (a placeholder line is sent); sub-agent (nested tool) traffic is dropped; effort levels are a fixed list.
 
 Harness binaries are resolved through `adapters::program`: the server's own
 `PATH`, then the operator's login shell. `ajax-cli web` runs under tmux or a

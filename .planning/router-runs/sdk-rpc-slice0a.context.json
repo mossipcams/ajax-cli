@@ -1,0 +1,30 @@
+{
+  "task_id": "sdk-rpc-slice0a-r3",
+  "agent": "cursor",
+  "model": "composer-2.5",
+  "risk": "high",
+  "allowed_files": [
+    ".planning/packets/claude-agent-sdk-pi-rpc/"
+  ],
+  "acceptance": [
+    ".planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-prompt.jsonl holds the real stdout records of one prompt run through agent_settled",
+    ".planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-toolcall.jsonl holds a run in which Pi executed at least one tool",
+    ".planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-abort.jsonl holds a run ended by the abort command",
+    ".planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-resume.jsonl holds a second process continuing the session created by the first, including get_state and get_messages responses",
+    ".planning/packets/claude-agent-sdk-pi-rpc/pi-rpc-findings.md states, with the exact commands used: how a session is resumed from the CLI, what id or path identifies a session, the get_state / get_available_models / get_available_thinking_levels / get_commands / get_session_stats response shapes, and which event marks run completion"
+  ],
+  "verify": [
+    "ls -l .planning/packets/claude-agent-sdk-pi-rpc/",
+    "every .jsonl file is non-empty and each line parses as JSON (node -e or python3)"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra",
+    "cursor/claude-opus-5-5"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.AS0AF7CKTR",
+  "user_request": "Read-only protocol spike. Drive the installed pi CLI in RPC mode (pi --mode rpc) as a child process and record what it really emits. Do not edit any repository source file; write only inside .planning/packets/claude-agent-sdk-pi-rpc/.",
+  "instructions": "Protocol reference: $(npm root -g)/@earendil-works/pi-coding-agent/docs/rpc.md, rpc-commands.md, json.md and cli.md. Read ONLY those docs, not the repository. Write a small throwaway driver script inside the allowed directory (node or python3) that spawns pi --mode rpc with a --session-dir inside the allowed directory, writes JSONL commands to stdin and saves every stdout line. Use trivial prompts to keep token spend small (e.g. 'Reply with the single word ok', and 'Run the bash command: echo hi' for the tool call). Do not write to /tmp. Do not commit. If pi cannot start or has no usable model, stop and report BLOCKED with the stderr text."
+}

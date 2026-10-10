@@ -1,0 +1,28 @@
+{
+  "task_id": "sdk-claude-bound-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_process_bound_tests.rs"
+  ],
+  "acceptance": [
+    "In pi_rpc_process_bound_tests.rs the helper `fn drain(input: Vec<u8>) -> Vec<PiRpcRecord>` is fixed so it cannot hang: it must `drop(sender)` immediately after `read_stdout_lines_bounded(Cursor::new(input), &sender, CAP);` returns and BEFORE `receiver.iter().collect()` (today `sender` is still alive when the iterator waits for the channel to close, so every test that calls drain blocks forever at 0% CPU). Fix the helper's doc comment so it no longer claims the sender drops when the reader finishes. No assertion in any test is changed",
+    "All 7 tests in the file are LISTED and PASS in `cargo nextest run -p ajax-web pi_rpc_process_bound`, each in well under a second. Then `cargo nextest run --workspace --no-fail-fast` shows 0 failures except possibly the known unrelated flaky ajax-supervisor test `watched_monitor_receiver_closes_after_process_exit_before_wait` (if only that one fails, rerun just it once and report both results). fmt and clippy pass. No other file is edited"
+  ],
+  "verify": [
+    "timeout 300 cargo nextest run -p ajax-web pi_rpc_process_bound",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "timeout 800 cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.9PcU1UI6AR",
+  "user_request": "One-line test-helper fix: drain() in pi_rpc_process_bound_tests.rs deadlocks because it keeps the mpsc sender alive while iterating the receiver.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. ALWAYS prefix test runs with `timeout <seconds>` as shown in the verify list: a hung test must never be waited on. Before running tests, kill stale test processes of this repo with `pkill -f 'ajax-claude-agent-sdk/target/debug/deps/ajax_web'` (they are leftovers). Do NOT explore: read ONLY pi_rpc_process_bound_tests.rs lines 1-25. Edit the helper in your FIRST action, then run the verify commands. Do not commit."
+}

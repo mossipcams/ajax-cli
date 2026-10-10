@@ -1,0 +1,28 @@
+{
+  "task_id": "sdk-claude-c4b2a",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_session.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/rpc_session_mapper_tests.rs"
+  ],
+  "acceptance": [
+    "rpc_session.rs implements the deferred-finish fix exactly as described; behavior for a finishing record WITHOUT events is unchanged (RunFinished immediately); no other behavior changes",
+    "rpc_session_mapper_tests.rs gains the one new test (listed in nextest output and passing); the existing tests in that file and in rpc_session_tests.rs / rpc_session_request_tests.rs are NOT edited and still pass",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 2585 tests, 0 failures (one known flaky test failing once and passing alone is acceptable; report it). No other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.P3U9gk6hR2",
+  "user_request": "Fix a bug in the shared session driver: a record that both carries events and finishes the run drops its events (Claude's result message would lose its usage update).",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: read ONLY rpc_session.rs and the first 60 lines of rpc_session_mapper_tests.rs. FIRST action: edit rpc_session.rs. Do not commit.\n\nFACTS (verified; do not explore). File: crates/ajax-web/src/adapters/web_session_acp/rpc_session.rs. You will read ONLY it and the first 60 lines of rpc_session_mapper_tests.rs.\n\nBUG: in `fn step_for_record(&mut self, value: &Value) -> Option<RpcStep>` (about line 248) the injected mapper's `RpcMapping { events, finished, ended_aborted }` is handled as:\n    if mapping.ended_aborted { self.ended_aborted = true; }\n    if mapping.finished { let aborted = self.ended_aborted; self.run_active = false; self.prompt_id = None; self.ended_aborted = false; return Some(RpcStep::RunFinished { aborted }); }\n    if !mapping.events.is_empty() { return Some(RpcStep::Events(mapping.events)); }\n    None\nso when ONE record both carries events AND finishes the run (Claude's `result` message maps to a usage UpdateEvent plus finished=true), the events are silently DROPPED. Pi never hit it because its finishing record has no events.\n\nFIX (exact): add a private field `deferred_finish: Option<bool>` to `RpcSession` (the bool is the `aborted` flag; initialise it to None in `new`). In step_for_record, change the finished branch to: \n    if mapping.finished {\n        let aborted = self.ended_aborted;\n        if mapping.events.is_empty() { /* unchanged: do the bookkeeping above and return RunFinished immediately */ }\n        else { self.deferred_finish = Some(aborted); return Some(RpcStep::Events(mapping.events)); }   // run_active/prompt_id/ended_aborted stay as they are until the deferred finish is delivered\n    }\nand at the TOP of `pub fn next_step`, right AFTER the existing `if self.exited { ... return RpcStep::Exited; }` block and BEFORE `let deadline = ...`, add:\n    if let Some(aborted) = self.deferred_finish.take() { self.run_active = false; self.prompt_id = None; self.ended_aborted = false; return RpcStep::RunFinished { aborted }; }\n(So a finishing record with events yields Events(..) first, then RunFinished on the very next call.) Also, if `JsonlRecord::Exited` or an Error arrives while a finish is deferred, nothing special is needed because the deferred finish is delivered first on the next call.\nUpdate the doc comments of next_step/RpcStep::RunFinished minimally if they claim a finishing record never carries events.\n\nTEST (add to rpc_session_mapper_tests.rs, which already has helpers that spawn the fake Pi child, run the handshake and build an RpcSession with an injected mapper): a mapper `fn events_and_finish_on_agent_start(record: &Value, _id: &str) -> RpcMapping` returning `RpcMapping { events: vec![AcpClientEvent::Error(\"usage-and-finish\".to_string())], finished: true, ended_aborted: false }` when record[\"type\"] == \"agent_start\" and an empty mapping otherwise. Test `finishing_record_with_events_yields_events_then_finish`: begin_prompt; first `next_step` is `RpcStep::Events(v)` with exactly that one Error event (text \"usage-and-finish\"); `run_active()` is still true; second `next_step` is `RpcStep::RunFinished { aborted: false }`; then `run_active()` is false. Use the same generous 10s step timeout the other tests use.\n"
+}

@@ -1,0 +1,2 @@
+# These fixture roots intentionally contain node_modules directories (they mirror a real global npm root).
+!node_modules/

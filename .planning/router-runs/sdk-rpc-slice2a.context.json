@@ -1,0 +1,30 @@
+{
+  "task_id": "sdk-rpc-slice2a-r5",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_map.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_map_tests.rs"
+  ],
+  "acceptance": [
+    "cargo fmt --check passes",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings passes",
+    "cargo nextest run -p ajax-web pi_rpc_map still passes 8/8",
+    "No assertion is removed or weakened; no behavior change"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc_map"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.tkTskl3XDj",
+  "user_request": "Mechanical lint fixes only, in two files. (1) Run `cargo fmt` (it only changes one hunk in pi_rpc_map.rs, push_update). (2) In pi_rpc_map_tests.rs replace the two redundant closures `.map(|event| session_update(event))` (around lines 114 and 207) with `.map(session_update)`. Do nothing else.",
+  "instructions": "Edit only the two allowed files. Do not run cargo fmt on other files; if it touches any other file, revert that file's change. Do not commit."
+}

@@ -1,0 +1,33 @@
+{
+  "task_id": "sdk-claude-c4d",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_client.rs",
+    "crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "crates/ajax-web/src/adapters/web_session_acp/claude_sdk_hardening_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs"
+  ],
+  "acceptance": [
+    "set_model: before contacting the sidecar, lock the state and, WHEN the advertised `models` list is non-empty and no entry's value equals `value`, return `Err(format!(\"unknown model: {value}\"))` without sending anything and without changing `current_model`. When the advertised list is empty the value passes through as today (nothing to validate against). Everything else in set_model is unchanged; do not hold the state lock across the sidecar request",
+    "Sidecar: delete the AJAX_CLAUDE_SDK_MODULE environment route (the `if (env.AJAX_CLAUDE_SDK_MODULE) {...}` block) and any mention of it in comments or the header; keep the argv `--sdk-module` route and the package / npm-root locations exactly as they are; drop the now-unused `env` import if nothing else uses it (check with grep). The sidecar stays under 420 lines and `node --check` passes",
+    "claude_sdk_hardening_tests.rs (declared in mod.rs as its own `#[cfg(test)]` line directly followed by `mod claude_sdk_hardening_tests;` inserted BETWEEN existing pairs) has these tests, all passing and LISTED: (1) set_model(\"not-a-model\") on a client spawned against the fake SDK (copy the spawn helper from the first 60 lines of claude_sdk_client_tests.rs) returns Err containing \"unknown model\", leaves applied_model() unchanged (\"default\") and the model option's current value unchanged; (2) set_model(\"haiku\") (advertised by the fake) still succeeds and updates applied_model(); (3) set_model(\"default\") succeeds; (4) a source test: `include_str!(\"../../../sidecar/claude_sdk_sidecar.mjs\")` does NOT contain the text AJAX_CLAUDE_SDK_MODULE (use a `concat!`/split literal if needed so the test file itself is not flagged by a grep)",
+    "No existing test is edited; claude_sidecar_tests, claude_sidecar_resume_tests and claude_sdk_client_tests still pass; no other file changes",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass; `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 0 failures (2600 existing plus 4 = 2604; the known flaky `watched_monitor_receiver_closes_after_process_exit_before_wait` failing once and passing alone is acceptable; report it)"
+  ],
+  "verify": [
+    "node --check crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.FqZYmWVKst",
+  "user_request": "Claude transport hardening (C4d): validate set_model against the advertised models and remove the environment route that lets the sidecar load an arbitrary SDK module in production.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore: read ONLY the two spots named, the first 60 lines of claude_sdk_client_tests.rs, and mod.rs. FIRST action: edit claude_sdk_client.rs. When you edit mod.rs every `mod *_tests;` line must stay directly preceded by its own #[cfg(test)]; re-read after editing. Do not commit.\n\nFACTS (verified; do not explore). Two small hardenings from a security review of the Claude transport (parity with the ACP path):\n\n(1) crates/ajax-web/src/adapters/web_session_acp/claude_sdk_client.rs, `pub fn set_model(&self, value: &str) -> Result<(), String>` (about line 228) forwards ANY string to the sidecar and then stores it. The ACP path rejects a value the harness did not advertise. `ClaudeState` (boxed, behind `state: Box<Mutex<ClaudeState>>`) has `models: Vec<(String, String)>` = (value, display name) copied from the sidecar's init response, and `current_model`. `set_effort` already rejects unknown levels with `Err(format!(\"unknown effort level: {level}\"))`: mirror that style.\n(2) crates/ajax-web/sidecar/claude_sdk_sidecar.mjs, SDK module resolution (about lines 105-135): besides the `--sdk-module <path>` argv route it also imports whatever file `env.AJAX_CLAUDE_SDK_MODULE` names (lines ~118-120: `if (env.AJAX_CLAUDE_SDK_MODULE) { specs.push({ spec: env.AJAX_CLAUDE_SDK_MODULE, via: \"env AJAX_CLAUDE_SDK_MODULE\", file: true }); }`). That is arbitrary code loading from the environment in production builds; the ACP path's equivalent overrides exist only under cfg(test). The tests only use the argv route.\n"
+}

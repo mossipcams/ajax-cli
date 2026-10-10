@@ -1,0 +1,30 @@
+{
+  "task_id": "sdk-neutral-r1",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "medium",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/",
+    "crates/ajax-web/sidecar/claude_sdk_sidecar.mjs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "The rename script below is run EXACTLY ONCE, unchanged, from the repository root. It renames identifiers (PiRpcProcess->JsonlProcess, PiRpcRecord->JsonlRecord, PiRpcSession->RpcSession, PiStep->RpcStep, PiRpcMapping->RpcMapping, PiHandshake->RpcHandshake, PiModel->RpcModel, PiCommand->RpcCommand, module prefixes pi_rpc_process->jsonl_process and pi_rpc_session->rpc_session) and renames six files. No hand edits to logic, strings, comments or assertions",
+    "After the script: run `cargo fmt` (formatting only), then make the build pass. The ONLY hand edit allowed is re-sorting `mod` lines in mod.rs if you wish (not required) while keeping every `mod *_tests;` line directly preceded by its own #[cfg(test)]. If anything else fails to compile, STOP and report BLOCKED with the error; do not improvise",
+    "`grep -rnE '\\b(PiRpcProcess|PiRpcRecord|PiRpcSession|PiStep|PiRpcMapping|PiHandshake|PiModel|PiCommand)\\b|pi_rpc_(process|session)' crates` prints nothing",
+    "`cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings` pass and `perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast` shows 2581 tests, 0 failures (same count as before the rename)"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "perl -e 'alarm 600; exec @ARGV' -- cargo nextest run --workspace --no-fail-fast"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.m5lWA9SyAi",
+  "user_request": "Mechanical rename: give the transport-generic pieces of the Pi RPC stack neutral names so the Claude transport does not depend on Pi-named types. Identifiers and file names only; zero behavior change.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase, git push, git commit, git mv or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT write to /tmp. No `timeout` binary on this host: use the perl alarm form. Do NOT explore and do NOT read the files first. Your FIRST action is running this exact command from the repository root:\n\npython3 - <<'EOF'\nimport re,os,glob\nD=\"crates/ajax-web/src/adapters/web_session_acp/\"\nfiles=sorted(glob.glob(D+\"*.rs\"))+[\"crates/ajax-web/sidecar/claude_sdk_sidecar.mjs\",\"crates/ajax-web/tests/fixtures/fake_pi_rpc.js\"]\nsubs=[(r\"\\bPiRpcProcess\\b\",\"JsonlProcess\"),(r\"\\bPiRpcRecord\\b\",\"JsonlRecord\"),(r\"\\bPiRpcSession\\b\",\"RpcSession\"),(r\"\\bPiStep\\b\",\"RpcStep\"),(r\"\\bPiRpcMapping\\b\",\"RpcMapping\"),(r\"\\bPiHandshake\\b\",\"RpcHandshake\"),(r\"\\bPiModel\\b\",\"RpcModel\"),(r\"\\bPiCommand\\b\",\"RpcCommand\"),(r\"\\bpi_rpc_process\",\"jsonl_process\"),(r\"\\bpi_rpc_session\",\"rpc_session\")]\nfor f in files:\n    s=open(f).read(); t=s\n    for a,b in subs: t=re.sub(a,b,t)\n    if t!=s: open(f,\"w\").write(t); print(\"edited\",f)\nfor old,new in [(\"pi_rpc_process.rs\",\"jsonl_process.rs\"),(\"pi_rpc_process_tests.rs\",\"jsonl_process_tests.rs\"),(\"pi_rpc_process_bound_tests.rs\",\"jsonl_process_bound_tests.rs\"),(\"pi_rpc_session.rs\",\"rpc_session.rs\"),(\"pi_rpc_session_tests.rs\",\"rpc_session_tests.rs\"),(\"pi_rpc_session_request_tests.rs\",\"rpc_session_request_tests.rs\")]:\n    os.rename(D+old,D+new); print(\"renamed\",old,\"->\",new)\nEOF\n\nThen `cargo fmt`, then the grep in the acceptance list, then the verify commands. Do not commit."
+}

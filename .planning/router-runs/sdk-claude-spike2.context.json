@@ -1,0 +1,27 @@
+{
+  "task_id": "sdk-claude-spike2",
+  "agent": "pi",
+  "model": "opencode-go/glm-5.2",
+  "risk": "low",
+  "allowed_files": [
+    ".planning/packets/claude-agent-sdk-pi-rpc/"
+  ],
+  "acceptance": [
+    "A new script .planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-interrupt-open.mjs drives ONE long-lived query() in streaming-input mode with an async-iterable prompt whose input stays OPEN (a queue you push SDKUserMessage objects onto; never end it until the very end of the script). Scenario: (1) push a user message asking it to 'count slowly from 1 to 200, one number per line'; (2) after >= 5 stream_event messages call `await q.interrupt()` and record what it returns; (3) keep consuming messages until the `result` for that interrupted turn arrives and record it (subtype, terminal_reason, is_error); (4) WITHOUT closing input, push a second user message 'Reply with the single word ok' and consume until the next `result`; record whether it is a success and whether the process is the same (compare the init/system `session_id` and any pid you can read); (5) then end the input and let the generator finish, recording whether any error is thrown and when",
+    "Run it for real (small spend; one interrupted turn and one 'ok' turn). Save EVERY SDKMessage (one JSON per line, plus driver.* marker lines such as driver.interrupt_returned, driver.second_prompt_sent, driver.error) to claude-sdk-interrupt-open.jsonl in the same directory. Do not write outside that directory. Do not edit or delete any existing file there",
+    "Append a section `## 9. Interrupt with input left open` to claude-sdk-findings.md (append only; do not alter earlier sections) that answers, with evidence lines from the jsonl: (a) does interrupt() resolve and what does it return; (b) does the interrupted turn end with a result and which one; (c) does the SECOND turn succeed in the same process without any respawn or `resume` option; (d) is the 'process exited with code 1' error thrown while input is open, only after input ends, or never; (e) the recommended cancel strategy for a long-lived sidecar (keep the process and call interrupt(), or respawn with resume), stated as a conclusion supported by (a)-(d). If auth fails or the SDK cannot start, stop and report BLOCKED with the error text",
+    "No repository source file is touched (only files under .planning/packets/claude-agent-sdk-pi-rpc/ change)"
+  ],
+  "verify": [
+    "node --check .planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-interrupt-open.mjs",
+    "every line of .planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-interrupt-open.jsonl parses as JSON (python3 -c)"
+  ],
+  "fallback": "CODEX",
+  "fallback_chain": [
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.W2liwwUiGj",
+  "user_request": "Read-only protocol spike for the Claude Agent SDK transport: determine whether interrupt() leaves a long-lived streaming-input query usable.",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase or any command that changes the index, the stash stack, or other worktrees' state. Do NOT write to /tmp. Do NOT touch any file outside the packet directory. Read ONLY claude-sdk-driver.mjs and the section headings of claude-sdk-findings.md in the packet directory. Write the script in your first substantive action, run it, save the transcript, then append the findings section. Do not commit.\n\nFACTS (verified): The Agent SDK is at /Users/matt/.nvm/versions/node/v22.23.1/lib/node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk (import with an absolute file URL of its sdk.mjs; types in sdk.d.ts: `query({prompt: string | AsyncIterable<SDKUserMessage>, options})` returns a Query (an AsyncGenerator<SDKMessage>) with `interrupt()`, `close()`, `streamInput()`). SDKUserMessage shape: `{type:'user', message:{role:'user', content:[{type:'text', text}]}, parent_tool_use_id:null, session_id}`. Auth works from the user's claude.ai login (no API key). Use model alias 'haiku', cwd = the packet directory, and `includePartialMessages:true`.\nAn earlier driver (`claude-sdk-driver.mjs` in the packet dir; read it for the working import/option style, especially its `interrupt` mode) showed: after `await q.interrupt()` the turn ended with a `result` message (subtype error_during_execution, terminal_reason aborted_streaming), and THEN the for-await loop threw `Error: Claude Code process exited with code 1`. That driver CLOSED its input stream right after `result`, so it is unknown whether the process dies because of interrupt() itself or because input was closed.\n"
+}

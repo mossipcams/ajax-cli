@@ -1,0 +1,36 @@
+{
+  "task_id": "sdk-rpc-slice3c1",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_session.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/pi_rpc_session_request_tests.rs",
+    "crates/ajax-web/src/adapters/web_session_acp/mod.rs",
+    "crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "acceptance": [
+    "pi_rpc_session.rs gains `pub fn request(&mut self, command_type: &str, fields: serde_json::Value, timeout: Duration) -> Result<serde_json::Value, String>`: it sends the command via self.process.send, then reads records (NOT from `queued`; straight from the process, polling try_recv every 5ms like next_step) until a `response` record whose id equals the sent id arrives or the deadline passes. success:true -> Ok(the `data` field, or Value::Null when absent); success:false -> Err(the `error` text, or a fixed fallback string); timeout -> Err including the command type and the stderr tail; PiRpcRecord::Error(text) -> Err including the text",
+    "Every OTHER record read while waiting is pushed onto the BACK of self.queued in arrival order so a later next_step processes it (older queued items stay ahead of it). Nothing is dropped",
+    "If PiRpcRecord::Exited is read while waiting, set a new private field `exited: bool` on the session and return Err(\"pi child exited\"-style message incl. stderr tail). next_step must, as its FIRST action (before popping `queued`), return PiStep::Exited once if that flag is set and then clear run_active/prompt_id as it already does for Exited; make sure the flag is cleared after reporting so Exited is reported exactly once. Add the field to the constructor",
+    "fake_pi_rpc.js gains, additively and in the existing style: `set_model` (success with data = {id: command.modelId, provider: command.provider, name: command.modelId}; but when modelId is 'does-not-exist' answer success:false error 'Model not found: does-not-exist'); `set_thinking_level` (success, no data); `get_session_stats` (success with the data object shown above, using sessionId 'fake-pi-rpc-session-1'); and a `--silent-stats` switch under which get_session_stats is never answered",
+    "pi_rpc_session_request_tests.rs (declared in mod.rs as `#[cfg(test)] mod pi_rpc_session_request_tests;` next to the other pi_rpc test modules; copy the handshaken()/spawn helper style from pi_rpc_session_tests.rs lines 1-40, which spawns the fake as `node <script> <flags>` through PiRpcProcess::spawn(Path::new(\"node\"), &args, cwd) then runs handshake) tests: (1) request get_session_stats returns Ok data with contextUsage.contextWindow == 1000000; (2) set_model with a good model returns Ok with data.id; (3) set_model 'does-not-exist' -> Err containing 'Model not found'; (4) set_thinking_level -> Ok(Null); (5) with `--hold-run`: begin_prompt, then request get_session_stats; AFTER the request, next_step yields the Events step containing the AgentMessageChunk that arrived during the wait (nothing dropped, order kept); (6) `--silent-stats` with a 500ms timeout -> Err mentioning get_session_stats; (7) close the child (process stdin close via dropping is not possible, so use the fake's existing way a test ends the child in pi_rpc_session_tests.rs `closed_child_surfaces_exited`) then request -> Err, and next_step then returns PiStep::Exited exactly once",
+    "Existing tests in pi_rpc_session_tests.rs and every other existing test are NOT edited and still pass; nothing #[ignore]d; no behavior change to existing methods besides the exited-flag check at the start of next_step"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web pi_rpc_session_request",
+    "cargo nextest run -p ajax-web pi_rpc",
+    "node --check crates/ajax-web/tests/fixtures/fake_pi_rpc.js"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.ARfBFbxpSL",
+  "user_request": "Give PiRpcSession a request/response method for one-shot commands (set_model, set_thinking_level, get_session_stats) that preserves every unrelated record for the next next_step call, with tests and the fake-child commands they need.",
+  "instructions": "Do NOT explore. Read only pi_rpc_session.rs (to edit it), the first 40 lines of pi_rpc_session_tests.rs (helper style), and fake_pi_rpc.js (to add commands). Write the code first, then the tests, then run the verify commands and fix errors. You MUST confirm in the nextest output that all seven pi_rpc_session_request tests are LISTED and pass. Keep each file under 600 lines. Do not commit.\n\nCONTEXT (all under crates/ajax-web/): pi_rpc_session.rs is src/adapters/web_session_acp/pi_rpc_session.rs. Its struct PiRpcSession has fields `session_id: String`, `queued: VecDeque<serde_json::Value>`, `process: PiRpcProcess`, `prompt_id: Option<String>`, `run_active: bool`, `ended_aborted: bool`. next_step(&mut self, timeout) pops `queued` FIRST, then reads `self.process.try_recv()` (polling every 5ms). PiRpcProcess API: `send(&mut self, command_type: &str, fields: serde_json::Value) -> Result<String, String>` (returns the allocated command id), `try_recv(&self) -> Result<PiRpcRecord, std::sync::mpsc::TryRecvError>`, `stderr_tail(&self) -> String`. `enum PiRpcRecord { Record(Value), Error(String), Exited }` (Exited is delivered exactly once per process). Responses look like {\"id\":\"..\",\"type\":\"response\",\"command\":\"..\",\"success\":true,\"data\":{..}} or {..,\"success\":false,\"error\":\"text\"}.\n\nPI COMMAND SHAPES (from Pi's docs): `{\"type\":\"set_model\",\"provider\":\"opencode-go\",\"modelId\":\"glm-5.2\"}` -> response data = the full model object; failure e.g. success:false error \"Model not found: x\". `{\"type\":\"set_thinking_level\",\"level\":\"high\"}` -> {\"success\":true} with no data. `{\"type\":\"get_session_stats\"}` -> data = {\"sessionFile\":..,\"sessionId\":..,\"userMessages\":1,\"assistantMessages\":1,\"toolCalls\":0,\"toolResults\":0,\"totalMessages\":3,\"tokens\":{\"input\":704,\"output\":3,\"cacheRead\":9655,\"cacheWrite\":0,\"total\":10362},\"cost\":0.0035091,\"contextUsage\":{\"tokens\":10362,\"contextWindow\":1000000,\"percent\":1.0362}}.\n\nfake_pi_rpc.js: switches are a Set `flags` of process.argv.slice(2); commands are handled in a `switch (command.type)` with `case 'get_commands':` style branches calling `emit({...})`; copy that style. Fixed session id 'fake-pi-rpc-session-1'. `holdRun` (--hold-run) makes prompt emit agent_start + one text_delta then wait for abort.\n"
+}

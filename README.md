@@ -408,18 +408,27 @@ list at first.
 
 ## Agent Client Protocol adapters
 
-Browser sessions drive each harness over the Agent Client Protocol. Cursor
-speaks it natively (`agent acp`); Codex, Claude, and Pi each need their adapter:
+Browser sessions drive each harness over its own transport: Cursor speaks the
+Agent Client Protocol natively (`agent acp`), Codex needs its ACP adapter, Pi is
+driven directly through its RPC mode, and Claude over the Claude Agent SDK.
 
 ```bash
-npm install -g @agentclientprotocol/codex-acp \
-               @agentclientprotocol/claude-agent-acp \
-               pi-acp
+npm install -g @agentclientprotocol/codex-acp
 ```
 
-`ajax doctor` reports these as `acp:codex`, `acp:claude`, and `acp:pi`. Without
-one, Ajax falls back to `npx -y <package>`, which works but pays a fetch on the
-first session.
+```bash
+npm install -g @earendil-works/pi-coding-agent
+```
+
+Claude additionally needs Node.js 20 or newer on `PATH` and the Agent SDK:
+
+```bash
+npm install -g @anthropic-ai/claude-agent-sdk
+```
+
+`ajax doctor` reports these as `acp:codex`, `rpc:pi`, and `sdk:claude`. Without
+an ACP adapter, Ajax falls back to `npx -y <package>`, which works but pays a
+fetch on the first session.
 
 ## Validation
 

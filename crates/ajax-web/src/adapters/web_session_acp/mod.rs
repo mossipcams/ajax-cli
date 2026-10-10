@@ -1,12 +1,23 @@
 mod apply_model;
 mod available_command_descriptors;
 mod catalog;
+mod claude_sdk_client;
+mod claude_sdk_map;
+mod claude_sdk_spawn;
 mod client;
 mod config_option_descriptors;
 mod config_options;
+mod jsonl_process;
+mod pi_rpc_client;
+mod pi_rpc_handshake;
+mod pi_rpc_map;
 mod prompt_capability_descriptors;
+mod rpc_client;
+mod rpc_handshake;
+mod rpc_session;
 mod sdk_connection;
 pub(crate) mod sdk_elicitation;
+mod session_client;
 
 pub use available_command_descriptors::{
     available_command_descriptors, AvailableCommandDescriptor,
@@ -22,6 +33,25 @@ pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapa
 mod apply_model_tests;
 
 #[cfg(test)]
+mod claude_sidecar_tests;
+
+#[cfg(test)]
+mod claude_sidecar_override_tests;
+#[cfg(test)]
+mod claude_sidecar_resolution_tests;
+
+#[cfg(test)]
+mod claude_sidecar_resume_tests;
+
+#[cfg(test)]
+mod claude_sdk_client_tests;
+
+#[cfg(test)]
+mod claude_sdk_hardening_tests;
+#[cfg(test)]
+mod claude_sdk_map_tests;
+
+#[cfg(test)]
 mod client_restore_tests;
 
 #[cfg(test)]
@@ -32,10 +62,49 @@ mod client_tests;
 
 #[cfg(test)]
 mod available_commands_tests;
+#[cfg(test)]
+mod claude_sdk_spawn_tests;
 
 #[cfg(test)]
 mod config_options_tests;
 
+#[cfg(test)]
+mod catalog_claude_sdk_tests;
+
+#[cfg(test)]
+mod catalog_pi_rpc_tests;
+
+#[cfg(test)]
+mod pi_rpc_client_options_tests;
+#[cfg(test)]
+mod pi_rpc_client_tests;
+#[cfg(test)]
+mod pi_rpc_client_usage_tests;
+#[cfg(test)]
+mod pi_rpc_handshake_tests;
+#[cfg(test)]
+mod pi_rpc_map_tests;
+
+#[cfg(test)]
+mod jsonl_process_bound_tests;
+#[cfg(test)]
+mod jsonl_process_tests;
+#[cfg(test)]
+mod rpc_session_mapper_tests;
+#[cfg(test)]
+mod rpc_session_tests;
+
+#[cfg(test)]
+mod rpc_session_request_tests;
+
+#[cfg(test)]
+mod session_client_claude_tests;
+#[cfg(test)]
+mod session_client_pin_tests;
+#[cfg(test)]
+mod session_client_spawn_tests;
+#[cfg(test)]
+mod session_client_tests;
 #[cfg(test)]
 mod spawn_tests;
 
@@ -48,6 +117,7 @@ pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
 pub(crate) use sdk_connection::CancelOutcome;
+pub use session_client::{AcpEventSource, SessionClient};
 
 #[cfg(test)]
 pub(crate) use client::{

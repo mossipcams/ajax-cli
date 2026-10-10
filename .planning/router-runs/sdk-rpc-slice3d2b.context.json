@@ -1,0 +1,28 @@
+{
+  "task_id": "sdk-rpc-slice3d2-r2",
+  "agent": "pi",
+  "model": "local/swift-1.5-qwen-3.8-27b",
+  "risk": "high",
+  "allowed_files": [
+    "crates/ajax-web/src/adapters/web_session_acp/session_client_spawn_tests.rs"
+  ],
+  "acceptance": [
+    "In session_client_spawn_tests.rs every use of the placeholder pin string \"operator-pin\" passed as the operator_pin argument to SessionClient::spawn_with_operator_pin is replaced by \"default\" (an unspecified pin that applies nothing). NO assertion is added, removed or weakened; only that string argument changes",
+    "`cargo nextest run -p ajax-web` reports 0 failures (849 tests); fmt and clippy pass",
+    "No other file is edited"
+  ],
+  "verify": [
+    "cargo fmt --check",
+    "cargo clippy -p ajax-web --all-targets --all-features -- -D warnings",
+    "cargo nextest run -p ajax-web"
+  ],
+  "fallback": "GLM",
+  "fallback_chain": [
+    "pi/opencode-go/glm-5.2",
+    "codex/gpt-6-astra"
+  ],
+  "working_directory": "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-claude-agent-sdk",
+  "snapshot_directory": "/var/folders/t0/f16kndkx2gs1_9ncbzfjhmh00000gn/T/tmp.KgMkerxcYP",
+  "user_request": "One-word test-input fix. The Pi spawn now applies the operator pin, so the placeholder pin \"operator-pin\" in session_client_spawn_tests.rs is (correctly) rejected as not provider/id and reported as model_apply_error, which makes pi_spawn_returns_client_and_report fail its model_apply_error.is_none() assertion. Change the placeholder to \"default\".",
+  "instructions": "NEVER run git stash, git checkout, git reset, git restore, git clean, git merge, git rebase or any command that changes the index, the stash stack, or other worktrees' state. Do NOT touch crates/ajax-web/web/. Do NOT explore. Open session_client_spawn_tests.rs, grep -n operator-pin, replace each such argument with \"default\", then run the verify commands. Do not commit."
+}
