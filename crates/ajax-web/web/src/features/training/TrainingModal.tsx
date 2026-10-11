@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -69,6 +69,12 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const [active, setActive] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [profilesError, setProfilesError] = useState<string | null>(null);
+  // Mirrors `open` for event handlers: a POST that rejects after the user
+  // closed the dialog must not surface a stale error banner on next open.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -125,7 +131,9 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
       setPending(null);
       void refresh();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      if (openRef.current) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setActive(null);
     }

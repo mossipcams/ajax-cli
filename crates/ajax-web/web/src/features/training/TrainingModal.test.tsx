@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@/test/testing-library-shim";
-import { render } from "@/test/testing-library-shim";
+import { act, fireEvent, render, screen, waitFor } from "@/test/testing-library-shim";
 import TrainingModal from "./TrainingModal";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
@@ -256,6 +255,58 @@ describe("TrainingModal", () => {
     expect(postCalls).toHaveLength(0);
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     expect(await screen.findByRole("button", { name: /unsloth/ })).toBeTruthy();
+  });
+
+  it("does not surface a stale action error when the dialog closes while a request fails", async () => {
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
+    modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
+
+    const routeMock = globalThis.fetch as (
+      i: RequestInfo | URL,
+      o?: RequestInit,
+    ) => Promise<Response>;
+    let settlePost: (response: Response) => void = () => undefined;
+    const pendingPost = new Promise<Response>((resolve) => {
+      settlePost = resolve;
+    });
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
+          return pendingPost;
+        }),
+      );
+
+      let open = true;
+      const view = render(<TrainingModal open={open} onOpenChange={() => {}} />);
+
+      await screen.findByTestId("training-state");
+
+      // Serve starts, request in flight; user closes the dialog before it resolves.
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      open = false;
+      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+
+      // Fail the abandoned POST after close; act() lets its catch flush.
+      await act(async () => {
+        settlePost(
+          new Response(JSON.stringify({ ok: false, error: "boom" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      });
+
+      // Reopening must not show a stale error banner for the abandoned action.
+      open = true;
+      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      await screen.findByTestId("training-state");
+      expect(screen.queryByTestId("training-action-error")).toBeNull();
+    } finally {
+      vi.stubGlobal("fetch", routeMock);
+    }
   });
 
   it("shows a compact error banner for host-unreachable responses", async () => {
