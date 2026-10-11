@@ -2,6 +2,22 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.60.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.59.0...ajax-cli-v0.60.0) (2026-10-11)
+
+
+### Features
+
+* **core:** acp execution state ([#1258](https://github.com/mossipcams/ajax-cli/issues/1258)) ([09a2965](https://github.com/mossipcams/ajax-cli/commit/09a2965f7c16184954bb23966cea2cdeae757306))
+* **web:** acp execution state ([#1259](https://github.com/mossipcams/ajax-cli/issues/1259)) ([f30edcc](https://github.com/mossipcams/ajax-cli/commit/f30edcc52d0bebaecf0a5929a5d513ca10874489))
+* **web:** local training ux ([#1265](https://github.com/mossipcams/ajax-cli/issues/1265)) ([5fade7a](https://github.com/mossipcams/ajax-cli/commit/5fade7a7506dcd76e6981ee9973c6a426d4e4762))
+
+
+### Bug Fixes
+
+* **core:** report delete-branch diagnostics on drop failure ([#1261](https://github.com/mossipcams/ajax-cli/issues/1261)) ([c77e70f](https://github.com/mossipcams/ajax-cli/commit/c77e70fdc78dc8eedd4e3ccba377ee759cfd3e80))
+* **web:** acknowledge terminal input without holding the shared state lock ([#1256](https://github.com/mossipcams/ajax-cli/issues/1256)) ([12252e5](https://github.com/mossipcams/ajax-cli/commit/12252e588c18f28195addced51bd99103d6c7fe5))
+* **web:** drop a deferred activity report once a newer one lands ([#1262](https://github.com/mossipcams/ajax-cli/issues/1262)) ([ff115e0](https://github.com/mossipcams/ajax-cli/commit/ff115e0c71bc92e85dc0ae3e2a5fbdffa2e473da))
+
 ## [0.59.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.2...ajax-cli-v0.59.0) (2026-10-07)
 
 
