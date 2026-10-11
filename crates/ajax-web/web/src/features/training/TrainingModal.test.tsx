@@ -280,14 +280,15 @@ describe("TrainingModal", () => {
       );
 
       let open = true;
-      const view = render(<TrainingModal open={open} onOpenChange={() => {}} />);
+      const noop = vi.fn();
+      const view = render(<TrainingModal open={open} onOpenChange={noop} />);
 
       await screen.findByTestId("training-state");
 
       // Serve starts, request in flight; user closes the dialog before it resolves.
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
       open = false;
-      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
       // Fail the abandoned POST after close; act() lets its catch flush.
       await act(async () => {
@@ -301,7 +302,7 @@ describe("TrainingModal", () => {
 
       // Reopening must not show a stale error banner for the abandoned action.
       open = true;
-      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
       expect(screen.queryByTestId("training-action-error")).toBeNull();
     } finally {
@@ -331,13 +332,14 @@ describe("TrainingModal", () => {
       );
 
       let open = true;
-      const view = render(<TrainingModal open={open} onOpenChange={() => {}} />);
+      const noop = vi.fn();
+      const view = render(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
 
       // Start goes in flight; the user closes the dialog before it resolves.
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
       open = false;
-      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
       const statusCalls = () =>
         routeMock.mock.calls.filter((call) => String(call[0]).includes("/status")).length;
@@ -353,7 +355,7 @@ describe("TrainingModal", () => {
 
       // Reopening still loads fresh data.
       open = true;
-      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
       expect(statusCalls()).toBeGreaterThan(countBefore);
     } finally {
