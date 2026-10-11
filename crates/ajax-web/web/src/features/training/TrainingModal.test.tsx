@@ -58,6 +58,8 @@ function openModal(): void {
   render(<TrainingModal open onOpenChange={onOpenChange} />);
 }
 
+type FetchMock = (i: RequestInfo | URL, o?: RequestInit) => Promise<Response>;
+
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   postCalls.length = 0;
@@ -74,13 +76,55 @@ afterEach(() => {
 });
 
 describe("TrainingModal", () => {
-  it("renders idle state with no run and no generation activity", async () => {
+  it("shows a skeleton while the first status fetch is pending, then the hero", async () => {
+    const routeMock = globalThis.fetch as unknown as FetchMock;
+    let settleStatus: (response: Response) => void = () => undefined;
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).includes("/status")) {
+            return new Promise<Response>((resolve) => {
+              settleStatus = resolve;
+            });
+          }
+          return routeMock(input, init);
+        }),
+      );
+      openModal();
+
+      // Loading is a designed skeleton, not plain "Loading…" text.
+      expect(screen.getByTestId("training-loading")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Unsloth train" })).toBeNull();
+
+      await act(async () => {
+        settleStatus(jsonResponse(idleStatus));
+        vi.advanceTimersByTime(10);
+      });
+      expect(await screen.findByTestId("training-state")).toBeTruthy();
+      expect(screen.queryByTestId("training-loading")).toBeNull();
+    } finally {
+      vi.stubGlobal("fetch", routeMock);
+    }
+  });
+
+  it("renders the idle hero with an obvious primary action and no visible raw state", async () => {
     openModal();
-    expect(await screen.findByTestId("training-state")).toHaveTextContent("Idle");
-    // The raw host state remains visible, verbatim, under the human line.
-    expect(screen.getByTestId("training-raw-state")).toHaveTextContent("idle");
-    expect(screen.getByText("No run in progress.")).toBeTruthy();
-    expect(screen.getByText("No generation activity.")).toBeTruthy();
+    const hero = await screen.findByTestId("training-hero");
+    expect(hero).toHaveTextContent("Idle");
+    // The raw host state stays in the DOM (tooltip/aria) but is visually hidden.
+    const raw = screen.getByTestId("training-raw-state");
+    expect(raw).toHaveClass("training-sr-only");
+    expect(raw).toHaveTextContent("idle");
+    expect(hero).toHaveAttribute("title", "idle");
+
+    // Primary CTA is obvious; secondary jobs are also reachable.
+    const primary = screen.getAllByRole("button", { name: "Unsloth train" });
+    expect(primary.length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Data generation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Wake train" })).toBeTruthy();
+    expect(hero).toHaveTextContent(/Start a job to begin/);
+    expect(hero).toHaveTextContent("No run in progress.");
   });
 
   it("renders the serving profile with a stop action", async () => {
@@ -92,13 +136,15 @@ describe("TrainingModal", () => {
       running: true,
     };
     openModal();
-    expect(await screen.findByTestId("training-state")).toBeTruthy();
+    expect(await screen.findByTestId("training-hero")).toHaveTextContent("Runtime ready");
     expect(screen.getByText("serving")).toBeTruthy();
     expect(screen.getByText("ctx 122880, 2 slots")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { name: "Stop serving" }).length,
+    ).toBeGreaterThan(0);
   });
 
-  it("renders a training run with progress, loss, ETA and log tail", async () => {
+  it("renders a training run with formatted stats and a Stop action beside them", async () => {
     statusRoute.body = {
       ...idleStatus,
       state: "train:lfm-train",
@@ -112,19 +158,32 @@ describe("TrainingModal", () => {
       },
     };
     openModal();
-    // Headline is human; the raw host state stays verbatim below it.
-    expect(await screen.findByTestId("training-state")).toHaveTextContent(
-      "Unsloth train",
+    const hero = await screen.findByTestId("training-hero");
+    // Headline is human; the raw host state is tooltip/aria only.
+    expect(hero).toHaveTextContent("Unsloth train running");
+    expect(hero).toHaveAttribute("title", "train:lfm-train");
+    expect(screen.getByTestId("training-raw-state")).toHaveClass(
+      "training-sr-only",
     );
-    expect(screen.getByTestId("training-raw-state")).toHaveTextContent(
-      "train:lfm-train",
-    );
-    const run = screen.getByTestId("training-run");
-    expect(run).toHaveTextContent(/lfm-train/);
+
+    // Loss is formatted to 2 decimals; the raw 4-decimal value is never shown.
+    const loss = screen.getByTestId("training-loss");
+    expect(loss).toHaveTextContent("1.23");
+    expect(hero).not.toHaveTextContent("1.2345");
+
+    // ETA is a prominent stat, not prose.
+    const eta = screen.getByTestId("training-eta");
+    expect(eta).toHaveTextContent("~6 min");
+    expect(eta.closest(".is-prominent")).toBeTruthy();
+
+    const step = screen.getByTestId("training-step");
+    expect(step).toHaveTextContent("step 30 / 100");
     expect(screen.getByRole("progressbar", { name: "lfm-train progress" })).toBeTruthy();
-    expect(run).toHaveTextContent(/step 30 \/ 100/);
-    expect(run).toHaveTextContent(/loss 1\.2345/);
-    expect(run).toHaveTextContent(/ETA ~6 min/);
+
+    // Stop sits beside the stats in the hero.
+    const stop = screen.getByRole("button", { name: "Stop run" });
+    expect(stop.closest(".training-hero-body")).toBeTruthy();
+
     const log = screen.getByTestId("training-log");
     expect(Array.from(log.querySelectorAll("li")).map((el) => el.textContent)).toEqual([
       "loss=1.2",
@@ -135,9 +194,12 @@ describe("TrainingModal", () => {
   it("renders generation with target and rows-only when target is null", async () => {
     statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 40, target: 100, running: true } };
     openModal();
-    expect(await screen.findByText(/40 \/ 100 rows/)).toBeTruthy();
+    expect(await screen.findByTestId("training-generation-rows")).toHaveTextContent("40 / 100");
+    expect(screen.getByRole("progressbar", { name: "Data generation progress" })).toBeTruthy();
 
-    statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 7, target: null, running: false } };
+    // The generation hero renders while the job runs; the rows stat drops the
+    // denominator when the host reports no target.
+    statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 7, target: null, running: true } };
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
@@ -147,28 +209,41 @@ describe("TrainingModal", () => {
   it("shows a live training job from the host state when no run object is sent", async () => {
     statusRoute.body = { ...idleStatus, state: "train:lfm 123 456 1700000000", run: null };
     openModal();
-    expect(await screen.findByTestId("training-live-state")).toHaveTextContent("Training in progress: lfm");
+    // The hero headline carries the human label from the host state; the live
+    // block beneath it reports that no run object has supplied progress yet.
+    expect(await screen.findByTestId("training-state")).toHaveTextContent(
+      "Training in progress: lfm",
+    );
+    expect(screen.getByTestId("training-live-state")).toHaveTextContent(
+      "No progress reported by the host yet.",
+    );
     expect(screen.queryByText("No run in progress.")).toBeNull();
   });
 
-  it("sends no mutating request without an explicit confirm step", async () => {
+  it("sends no mutating request without the confirm bar step", async () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
     openModal();
-    // Profile switch is two-step: arming must not fire a mutating request.
+
+    // Profile switch is two-step through the shared confirm bar.
     fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
     expect(postCalls).toHaveLength(0);
+    const confirm = await screen.findByTestId("training-confirm");
+    expect(confirm).toHaveTextContent("Switch the active profile to unsloth?");
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Confirm switch to unsloth" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(postCalls).toHaveLength(1));
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Unsloth train" }));
+    // Primary job start uses the same bar (jobs section keeps its own button;
+    // the idle hero may mirror it, so pick any match explicitly).
+    fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[1] ?? screen.getAllByRole("button", { name: "Unsloth train" })[0]);
     expect(postCalls).toHaveLength(1);
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Unsloth train" }));
+    const jobConfirm = await screen.findByTestId("training-confirm");
+    expect(jobConfirm).toHaveTextContent("Start the Unsloth train job?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(postCalls).toHaveLength(2));
     expect(postCalls[1].url).toContain("/api/training/start");
     expect(postCalls[1].body).toEqual({ job: "lfm-train", confirm: true });
@@ -180,7 +255,7 @@ describe("TrainingModal", () => {
     openModal();
     expect(await screen.findByRole("button", { name: /unsloth/ })).toBeDisabled();
     expect(
-      screen.getByText(/Switching is unavailable while (a training job is in progress|state is train:)/),
+      screen.getByText(/Switching is unavailable while (a job is in progress|state is train:)/),
     ).toBeTruthy();
   });
 
@@ -211,30 +286,16 @@ describe("TrainingModal", () => {
   it("labels the in-flight action instead of silently disabling everything", async () => {
     // Delegate GETs to the existing per-route mock; let POSTs hang so the start
     // request stays in flight while we assert.
-    const routeMock = globalThis.fetch as (
-      i: RequestInfo | URL,
-      o?: RequestInit,
-    ) => Promise<Response>;
+    const routeMock = globalThis.fetch as unknown as FetchMock;
 
-    // A stopped runtime with a selected profile makes Start clickable.
-    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
-    modelsRoute.body = { ok: true, profiles: ["atomic", "swift-1.5"], active_profile: "atomic", running: false };
-    const hang = new Promise<Response>(() => undefined);
+    openModal();
+    await screen.findByTestId("training-state");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
     try {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
-          return hang;
-        }),
-      );
-      openModal();
-
-      await screen.findByTestId("training-state");
-
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
-
-      const busyButton = await screen.findByRole("button", { name: /Starting…/ });
+      const busyButton = await screen.findByRole("button", { name: /Starting/ });
       expect(busyButton).toHaveAttribute("aria-busy", "true");
     } finally {
       // Restore the per-route mock so POSTs don't hang for later tests.
@@ -251,8 +312,9 @@ describe("TrainingModal", () => {
     const cancel = await screen.findByRole("button", { name: "Cancel" });
     fireEvent.click(cancel);
 
-    // No request, and the armed UI is gone — picker is back in its default state.
+    // No request, and the confirm bar is gone — picker is back in its default state.
     expect(postCalls).toHaveLength(0);
+    expect(screen.queryByTestId("training-confirm")).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
     expect(await screen.findByRole("button", { name: /unsloth/ })).toBeTruthy();
   });
@@ -261,10 +323,7 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "atomic" };
     modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
 
-    const routeMock = globalThis.fetch as (
-      i: RequestInfo | URL,
-      o?: RequestInit,
-    ) => Promise<Response>;
+    const routeMock = globalThis.fetch as unknown as FetchMock;
     let settlePost: (response: Response) => void = () => undefined;
     const pendingPost = new Promise<Response>((resolve) => {
       settlePost = resolve;
@@ -285,8 +344,9 @@ describe("TrainingModal", () => {
 
       await screen.findByTestId("training-state");
 
-      // Serve starts, request in flight; user closes the dialog before it resolves.
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      // Train start goes in flight via the confirm bar; user closes before it resolves.
+      fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
@@ -314,9 +374,7 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "atomic" };
     modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
 
-    const routeMock = globalThis.fetch as ReturnType<typeof vi.fn> & (
-      (i: RequestInfo | URL, o?: RequestInit) => Promise<Response>
-    );
+    const routeMock = globalThis.fetch as unknown as FetchMock;
     let settlePost: (response: Response) => void = () => undefined;
     const pendingPost = new Promise<Response>((resolve) => {
       settlePost = resolve;
@@ -337,13 +395,15 @@ describe("TrainingModal", () => {
       await screen.findByTestId("training-state");
 
       // Start goes in flight; the user closes the dialog before it resolves.
-      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
-      const statusCalls = () =>
-        routeMock.mock.calls.filter((call) => String(call[0]).includes("/status")).length;
-      // The wrapper above delegates GETs to routeMock, so count on that mock.
+const calls = (routeMock as unknown as {
+        mock: { calls: Array<[RequestInfo | URL, RequestInit?]> };
+      }).mock.calls;
+      const statusCalls = () => calls.filter((call) => String(call[0]).includes("/status")).length;
       const countBefore = statusCalls();
 
       // The abandoned POST completes successfully after close; no follow-up
@@ -380,8 +440,9 @@ describe("TrainingModal", () => {
     openModal();
     fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
 
+    expect(await screen.findByText("Stop the current training run?")).toBeTruthy();
     postResponse = { body: { ok: false, error: "a job is running" }, status: 409 };
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm stop run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(await screen.findByTestId("training-action-error")).toHaveTextContent(
       "a job is running",
     );
