@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -21,7 +21,8 @@ type PendingAction =
   | { kind: "job"; job: trainingApi.TrainingJobKind }
   | { kind: "stop" }
   | { kind: "serve" }
-  | { kind: "switch"; profile: string };
+  | { kind: "switch"; profile: string }
+  | { kind: "serve-stop" };
 
 function formatEta(seconds: number): string {
   const minutes = Math.round(seconds / 60);
@@ -35,12 +36,45 @@ function progressWidth(fraction: number): string {
   return `${Number(percent.toFixed(1))}%`;
 }
 
+function formatStarted(started: string | null): string {
+  if (!started) return "";
+  const startedMs = Date.parse(started);
+  if (!Number.isFinite(startedMs)) return "";
+  const text = new Date(startedMs).toLocaleString();
+  let elapsed = "";
+  const diff = Math.max(0, Date.now() - startedMs);
+  if (diff > 5000) {
+    const seconds = Math.floor(diff / 1000);
+    if (seconds < 60) elapsed = `${seconds} s`;
+    else if (seconds < 3600) elapsed = `${Math.floor(seconds / 60)} min`;
+    else elapsed = `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
+  }
+  return elapsed ? `${text} · ${elapsed}` : text;
+}
+
+function statusLine(state: string, runningKind: string | null): string {
+  if (runningKind) {
+    return (JOB_LABELS as Record<string, string>)[runningKind] ?? runningKind;
+  }
+  if (state.startsWith("train:")) return "Training in progress";
+  if (state.startsWith("generate")) return "Generating data";
+  if (state === "idle") return "Idle";
+  return state;
+}
+
 export default function TrainingModal({ open, onOpenChange }: Props) {
   const { status, error, refresh } = useTrainingStatus(open);
   const [models, setModels] = useState<trainingApi.TrainingModels | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [active, setActive] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
+  // Mirrors `open` for event handlers: a POST that rejects after the user
+  // closed the dialog must not surface a stale error banner on next open.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -51,7 +85,8 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         if (cancelled) return;
         setModels(result);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (!cancelled) setProfilesError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       cancelled = true;
@@ -59,7 +94,12 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   }, [open]);
 
   useEffect(() => {
-    if (!open) setPending(null);
+    if (!open) {
+      setPending(null);
+      setActive(null);
+      setActionError(null);
+      setProfilesError(null);
+    }
   }, [open]);
 
   const run = status?.run ?? null;
@@ -71,6 +111,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const activeProfile =
     models?.active_profile ?? status?.active_profile ?? null;
   const runtimeUp = models?.running ?? status?.runtime_up === true;
+  const busy = active !== null;
   const busyReason =
     run?.running || (generation && generation.running)
       ? "a training job is in progress"
@@ -79,19 +120,24 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         : null;
 
   async function execute(action: PendingAction): Promise<void> {
-    setBusy(true);
+    setActive(action);
     setActionError(null);
     try {
       if (action.kind === "job") await trainingApi.startTrainingJob(action.job);
-      else if (action.kind === "stop") await trainingApi.stopTraining();
+      else if (action.kind === "stop" || action.kind === "serve-stop")
+        await trainingApi.stopTraining();
       else if (action.kind === "serve") await trainingApi.serveLlama();
       else await trainingApi.switchTrainingProfile(action.profile);
       setPending(null);
-      void refresh();
+      // Skip the refetch if the dialog closed while the action completed;
+      // reopening reloads fresh state anyway (same guard as the error path).
+      if (openRef.current) void refresh();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      if (openRef.current) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      setActive(null);
     }
   }
 
@@ -133,94 +179,28 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
 
           <section
             className="training-section"
-            aria-labelledby="training-models-heading"
-          >
-            <h3 id="training-models-heading">llama.cpp</h3>
-            <p className="training-muted" data-testid="llama-state">
-              {runtimeUp ? "Serving" : "Stopped"}
-              {activeProfile ? ` · ${activeProfile}` : ""}
-            </p>
-            <div className="training-llama-actions">
-              <Button
-                type="button"
-                disabled={busy || runtimeUp || !activeProfile}
-                onClick={() => void execute({ kind: "serve" })}
-              >
-                Start
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={busy || !runtimeUp}
-                onClick={() => void execute({ kind: "stop" })}
-              >
-                Stop
-              </Button>
-            </div>
-            <ul className="training-profile-list">
-              {(models?.profiles ?? []).map((name) => {
-                const detail = details?.[name] ?? {};
-                const isActive = name === activeProfile;
-                return (
-                  <li
-                    key={name}
-                    className={`training-profile${isActive ? " is-active" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="training-profile-picker"
-                      aria-pressed={isActive}
-                      disabled={isActive || busy || Boolean(busyReason)}
-                      onClick={() =>
-                        void execute({ kind: "switch", profile: name })
-                      }
-                    >
-                      <span className="training-profile-text">
-                        <strong>{detail.label ?? name}</strong>
-                        {isActive ? (
-                          <em className="training-tag">active</em>
-                        ) : null}
-                        {isActive ? (
-                          runtimeUp ? (
-                            <em className="training-tag">serving</em>
-                          ) : (
-                            <em className="training-tag is-muted">stopped</em>
-                          )
-                        ) : null}
-                        {detail.model ? (
-                          <span className="training-model">{detail.model}</span>
-                        ) : null}
-                        {detail.serving ? (
-                          <span className="training-serving">
-                            {detail.serving}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            {busyReason ? (
-              <p className="training-muted">
-                Switching is unavailable while {busyReason}.
-              </p>
-            ) : null}
-          </section>
-
-          <section
-            className="training-section"
             aria-labelledby="training-runs-heading"
           >
             <h3 id="training-runs-heading">Training runs</h3>
             {status ? (
-              <p className="training-state" data-testid="training-state">
-                {status.state}
-              </p>
+              <>
+                <p className="training-state" data-testid="training-state">
+                  {statusLine(status.state, run?.running ? run.kind : null)}
+                </p>
+                <p
+                  className="training-muted training-raw-state"
+                  data-testid="training-raw-state"
+                >
+                  {status.state}
+                </p>
+              </>
             ) : null}
             {run ? (
-              <div className="training-run" data-testid="training-run">
+              <div className="training-run" data-testid={run.running ? "training-run" : "training-run-idle"}>
                 <p className="training-muted">{run.kind}</p>
+                {!run.running && (
+                  <p className="training-muted">Run finished</p>
+                )}
                 {run.progress ? (
                   <>
                     <div
@@ -271,6 +251,10 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                     ))}
                   </ul>
                 ) : null}
+
+                {formatStarted(run.started) ? (
+                  <p className="training-muted">{formatStarted(run.started)}</p>
+                ) : null}
               </div>
             ) : trainLabel ? (
               <div data-testid="training-live-state">
@@ -291,15 +275,24 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 (job) => {
                   const isPending =
                     pending?.kind === "job" && pending.job === job;
+                  const inFlight = active?.kind === "job" && active.job === job;
                   return isPending ? (
                     <Button
                       key={job}
                       type="button"
                       variant="secondary"
                       disabled={busy}
+                      aria-busy={inFlight || undefined}
                       onClick={() => void execute(pending)}
                     >
-                      Confirm {JOB_LABELS[job]}
+                      {inFlight ? (
+                        <>
+                          <span className="training-busy-dot" aria-hidden />
+                          Starting {JOB_LABELS[job]}…
+                        </>
+                      ) : (
+                        `Confirm ${JOB_LABELS[job]}`
+                      )}
                     </Button>
                   ) : (
                     <Button
@@ -319,9 +312,17 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                   <Button
                     type="button"
                     disabled={busy}
+                    aria-busy={active?.kind === "stop" || undefined}
                     onClick={() => void execute(pending)}
                   >
-                    Confirm stop run
+                    {active?.kind === "stop" ? (
+                      <>
+                        <span className="training-busy-dot" aria-hidden />
+                        Stopping run…
+                      </>
+                    ) : (
+                      "Confirm stop run"
+                    )}
                   </Button>
                 ) : (
                   <Button
@@ -334,6 +335,133 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 )
               ) : null}
             </div>
+          </section>
+
+          <section
+            className="training-section"
+            aria-labelledby="training-models-heading"
+          >
+            <h3 id="training-models-heading">llama.cpp</h3>
+            <p className="training-muted" data-testid="llama-state">
+              {runtimeUp ? "Serving" : "Stopped"}
+              {activeProfile ? ` · ${activeProfile}` : ""}
+            </p>
+            <div className="training-llama-actions">
+              <Button
+                type="button"
+                disabled={busy || runtimeUp || !activeProfile}
+                aria-busy={active?.kind === "serve" || undefined}
+                onClick={() => void execute({ kind: "serve" })}
+              >
+                {active?.kind === "serve" ? (
+                  <>
+                    <span className="training-busy-dot" aria-hidden />
+                    Starting…
+                  </>
+                ) : (
+                  "Start"
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={busy || !runtimeUp}
+                aria-busy={active?.kind === "serve-stop" || undefined}
+                onClick={() => void execute({ kind: "serve-stop" })}
+              >
+                {active?.kind === "serve-stop" ? (
+                  <>
+                    <span className="training-busy-dot" aria-hidden />
+                    Stopping…
+                  </>
+                ) : (
+                  "Stop"
+                )}
+              </Button>
+            </div>
+            <ul className="training-profile-list">
+              {(models?.profiles ?? []).map((name) => {
+                const detail = details?.[name] ?? {};
+                const isActive = name === activeProfile;
+                const isArmed = pending?.kind === "switch" && pending.profile === name;
+                const switching = active?.kind === "switch" && active.profile === name;
+                return (
+                  <li
+                    key={name}
+                    className={`training-profile${isActive ? " is-active" : ""}`}
+                  >
+                    {switching ? (
+                      <p className="training-muted" data-testid="training-switch-busy">
+                        Switching to {detail.label ?? name}…
+                      </p>
+                    ) : isArmed ? (
+                      <div className="training-llama-actions">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={busy || isActive}
+                          onClick={() => void execute(pending)}
+                        >
+                          Confirm switch to {detail.label ?? name}
+                        </Button>
+                        <Button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setPending(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                    <button
+                      type="button"
+                      className="training-profile-picker"
+                      aria-pressed={isActive}
+                      disabled={isActive || busy || Boolean(busyReason)}
+                      onClick={() => setPending({ kind: "switch", profile: name })}
+                    >
+                      <span className="training-profile-text">
+                        <strong>{detail.label ?? name}</strong>
+                        {isActive ? (
+                          <em className="training-tag">active</em>
+                        ) : null}
+                        {isActive ? (
+                          runtimeUp ? (
+                            <em className="training-tag">serving</em>
+                          ) : (
+                            <em className="training-tag is-muted">stopped</em>
+                          )
+                        ) : null}
+                        {detail.model ? (
+                          <span className="training-model">{detail.model}</span>
+                        ) : null}
+                        {detail.serving ? (
+                          <span className="training-serving">
+                            {detail.serving}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            {profilesError ? (
+              <p
+                role="alert"
+                className="training-banner"
+                data-testid="training-profiles-error"
+              >
+                Model list unavailable: {profilesError}
+              </p>
+            ) : null}
+            {busyReason ? (
+              <p className="training-muted">
+                Switching is unavailable while {busyReason}.
+              </p>
+            ) : null}
           </section>
 
           <section
