@@ -309,6 +309,58 @@ describe("TrainingModal", () => {
     }
   });
 
+  it("does not refetch status when the dialog closes while an in-flight action completes", async () => {
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
+    modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
+
+    const routeMock = globalThis.fetch as ReturnType<typeof vi.fn> & (
+      (i: RequestInfo | URL, o?: RequestInit) => Promise<Response>
+    );
+    let settlePost: (response: Response) => void = () => undefined;
+    const pendingPost = new Promise<Response>((resolve) => {
+      settlePost = resolve;
+    });
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
+          return pendingPost;
+        }),
+      );
+
+      let open = true;
+      const view = render(<TrainingModal open={open} onOpenChange={() => {}} />);
+      await screen.findByTestId("training-state");
+
+      // Start goes in flight; the user closes the dialog before it resolves.
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      open = false;
+      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+
+      const statusCalls = () =>
+        routeMock.mock.calls.filter((call) => String(call[0]).includes("/status")).length;
+      // The wrapper above delegates GETs to routeMock, so count on that mock.
+      const countBefore = statusCalls();
+
+      // The abandoned POST completes successfully after close; no follow-up
+      // status fetch may fire while the dialog is closed.
+      await act(async () => {
+        settlePost(jsonResponse({ ok: true }));
+      });
+      expect(statusCalls()).toBe(countBefore);
+
+      // Reopening still loads fresh data.
+      open = true;
+      view.rerender(<TrainingModal open={open} onOpenChange={() => {}} />);
+      await screen.findByTestId("training-state");
+      expect(statusCalls()).toBeGreaterThan(countBefore);
+    } finally {
+      vi.stubGlobal("fetch", routeMock);
+    }
+  });
+
   it("shows a compact error banner for host-unreachable responses", async () => {
     statusRoute.body = { ok: false, error: "host unreachable" };
     statusRoute.status = 502;

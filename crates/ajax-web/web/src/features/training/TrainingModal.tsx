@@ -129,7 +129,9 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
       else if (action.kind === "serve") await trainingApi.serveLlama();
       else await trainingApi.switchTrainingProfile(action.profile);
       setPending(null);
-      void refresh();
+      // Skip the refetch if the dialog closed while the action completed;
+      // reopening reloads fresh state anyway (same guard as the error path).
+      if (openRef.current) void refresh();
     } catch (err) {
       if (openRef.current) {
         setActionError(err instanceof Error ? err.message : String(err));
