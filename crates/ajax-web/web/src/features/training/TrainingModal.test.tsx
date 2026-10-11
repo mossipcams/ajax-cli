@@ -77,7 +77,9 @@ afterEach(() => {
 describe("TrainingModal", () => {
   it("renders idle state with no run and no generation activity", async () => {
     openModal();
-    expect(await screen.findByTestId("training-state")).toHaveTextContent("idle");
+    expect(await screen.findByTestId("training-state")).toHaveTextContent("Idle");
+    // The raw host state remains visible, verbatim, under the human line.
+    expect(screen.getByTestId("training-raw-state")).toHaveTextContent("idle");
     expect(screen.getByText("No run in progress.")).toBeTruthy();
     expect(screen.getByText("No generation activity.")).toBeTruthy();
   });
@@ -111,7 +113,13 @@ describe("TrainingModal", () => {
       },
     };
     openModal();
-    expect(await screen.findByTestId("training-state")).toHaveTextContent("train:lfm-train");
+    // Headline is human; the raw host state stays verbatim below it.
+    expect(await screen.findByTestId("training-state")).toHaveTextContent(
+      "Unsloth train",
+    );
+    expect(screen.getByTestId("training-raw-state")).toHaveTextContent(
+      "train:lfm-train",
+    );
     const run = screen.getByTestId("training-run");
     expect(run).toHaveTextContent(/lfm-train/);
     expect(screen.getByRole("progressbar", { name: "lfm-train progress" })).toBeTruthy();
@@ -148,7 +156,13 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama" };
     modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
     openModal();
+    // Profile switch is two-step: arming must not fire a mutating request.
     fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
+    expect(postCalls).toHaveLength(0);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm switch to unsloth" }),
+    );
     await waitFor(() => expect(postCalls).toHaveLength(1));
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
@@ -195,6 +209,55 @@ describe("TrainingModal", () => {
     }
   });
 
+  it("labels the in-flight action instead of silently disabling everything", async () => {
+    // Delegate GETs to the existing per-route mock; let POSTs hang so the start
+    // request stays in flight while we assert.
+    const routeMock = globalThis.fetch as (
+      i: RequestInfo | URL,
+      o?: RequestInit,
+    ) => Promise<Response>;
+
+    // A stopped runtime with a selected profile makes Start clickable.
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
+    modelsRoute.body = { ok: true, profiles: ["atomic", "swift-1.5"], active_profile: "atomic", running: false };
+    const hang = new Promise<Response>(() => undefined);
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
+          return hang;
+        }),
+      );
+      openModal();
+
+      await screen.findByTestId("training-state");
+
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+      const busyButton = await screen.findByRole("button", { name: /Starting…/ });
+      expect(busyButton).toHaveAttribute("aria-busy", "true");
+    } finally {
+      // Restore the per-route mock so POSTs don't hang for later tests.
+      vi.stubGlobal("fetch", routeMock);
+    }
+  });
+
+  it("cancelling an armed profile switch sends no request", async () => {
+    statusRoute.body = { ...idleStatus, active_profile: "llama" };
+    modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
+    openModal();
+
+    fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    fireEvent.click(cancel);
+
+    // No request, and the armed UI is gone — picker is back in its default state.
+    expect(postCalls).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(await screen.findByRole("button", { name: /unsloth/ })).toBeTruthy();
+  });
+
   it("shows a compact error banner for host-unreachable responses", async () => {
     statusRoute.body = { ok: false, error: "host unreachable" };
     statusRoute.status = 502;
@@ -207,7 +270,7 @@ describe("TrainingModal", () => {
   it("shows an action error banner when a confirmed request fails with 409", async () => {
     statusRoute.body = {
       ...idleStatus,
-      run: { kind: "generate", started: "", running: true, progress: null, log_tail: [] },
+      run: { kind: "lfm-train", started: "", running: true, progress: null, log_tail: [] },
     };
     openModal();
     fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
