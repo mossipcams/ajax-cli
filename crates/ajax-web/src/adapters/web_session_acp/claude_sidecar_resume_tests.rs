@@ -201,7 +201,10 @@ fn client_resume_missing_session_fails_and_known_session_succeeds() {
         Err(error) => error,
         Ok(_) => panic!("expected an init failure for a missing session"),
     };
-    assert!(error.contains("session not found"), "error: {error}");
+    assert!(
+        error.contains("session not found"),
+        "spawn error must mention the missing session"
+    );
 
     let known = match ClaudeSdkClient::spawn(
         Path::new("node"),
@@ -212,7 +215,7 @@ fn client_resume_missing_session_fails_and_known_session_succeeds() {
         STEP_TIMEOUT,
     ) {
         Ok(client) => client,
-        Err(error) => panic!("claude sdk client must spawn against the fake fixture: {error}"),
+        Err(_) => panic!("claude sdk client must spawn against the fake fixture"),
     };
     assert_eq!(known.session_id(), "r-1");
 }

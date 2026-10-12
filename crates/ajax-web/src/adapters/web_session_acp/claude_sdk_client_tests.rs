@@ -154,14 +154,10 @@ fn spawn_reports_generated_session_and_config_options() {
     let client = spawn_client(None, None);
 
     let session_id = client.session_id();
-    assert_eq!(
-        session_id.len(),
-        36,
-        "uuid session id shape: {session_id:?}"
-    );
+    assert_eq!(session_id.len(), 36, "uuid session id length");
     assert!(
         session_id.contains('-'),
-        "uuid session id shape: {session_id:?}"
+        "uuid session id must contain a hyphen"
     );
 
     let options = client.config_options();
