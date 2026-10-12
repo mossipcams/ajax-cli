@@ -31,7 +31,7 @@ fn round_trip_atomic_ledger() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(ledger_path(&dir, handle))
+        let mode = std::fs::metadata(dir.join("ajax.db"))
             .unwrap()
             .permissions()
             .mode()
@@ -102,7 +102,9 @@ fn owns_prompt_is_dedupe_authority() {
 fn delete_ledger_removes_sidecar_file() {
     let dir = scratch_dir("delete");
     let handle = "web/fix-login";
-    persist(&dir, handle, &PromptLedger::default()).expect("persist");
+    let path = ledger_path(&dir, handle);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"{"kind":"prompt_ledger","v":1,"entries":[]}"#).unwrap();
     assert!(ledger_path(&dir, handle).is_file());
     assert!(delete_ledger(&dir, handle));
     assert!(!ledger_path(&dir, handle).exists());
@@ -145,5 +147,34 @@ fn load_rejects_wrong_kind() {
         load(&dir, handle),
         Err(LedgerLoadError::WrongKind { .. })
     ));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn legacy_ledger_is_imported_once_and_renamed() {
+    let dir = scratch_dir("legacy-import");
+    let handle = "web/fix-login";
+    let path = ledger_path(&dir, handle);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"kind":"prompt_ledger","v":1,"entries":[{"clientMessageId":"p1","phase":"queued","transcript_text":"hi","prompt_text":"hi"}]}"#,
+    )
+    .unwrap();
+
+    let loaded = load(&dir, handle).expect("load");
+    assert_eq!(loaded.entries.len(), 1);
+    let entry = &loaded.entries[0];
+    assert_eq!(entry.client_message_id, "p1");
+    assert_eq!(entry.phase, PromptPhase::Queued);
+    assert_eq!(entry.prompt_text, "hi");
+
+    let base = path.file_name().unwrap().to_str().unwrap();
+    let migrated = path.with_file_name(format!("{base}.migrated"));
+    assert!(!path.exists());
+    assert!(migrated.is_file());
+
+    let again = load(&dir, handle).expect("load");
+    assert_eq!(again, loaded);
     let _ = std::fs::remove_dir_all(dir);
 }

@@ -66,7 +66,20 @@ impl SqliteRegistryStore {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
         }
-        Connection::open(&self.path).map_err(database_error)
+        let connection = Connection::open(&self.path).map_err(database_error)?;
+        #[cfg(unix)]
+        {
+            // Chat transcripts and prompt text live here: owner-only, like the ledger file was.
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&self.path)
+                .map(|meta| meta.permissions().mode())
+                .unwrap_or(0);
+            if mode & 0o777 != 0o600 {
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+            }
+        }
+        Ok(connection)
     }
 
     pub fn current_revision(&self) -> Result<u64, RegistrySnapshotError> {

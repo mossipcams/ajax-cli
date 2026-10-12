@@ -17,7 +17,8 @@ pub(super) fn is_acp_exit_error(event: &SessionServerEvent) -> bool {
 }
 
 pub(super) fn persist_prompt_ledger(state: &TaskSessionState) -> Result<(), SessionError> {
-    crate::adapters::web_session_store::prompt_ledger::persist(
+    crate::adapters::web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,
@@ -31,7 +32,8 @@ pub(super) fn persist_ledger_update(
 ) -> Result<(), SessionError> {
     let mut next = state.prompts.prompt_ledger.clone();
     update(&mut next);
-    crate::adapters::web_session_store::prompt_ledger::persist(
+    crate::adapters::web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         &next,
@@ -269,7 +271,8 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
         ));
     }
 
-    state.prompts.prompt_ledger = crate::adapters::web_session_store::prompt_ledger::load(
+    state.prompts.prompt_ledger = crate::adapters::web_session_store::prompt_ledger::try_load(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
     )

@@ -290,11 +290,14 @@ pub(crate) fn spawn_task_session(
 ) {
     let (tx, mut rx) = mpsc::channel(COMMAND_CAPACITY);
     let handle = qualified_handle.clone();
-    let (prompt_ledger, ledger_unusable) =
-        match web_session_store::prompt_ledger::load(&storage.state_dir, &handle) {
-            Ok(ledger) => (ledger, None),
-            Err(error) => (PromptLedger::default(), Some(error.to_string())),
-        };
+    let (prompt_ledger, ledger_unusable) = match web_session_store::prompt_ledger::try_load(
+        &storage.registry_store(),
+        &storage.state_dir,
+        &handle,
+    ) {
+        Ok(ledger) => (ledger, None),
+        Err(error) => (PromptLedger::default(), Some(error.to_string())),
+    };
     let join = tokio::spawn(async move {
         let mut state = TaskSessionState {
             qualified_handle: handle,

@@ -223,7 +223,8 @@ pub(super) async fn reset_harness_context(
     release_live_client(state, true, "harness switch")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
-    let _ = web_session_store::prompt_ledger::persist(
+    let _ = web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,
@@ -285,7 +286,8 @@ pub(super) async fn clear_session_context(
     release_live_client(state, true, "clear context")?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
-    let _ = web_session_store::prompt_ledger::persist(
+    let _ = web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,

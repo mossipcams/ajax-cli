@@ -50,7 +50,7 @@ fn new_run(handle: &str, harness: &str, model: &str) -> NewRun {
 }
 
 // ponytail: opens the registry per call; cache the run id per session if append latency shows up
-fn load_run(
+pub(super) fn load_run(
     store: &SqliteRegistryStore,
     state_dir: &Path,
     handle: &str,
@@ -140,7 +140,7 @@ pub fn try_load<T: DeserializeOwned + Serialize>(
     })
 }
 
-fn ensure_run(
+pub(super) fn ensure_run(
     store: &SqliteRegistryStore,
     state_dir: &Path,
     handle: &str,

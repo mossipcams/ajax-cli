@@ -53,7 +53,6 @@ fn content_fields(content_json: &str) -> (String, String, Vec<serde_json::Value>
 
 /// Rebuild a ledger from the stored prompts, preserving order. Failed and
 /// Cancelled prompts are omitted; Completed entries have their text cleared.
-#[allow(dead_code)] // Nothing calls this yet; wiring lands in packet 4b-A2.
 pub(super) fn ledger_from_prompts(prompts: &[RunPrompt]) -> PromptLedger {
     let mut entries = Vec::with_capacity(prompts.len());
     for prompt in prompts {
@@ -127,7 +126,6 @@ fn transition_path(
 
 /// Compute the single kernel commit that makes the stored prompts match the
 /// desired ledger. Returns `Ok(None)` when nothing would change.
-#[allow(dead_code)] // Nothing calls this yet; wiring lands in packet 4b-A2.
 pub(super) fn plan_commit(
     run_id: &str,
     current: &[RunPrompt],

@@ -233,6 +233,28 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   `is_file()`. **These need Matt's sign-off.**
 - Known ceiling: the adapter opens the registry (and runs the migration check)
   on every append; marked `ponytail:` in `load_run`.
+- Security review of 046d6ae7 (background reviewer; finding body arrived
+  empty, title only): confirmed and fixed in 38a48a56 — session delete now
+  removes legacy files and ledger even when the database delete fails, and
+  deletes/lists numbered `.jsonl.migrated.N` leftovers. Not addressed: SQLite
+  does not zero deleted rows (`secure_delete` is off), so deleted transcript
+  text can remain in free pages of the registry database.
+- Stage 4b (Qwen, packets K1/A1a/A1b/A1c): prompt ledger stored as kernel
+  prompt tasks. Every ledger save is one `commit_execution`; a dispatch opens a
+  `PromptDispatch` checkpoint with replay policy `unsafe`, completion closes
+  it. Legacy `prompt-ledger.json` imported once, renamed `.migrated`. A re-used
+  prompt id that was already withdrawn fails closed. Registry database is now
+  chmod 0600 on open (prompt text used to sit in a 0600 file; the database was
+  0644) — this also tightens existing users' databases. Orchestrator rerun:
+  fmt, workspace clippy, verify:arch, `cargo nextest run --workspace` 2543/2544;
+  the one failure, `web_session_acp::spawn_tests::
+  live_cursor_initialize_advertises_load_session`, spawns the real cursor CLI,
+  is untouched by this branch, and passed when rerun alone (load flake).
+  Existing tests changed: `prompt_ledger/tests.rs::round_trip_atomic_ledger`
+  (0600 assertion now on the database file) and
+  `delete_ledger_removes_sidecar_file` (seeds the legacy file by hand).
+- Not yet done in stage 4: prompt admission and its user-message transcript
+  event are still two commits (4c); nothing reads the checkpoints yet (stage 5).
 - Still owed from 4a-2's list: a slice-level restart test and an import test
   with `dropped > 0`; folded into 4b.
 - Resolved in 2b: a commit carrying a duplicate prompt must be a complete

@@ -64,3 +64,19 @@ fn list_run_task_ids_is_distinct_and_sorted() {
         .unwrap();
     assert_eq!(store.list_run_task_ids().unwrap(), vec!["task-a", "task-b"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn database_file_is_owner_only_and_reapplied_on_open() {
+    use std::os::unix::fs::PermissionsExt;
+    let path = temp_path("owner-only");
+    let store = SqliteRegistryStore::new(path.clone());
+    assert_eq!(store.latest_run_for_task("x").unwrap(), None);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(store.latest_run_for_task("x").unwrap(), None);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
