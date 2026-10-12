@@ -290,3 +290,68 @@ fn import_is_not_repeated_when_the_run_already_exists() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn delete_session_removes_numbered_migration_leftovers() {
+    let dir = scratch_dir("delete-migrated");
+    let session_dir = dir.join(WEB_SESSION_DIR);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let enc_a = encode_handle("web/a");
+    let enc_ab = encode_handle("web/ab");
+    for name in [
+        format!("{enc_a}.jsonl.migrated"),
+        format!("{enc_a}.jsonl.migrated.1"),
+        format!("{enc_a}.jsonl.migrated.2"),
+        format!("{enc_ab}.jsonl.migrated"),
+    ] {
+        std::fs::write(session_dir.join(&name), EVENT_ROW).unwrap();
+    }
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    assert!(delete_session(&store, &dir, "web/a"));
+    for n in ["migrated", "migrated.1", "migrated.2"] {
+        let gone = session_dir.join(format!("{enc_a}.jsonl.{n}"));
+        assert!(!gone.exists(), "{gone:?} must be deleted");
+    }
+    let kept = session_dir.join(format!("{enc_ab}.jsonl.migrated"));
+    assert!(
+        kept.exists(),
+        "a longer handle sharing the prefix must be untouched"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn delete_session_still_removes_files_when_the_database_delete_fails() {
+    let dir = scratch_dir("delete-db-fail");
+    // A directory where the registry lives makes the database unusable.
+    std::fs::create_dir_all(dir.join("ajax.db")).unwrap();
+    let path = session_path(&dir, "web/a");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let migrated = path.with_extension("jsonl.migrated");
+    std::fs::write(&migrated, EVENT_ROW).unwrap();
+    assert!(migrated.is_file());
+
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    assert!(!delete_session(&store, &dir, "web/a"));
+    assert!(
+        !migrated.exists(),
+        "files must be removed even when the db delete fails"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_persisted_handles_sees_numbered_migration_leftovers() {
+    let dir = scratch_dir("list-migrated");
+    let session_dir = dir.join(WEB_SESSION_DIR);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let enc = encode_handle("web/x");
+    std::fs::write(
+        session_dir.join(format!("{enc}.jsonl.migrated.3")),
+        EVENT_ROW,
+    )
+    .unwrap();
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    assert_eq!(list_persisted_handles(&store, &dir), vec!["web/x"]);
+    let _ = std::fs::remove_dir_all(dir);
+}

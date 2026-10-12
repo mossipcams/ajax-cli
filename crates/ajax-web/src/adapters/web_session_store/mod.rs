@@ -264,10 +264,7 @@ pub fn list_persisted_handles(store: &SqliteRegistryStore, state_dir: &Path) -> 
     if let Ok(entries) = fs::read_dir(state_dir.join(WEB_SESSION_DIR)) {
         handles.extend(entries.filter_map(Result::ok).filter_map(|entry| {
             let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.strip_suffix(".jsonl")
-                .or_else(|| name.strip_suffix(".jsonl.migrated"))
-                .map(decode_handle)
+            transcript_entry_handle(&name.to_string_lossy())
         }));
     }
     handles.sort();
@@ -275,25 +272,76 @@ pub fn list_persisted_handles(store: &SqliteRegistryStore, state_dir: &Path) -> 
     handles
 }
 
+/// A transcript directory entry names exactly one persisted handle: `<x>.jsonl`,
+/// `<x>.jsonl.migrated`, or a numbered migration leftover `<x>.jsonl.migrated.<digits>`.
+fn transcript_entry_handle(name: &str) -> Option<String> {
+    if let Some(stem) = name.strip_suffix(".jsonl") {
+        return Some(decode_handle(stem));
+    }
+    if let Some((stem, digits)) = name.rsplit_once(".migrated.") {
+        if stem.ends_with(".jsonl")
+            && !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Some(decode_handle(&stem[..stem.len() - ".jsonl".len()]));
+        }
+        // A `.migrated.` tail that is not numeric is not a transcript entry.
+        return None;
+    }
+    name.strip_suffix(".jsonl.migrated").map(decode_handle)
+}
+
 pub fn delete_session(store: &SqliteRegistryStore, state_dir: &Path, handle: &str) -> bool {
-    let mut deleted = match store.delete_runs_for_task(handle) {
-        Ok(count) => count > 0,
+    let mut deleted = false;
+    // Every step is attempted even when an earlier one fails; a failed database
+    // delete makes the whole session not fully deleted so a later prune retries.
+    let database_failed = match store.delete_runs_for_task(handle) {
+        Ok(count) => {
+            deleted = count > 0;
+            false
+        }
         Err(error) => {
             tracing::warn!(%error, handle, "failed to delete web session runs");
-            return false;
+            true
         }
     };
+
+    // Remove every stored copy of the transcript: the live file and any numbered migration leftovers.
+    let encoded = encode_handle(handle);
     let path = session_path(state_dir, handle);
-    for path in [&path, &path.with_extension("jsonl.migrated")] {
-        match fs::remove_file(path) {
-            Ok(()) => deleted = true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                tracing::warn!(%error, handle, "failed to delete legacy web session transcript")
+    match fs::remove_file(&path) {
+        Ok(()) => deleted = true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(%error, handle, "failed to delete legacy web session transcript")
+        }
+    }
+    let migrated_base = format!("{encoded}.jsonl.migrated");
+    let numbered_prefix = format!("{migrated_base}.");
+    if let Ok(entries) = fs::read_dir(state_dir.join(WEB_SESSION_DIR)) {
+        for entry in entries.filter_map(Result::ok) {
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+            // Exact base name only: never touches a longer handle that shares this prefix.
+            if name != migrated_base && !name.starts_with(numbered_prefix.as_str()) {
+                continue;
+            }
+            match fs::remove_file(entry.path()) {
+                Ok(()) => deleted = true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    tracing::warn!(%error, handle, "failed to delete legacy web session transcript")
+                }
             }
         }
     }
-    prompt_ledger::delete_ledger(state_dir, handle) || deleted
+
+    let ledger_deleted = prompt_ledger::delete_ledger(state_dir, handle);
+    if database_failed {
+        false
+    } else {
+        deleted || ledger_deleted
+    }
 }
 
 pub fn session_path(state_dir: &Path, handle: &str) -> PathBuf {
@@ -312,6 +360,7 @@ pub fn load<T: DeserializeOwned + Serialize>(state_dir: &Path, handle: &str) -> 
     )
     .unwrap_or_default()
 }
+
 #[cfg(test)]
 pub fn save_meta(state_dir: &Path, handle: &str, id: Option<&str>, model: &str) {
     try_save_meta(
@@ -324,6 +373,7 @@ pub fn save_meta(state_dir: &Path, handle: &str, id: Option<&str>, model: &str) 
     )
     .unwrap();
 }
+
 #[cfg(test)]
 pub fn append_events<T: Serialize + DeserializeOwned>(
     state_dir: &Path,
@@ -339,6 +389,7 @@ pub fn append_events<T: Serialize + DeserializeOwned>(
     )
     .unwrap();
 }
+
 #[cfg(test)]
 mod tests;
 
