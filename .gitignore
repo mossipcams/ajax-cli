@@ -15,3 +15,7 @@ crates/ajax-web/web/e2e/artifacts/
 exploratory-results/
 exploratory-memory/
 .vitest/
+# Development artifacts: keep router-run and packet outputs out of PRs
+.planning/packets/
+.planning/router-runs/
+# These directories contain files already tracked on main; gitignore only affects untracked files, so that is expected and correct.
