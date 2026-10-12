@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod kernel;
+
 pub const LEDGER_VERSION: u32 = 1;
 const LEDGER_KIND: &str = "prompt_ledger";
 
