@@ -177,15 +177,15 @@ impl TaskSessionState {
         self.holders.reset_to_one();
     }
 
-    pub(super) fn append_to_log(
+    /// Flushes pending activity and drops duplicate spawn errors; reports the
+    /// rest as evidence the ACP client is alive.
+    pub(super) fn filter_events_for_log(
         &mut self,
         events: Vec<SessionServerEvent>,
-    ) -> Result<(), SessionError> {
-        if events.is_empty() {
-            return Ok(());
-        }
+    ) -> Vec<SessionServerEvent> {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
+
         let mut filtered = Vec::with_capacity(events.len());
         for event in events {
             if self
@@ -194,13 +194,28 @@ impl TaskSessionState {
             {
                 continue;
             }
+
             self.evidence
                 .report_activity_for_event(&self.qualified_handle, &event);
             filtered.push(event);
         }
+
+        filtered
+    }
+
+    pub(super) fn append_to_log(
+        &mut self,
+        events: Vec<SessionServerEvent>,
+    ) -> Result<(), SessionError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let filtered = self.filter_events_for_log(events);
         if filtered.is_empty() {
             return Ok(());
         }
+
         if let Err(error) = web_session_store::try_append_events(
             &self.storage.registry_store(),
             &self.storage.state_dir,

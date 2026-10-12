@@ -23,6 +23,7 @@ mod session_storage;
 mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
+mod task_session_commit;
 mod task_session_directory;
 mod task_session_exit;
 mod task_session_outbound;
@@ -406,6 +407,9 @@ mod task_session_reliability_tests;
 
 #[cfg(test)]
 mod task_session_durability_tests;
+
+#[cfg(test)]
+mod task_session_commit_tests;
 
 #[cfg(test)]
 mod task_session_phase2_tests;
