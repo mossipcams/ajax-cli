@@ -42,6 +42,93 @@ fn round_trip_atomic_ledger() {
 }
 
 #[test]
+fn ledger_and_events_commit_together() {
+    let dir = scratch_dir("ledger-events");
+    let handle = "web/fix-login";
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_string(),
+        "hello".to_string(),
+        "hello".to_string(),
+        Vec::new(),
+    );
+    let events: [serde_json::Value; 2] = [
+        serde_json::json!({"type": "delta", "text": "a"}),
+        serde_json::json!({"type": "done"}),
+    ];
+    try_persist_with_events(
+        &ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db")),
+        &dir,
+        handle,
+        &ledger,
+        &events,
+    )
+    .expect("persist with events");
+
+    let loaded = super::super::load::<serde_json::Value>(&dir, handle);
+    let ledger_loaded = load(&dir, handle).expect("load ledger");
+    assert!(ledger_loaded.owns_prompt("p1"));
+    assert_eq!(loaded.events, events.into_iter().collect::<Vec<_>>());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn failed_ledger_commit_writes_no_events() {
+    let dir = scratch_dir("ledger-events-fail");
+    let handle = "web/fix-login";
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    let mut first = PromptLedger::default();
+    first.upsert_queued(
+        "p1".to_string(),
+        "one".to_string(),
+        "one".to_string(),
+        Vec::new(),
+    );
+    persist(&dir, handle, &first).expect("persist p1");
+
+    // Absent prompt is cancelled; the id then collides with the tombstone row.
+    persist(&dir, handle, &PromptLedger::default()).expect("cancel p1");
+    let mut again = PromptLedger::default();
+    again.upsert_queued(
+        "p1".to_string(),
+        "again".to_string(),
+        "again".to_string(),
+        Vec::new(),
+    );
+    let events: [serde_json::Value; 1] = [serde_json::json!({"type": "delta"})];
+    let result = super::try_persist_with_events(&store, &dir, handle, &again, &events);
+    assert!(result.is_err(), "duplicate prompt id must fail");
+
+    let loaded = super::super::load::<serde_json::Value>(&dir, handle);
+    assert!(loaded.events.is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn events_alone_commit_when_ledger_is_unchanged() {
+    let dir = scratch_dir("events-alone");
+    let handle = "web/fix-login";
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_string(),
+        "one".to_string(),
+        "one".to_string(),
+        Vec::new(),
+    );
+    persist(&dir, handle, &ledger).expect("first persist");
+    persist(&dir, handle, &ledger).expect("second persist (no events)");
+
+    let events: [serde_json::Value; 1] = [serde_json::json!({"type": "delta", "text": "solo"})];
+    super::try_persist_with_events(&store, &dir, handle, &ledger, &events)
+        .expect("events-only persist");
+
+    let loaded = super::super::load::<serde_json::Value>(&dir, handle);
+    assert_eq!(loaded.events, events.into_iter().collect::<Vec<_>>());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn persist_failure_surfaces_error() {
     let dir = scratch_dir("persist-fail");
     let handle = "web/fix-login";

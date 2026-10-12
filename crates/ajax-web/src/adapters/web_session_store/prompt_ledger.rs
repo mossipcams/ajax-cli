@@ -275,6 +275,17 @@ pub fn try_persist(
     handle: &str,
     ledger: &PromptLedger,
 ) -> Result<(), std::io::Error> {
+    try_persist_with_events::<serde_json::Value>(store, state_dir, handle, ledger, &[])
+}
+
+/// Persist the prompt ledger and transcript events in one database transaction.
+pub fn try_persist_with_events<T: serde::Serialize>(
+    store: &ajax_core::registry::SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    ledger: &PromptLedger,
+    events: &[T],
+) -> Result<(), std::io::Error> {
     #[cfg(test)]
     if force_persist_fail() {
         return Err(std::io::Error::other(
@@ -286,15 +297,35 @@ pub fn try_persist(
     let current = store
         .prompts_for_run(&run_id)
         .map_err(std::io::Error::other)?;
-    if let Some(commit) =
-        kernel::plan_commit(&run_id, &current, ledger).map_err(std::io::Error::other)?
-    {
-        let receipt = store
-            .commit_execution(&commit)
-            .map_err(std::io::Error::other)?;
-        if !receipt.duplicate_prompts.is_empty() {
-            return Err(std::io::Error::other("prompt id already used"));
+    let event_strings = events
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)?;
+    match kernel::plan_commit(&run_id, &current, ledger).map_err(std::io::Error::other)? {
+        Some(mut commit) => {
+            commit.events = event_strings;
+            let receipt = store
+                .commit_execution(&commit)
+                .map_err(std::io::Error::other)?;
+            if !receipt.duplicate_prompts.is_empty() {
+                return Err(std::io::Error::other("prompt id already used"));
+            }
         }
+        None if !event_strings.is_empty() => {
+            store
+                .commit_execution(&ajax_core::registry::ExecutionCommit {
+                    run_id: run_id.clone(),
+                    events: event_strings,
+                    ..Default::default()
+                })
+                .map_err(std::io::Error::other)?;
+        }
+        None => return Ok(()),
+    }
+    // A retention failure must not make a committed append look unsuccessful.
+    if let Err(error) = store.prune_execution_events(&run_id, super::MAX_LOG_EVENTS as u64) {
+        tracing::warn!(%error, handle, "failed to prune web session transcript");
     }
     Ok(())
 }
