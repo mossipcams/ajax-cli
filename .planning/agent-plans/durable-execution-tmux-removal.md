@@ -124,7 +124,7 @@ while a child is non-terminal.
 - [x] 1. Kernel domain in `ajax-core::execution`: ids, states, transition
       table, replay policy, recovery resolution, checkpoint schema version.
       Pure, unit + property tested.
-- [ ] 2. Kernel persistence: migration adding the five tables + owner row;
+- [x] 2. Kernel persistence: migration adding the five tables + owner row;
       transactional ops (admit prompt, begin effect, commit effect, complete
       child + wake parent, request cancel, load unfinished). Fault-injection
       test: a failed transaction leaves no partial rows.
@@ -205,5 +205,9 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   -p ajax-core` 1021 passed; `cargo nextest run -p ajax-cli -p ajax-web` 1152
   passed. Existing-test edits: six `assert_eq!(version, 9)` literals became 10
   in `registry/sqlite/tests/suite_2.rs` and `suite_3.rs`; nothing else.
-- Follow-up for 2b: a commit carrying a duplicate prompt must be a complete
+- Stage 2b (Codex): duplicate admission is now a whole-commit no-op; cancel
+  intent, run lookup, history import, unfinished-execution load, event prune,
+  per-task delete, owner lease. Orchestrator rerun: fmt, workspace clippy,
+  `cargo nextest run -p ajax-core` 1030 passed (9 new recovery tests).
+- Resolved in 2b: a commit carrying a duplicate prompt must be a complete
   no-op (today its events still append, which would duplicate the user bubble).

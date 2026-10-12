@@ -140,22 +140,19 @@ fn prompt_admission_creates_task_prompt_and_event_atomically() {
 }
 
 #[test]
-fn duplicate_idempotency_key_admits_once_and_preserves_other_changes() {
+fn duplicate_idempotency_key_makes_the_entire_commit_a_no_op() {
     let store = store();
     let apply = |change| store.commit_execution(&change).unwrap();
     let admission = ExecutionCommit {
         new_tasks: vec![new_task("task", None)],
         prompts: vec![prompt("task")],
+        events: vec!["{}".into()],
         ..commit()
     };
     store.commit_execution(&admission).unwrap();
-    assert_eq!(
-        store
-            .commit_execution(&admission)
-            .unwrap()
-            .duplicate_prompts,
-        vec!["key"]
-    );
+    let retry = store.commit_execution(&admission).unwrap();
+    assert_eq!(retry.duplicate_prompts, vec!["key"]);
+    assert!(retry.event_seqs.is_empty());
     let receipt = apply(ExecutionCommit {
         new_tasks: vec![new_task("retry", None), new_task("other", None)],
         prompts: vec![prompt("retry")],
@@ -164,26 +161,33 @@ fn duplicate_idempotency_key_admits_once_and_preserves_other_changes() {
         ..commit()
     });
     assert_eq!(receipt.duplicate_prompts, vec!["key"]);
-    assert_eq!(receipt.event_seqs, vec![1]);
+    assert!(receipt.event_seqs.is_empty());
     assert_eq!(state(&store, "retry"), None);
-    assert_eq!(state(&store, "other"), Some(State::Pending));
-    assert_eq!(state(&store, "task"), Some(State::Running));
+    assert_eq!(state(&store, "other"), None);
+    assert_eq!(state(&store, "task"), Some(State::Pending));
     assert_eq!(number(&store, "SELECT count(*) FROM prompt_submissions"), 1);
+    let events = store.execution_events_since("run", 0).unwrap();
+    assert_eq!(events, vec![(1, "{}".into())]);
+    assert_eq!(number(&store, "SELECT next_event_seq FROM agent_runs"), 2);
 }
 
 #[test]
-fn duplicate_keys_within_one_commit_keep_the_first_task() {
+fn duplicate_keys_within_one_commit_make_the_entire_commit_a_no_op() {
     let store = store();
     let apply = |change| store.commit_execution(&change).unwrap();
     let receipt = apply(ExecutionCommit {
         new_tasks: vec![new_task("task", None), new_task("retry", None)],
         prompts: vec![prompt("task"), prompt("task"), prompt("retry")],
+        events: vec!["{}".into()],
         ..commit()
     });
     assert_eq!(receipt.duplicate_prompts, vec!["key", "key"]);
-    assert_eq!(state(&store, "task"), Some(State::Pending));
+    assert!(receipt.event_seqs.is_empty());
+    assert_eq!(state(&store, "task"), None);
     assert_eq!(state(&store, "retry"), None);
-    assert_eq!(number(&store, "SELECT count(*) FROM prompt_submissions"), 1);
+    assert_eq!(number(&store, "SELECT count(*) FROM prompt_submissions"), 0);
+    assert!(store.execution_events_since("run", 0).unwrap().is_empty());
+    assert_eq!(number(&store, "SELECT next_event_seq FROM agent_runs"), 1);
 }
 
 #[test]

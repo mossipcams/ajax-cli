@@ -88,6 +88,7 @@ pub struct ExecutionCommit {
     pub new_tasks: Vec<NewExecutionTask>,
     pub prompts: Vec<NewPrompt>,
     pub transitions: Vec<TaskTransition>,
+    pub cancel_requests: Vec<String>,
     pub checkpoint_intents: Vec<CheckpointIntent>,
     pub checkpoint_results: Vec<CheckpointResult>,
     /// Event payloads (JSON) appended with consecutive per-run sequence numbers.
@@ -100,7 +101,7 @@ pub struct ExecutionCommit {
 pub struct CommitReceipt {
     /// Sequence numbers assigned to the commit's events, in order.
     pub event_seqs: Vec<u64>,
-    /// Idempotency keys that were already present and therefore not re-inserted.
+    /// Duplicate idempotency keys that caused the entire commit to be skipped.
     pub duplicate_prompts: Vec<String>,
 }
 
@@ -173,7 +174,7 @@ impl From<rusqlite::Error> for ExecutionCommitError {
     }
 }
 
-fn parse_state(text: &str) -> Result<ExecutionState, RegistrySnapshotError> {
+pub(super) fn parse_state(text: &str) -> Result<ExecutionState, RegistrySnapshotError> {
     ExecutionState::parse(text)
         .ok_or_else(|| RegistrySnapshotError::Decode(format!("execution_tasks.state: {text}")))
 }
@@ -230,7 +231,7 @@ impl SqliteRegistryStore {
 
     /// Applies an entire [`ExecutionCommit`] in a single transaction. Any error
     /// rolls everything back: no task, prompt, checkpoint, or event row and no
-    /// `next_event_seq` advance survive.
+    /// `next_event_seq` advance survive. Any duplicate prompt skips the whole commit.
     pub fn commit_execution(
         &self,
         commit: &ExecutionCommit,
@@ -252,33 +253,25 @@ impl SqliteRegistryStore {
                 other => ExecutionCommitError::Store(database_error(other)),
             })?;
 
-        // A prompt whose (run_id, idempotency_key) is already known - in the
-        // database or earlier in this commit - is admitted once: it is not
-        // re-inserted and its new task is skipped too.
+        // A duplicate admission makes the entire commit a no-op, including events.
         let mut duplicate_prompts = Vec::new();
-        let mut duplicate_indexes = HashSet::new();
-        let mut admitted_task_ids = HashSet::new();
-        let mut duplicate_task_ids = HashSet::new();
         let mut keys_in_commit = HashSet::new();
-        for (prompt_index, prompt) in commit.prompts.iter().enumerate() {
+        for prompt in &commit.prompts {
             let already_present =
                 self.prompt_key_present(&transaction, &commit.run_id, &prompt.idempotency_key)?;
-            if already_present || !keys_in_commit.insert(prompt.idempotency_key.clone()) {
+            if already_present || !keys_in_commit.insert(&prompt.idempotency_key) {
                 duplicate_prompts.push(prompt.idempotency_key.clone());
-                duplicate_indexes.insert(prompt_index);
-                if already_present || !admitted_task_ids.contains(&prompt.task_exec_id) {
-                    duplicate_task_ids.insert(prompt.task_exec_id.clone());
-                }
-            } else {
-                admitted_task_ids.insert(prompt.task_exec_id.clone());
             }
+        }
+        if !duplicate_prompts.is_empty() {
+            return Ok(CommitReceipt {
+                event_seqs: Vec::new(),
+                duplicate_prompts,
+            });
         }
 
         // 1. New execution tasks, inserted in state Pending.
         for task in &commit.new_tasks {
-            if duplicate_task_ids.contains(&task.task_exec_id) {
-                continue;
-            }
             transaction.execute(
                 "INSERT INTO execution_tasks (task_exec_id, run_id, parent_id, kind, state) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -292,11 +285,8 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // 2. Prompt submissions; already-present keys were reported above.
-        for (prompt_index, prompt) in commit.prompts.iter().enumerate() {
-            if duplicate_indexes.contains(&prompt_index) {
-                continue;
-            }
+        // 2. Prompt submissions.
+        for prompt in &commit.prompts {
             task_state(&transaction, &commit.run_id, &prompt.task_exec_id)?;
             transaction.execute(
                 "INSERT INTO prompt_submissions (run_id, idempotency_key, task_exec_id, content_json) \
@@ -353,6 +343,14 @@ impl SqliteRegistryStore {
                     task_transition.to.as_str(),
                     task_transition.outcome_json
                 ],
+            )?;
+        }
+
+        for task_exec_id in &commit.cancel_requests {
+            task_state(&transaction, &commit.run_id, task_exec_id)?;
+            transaction.execute(
+                "UPDATE execution_tasks SET cancel_requested = 1 WHERE task_exec_id = ?1",
+                params![task_exec_id],
             )?;
         }
 

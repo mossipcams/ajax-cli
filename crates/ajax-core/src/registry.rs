@@ -11,7 +11,8 @@ mod sqlite;
 
 pub use sqlite::{
     CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
-    NewExecutionTask, NewPrompt, NewRun, RunUpdate, SqliteRegistryStore, TaskTransition,
+    NewExecutionTask, NewPrompt, NewRun, OwnerClaim, RunRecord, RunUpdate, SqliteRegistryStore,
+    TaskTransition, UnfinishedExecution,
 };
 
 pub trait Registry {
