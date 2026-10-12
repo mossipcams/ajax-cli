@@ -96,6 +96,8 @@ pub struct ExecutionCommit {
     pub transitions: Vec<TaskTransition>,
     pub cancel_requests: Vec<String>,
     pub prompt_content_updates: Vec<PromptContentUpdate>,
+    /// Idempotency keys whose stored `content_json` is wiped to `'{}'`; allowed in any task state.
+    pub prompt_content_clears: Vec<String>,
     pub checkpoint_intents: Vec<CheckpointIntent>,
     pub checkpoint_results: Vec<CheckpointResult>,
     /// Event payloads (JSON) appended with consecutive per-run sequence numbers.
@@ -388,6 +390,18 @@ impl SqliteRegistryStore {
                  WHERE run_id = ?1 AND idempotency_key = ?3",
                 params![commit.run_id, update.content_json, update.idempotency_key],
             )?;
+        }
+
+        // Clear stored prompt content for the given keys, in any task state.
+        for key in &commit.prompt_content_clears {
+            let updated = transaction.execute(
+                "UPDATE prompt_submissions SET content_json = '{}' \
+                 WHERE run_id = ?1 AND idempotency_key = ?2",
+                params![commit.run_id, key],
+            )?;
+            if updated == 0 {
+                return Err(ExecutionCommitError::UnknownTask(key.clone()));
+            }
         }
 
         // 5. New checkpoint intents on the next version of each task.

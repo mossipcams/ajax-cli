@@ -190,3 +190,93 @@ fn prompt_content_update_for_unknown_key_is_unknown_task() {
         Err(ExecutionCommitError::UnknownTask(key)) if key == "missing"
     ));
 }
+
+#[test]
+fn prompt_content_clear_wipes_completed_task_content_in_same_commit() {
+    let store = SqliteRegistryStore::new(temp_path("prompt-clear"));
+    store.create_run(&run("run-1", "registry-task")).unwrap();
+    admission_commit(&store, "run-1");
+
+    store
+        .commit_execution(&ExecutionCommit {
+            run_id: "run-1".into(),
+            transitions: vec![TaskTransition {
+                task_exec_id: "t1".into(),
+                to: ExecutionState::Running,
+                outcome_json: None,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+    store
+        .commit_execution(&ExecutionCommit {
+            run_id: "run-1".into(),
+            transitions: vec![
+                TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Completing,
+                    outcome_json: None,
+                },
+                TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Completed,
+                    outcome_json: None,
+                },
+            ],
+            prompt_content_clears: vec!["k1".into()],
+            ..Default::default()
+        })
+        .unwrap();
+
+    let prompts = store.prompts_for_run("run-1").unwrap();
+    assert_eq!(prompts[0].state, ExecutionState::Completed);
+    assert_eq!(prompts[0].content_json, "{}");
+    assert_eq!(prompts[1].content_json, "two");
+}
+
+#[test]
+fn prompt_content_clear_for_unknown_key_is_unknown_task_and_rolls_back() {
+    let store = SqliteRegistryStore::new(temp_path("prompt-clear-unknown"));
+    store.create_run(&run("run-1", "registry-task")).unwrap();
+    admission_commit(&store, "run-1");
+
+    let result = store.commit_execution(&ExecutionCommit {
+        run_id: "run-1".into(),
+        prompt_content_clears: vec!["missing".into()],
+        events: vec!["event-in-failed-clear-commit".into()],
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        result,
+        Err(ExecutionCommitError::UnknownTask(key)) if key == "missing"
+    ));
+    assert!(store.execution_events_since("run-1", 0).unwrap().is_empty());
+}
+
+#[test]
+fn prompt_content_clear_in_commit_with_invalid_transition_leaves_content_unchanged() {
+    let store = SqliteRegistryStore::new(temp_path("prompt-clear-invalid"));
+    store.create_run(&run("run-1", "registry-task")).unwrap();
+    admission_commit(&store, "run-1");
+
+    let result = store.commit_execution(&ExecutionCommit {
+        run_id: "run-1".into(),
+        transitions: vec![TaskTransition {
+            task_exec_id: "t1".into(),
+            to: ExecutionState::Completed,
+            outcome_json: None,
+        }],
+        prompt_content_clears: vec!["k1".into()],
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        result,
+        Err(ExecutionCommitError::InvalidTransition { .. })
+    ));
+    let prompts = store.prompts_for_run("run-1").unwrap();
+    assert_eq!(prompts[0].state, ExecutionState::Pending);
+    assert_eq!(prompts[0].content_json, "one");
+}

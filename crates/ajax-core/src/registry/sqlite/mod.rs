@@ -66,10 +66,27 @@ impl SqliteRegistryStore {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
         }
+        // On unix, create a new database file owner-only before SQLite sees it, so
+        // it is never briefly world-readable under the process umask.
+        #[cfg(unix)]
+        if !self.path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&self.path)
+            {
+                Ok(_file) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(RegistrySnapshotError::Io(error.to_string())),
+            }
+        }
         let connection = Connection::open(&self.path).map_err(database_error)?;
         #[cfg(unix)]
         {
             // Chat transcripts and prompt text live here: owner-only, like the ledger file was.
+            // SQLite gives its -journal/-wal files the same mode as the database, so nothing more is needed for them.
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&self.path)
                 .map(|meta| meta.permissions().mode())

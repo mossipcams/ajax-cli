@@ -80,3 +80,23 @@ fn database_file_is_owner_only_and_reapplied_on_open() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[cfg(unix)]
+#[test]
+fn database_file_precreated_wider_is_opened_and_tightened() {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let path = temp_path("pre-created-0644");
+    // Pre-create the file empty with world-readable permissions, as a process
+    // under a lax umask once did.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .open(&path)
+        .unwrap();
+
+    let store = SqliteRegistryStore::new(path.clone());
+    assert_eq!(store.latest_run_for_task("x").unwrap(), None);
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
