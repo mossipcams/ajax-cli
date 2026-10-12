@@ -41,6 +41,12 @@ pub struct NewPrompt {
     pub task_exec_id: String,
     pub content_json: String,
 }
+/// An in-place content update for an already-admitted queued prompt.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PromptContentUpdate {
+    pub idempotency_key: String,
+    pub content_json: String,
+}
 
 /// A state transition applied to an existing execution task.
 #[derive(Clone, Debug)]
@@ -89,6 +95,7 @@ pub struct ExecutionCommit {
     pub prompts: Vec<NewPrompt>,
     pub transitions: Vec<TaskTransition>,
     pub cancel_requests: Vec<String>,
+    pub prompt_content_updates: Vec<PromptContentUpdate>,
     pub checkpoint_intents: Vec<CheckpointIntent>,
     pub checkpoint_results: Vec<CheckpointResult>,
     /// Event payloads (JSON) appended with consecutive per-run sequence numbers.
@@ -122,6 +129,9 @@ pub enum ExecutionCommitError {
     NoOpenCheckpoint {
         task_exec_id: String,
     },
+    PromptNotQueued {
+        idempotency_key: String,
+    },
     Store(RegistrySnapshotError),
 }
 
@@ -148,6 +158,9 @@ impl fmt::Display for ExecutionCommitError {
                 formatter,
                 "task {task_exec_id} has no open checkpoint for the change"
             ),
+            Self::PromptNotQueued { idempotency_key } => {
+                write!(formatter, "prompt {idempotency_key} is no longer queued")
+            }
             Self::Store(error) => write!(formatter, "registry store error: {error}"),
         }
     }
@@ -351,6 +364,29 @@ impl SqliteRegistryStore {
             transaction.execute(
                 "UPDATE execution_tasks SET cancel_requested = 1 WHERE task_exec_id = ?1",
                 params![task_exec_id],
+            )?;
+        }
+        // In-place content updates on prompts whose tasks are still queued.
+        for update in &commit.prompt_content_updates {
+            let task_exec_id: Option<String> = transaction
+                .query_row(
+                    "SELECT task_exec_id FROM prompt_submissions \
+                     WHERE run_id = ?1 AND idempotency_key = ?2",
+                    params![commit.run_id, update.idempotency_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let task_exec_id = task_exec_id
+                .ok_or_else(|| ExecutionCommitError::UnknownTask(update.idempotency_key.clone()))?;
+            if task_state(&transaction, &commit.run_id, &task_exec_id)? != ExecutionState::Pending {
+                return Err(ExecutionCommitError::PromptNotQueued {
+                    idempotency_key: update.idempotency_key.clone(),
+                });
+            }
+            transaction.execute(
+                "UPDATE prompt_submissions SET content_json = ?2 \
+                 WHERE run_id = ?1 AND idempotency_key = ?3",
+                params![commit.run_id, update.content_json, update.idempotency_key],
             )?;
         }
 

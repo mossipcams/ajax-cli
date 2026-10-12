@@ -44,6 +44,13 @@ pub enum OwnerClaim {
     Acquired { previous: Option<(String, i64)> },
     HeldBy { boot_id: String, pid: i64 },
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunPrompt {
+    pub idempotency_key: String,
+    pub task_exec_id: String,
+    pub content_json: String,
+    pub state: ExecutionState,
+}
 
 impl SqliteRegistryStore {
     /// Lists the distinct registry task ids with execution runs, in sorted order.
@@ -57,6 +64,31 @@ impl SqliteRegistryStore {
             .query_map([], |row| row.get(0))
             .map_err(database_error)?;
         rows.map(|row| row.map_err(database_error)).collect()
+    }
+    /// Returns every prompt of the run (all states) in admission order.
+    pub fn prompts_for_run(&self, run_id: &str) -> Result<Vec<RunPrompt>, RegistrySnapshotError> {
+        let connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT p.idempotency_key, p.task_exec_id, p.content_json, t.state \
+             FROM prompt_submissions p \
+             JOIN execution_tasks t ON t.task_exec_id = p.task_exec_id AND t.run_id = p.run_id \
+             WHERE p.run_id = ?1 ORDER BY p.submission_id",
+            )
+            .map_err(database_error)?;
+        let mut rows = statement.query([run_id]).map_err(database_error)?;
+        let mut prompts = Vec::new();
+        while let Some(row) = rows.next().map_err(database_error)? {
+            let state_text: String = row.get(3).map_err(database_error)?;
+            prompts.push(RunPrompt {
+                idempotency_key: row.get(0).map_err(database_error)?,
+                task_exec_id: row.get(1).map_err(database_error)?,
+                content_json: row.get(2).map_err(database_error)?,
+                state: parse_state(&state_text)?,
+            });
+        }
+        Ok(prompts)
     }
 
     /// Returns the last inserted run for a registry task.

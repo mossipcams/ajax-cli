@@ -17,10 +17,10 @@ use load::{load_events, load_step_receipts, load_tasks};
 use row_codec::database_error;
 use save::save_registry;
 
-pub use execution_recovery::{OwnerClaim, RunRecord, UnfinishedExecution};
+pub use execution_recovery::{OwnerClaim, RunPrompt, RunRecord, UnfinishedExecution};
 pub use execution_store::{
     CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
-    NewExecutionTask, NewPrompt, NewRun, RunUpdate, TaskTransition,
+    NewExecutionTask, NewPrompt, NewRun, PromptContentUpdate, RunUpdate, TaskTransition,
 };
 
 #[cfg(test)]
