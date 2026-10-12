@@ -134,6 +134,29 @@ body::-webkit-scrollbar {
   height: 0;
 }
 
+/* Shell lock (kiosk-style cockpit):
+   - No horizontal pan: touch-action: pan-y keeps only vertical gestures;
+     they still reach the real scroll owners (session thread, terminal).
+   - No zoom: with user-scalable=no / maximum-scale=1 in the viewport meta,
+     pinch and double-tap never reach browser zoom.
+   - No visible scrollbars anywhere: universal hide for every element. This
+     changes no overflow/scroll behavior — inner overflow containers keep
+     their rules and remain touch- and programmatic-scrollable. */
+html,
+body,
+#app {
+  touch-action: pan-y;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
 body {
   font-family: var(--sans);
   font-size: var(--text-body);
