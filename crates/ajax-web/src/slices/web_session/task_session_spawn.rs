@@ -41,7 +41,7 @@ pub(super) async fn acquire(
             state.acquire_holder();
             return Ok(());
         }
-        let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
+        let resume_id = replace_resume_id(&state.storage.state_dir, &state.qualified_handle)?;
         release_live_client(state, resume_id.is_none(), "attach replaced a dead slot")?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
@@ -53,7 +53,7 @@ pub(super) async fn acquire(
     state.acp.model = model.to_string();
     // Unreadable metadata must fail the attach, not start a fresh ACP context.
     let stored: StoredSession<SessionServerEvent> =
-        web_session_store::try_load(&state.state_dir, &state.qualified_handle)
+        web_session_store::try_load(&state.storage.state_dir, &state.qualified_handle)
             .map_err(unreadable_session)?;
     state.evidence.transcript_corruption =
         web_session_store::corruption_warning(stored.corrupt_lines);
@@ -120,7 +120,7 @@ pub(super) async fn apply_config_option(
                 state.acp.session_config_options = Some(config_option_descriptors(options));
             }
             let persist_warning = web_session_store::try_save_meta(
-                &state.state_dir,
+                &state.storage.state_dir,
                 &state.qualified_handle,
                 Some(client.session_id()),
                 &meta_model_from_config_options(
@@ -189,7 +189,7 @@ pub(super) async fn respawn(
     if !force && !slot_must_replace(state.acp.acp_alive, host_exited) {
         return Ok(state.generation);
     }
-    let resume_id = replace_resume_id(&state.state_dir, &state.qualified_handle)?;
+    let resume_id = replace_resume_id(&state.storage.state_dir, &state.qualified_handle)?;
     let agent = state.agent;
     release_live_client(state, resume_id.is_none(), "respawn")?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
@@ -209,19 +209,20 @@ pub(super) async fn reset_harness_context(
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
-        &state.state_dir,
+        &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,
     );
 
-    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle).map_err(
-        |error| SessionError::persist(format!("stored session id could not be cleared: {error}")),
-    )?;
+    web_session_store::clear_acp_session_id(&state.storage.state_dir, &state.qualified_handle)
+        .map_err(|error| {
+            SessionError::persist(format!("stored session id could not be cleared: {error}"))
+        })?;
 
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
 
     if let Err(error) = web_session_store::try_save_meta(
-        &state.state_dir,
+        &state.storage.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, model),
@@ -264,19 +265,20 @@ pub(super) async fn clear_session_context(
     apply_cancel_to_queue(&mut state.prompts.queued, false);
     state.prompts.prompt_ledger.remove_queued();
     let _ = web_session_store::prompt_ledger::persist(
-        &state.state_dir,
+        &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,
     );
 
-    web_session_store::clear_acp_session_id(&state.state_dir, &state.qualified_handle).map_err(
-        |error| SessionError::persist(format!("stored session id could not be cleared: {error}")),
-    )?;
+    web_session_store::clear_acp_session_id(&state.storage.state_dir, &state.qualified_handle)
+        .map_err(|error| {
+            SessionError::persist(format!("stored session id could not be cleared: {error}"))
+        })?;
 
     let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
 
     if let Err(error) = web_session_store::try_save_meta(
-        &state.state_dir,
+        &state.storage.state_dir,
         &state.qualified_handle,
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, &model),

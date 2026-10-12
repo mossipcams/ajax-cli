@@ -19,6 +19,7 @@ mod session_activity;
 mod session_cleanup;
 mod session_error;
 mod session_evidence;
+mod session_storage;
 mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
@@ -42,6 +43,7 @@ pub(crate) use session_activity::{
 };
 pub(crate) use session_cleanup::owned_session_handles;
 pub(crate) use session_error::SessionError;
+pub use session_storage::SessionStorage;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;

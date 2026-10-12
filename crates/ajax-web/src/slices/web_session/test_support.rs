@@ -16,7 +16,7 @@ impl BlockingSessionDirectory {
             .enable_all()
             .build()
             .expect("test runtime");
-        let inner = TaskSessionDirectory::new(state_dir);
+        let inner = TaskSessionDirectory::new(super::SessionStorage::under(state_dir));
         Self { inner, rt }
     }
 

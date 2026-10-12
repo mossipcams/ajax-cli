@@ -13,13 +13,16 @@ use ajax_web::{
         format_operate_error, operate, operate_error_code, start_task_with_checkpoint,
         OperateError, OperateOutcome, OperateRequest, StartTaskRequest,
     },
+    slices::web_session::SessionStorage,
     WebError,
 };
 #[cfg(test)]
 use axum::body::{to_bytes, Body};
 #[cfg(test)]
 use axum::http::{header, Request as AxumRequest};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::time::SystemTime;
 #[cfg(test)]
 use tower::util::ServiceExt;
@@ -71,9 +74,9 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     runner: &mut (impl CommandRunner + Clone + Send + Sync + 'static),
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
-    let dir = companion_state_dir(paths)?;
+    let storage = companion_session_storage(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
-    let state = runtime::WebAppState::new(context.clone(), runner.clone(), bridge, dir);
+    let state = runtime::WebAppState::new(context.clone(), runner.clone(), bridge, storage);
     Ok(dispatch_axum_request(state, method, path, body))
 }
 
@@ -177,7 +180,7 @@ pub(crate) fn serve_mobile_web_with_paths(
     _runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
-    let state_dir = companion_state_dir(paths)?;
+    let storage = companion_session_storage(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
     let _ = crate::agent_event_notify::start_agent_event_notify_listener(
         context.runtime_paths.cache_dir.join("agent-events"),
@@ -187,7 +190,7 @@ pub(crate) fn serve_mobile_web_with_paths(
         context.clone(),
         ProcessCommandRunner,
         bridge,
-        state_dir,
+        storage,
     )
     .map_err(cli_error_from_web)?;
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
@@ -209,15 +212,22 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     )
 }
 
-fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
+fn companion_session_storage(paths: Option<&CliContextPaths>) -> Result<SessionStorage, CliError> {
     let state_file = match paths {
         Some(paths) => paths.state_file.clone(),
         None => crate::context::default_context_paths()?.state_file,
     };
-    state_file
+    let state_dir = state_file
         .parent()
         .map(Path::to_path_buf)
-        .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
+        .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))?;
+    Ok(match paths {
+        Some(paths) => SessionStorage {
+            state_dir,
+            registry_db: paths.state_file.clone(),
+        },
+        None => SessionStorage::under(state_dir),
+    })
 }
 
 #[derive(Clone)]
@@ -479,3 +489,7 @@ fn action_failure_from_cli(error: CliError) -> ActionFailure {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "web_backend/session_storage_tests.rs"]
+mod session_storage_tests;

@@ -7,7 +7,7 @@ use super::{
     task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
     PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionError,
-    SessionServerEvent,
+    SessionServerEvent, SessionStorage,
 };
 
 async fn send_command<T>(
@@ -26,7 +26,7 @@ use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -39,15 +39,15 @@ struct SessionEntry {
 
 pub(crate) struct TaskSessionDirectory {
     sessions: Mutex<HashMap<String, SessionEntry>>,
-    state_dir: PathBuf,
+    storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
 }
 
 impl TaskSessionDirectory {
-    pub fn new(state_dir: PathBuf) -> Arc<Self> {
+    pub fn new(storage: SessionStorage) -> Arc<Self> {
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
-            state_dir,
+            storage,
             report_activity: Mutex::new(None),
         })
     }
@@ -75,7 +75,7 @@ impl TaskSessionDirectory {
         }
         let (tx, join) = spawn_task_session(
             handle.to_string(),
-            self.state_dir.clone(),
+            self.storage.clone(),
             self.report_activity_for_spawn(),
         );
         sessions.insert(
@@ -108,7 +108,7 @@ impl TaskSessionDirectory {
         }
         let (tx, join) = spawn_task_session(
             handle.to_string(),
-            self.state_dir.clone(),
+            self.storage.clone(),
             self.report_activity_for_spawn(),
         );
         sessions.insert(
@@ -256,7 +256,8 @@ impl TaskSessionDirectory {
                 .await;
             let _ = entry.join_handle.await;
         }
-        if let Err(error) = web_session_store::clear_acp_session_id(&self.state_dir, handle) {
+        if let Err(error) = web_session_store::clear_acp_session_id(&self.storage.state_dir, handle)
+        {
             tracing::warn!(%error, handle, "failed to clear stored ACP session id on drop");
         }
     }
@@ -278,11 +279,11 @@ impl TaskSessionDirectory {
 
     pub async fn cleanup_session(&self, handle: &str) {
         self.drop_session(handle).await;
-        web_session_store::delete_session(&self.state_dir, handle);
+        web_session_store::delete_session(&self.storage.state_dir, handle);
     }
 
     pub fn prune_stale_persisted(&self, owned: &std::collections::HashSet<String>) {
-        super::session_cleanup::prune_stale_persisted_sessions(&self.state_dir, owned);
+        super::session_cleanup::prune_stale_persisted_sessions(&self.storage.state_dir, owned);
     }
 
     pub async fn submit_prompt_with_id(
@@ -386,7 +387,7 @@ impl TaskSessionDirectory {
             .await??;
             Ok(())
         } else {
-            clear_stored_session_id(&self.state_dir, handle)
+            clear_stored_session_id(&self.storage.state_dir, handle)
         }
     }
 
@@ -401,7 +402,7 @@ impl TaskSessionDirectory {
             .await?
             .map_err(Into::into)
         } else {
-            clear_stored_session_id(&self.state_dir, handle).map(|()| 0)
+            clear_stored_session_id(&self.storage.state_dir, handle).map(|()| 0)
         }
     }
 
@@ -427,7 +428,7 @@ impl TaskSessionDirectory {
                 return snapshot;
             }
         }
-        let (stored, transcript_error) = load_detached(&self.state_dir, handle);
+        let (stored, transcript_error) = load_detached(&self.storage.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
         let (mut snapshot, replayed) = super::replay::build_attach(
             &log,
@@ -461,7 +462,7 @@ impl TaskSessionDirectory {
                 return batch;
             }
         }
-        let (stored, _) = load_detached(&self.state_dir, handle);
+        let (stored, _) = load_detached(&self.storage.state_dir, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
         let (events, next) = log.read_from_enveloped(cursor);
         OutboundBatch {
@@ -481,7 +482,7 @@ impl TaskSessionDirectory {
                 return result;
             }
         }
-        super::task_session_outbound::disk_read_from(&self.state_dir, handle, cursor)
+        super::task_session_outbound::disk_read_from(&self.storage.state_dir, handle, cursor)
     }
 
     #[cfg(test)]

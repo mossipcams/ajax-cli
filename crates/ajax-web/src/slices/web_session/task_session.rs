@@ -7,7 +7,7 @@ use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{drain_acp_events_with_prompt_cancel, normalize_session_events},
-    SessionError, SessionServerEvent,
+    SessionError, SessionServerEvent, SessionStorage,
 };
 use crate::adapters::web_session_store::{self, prompt_ledger::PromptLedger};
 use ajax_core::models::AgentClient;
@@ -146,7 +146,7 @@ impl HolderCount {
 
 pub(crate) struct TaskSessionState {
     pub(super) qualified_handle: String,
-    pub(super) state_dir: PathBuf,
+    pub(super) storage: SessionStorage,
     pub(super) acp: AcpSlot,
     pub(super) prompts: PromptQueue,
     pub(super) evidence: SessionEvidence,
@@ -192,9 +192,11 @@ impl TaskSessionState {
         if filtered.is_empty() {
             return Ok(());
         }
-        if let Err(error) =
-            web_session_store::try_append_events(&self.state_dir, &self.qualified_handle, &filtered)
-        {
+        if let Err(error) = web_session_store::try_append_events(
+            &self.storage.state_dir,
+            &self.qualified_handle,
+            &filtered,
+        ) {
             let reason = format!("transcript could not be saved: {error}");
             self.evidence
                 .note_transcript_durability_fault(reason.clone());
@@ -269,7 +271,7 @@ impl TaskSessionState {
 
 pub(crate) fn spawn_task_session(
     qualified_handle: String,
-    state_dir: PathBuf,
+    storage: SessionStorage,
     report_activity: Option<super::ReportSessionActivity>,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
@@ -278,14 +280,14 @@ pub(crate) fn spawn_task_session(
     let (tx, mut rx) = mpsc::channel(COMMAND_CAPACITY);
     let handle = qualified_handle.clone();
     let (prompt_ledger, ledger_unusable) =
-        match web_session_store::prompt_ledger::load(&state_dir, &handle) {
+        match web_session_store::prompt_ledger::load(&storage.state_dir, &handle) {
             Ok(ledger) => (ledger, None),
             Err(error) => (PromptLedger::default(), Some(error.to_string())),
         };
     let join = tokio::spawn(async move {
         let mut state = TaskSessionState {
             qualified_handle: handle,
-            state_dir,
+            storage,
             acp: AcpSlot {
                 client: None,
                 model: String::new(),
@@ -522,7 +524,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::EvictionSnapshot { reply } => {
             // Unreadable metadata is not evictable: eviction relies on a restore.
             let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
-                &state.state_dir,
+                &state.storage.state_dir,
                 &state.qualified_handle,
             )
             .is_ok_and(|stored| stored.acp_session_id.is_some());
