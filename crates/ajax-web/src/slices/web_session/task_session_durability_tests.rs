@@ -7,17 +7,21 @@ use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{fs, path::Path};
 
-/// A directory where the transcript file belongs: every read and append fails.
-fn make_transcript_unreadable(dir: &Path, handle: &str) {
-    let path = web_session_store::session_path(dir, handle);
-    let _ = fs::remove_file(&path);
-    fs::create_dir_all(&path).expect("block transcript path");
+/// A directory where the registry database belongs: every read and append fails.
+fn make_transcript_unreadable(dir: &Path, _handle: &str) {
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let _ = fs::remove_file(dir.join(format!("ajax.db{suffix}")));
+    }
+    fs::create_dir_all(dir.join("ajax.db")).expect("block registry database path");
 }
 
-/// A directory where the rewrite temp file belongs: reads work, rewrites fail.
-fn make_metadata_unwritable(dir: &Path, handle: &str) {
-    let tmp = web_session_store::session_path(dir, handle).with_extension("jsonl.tmp");
-    fs::create_dir_all(&tmp).expect("block rewrite temp path");
+/// Forces session metadata writes to fail: reads work, the stored id cannot change.
+fn make_metadata_unwritable(_dir: &Path, _handle: &str) {
+    web_session_store::set_force_meta_write_fail(true);
+}
+
+fn restore_metadata_writes() {
+    web_session_store::set_force_meta_write_fail(false);
 }
 
 fn attach_transcript_error(directory: &BlockingSessionDirectory, handle: &str) -> Option<String> {
@@ -83,6 +87,7 @@ fn issue_1220_unsaved_resume_id_fails_the_attach() {
             .to_string();
         assert!(error.contains("session id could not be saved"), "{error}");
     });
+    restore_metadata_writes();
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -107,6 +112,8 @@ fn issue_1221_clear_context_fails_when_resume_id_stays_on_disk() {
         Some("sess-old")
     );
 
+    restore_metadata_writes();
+
     // Live: same failure through the session actor.
     let live = "web/clear-fail-1221-live";
     with_test_acp_program(&script, || {
@@ -119,6 +126,7 @@ fn issue_1221_clear_context_fails_when_resume_id_stays_on_disk() {
             "a live clear must report the metadata failure"
         );
     });
+    restore_metadata_writes();
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -150,12 +158,20 @@ fn issue_1240_interior_corruption_is_surfaced_on_attach() {
     let handle = "web/corrupt-1240";
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
-    web_session_store::append_events(&dir, handle, &[note("before")]);
     let path = web_session_store::session_path(&dir, handle);
-    let mut raw = fs::read_to_string(&path).expect("seeded transcript");
-    raw.push_str("{\"kind\":\"event\",\"event\":{\"type\":\"mess\n");
-    fs::write(&path, raw).expect("corrupt a row");
-    web_session_store::append_events(&dir, handle, &[note("after")]);
+    fs::create_dir_all(path.parent().expect("session dir")).expect("session dir");
+    fs::write(
+        &path,
+        format!(
+            "{{\"kind\":\"event\",\"event\":{}}}
+{{\"kind\":\"event\",\"event\":{{\"type\":\"mess
+{{\"kind\":\"event\",\"event\":{}}}
+",
+            serde_json::to_string(&note("before")).expect("json"),
+            serde_json::to_string(&note("after")).expect("json")
+        ),
+    )
+    .expect("seed legacy transcript");
 
     let detached = attach_transcript_error(&directory, handle)
         .expect("a detached attach must warn about unreadable rows");

@@ -58,6 +58,14 @@ impl SqliteRegistryStore {
     }
 
     fn open(&self) -> Result<Connection, RegistrySnapshotError> {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+        }
         Connection::open(&self.path).map_err(database_error)
     }
 

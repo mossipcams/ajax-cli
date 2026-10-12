@@ -21,6 +21,7 @@ pub struct RunRecord {
     pub owner_boot_id: Option<String>,
     pub schema_version: u32,
     pub next_event_seq: u64,
+    pub unreadable_history_rows: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +46,19 @@ pub enum OwnerClaim {
 }
 
 impl SqliteRegistryStore {
+    /// Lists the distinct registry task ids with execution runs, in sorted order.
+    pub fn list_run_task_ids(&self) -> Result<Vec<String>, RegistrySnapshotError> {
+        let connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let mut statement = connection
+            .prepare("SELECT DISTINCT task_id FROM agent_runs ORDER BY task_id")
+            .map_err(database_error)?;
+        let rows = statement
+            .query_map([], |row| row.get(0))
+            .map_err(database_error)?;
+        rows.map(|row| row.map_err(database_error)).collect()
+    }
+
     /// Returns the last inserted run for a registry task.
     pub fn latest_run_for_task(
         &self,
@@ -55,7 +69,8 @@ impl SqliteRegistryStore {
         connection
             .query_row(
                 "SELECT run_id, task_id, harness, model, native_session_id, capabilities_json, \
-             child_pid, child_pgid, owner_boot_id, schema_version, next_event_seq \
+             child_pid, child_pgid, owner_boot_id, schema_version, next_event_seq, \
+             unreadable_history_rows \
              FROM agent_runs WHERE task_id = ?1 ORDER BY rowid DESC LIMIT 1",
                 [task_id],
                 |row| {
@@ -74,6 +89,11 @@ impl SqliteRegistryStore {
                             u64::try_from(seq)
                                 .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(10, seq))?
                         },
+                        unreadable_history_rows: {
+                            let value = row.get::<_, i64>(11)?;
+                            u64::try_from(value)
+                                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, value))?
+                        },
                     })
                 },
             )
@@ -88,6 +108,7 @@ impl SqliteRegistryStore {
         native_session_id: Option<&str>,
         first_seq: u64,
         events: &[String],
+        unreadable_history_rows: u64,
     ) -> Result<(), RegistrySnapshotError> {
         let first_seq = i64::try_from(first_seq)
             .ok()
@@ -97,15 +118,28 @@ impl SqliteRegistryStore {
             .ok()
             .and_then(|len| first_seq.checked_add(len))
             .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        let unreadable_history_rows = i64::try_from(unreadable_history_rows).unwrap_or(i64::MAX);
         let mut connection = self.open()?;
         migrations::migrate(&connection)?;
         let transaction = connection.transaction().map_err(database_error)?;
-        transaction.execute(
-            "INSERT INTO agent_runs (run_id, task_id, harness, model, native_session_id, \
-             schema_version, next_event_seq, created_unix_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![run.run_id, run.task_id, run.harness, run.model, native_session_id,
-                CHECKPOINT_SCHEMA_VERSION, next_seq, run.created_unix_ms],
-        ).map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO agent_runs (run_id, task_id, harness, model, native_session_id, \
+             schema_version, next_event_seq, created_unix_ms, unreadable_history_rows) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    run.run_id,
+                    run.task_id,
+                    run.harness,
+                    run.model,
+                    native_session_id,
+                    CHECKPOINT_SCHEMA_VERSION,
+                    next_seq,
+                    run.created_unix_ms,
+                    unreadable_history_rows
+                ],
+            )
+            .map_err(database_error)?;
         for (seq, payload) in (first_seq..next_seq).zip(events) {
             transaction
                 .execute(

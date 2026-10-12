@@ -159,6 +159,15 @@ pub(crate) struct TaskSessionState {
     pub(super) worktree_path: Option<PathBuf>,
 }
 
+pub(super) fn agent_client_name(agent: AgentClient) -> &'static str {
+    match agent {
+        AgentClient::Claude => "claude",
+        AgentClient::Codex => "codex",
+        AgentClient::Cursor => "cursor",
+        AgentClient::Pi => "pi",
+        AgentClient::Other => "other",
+    }
+}
 impl TaskSessionState {
     pub(super) fn acquire_holder(&mut self) {
         self.holders.acquire();
@@ -193,8 +202,10 @@ impl TaskSessionState {
             return Ok(());
         }
         if let Err(error) = web_session_store::try_append_events(
+            &self.storage.registry_store(),
             &self.storage.state_dir,
             &self.qualified_handle,
+            agent_client_name(self.agent),
             &filtered,
         ) {
             let reason = format!("transcript could not be saved: {error}");
@@ -524,8 +535,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::EvictionSnapshot { reply } => {
             // Unreadable metadata is not evictable: eviction relies on a restore.
             let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
+                &state.storage.registry_store(),
                 &state.storage.state_dir,
                 &state.qualified_handle,
+                agent_client_name(state.agent),
             )
             .is_ok_and(|stored| stored.acp_session_id.is_some());
             let _ = reply.send(EvictionSnapshot {

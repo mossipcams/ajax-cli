@@ -169,6 +169,7 @@ fn latest_run_uses_insertion_order_and_reads_all_fields() {
             owner_boot_id: Some("boot".into()),
             schema_version: CHECKPOINT_SCHEMA_VERSION,
             next_event_seq: 1,
+            unreadable_history_rows: 0,
         })
     );
 }
@@ -178,7 +179,7 @@ fn imported_history_continues_sequence_and_duplicate_run_writes_nothing() {
     let store = store();
     let run = new_run("imported");
     store
-        .create_run_with_history(&run, Some("native"), 12, &["a".into(), "b".into()])
+        .create_run_with_history(&run, Some("native"), 12, &["a".into(), "b".into()], 0)
         .unwrap();
     let record = store.latest_run_for_task("registry-task").unwrap().unwrap();
     assert_eq!(record.native_session_id.as_deref(), Some("native"));
@@ -203,11 +204,11 @@ fn imported_history_continues_sequence_and_duplicate_run_writes_nothing() {
     );
     let before = snapshot(&store);
     assert!(store
-        .create_run_with_history(&run, None, 100, &["retry".into()])
+        .create_run_with_history(&run, None, 100, &["retry".into()], 0)
         .is_err());
     assert_eq!(snapshot(&store), before);
     store
-        .create_run_with_history(&new_run("empty"), None, 5, &[])
+        .create_run_with_history(&new_run("empty"), None, 5, &[], 0)
         .unwrap();
     assert_eq!(
         store
@@ -225,7 +226,7 @@ fn invalid_history_sequences_and_failed_event_insert_write_nothing() {
     let before = snapshot(&store);
     for first_seq in [0, u64::MAX, i64::MAX as u64] {
         assert!(store
-            .create_run_with_history(&new_run("bad"), None, first_seq, &["{}".into()])
+            .create_run_with_history(&new_run("bad"), None, first_seq, &["{}".into()], 0)
             .is_err());
         assert_eq!(snapshot(&store), before);
     }
@@ -238,7 +239,7 @@ fn invalid_history_sequences_and_failed_event_insert_write_nothing() {
         )
         .unwrap();
     assert!(store
-        .create_run_with_history(&new_run("bad"), None, 1, &["a".into(), "b".into()])
+        .create_run_with_history(&new_run("bad"), None, 1, &["a".into(), "b".into()], 0)
         .is_err());
     assert_eq!(snapshot(&store), before);
 }
@@ -429,7 +430,7 @@ fn cancellation_is_atomic_and_cannot_target_another_run() {
 fn pruning_preserves_other_runs_and_monotonic_sequences() {
     let store = store();
     store
-        .create_run_with_history(&new_run("other"), None, 1, &["other".into()])
+        .create_run_with_history(&new_run("other"), None, 1, &["other".into()], 0)
         .unwrap();
     store
         .commit_execution(&ExecutionCommit {

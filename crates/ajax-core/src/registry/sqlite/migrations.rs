@@ -193,7 +193,8 @@ fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshot
                 owner_boot_id TEXT,
                 schema_version INTEGER NOT NULL,
                 next_event_seq INTEGER NOT NULL DEFAULT 1,
-                created_unix_ms INTEGER NOT NULL
+                created_unix_ms INTEGER NOT NULL,
+                unreadable_history_rows INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS execution_tasks (

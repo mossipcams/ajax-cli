@@ -33,11 +33,16 @@ fn issue_977_startup_prunes_unowned_persisted_sessions() {
     let mut owned = std::collections::HashSet::new();
     owned.insert(owned_handle.to_string());
 
-    let pruned = prune_stale_persisted_sessions(&dir, &owned);
+    let pruned = prune_stale_persisted_sessions(&super::SessionStorage::under(dir.clone()), &owned);
     assert_eq!(pruned, vec![stale_handle.to_string()]);
-    assert!(web_session_store::session_path(&dir, owned_handle).is_file());
+    assert_eq!(
+        web_session_store::load::<serde_json::Value>(&dir, owned_handle).events,
+        vec![note("keep")]
+    );
     assert!(
-        !web_session_store::session_path(&dir, stale_handle).exists(),
+        web_session_store::load::<serde_json::Value>(&dir, stale_handle)
+            .events
+            .is_empty(),
         "stale transcript must be deleted at startup"
     );
 
@@ -55,7 +60,7 @@ fn issue_977_startup_keeps_owned_recoverable_task_transcripts() {
     let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
     let owned = owned_session_handles(&context);
 
-    let pruned = prune_stale_persisted_sessions(&dir, &owned);
+    let pruned = prune_stale_persisted_sessions(&super::SessionStorage::under(dir.clone()), &owned);
     assert!(pruned.is_empty(), "owned transcript must survive prune");
     assert_eq!(
         web_session_store::load::<serde_json::Value>(&dir, handle).events,

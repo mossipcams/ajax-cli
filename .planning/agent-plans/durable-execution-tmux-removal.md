@@ -209,5 +209,31 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   intent, run lookup, history import, unfinished-execution load, event prune,
   per-task delete, owner lease. Orchestrator rerun: fmt, workspace clippy,
   `cargo nextest run -p ajax-core` 1030 passed (9 new recovery tests).
+- Stage 4a-1 (6971212c): registry database path threaded into chat sessions
+  (`SessionStorage`). 1153 web+cli tests passed.
+- Stage 4a-2: chat transcript + stored session id + model now live in the
+  kernel tables (`web_session_store` rewritten; JSONL reader kept only as the
+  import source, `legacy.rs`). Codex started it and ran out of quota; per user
+  instruction the rest went to Qwen in six small packets. Orchestrator review
+  changed four things in the adapter (raw-JSON import, undecodable row skipped
+  not fatal, `.migrated.N` instead of an error, no capabilities-field hack) and
+  reversed one of its own calls: issue #1240 needs the unreadable-row count to
+  persist, now `agent_runs.unreadable_history_rows`. Core `open()` now creates
+  the parent directory. Orchestrator rerun: fmt, workspace clippy,
+  `npm run verify:arch`, `cargo nextest run --workspace` 2522 passed.
+  Existing tests changed (setup/inspection only unless noted):
+  `web_session_store/tests.rs` — `torn_last_line_is_skipped` (now seeds a
+  legacy file; renamed `..._on_import`), `append_past_the_byte_cap_...`
+  (byte cap no longer exists; now asserts the MAX_LOG_EVENTS bound),
+  `incremental_appends_keep_the_transcript_file_identity` (inode assertions
+  removed, ordering assertion kept; renamed), filename/delete tests seed a
+  legacy file; `task_session_durability_tests.rs` — fault helpers target the
+  database / a test-only meta-write switch, #1240 seeds a legacy file;
+  `session_cleanup_tests.rs` — #977 inspects through `load` instead of
+  `is_file()`. **These need Matt's sign-off.**
+- Known ceiling: the adapter opens the registry (and runs the migration check)
+  on every append; marked `ponytail:` in `load_run`.
+- Still owed from 4a-2's list: a slice-level restart test and an import test
+  with `dropped > 0`; folded into 4b.
 - Resolved in 2b: a commit carrying a duplicate prompt must be a complete
   no-op (today its events still append, which would duplicate the user bubble).

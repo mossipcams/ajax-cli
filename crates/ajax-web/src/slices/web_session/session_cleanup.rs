@@ -1,6 +1,7 @@
 use ajax_core::{commands::CommandContext, models::LifecycleStatus, registry::Registry};
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
 
+use super::session_storage::SessionStorage;
 use crate::adapters::web_session_store;
 
 #[cfg(test)]
@@ -20,10 +21,15 @@ pub fn owned_session_handles<R: Registry>(context: &CommandContext<R>) -> HashSe
         .collect()
 }
 
-pub fn prune_stale_persisted_sessions(state_dir: &Path, owned: &HashSet<String>) -> Vec<String> {
-    web_session_store::list_persisted_handles(state_dir)
+pub fn prune_stale_persisted_sessions(
+    storage: &SessionStorage,
+    owned: &HashSet<String>,
+) -> Vec<String> {
+    web_session_store::list_persisted_handles(&storage.registry_store(), &storage.state_dir)
         .into_iter()
         .filter(|handle| !owned.contains(handle))
-        .filter(|handle| web_session_store::delete_session(state_dir, handle))
+        .filter(|handle| {
+            web_session_store::delete_session(&storage.registry_store(), &storage.state_dir, handle)
+        })
         .collect()
 }
