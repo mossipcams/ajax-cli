@@ -6,6 +6,7 @@ use super::{refresh_task_annotations, InMemoryRegistry, RegistrySnapshotError};
 use crate::ghost_task::is_registry_ghost_task;
 
 mod enums;
+mod execution_store;
 mod load;
 mod migrations;
 mod row_codec;
@@ -14,6 +15,11 @@ mod save;
 use load::{load_events, load_step_receipts, load_tasks};
 use row_codec::database_error;
 use save::save_registry;
+
+pub use execution_store::{
+    CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
+    NewExecutionTask, NewPrompt, NewRun, RunUpdate, TaskTransition,
+};
 
 #[cfg(test)]
 pub(crate) use enums::{

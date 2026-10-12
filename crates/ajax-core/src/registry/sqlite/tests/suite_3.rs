@@ -26,7 +26,7 @@ fn sqlite_registry_store_migrates_v7_wide_tasks_to_current_normalized_tables() {
     std::fs::remove_file(&path).unwrap();
     let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert_eq!(task.title, "Fix login");
     assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
     assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
@@ -268,7 +268,7 @@ fn sqlite_registry_migrates_v5_with_null_attention_acknowledgment() {
     let columns = table_columns(&connection, "registry_task_workflow");
     std::fs::remove_file(&path).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert!(columns.contains(&"attention_acknowledged_at_unix_seconds".to_string()));
     assert!(columns.contains(&"attention_acknowledged_at_subsec_nanos".to_string()));
     assert_eq!(
@@ -298,7 +298,7 @@ fn sqlite_registry_migrates_v6_live_status_timestamp_from_last_activity() {
         .unwrap();
     std::fs::remove_file(&path).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert_eq!(
         restored
             .get_task(&TaskId::new("task-1"))

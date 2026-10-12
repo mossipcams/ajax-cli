@@ -16,7 +16,10 @@ dependency.
 ## Non-goals
 
 - No general workflow engine: no user-defined workflows, timers, or signals.
-- No durability claim for PTY shell state across an Ajax process crash.
+- Terminal shells survive an `ajax-web` restart or crash (user requirement,
+  2026-10-12, supersedes the original "not guaranteed" wording). They do not
+  survive a machine reboot or the death of their own keeper process — the same
+  bound tmux had. Nothing stronger is claimed.
 - No fabricated model/tool checkpoints for external harnesses. Ajax checkpoints
   only what it dispatches or can observe: prompt admission, prompt dispatch,
   turn completion, permission answers, session create/restore, cancel.
@@ -118,7 +121,7 @@ while a child is non-terminal.
 
 ## Stages
 
-- [ ] 1. Kernel domain in `ajax-core::execution`: ids, states, transition
+- [x] 1. Kernel domain in `ajax-core::execution`: ids, states, transition
       table, replay policy, recovery resolution, checkpoint schema version.
       Pure, unit + property tested.
 - [ ] 2. Kernel persistence: migration adding the five tables + owner row;
@@ -139,11 +142,20 @@ while a child is non-terminal.
 - [ ] 8. Status projection from committed events: idle, generating, tool
       executing, subagent working, waiting for input, recovering, interrupted,
       failed, completed; frontend mapping.
-- [ ] 9. Terminal: direct shell PTY in the worktree; drop `tmux attach`.
-- [ ] 10. Task lifecycle: `start` provisions worktree only; agent session is
+- [ ] (PARKED) 9. Terminal: one detached keeper process per task (`ajax terminal-keeper`,
+      own session via `setsid`, not a child of `ajax-web`) owns the PTY master
+      and the shell in the worktree, keeps a bounded scrollback ring, and serves
+      input / output / resize over a Unix socket under `state_dir` (0600, same
+      user only). `ajax-web` connects to the socket on attach and starts a
+      keeper only when none answers; a host restart reconnects to the running
+      shell and replays scrollback. Keeper pid + socket path are recorded so
+      drop/tidy can stop it and startup can sweep keepers whose task is gone.
+      9a keeper + protocol, 9b web bridge onto the keeper, 9c drop `tmux
+      attach` and the ephemeral-session reaper.
+- [ ] (PARKED) 10. Task lifecycle: `start` provisions worktree only; agent session is
       created on first Chat attach or prompt; drop/tidy stop the run instead of
       killing tmux. Remove tmux plan steps, probes, preflight, config.
-- [ ] 11. Delete `adapters/tmux.rs`, `tmux_task_session`, tmux evidence
+- [ ] (PARKED) 11. Delete `adapters/tmux.rs`, `tmux_task_session`, tmux evidence
       writes, `TmuxMissing` paths; migration tolerating legacy tmux columns;
       docs (`architecture.md`, `core-subsystems.md`, `web-cockpit.md`,
       `web-session-behavior.md`, `AGENTS.md`, README).
@@ -159,8 +171,39 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
 
 ## Deviations
 
-(none yet)
+- 2026-10-12 (user, latest instruction): scope narrowed to **Ajax web chat
+  only, not terminals**. In scope: stages 1, 2, 4, 5, 8, 12 (chat prompt
+  admission, queue, transcript, checkpoints, recovery, status, crash tests) and
+  the chat runtimes via #1264. **Parked, not started:** stage 9 (terminal
+  keeper), stage 10 (task provisioning without tmux), stage 11 (tmux code and
+  evidence removal). Ajax Terminal and tmux provisioning stay exactly as they
+  are on main; nothing on this branch touches them.
+
+- 2026-10-12: open PR #1264 (`feat/claude/sdk-integration`, 11 commits, not on
+  main) already adds a `SessionClient` abstraction, a Claude Agent SDK client,
+  and a Pi native RPC client under `ajax-web/src/adapters/web_session_acp/`.
+  Stages 3, 6, and 7 are therefore NOT reimplemented on this branch. They
+  become: land #1264, then add `Capabilities` reporting and kernel checkpoint
+  wiring on top of its `SessionClient`. Stages 1, 2, 9, 10, 11 do not touch
+  those files and proceed here. Stages 4, 5, 8, 12 touch the session slice and
+  are sequenced after #1264 merges to avoid a 200-file conflict.
+- Stage 2 split into 2a (schema + atomic commit) and 2b (recovery load, owner
+  lease, cancel intent).
+- Prompt phase is not stored separately: a prompt's phase is the state of its
+  execution task (`prompt_submissions.task_exec_id`), so there is one source of
+  truth for queued / dispatching / interrupted / completed.
 
 ## Validation log
 
-(appended per stage)
+- Stage 1 (ca518073): `cargo fmt --check`, `cargo clippy -p ajax-core
+  --all-targets --all-features -- -D warnings`, `cargo nextest run -p ajax-core
+  execution architecture` — 51 passed. Rerun by the orchestrator.
+- Stage 2a: Qwen timed out at 900s with partial work; escalated to Codex,
+  which finished it (its report failed the router schema, so acceptance rests
+  on the delta and an orchestrator rerun). `cargo fmt --check`; `cargo clippy
+  --workspace --all-targets --all-features -- -D warnings`; `cargo nextest run
+  -p ajax-core` 1021 passed; `cargo nextest run -p ajax-cli -p ajax-web` 1152
+  passed. Existing-test edits: six `assert_eq!(version, 9)` literals became 10
+  in `registry/sqlite/tests/suite_2.rs` and `suite_3.rs`; nothing else.
+- Follow-up for 2b: a commit carrying a duplicate prompt must be a complete
+  no-op (today its events still append, which would duplicate the user bubble).
