@@ -99,7 +99,22 @@ pub(super) fn load_run(
             };
             let migrated = path.with_extension(&name);
             if !migrated.try_exists()? {
-                fs::rename(&path, migrated)?;
+                fs::rename(&path, &migrated)?;
+                // The preserved transcript may contain prompt text; lock it
+                // down to the owner only.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Err(error) =
+                        fs::set_permissions(&migrated, fs::Permissions::from_mode(0o600))
+                    {
+                        tracing::warn!(
+                            path = %migrated.display(),
+                            ?error,
+                            "failed to tighten migrated transcript permissions"
+                        );
+                    }
+                }
                 break;
             }
             suffix += 1;

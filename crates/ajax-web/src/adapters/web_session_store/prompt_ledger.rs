@@ -218,15 +218,25 @@ pub fn try_load(
             .prompts_for_run(&run_id)
             .map_err(|_| LedgerLoadError::Unreadable)?;
         if current.is_empty() {
-            if let Some(commit) = kernel::plan_commit(&run_id, &[], &legacy)
-                .map_err(|_| LedgerLoadError::Unreadable)?
-            {
-                store
-                    .commit_execution(&commit)
-                    .map_err(|_| LedgerLoadError::Unreadable)?;
+            // The ledger content is now durable in the database: delete the
+            // legacy file instead of preserving it.
+            let commit = kernel::plan_commit(&run_id, &[], &legacy)
+                .map_err(|_| LedgerLoadError::Unreadable)?;
+            if legacy.entries.is_empty() || commit.is_some() {
+                if let Some(commit) = commit {
+                    store
+                        .commit_execution(&commit)
+                        .map_err(|_| LedgerLoadError::Unreadable)?;
+                }
+                delete_legacy_file(state_dir, handle)?;
+            } else {
+                migrate_legacy_file(state_dir, handle)?;
             }
+        } else {
+            // The database already has prompts for the run; the sidecar was not
+            // imported, so preserve it under a `.migrated` name.
+            migrate_legacy_file(state_dir, handle)?;
         }
-        migrate_legacy_file(state_dir, handle)?;
     }
     let run = super::load_run(store, state_dir, handle, "unknown")
         .map_err(|_| LedgerLoadError::Unreadable)?;
@@ -239,7 +249,19 @@ pub fn try_load(
     }
 }
 
-/// Rename the legacy ledger file to the first free `.migrated` name; never overwrite.
+/// Delete a legacy ledger file whose content was imported into the database in
+/// this call. `NotFound` is fine; any other failure is `Unreadable`.
+fn delete_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
+    match fs::remove_file(ledger_path(state_dir, handle)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(LedgerLoadError::Unreadable),
+    }
+}
+
+/// Rename the legacy ledger file to the first free `.migrated` name; never
+/// overwrite. Used only when an import was skipped because the database already
+/// has prompts for the run and the sidecar content was not trusted into it.
 fn migrate_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
     let path = ledger_path(state_dir, handle);
     if !path.try_exists().map_err(|_| LedgerLoadError::Unreadable)? {

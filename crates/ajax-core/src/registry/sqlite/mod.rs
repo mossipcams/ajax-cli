@@ -96,6 +96,10 @@ impl SqliteRegistryStore {
                     .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
             }
         }
+        // Freed transcript and prompt content is overwritten with zeros, not left in free pages.
+        connection
+            .pragma_update(None, "secure_delete", "ON")
+            .map_err(database_error)?;
         Ok(connection)
     }
 

@@ -355,3 +355,30 @@ fn list_persisted_handles_sees_numbered_migration_leftovers() {
     assert_eq!(list_persisted_handles(&store, &dir), vec!["web/x"]);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn migrated_transcript_copy_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_dir("owner-only-migrated");
+    let handle = "web/owner-only";
+    write_rows(&dir, handle, &[META_ROW, EVENT_ROW]);
+    std::fs::set_permissions(
+        session_path(&dir, handle),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    try_load::<serde_json::Value>(&store, &dir, handle, "unknown").unwrap();
+
+    let migrated = session_path(&dir, handle).with_extension("jsonl.migrated");
+    assert!(migrated.exists());
+    assert_eq!(
+        std::fs::metadata(&migrated).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -238,7 +238,7 @@ fn load_rejects_wrong_kind() {
 }
 
 #[test]
-fn legacy_ledger_is_imported_once_and_renamed() {
+fn legacy_ledger_is_imported_once_and_removed() {
     let dir = scratch_dir("legacy-import");
     let handle = "web/fix-login";
     let path = ledger_path(&dir, handle);
@@ -259,9 +259,47 @@ fn legacy_ledger_is_imported_once_and_renamed() {
     let base = path.file_name().unwrap().to_str().unwrap();
     let migrated = path.with_file_name(format!("{base}.migrated"));
     assert!(!path.exists());
-    assert!(migrated.is_file());
+    assert!(
+        !migrated.exists(),
+        "an imported legacy ledger is durable in the database and must be deleted"
+    );
 
     let again = load(&dir, handle).expect("load");
     assert_eq!(again, loaded);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn legacy_ledger_seen_after_import_is_renamed_not_imported() {
+    let dir = scratch_dir("legacy-import-then-sidecar");
+    let handle = "web/fix-login";
+
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_string(),
+        "one (1 attachment)".to_string(),
+        "one".to_string(),
+        Vec::new(),
+    );
+    persist(&dir, handle, &ledger).expect("persist p1");
+
+    // A legacy sidecar appearing after the run exists is not trusted content.
+    let path = ledger_path(&dir, handle);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"kind":"prompt_ledger","v":1,"entries":[{"clientMessageId":"p2","phase":"queued","transcript_text":"two","prompt_text":"two"}]}"#
+    )
+    .unwrap();
+
+    let loaded = load(&dir, handle).expect("load");
+    assert_eq!(loaded.entries.len(), 1);
+    assert_eq!(loaded.entries[0].client_message_id, "p1");
+
+    let base = path.file_name().unwrap().to_str().unwrap();
+    let migrated = path.with_file_name(format!("{base}.migrated"));
+    assert!(!path.exists());
+    assert!(migrated.is_file());
+
     let _ = std::fs::remove_dir_all(dir);
 }

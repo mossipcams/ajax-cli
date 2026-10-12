@@ -100,3 +100,34 @@ fn database_file_precreated_wider_is_opened_and_tightened() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn deleted_event_text_is_not_left_in_the_database_file() {
+    const SENTINEL: &str = "SENTINEL-7f3a9c-PROMPT-TEXT";
+    let path = temp_path("secure-delete");
+    let store = SqliteRegistryStore::new(path.clone());
+    store
+        .create_run_with_history(
+            &run("secure", "secure-task"),
+            None,
+            1,
+            &[SENTINEL.to_string()],
+            0,
+        )
+        .unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(contains(&bytes, SENTINEL.as_bytes()));
+
+    store.delete_runs_for_task("secure-task").unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        !contains(&bytes, SENTINEL.as_bytes()),
+        "deleted event text remains in the database file"
+    );
+}

@@ -253,6 +253,25 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   Existing tests changed: `prompt_ledger/tests.rs::round_trip_atomic_ledger`
   (0600 assertion now on the database file) and
   `delete_ledger_removes_sidecar_file` (seeds the legacy file by hand).
+- Security reviews of 129d9214 and b-series commits (titles only, bodies
+  empty) — all confirmed, fixed, orchestrator-verified
+  (`cargo nextest run --workspace` 2557 passed, clippy, fmt, verify:arch):
+  1. permission race: a new registry database is now created 0600 before
+     SQLite opens it (was chmod-after-open);
+  2. prompt text retained after completion/withdrawal: `plan_commit` clears
+     `content_json` in the same transaction (also heals rows written before the
+     fix); kernel op `prompt_content_clears`;
+  3. imported `prompt-ledger.json` kept on disk: now deleted once its import
+     commits; kept (renamed) only when an import is skipped;
+  4. logical-only erasure: `PRAGMA secure_delete = ON` on every store
+     connection, with a raw-file sentinel test.
+  `.jsonl.migrated` transcript copies are kept as an import safety net, now
+  0600. **Open decision for Matt:** keep them (full pre-import transcript on
+  disk until session delete) or delete after a committed import.
+  Residual, not fixed: SQLite's rollback journal holds old page images during a
+  transaction and its deletion does not scrub disk blocks.
+- Stage 4c-C1: `try_persist_with_events` commits a ledger save and transcript
+  events in one transaction (adapter only; the slice does not call it yet).
 - Not yet done in stage 4: prompt admission and its user-message transcript
   event are still two commits (4c); nothing reads the checkpoints yet (stage 5).
 - Still owed from 4a-2's list: a slice-level restart test and an import test
