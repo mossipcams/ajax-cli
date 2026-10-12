@@ -13,6 +13,7 @@ pub mod commands;
 pub mod config;
 pub mod diff_review;
 pub mod events;
+pub mod execution;
 pub mod ghost_task;
 pub mod lifecycle;
 pub mod live;
