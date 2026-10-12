@@ -376,3 +376,56 @@ fn ledger_from_prompts_round_trip() {
     assert_eq!(ledger.entries[0].prompt_text, "");
     assert!(ledger.entries[0].content_blocks.is_empty());
 }
+
+#[test]
+fn cancelled_prompt_with_stale_content_yields_only_a_clear() {
+    let current = vec![prompt("m1", ExecutionState::Cancelled, None)];
+    let commit = plan_commit("run-1", &current, &ledger(Vec::new()))
+        .unwrap()
+        .expect("commit with a clear for pre-fix content");
+    assert!(commit.transitions.is_empty());
+    assert!(commit.prompts.is_empty());
+    assert_eq!(commit.prompt_content_clears, vec!["m1".to_string()]);
+}
+
+#[test]
+fn failed_prompt_with_stale_content_yields_only_a_clear() {
+    let current = vec![prompt("m1", ExecutionState::Failed, None)];
+    let commit = plan_commit("run-1", &current, &ledger(Vec::new()))
+        .unwrap()
+        .expect("commit with a clear for pre-fix content");
+    assert!(commit.transitions.is_empty());
+    assert!(commit.prompts.is_empty());
+    assert_eq!(commit.prompt_content_clears, vec!["m1".to_string()]);
+}
+
+#[test]
+fn cancelled_prompt_with_empty_content_yields_none() {
+    let current = vec![prompt("m1", ExecutionState::Cancelled, Some("{}"))];
+    assert!(plan_commit("run-1", &current, &ledger(Vec::new()))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn mixed_current_with_empty_desired_clears_every_leftover_row_once() {
+    let current = vec![
+        prompt("m1", ExecutionState::Pending, None),
+        prompt("m2", ExecutionState::Completed, None),
+        prompt("m3", ExecutionState::Cancelled, None),
+    ];
+    let commit = plan_commit("run-1", &current, &ledger(Vec::new()))
+        .unwrap()
+        .expect("commit");
+    // Only the Pending row transitions; the two terminal rows just clear.
+    assert_eq!(commit.transitions.len(), 1);
+    assert_eq!(commit.transitions[0].task_exec_id, "run-1:prompt:m1");
+    assert_eq!(commit.transitions[0].to, ExecutionState::Cancelled);
+    let mut clears = commit.prompt_content_clears.clone();
+    clears.sort();
+    assert_eq!(clears, vec!["m1", "m2", "m3"]);
+    // No duplicate clears.
+    let mut deduped = clears.clone();
+    deduped.dedup();
+    assert_eq!(deduped.len(), clears.len());
+}

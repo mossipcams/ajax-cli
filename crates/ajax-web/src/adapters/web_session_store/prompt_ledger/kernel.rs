@@ -201,18 +201,6 @@ pub(super) fn plan_commit(
             });
         }
 
-        // A Completed prompt no longer needs its text. Wipe it in this same
-        // transaction when it just completed, or when pre-fix data still holds
-        // real content on a row that is already Completed.
-        if let Some(current_content) = &existing_content_json {
-            let clearing = (target == ExecutionState::Completed
-                && start != ExecutionState::Completed)
-                || (start == ExecutionState::Completed && current_content != "{}");
-            if clearing {
-                commit.prompt_content_clears.push(key.to_string());
-            }
-        }
-
         if let Some(current_content) = existing_content_json {
             if target == ExecutionState::Pending && entry_content_json(entry) != current_content {
                 commit.prompt_content_updates.push(PromptContentUpdate {
@@ -235,18 +223,35 @@ pub(super) fn plan_commit(
                 to: ExecutionState::Cancelled,
                 outcome_json: None,
             });
-            commit
-                .prompt_content_clears
-                .push(prompt.idempotency_key.clone());
-        } else if !desired_keys.contains(prompt.idempotency_key.as_str())
-            && prompt.state == ExecutionState::Completed
-            && prompt.content_json != "{}"
-        {
-            commit
-                .prompt_content_clears
-                .push(prompt.idempotency_key.clone());
         }
     }
+
+    // One rule decides content clears: exactly one clear per prompt whose
+    // state after this commit is terminal (Completed, Failed or Cancelled)
+    // and which still holds real content. A key in `desired` ends in its
+    // target state; a key absent from `desired` is cancelled here, or was
+    // already terminal. Brand-new prompts have no row yet and never clear.
+    let mut to_clear: Vec<&str> = desired
+        .entries
+        .iter()
+        .filter(|entry| {
+            target_state(entry.phase) == ExecutionState::Completed
+                && current.iter().any(|prompt| {
+                    prompt.idempotency_key == entry.client_message_id && prompt.content_json != "{}"
+                })
+        })
+        .map(|entry| entry.client_message_id.as_str())
+        .collect();
+    to_clear.extend(
+        current
+            .iter()
+            .filter(|prompt| {
+                !desired_keys.contains(prompt.idempotency_key.as_str())
+                    && prompt.content_json != "{}"
+            })
+            .map(|prompt| prompt.idempotency_key.as_str()),
+    );
+    commit.prompt_content_clears = to_clear.into_iter().map(str::to_string).collect();
 
     let empty = commit.new_tasks.is_empty()
         && commit.prompts.is_empty()
