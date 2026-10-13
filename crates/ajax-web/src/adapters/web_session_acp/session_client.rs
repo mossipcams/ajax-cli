@@ -12,9 +12,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, ResourceLink, TextContent,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
 use super::agent_event::AgentEvent;
 use super::claude_sdk_client::ClaudeSdkClient;
@@ -328,8 +326,10 @@ impl SessionClient {
     pub fn respond_elicitation(
         &mut self,
         request_id: &str,
-        action: ElicitationAction,
+        action: &str,
+        content: Option<&serde_json::Value>,
     ) -> Result<(), String> {
+        let action = super::sdk_elicitation::action_from_wire(action, content)?;
         match self {
             SessionClient::Acp(client) => client.respond_elicitation(request_id, action),
             // ponytail: follow up when Pi RPC needs elicitation responses.

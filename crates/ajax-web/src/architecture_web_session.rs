@@ -174,4 +174,38 @@ mod tests {
             "protocol mapping modules must not import AcpStdioClient"
         );
     }
+
+    #[test]
+    fn native_harness_code_never_names_the_acp_protocol() {
+        let forbidden = [
+            concat!("agent_client", "_protocol"),
+            concat!("AcpClient", "Event"),
+        ];
+        let files = [
+            "claude_sdk_client.rs",
+            "claude_sdk_map.rs",
+            "claude_sdk_spawn.rs",
+            "pi_rpc_client.rs",
+            "pi_rpc_map.rs",
+            "pi_rpc_handshake.rs",
+            "rpc_client.rs",
+            "rpc_session.rs",
+            "rpc_handshake.rs",
+            "jsonl_process.rs",
+        ];
+        for name in files {
+            let source = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("src/adapters/web_session_acp")
+                    .join(name),
+            )
+            .unwrap_or_else(|error| panic!("missing native harness file {name}: {error}"));
+            for token in forbidden {
+                assert!(
+                    !source.contains(token),
+                    "{name} contains `{token}`: the Claude Agent SDK and Pi RPC code must stay free of ACP protocol types; convert at SessionClient instead"
+                );
+            }
+        }
+    }
 }

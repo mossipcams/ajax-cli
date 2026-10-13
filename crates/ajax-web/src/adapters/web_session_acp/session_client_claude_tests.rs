@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, ElicitationAction, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::models::AgentClient;
 
 use super::agent_event::{AgentEvent, NativeEvent};
@@ -173,7 +173,7 @@ fn request_responses_are_rejected_in_claude_mode() {
             .respond_client_request(&serde_json::json!(1), serde_json::json!({}))
             .expect_err("respond_client_request must be rejected");
         client
-            .respond_elicitation("r-1", ElicitationAction::Decline)
+            .respond_elicitation("r-1", "decline", None)
             .expect_err("respond_elicitation must be rejected");
     });
 }

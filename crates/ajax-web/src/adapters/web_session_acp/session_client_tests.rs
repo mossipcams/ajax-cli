@@ -169,10 +169,7 @@ fn pi_variant_rejects_request_and_elicitation_responses() {
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
     let err = session
-        .respond_elicitation(
-            "elicit-1",
-            agent_client_protocol::schema::v1::ElicitationAction::Decline,
-        )
+        .respond_elicitation("elicit-1", "decline", None)
         .expect_err("respond_elicitation should be unsupported");
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
