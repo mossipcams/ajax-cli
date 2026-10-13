@@ -335,6 +335,9 @@ pub(super) fn submit_prompt(
     text: String,
     content_blocks: Vec<prompt_content::PromptContentBlockWire>,
 ) -> Result<(), SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     if let Some(reason) = &state.prompts.ledger_unusable {
         return Err(SessionError::persist(format!(
             "prompt ownership unavailable: {reason}"
@@ -475,6 +478,9 @@ pub(super) fn dispatch_queued_prompt(
     state: &mut TaskSessionState,
     next: &super::QueuedPrompt,
 ) -> Result<(), SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     if let Some(reason) = &state.evidence.transcript_durability_fault {
         return Err(SessionError::persist(reason.clone()));
     }
@@ -642,6 +648,9 @@ pub(super) fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(
 }
 
 pub(super) fn try_dispatch_next_if_idle(state: &mut TaskSessionState) {
+    if state.ownership.check().is_err() {
+        return;
+    }
     if state.prompts.active_prompt.is_some() || state.prompts.pending_exit_interruption.is_some() {
         return;
     }

@@ -1,4 +1,5 @@
 use super::acp_slot::AcpSlot;
+use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
@@ -157,6 +158,7 @@ pub(crate) struct TaskSessionState {
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
     pub(super) worktree_path: Option<PathBuf>,
+    pub(super) ownership: std::sync::Arc<ExecutionOwnership>,
 }
 
 pub(super) fn agent_client_name(agent: AgentClient) -> &'static str {
@@ -299,6 +301,7 @@ pub(crate) fn spawn_task_session(
     qualified_handle: String,
     storage: SessionStorage,
     report_activity: Option<super::ReportSessionActivity>,
+    ownership: std::sync::Arc<ExecutionOwnership>,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
     tokio::task::JoinHandle<()>,
@@ -362,6 +365,7 @@ pub(crate) fn spawn_task_session(
             last_released: None,
             agent: AgentClient::Cursor,
             worktree_path: None,
+            ownership,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

@@ -128,3 +128,122 @@ fn unreadable_store_reports_stored_session_unreadable() {
         "expected 'ownership unavailable', got: {err}"
     );
 }
+
+#[test]
+fn holder_is_dead_only_on_positive_evidence() {
+    use super::execution_ownership::holder_is_dead;
+
+    // Exit 1 with empty stdout is the only positive evidence of death.
+    assert!(holder_is_dead(Some(1), true));
+
+    // Everything else — including probes that never ran — means alive.
+    assert!(!holder_is_dead(Some(0), false));
+    assert!(!holder_is_dead(Some(0), true));
+    assert!(!holder_is_dead(Some(1), false));
+    assert!(!holder_is_dead(Some(2), true));
+    assert!(!holder_is_dead(None, true));
+}
+
+#[test]
+fn lost_lease_is_detected_by_heartbeat_and_blocks_ensure_owner() {
+    let dir = test_support::scratch_dir("exec-ownership-lost-heartbeat");
+    let first_storage = SessionStorage::under(dir.clone());
+    let first = ExecutionOwnership::new(first_storage);
+    assert!(first.ensure_owner().is_ok());
+
+    let second = ExecutionOwnership::new(SessionStorage::under(dir));
+    assert!(second.ensure_owner().is_ok());
+
+    // The first boot no longer owns the lease; its heartbeat marks it lost.
+    first.heartbeat();
+
+    let err = first
+        .check()
+        .expect_err("the lease must be lost after heartbeat");
+    assert!(err.contains("ownership lost"), "unexpected error: {err}");
+
+    let err = first
+        .ensure_owner()
+        .expect_err("a lost lease must refuse re-acquisition");
+    assert!(err.contains("ownership lost"), "unexpected error: {err}");
+
+    // The second boot still owns the lease and keeps running.
+    assert!(second.ensure_owner().is_ok());
+}
+
+#[test]
+fn repeated_heartbeat_errors_mark_the_lease_lost() {
+    let dir = test_support::scratch_dir("exec-ownership-heartbeat-errors");
+    // Make the registry database path a directory so it cannot be opened.
+    std::fs::create_dir_all(dir.join("ajax.db")).expect("create bogus db dir");
+
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
+
+    ownership.heartbeat();
+    assert!(ownership.check().is_ok());
+    ownership.heartbeat();
+    assert!(ownership.check().is_ok());
+
+    // The third consecutive failure is positive enough evidence.
+    ownership.heartbeat();
+    let err = ownership
+        .check()
+        .expect_err("three heartbeat failures must mark the lease lost");
+    assert!(err.contains("ownership lost"), "unexpected error: {err}");
+}
+
+#[test]
+fn healthy_ownership_never_becomes_lost() {
+    let dir = test_support::scratch_dir("exec-ownership-healthy");
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
+    assert!(ownership.ensure_owner().is_ok());
+
+    for _ in 0..5 {
+        ownership.heartbeat();
+    }
+
+    assert!(ownership.check().is_ok());
+}
+
+#[test]
+fn lost_ownership_refuses_prompts_and_leaves_the_transcript_unchanged() {
+    use super::test_support::{fake_acp_fixture, BlockingSessionDirectory};
+    use crate::adapters::web_session_acp::with_test_acp_program;
+    use ajax_core::models::AgentClient;
+
+    let dir = test_support::scratch_dir("exec-ownership-prompt-refused");
+    let handle = "web/exec-ownership-prompt-refused";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let (before, cursor) = directory.read_from(handle, 0);
+
+        // A second boot in the same process takes over the lease.
+        let foreign = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
+        assert!(foreign.ensure_owner().is_ok());
+
+        directory.inner().heartbeat_execution_ownership();
+
+        let result = directory.submit_prompt_with_id(handle, "p1".to_string(), "hello".to_string());
+        assert!(
+            result.is_err(),
+            "a lost ownership lease must refuse the prompt"
+        );
+
+        let err = result.expect_err("prompt refused");
+        assert!(err.contains("ownership lost"), "unexpected error: {err}");
+
+        let (after, next) = directory.read_from(handle, 0);
+        assert_eq!(
+            (after, next),
+            (before, cursor),
+            "a refused prompt must leave the transcript untouched"
+        );
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}

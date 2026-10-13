@@ -40,14 +40,14 @@ struct SessionEntry {
 
 pub(crate) struct TaskSessionDirectory {
     sessions: Mutex<HashMap<String, SessionEntry>>,
-    ownership: ExecutionOwnership,
+    ownership: std::sync::Arc<ExecutionOwnership>,
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
 }
 
 impl TaskSessionDirectory {
     pub fn new(storage: SessionStorage) -> Arc<Self> {
-        let ownership = ExecutionOwnership::new(storage.clone());
+        let ownership = std::sync::Arc::new(ExecutionOwnership::new(storage.clone()));
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             ownership,
@@ -86,6 +86,7 @@ impl TaskSessionDirectory {
             handle.to_string(),
             self.storage.clone(),
             self.report_activity_for_spawn(),
+            self.ownership.clone(),
         );
         sessions.insert(
             handle.to_string(),
@@ -120,6 +121,7 @@ impl TaskSessionDirectory {
             handle.to_string(),
             self.storage.clone(),
             self.report_activity_for_spawn(),
+            self.ownership.clone(),
         );
         sessions.insert(
             handle.to_string(),

@@ -33,6 +33,9 @@ pub(super) async fn acquire(
     model: &str,
     agent: AgentClient,
 ) -> Result<(), SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     state.worktree_path = Some(worktree_path.to_path_buf());
     state.agent = agent;
 
@@ -188,6 +191,9 @@ pub(super) async fn respawn(
     model: &str,
     force: bool,
 ) -> Result<u64, SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     if state.acp.client.is_none() {
         return Err(SessionError::protocol("session slot missing"));
     }
