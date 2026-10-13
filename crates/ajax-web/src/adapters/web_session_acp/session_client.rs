@@ -16,11 +16,11 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, ElicitationAction, SessionConfigOptionValue,
 };
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
 use super::client::{
-    AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
-    HANDSHAKE_TIMEOUT,
+    AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
 };
 use super::pi_rpc_client::PiRpcClient;
 use super::{ApplyModelOutcome, CancelOutcome, PromptCapabilityDescriptor};
@@ -52,7 +52,7 @@ pub struct ClaudeSession {
 /// session client, so drain helpers can serve both.
 pub trait AcpEventSource {
     fn session_new_result(&self) -> &serde_json::Value;
-    fn poll_event(&self) -> Option<AcpClientEvent>;
+    fn poll_event(&self) -> Option<AgentEvent>;
 }
 
 impl AcpEventSource for AcpStdioClient {
@@ -60,8 +60,8 @@ impl AcpEventSource for AcpStdioClient {
         self.session_new_result()
     }
 
-    fn poll_event(&self) -> Option<AcpClientEvent> {
-        self.poll_event()
+    fn poll_event(&self) -> Option<AgentEvent> {
+        self.poll_event().map(AgentEvent::Acp)
     }
 }
 
@@ -70,7 +70,7 @@ impl AcpEventSource for SessionClient {
         SessionClient::session_new_result(self)
     }
 
-    fn poll_event(&self) -> Option<AcpClientEvent> {
+    fn poll_event(&self) -> Option<AgentEvent> {
         SessionClient::poll_event(self)
     }
 }
@@ -240,17 +240,17 @@ impl SessionClient {
         }
     }
 
-    pub fn poll_event(&self) -> Option<AcpClientEvent> {
+    pub fn poll_event(&self) -> Option<AgentEvent> {
         match self {
-            SessionClient::Acp(client) => client.poll_event(),
+            SessionClient::Acp(client) => client.poll_event().map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.poll_event(),
             SessionClient::Claude(session) => session.client.poll_event(),
         }
     }
 
-    pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         match self {
-            SessionClient::Acp(client) => client.wait_event(timeout),
+            SessionClient::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.wait_event(timeout),
             SessionClient::Claude(session) => session.client.wait_event(timeout),
         }

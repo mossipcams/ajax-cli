@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, ToolCallStatus};
 use serde_json::Value;
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::pi_rpc_map::map_record;
 
@@ -32,13 +33,22 @@ fn fixture(name: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Unwrap one [`AgentEvent`] down to its ACP event. The Pi mapper emits no
+/// native events, so anything other than `AgentEvent::Acp` fails the test.
+fn acp_event(event: &AgentEvent) -> &AcpClientEvent {
+    match event {
+        AgentEvent::Acp(acp) => acp,
+        other => panic!("expected an ACP event, got {other:?}"),
+    }
+}
+
 fn replay(records: &[Value]) -> Replay {
     let mut events = Vec::new();
     let mut finished = false;
     let mut ended_aborted = false;
     for record in records {
         let mapping = map_record(record, SESSION_ID);
-        events.extend(mapping.events);
+        events.extend(mapping.events.iter().map(|event| acp_event(event).clone()));
         finished |= mapping.finished;
         ended_aborted |= mapping.ended_aborted;
     }

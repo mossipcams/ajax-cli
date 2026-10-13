@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
@@ -60,9 +61,13 @@ fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
 fn collect_until_finished(client: &PiRpcClient) -> Vec<AcpClientEvent> {
     let mut events = Vec::new();
     loop {
-        let event = client
+        let raw = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
+        let event = match &raw {
+            AgentEvent::Acp(acp) => acp.clone(),
+            other => panic!("expected an ACP event, got {other:?}"),
+        };
         let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
         events.push(event);
         if finished {
@@ -214,9 +219,13 @@ fn rejected_prompt_finishes_without_usage() {
 
     let mut events = Vec::new();
     loop {
-        let event = client
+        let raw = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
+        let event = match &raw {
+            AgentEvent::Acp(acp) => acp.clone(),
+            other => panic!("expected an ACP event, got {other:?}"),
+        };
         let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
         events.push(event);
         if finished {

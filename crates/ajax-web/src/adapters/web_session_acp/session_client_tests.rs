@@ -10,7 +10,7 @@ use agent_client_protocol::schema::v1::{
 
 use super::pi_rpc_client::PiRpcClient;
 use super::session_client::SessionClient;
-use super::{AcpClientEvent, CancelOutcome};
+use super::{AcpClientEvent, AgentEvent, CancelOutcome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -38,19 +38,19 @@ fn text_block(text: &str) -> ContentBlock {
     ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new(text))
 }
 
-fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
+fn is_agent_message_chunk(event: &AgentEvent) -> bool {
     matches!(
         event,
-        AcpClientEvent::SessionUpdate(notification)
+        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
             if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
     )
 }
 
 /// True when `event` is a `SessionUpdate` carrying a `UsageUpdate`.
-fn is_usage_update(event: &AcpClientEvent) -> bool {
+fn is_usage_update(event: &AgentEvent) -> bool {
     matches!(
         event,
-        AcpClientEvent::SessionUpdate(notification)
+        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
             if matches!(notification.update, SessionUpdate::UsageUpdate(_))
     )
 }
@@ -87,19 +87,19 @@ fn pi_variant_prompt_flow_streams_chunk_then_request_finished() {
             .wait_event(WAIT)
             .expect("RequestFinished should follow the chunk");
         match event {
-            AcpClientEvent::SessionUpdate(notification)
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                 if matches!(notification.update, SessionUpdate::UsageUpdate(_)) =>
             {
                 continue
             }
-            AcpClientEvent::RequestFinished { .. } => break event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. }) => break event,
             other => panic!("expected RequestFinished, got {other:?}"),
         }
     };
     match &second {
-        AcpClientEvent::RequestFinished {
+        AgentEvent::Acp(AcpClientEvent::RequestFinished {
             id: finished_id, ..
-        } => {
+        }) => {
             assert_eq!(*finished_id, id);
         }
         other => panic!("expected RequestFinished, got {other:?}"),
@@ -126,18 +126,25 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
     let finished = loop {
         match session.wait_event(WAIT) {
             None => panic!("run should finish after cancel"),
-            Some(event) if matches!(event, AcpClientEvent::RequestFinished { .. }) => break event,
+            Some(event)
+                if matches!(
+                    event,
+                    AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+                ) =>
+            {
+                break event
+            }
             Some(event) if is_agent_message_chunk(&event) => {}
             Some(event) if is_usage_update(&event) => {}
             Some(other) => panic!("expected chunk or RequestFinished after cancel, got {other:?}"),
         }
     };
     match &finished {
-        AcpClientEvent::RequestFinished {
+        AgentEvent::Acp(AcpClientEvent::RequestFinished {
             id: finished_id,
             result,
             ..
-        } => {
+        }) => {
             assert_eq!(*finished_id, id);
             let value = result
                 .as_ref()

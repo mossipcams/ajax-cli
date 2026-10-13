@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1::{
 };
 use ajax_core::models::AgentClient;
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
 use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
@@ -80,22 +81,24 @@ fn prompt_flow_streams_through_the_enum() {
                 .wait_event(TIMEOUT)
                 .expect("event before RequestFinished");
             match &event {
-                AcpClientEvent::SessionUpdate(notification) => match &notification.update {
-                    SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                        ContentBlock::Text(text) => {
-                            assert_eq!(text.text, "ok");
-                            chunk_seen = true;
-                        }
-                        _ => panic!("expected a text chunk, got {:?}", chunk.content),
-                    },
-                    SessionUpdate::UsageUpdate(_) => usage_seen = true,
-                    _ => {}
-                },
-                AcpClientEvent::RequestFinished {
+                AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) => {
+                    match &notification.update {
+                        SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
+                            ContentBlock::Text(text) => {
+                                assert_eq!(text.text, "ok");
+                                chunk_seen = true;
+                            }
+                            _ => panic!("expected a text chunk, got {:?}", chunk.content),
+                        },
+                        SessionUpdate::UsageUpdate(_) => usage_seen = true,
+                        _ => {}
+                    }
+                }
+                AgentEvent::Acp(AcpClientEvent::RequestFinished {
                     id: finished_id,
                     result,
                     ..
-                } => {
+                }) => {
                     assert_eq!(*finished_id, id);
                     let stop_reason = result
                         .as_ref()
@@ -130,7 +133,7 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
                 .expect("event during slow prompt");
             if matches!(
                 &event,
-                AcpClientEvent::SessionUpdate(notification)
+                AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                     if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
             ) {
                 break;
@@ -144,11 +147,11 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
         // Drain until the run ends with stopReason cancelled.
         loop {
             let event = client.wait_event(TIMEOUT).expect("event after cancel");
-            if let AcpClientEvent::RequestFinished {
+            if let AgentEvent::Acp(AcpClientEvent::RequestFinished {
                 id: finished_id,
                 result,
                 ..
-            } = &event
+            }) = &event
             {
                 assert_eq!(*finished_id, id);
                 let stop_reason = result

@@ -19,6 +19,7 @@ use agent_client_protocol::schema::v1::{
 };
 use serde_json::Value;
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
 
@@ -71,7 +72,7 @@ pub fn map_sdk_message(message: &Value, session_id: &str) -> RpcMapping {
 fn map_stream_event(
     message: &Value,
     session_id: &str,
-    events: &mut Vec<AcpClientEvent>,
+    events: &mut Vec<AgentEvent>,
 ) -> (bool, bool) {
     if let Some(event) = message.get("event") {
         match event.get("type").and_then(Value::as_str) {
@@ -87,7 +88,7 @@ fn map_stream_event(
     (false, false)
 }
 
-fn map_delta(event: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) {
+fn map_delta(event: &Value, session_id: &str, events: &mut Vec<AgentEvent>) {
     let delta = event.get("delta");
     let Some(delta) = delta else { return };
     let update = match delta.get("type").and_then(Value::as_str) {
@@ -151,7 +152,7 @@ fn tool_kind_for_name(name: &str) -> ToolKind {
 /// thinking were already streamed as deltas (re-emitting them would duplicate
 /// the output), so only `tool_use` blocks matter — they carry the complete
 /// input. Text/thinking/unknown blocks produce no events.
-fn map_assistant_tool_calls(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) {
+fn map_assistant_tool_calls(message: &Value, session_id: &str, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
         .and_then(|m| m.get("content"))
@@ -182,7 +183,7 @@ fn map_assistant_tool_calls(message: &Value, session_id: &str, events: &mut Vec<
 /// User message content blocks of type `tool_result` settle the matching tool
 /// call; plain text user blocks (e.g. `[Request interrupted by user]`) produce
 /// no events.
-fn map_user_tool_results(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) {
+fn map_user_tool_results(message: &Value, session_id: &str, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
         .and_then(|m| m.get("content"))
@@ -245,7 +246,7 @@ fn tool_result_text(block: &Value) -> String {
 /// for `error_during_execution` / `aborted_streaming`). A non-aborted error
 /// result additionally emits an [`AcpClientEvent::Error`] after the usage
 /// event.
-fn map_result(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) -> (bool, bool) {
+fn map_result(message: &Value, session_id: &str, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     push_usage_update(message, session_id, events);
     let subtype = message
         .get("subtype")
@@ -259,9 +260,9 @@ fn map_result(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent
         .unwrap_or(false)
         && !ended_aborted
     {
-        events.push(AcpClientEvent::Error(format!(
+        events.push(AgentEvent::Acp(AcpClientEvent::Error(format!(
             "Claude run failed: {subtype}"
-        )));
+        ))));
     }
     (true, ended_aborted)
 }
@@ -269,7 +270,7 @@ fn map_result(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent
 /// Usage event for a `result` message: used tokens from `usage` and the context
 /// window of the first `modelUsage` entry. Skipped when either is missing or
 /// non-numeric (missing token parts count as 0).
-fn push_usage_update(message: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) {
+fn push_usage_update(message: &Value, session_id: &str, events: &mut Vec<AgentEvent>) {
     let usage = match message.get("usage") {
         Some(usage @ Value::Object(_)) => usage,
         _ => return,
@@ -301,8 +302,8 @@ fn push_usage_update(message: &Value, session_id: &str, events: &mut Vec<AcpClie
     );
 }
 
-fn push_update(update: SessionUpdate, session_id: &str, events: &mut Vec<AcpClientEvent>) {
-    events.push(AcpClientEvent::SessionUpdate(Box::new(
+fn push_update(update: SessionUpdate, session_id: &str, events: &mut Vec<AgentEvent>) {
+    events.push(AgentEvent::Acp(AcpClientEvent::SessionUpdate(Box::new(
         SessionNotification::new(session_id.to_string(), update),
-    )));
+    ))));
 }

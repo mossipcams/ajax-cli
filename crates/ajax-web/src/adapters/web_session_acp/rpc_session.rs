@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::client::AcpClientEvent;
+use super::agent_event::AgentEvent;
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_handshake::RpcHandshake;
 
@@ -34,7 +34,7 @@ pub type RecordMapper = fn(&Value, &str) -> RpcMapping;
 /// What one inbound transport record means for the web session adapter.
 pub struct RpcMapping {
     /// Adapter events to forward, in order. Empty for non-mappable records.
-    pub events: Vec<AcpClientEvent>,
+    pub events: Vec<AgentEvent>,
     /// The agent run has settled.
     pub finished: bool,
     /// The run was reported aborted.
@@ -45,7 +45,7 @@ pub struct RpcMapping {
 #[derive(Debug)]
 pub enum RpcStep {
     /// Adapter events to forward, in order.
-    Events(Vec<AcpClientEvent>),
+    Events(Vec<AgentEvent>),
     /// The agent run has settled; `aborted` reflects the injected record mapper's stop reason.
     RunFinished { aborted: bool },
     /// The prompt was rejected before any run started; carries the response's error text.

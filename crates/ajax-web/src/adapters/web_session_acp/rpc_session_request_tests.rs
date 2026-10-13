@@ -10,6 +10,7 @@ use std::time::Duration;
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 use serde_json::json;
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
@@ -133,7 +134,10 @@ fn request_preserves_interleaved_events_for_next_step() {
             1,
             "one agent message chunk expected: {events:?}"
         );
-        match &events[0] {
+        let AgentEvent::Acp(event) = &events[0] else {
+            panic!("expected an ACP event")
+        };
+        match event {
             AcpClientEvent::SessionUpdate(update) => match &update.update {
                 SessionUpdate::AgentMessageChunk(chunk) => {
                     assert!(matches!(chunk.content, ContentBlock::Text(_)))

@@ -12,6 +12,7 @@ use agent_client_protocol::schema::v1::{
     SessionConfigSelectOptions, SessionUpdate, TextContent,
 };
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
 use super::client::AcpClientEvent;
 
@@ -68,7 +69,10 @@ fn chunk_text(update: &SessionUpdate) -> Option<&str> {
 
 /// The `(used, size)` pair when `event` is a `SessionUpdate` carrying a
 /// `UsageUpdate`, otherwise `None`.
-fn usage_update(event: &AcpClientEvent) -> Option<(u64, u64)> {
+fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
+    let AgentEvent::Acp(event) = event else {
+        return None;
+    };
     match event {
         AcpClientEvent::SessionUpdate(notification) => match &notification.update {
             SessionUpdate::UsageUpdate(update) => Some((update.used, update.size)),
@@ -79,7 +83,6 @@ fn usage_update(event: &AcpClientEvent) -> Option<(u64, u64)> {
 }
 
 /// The stop reason when `event` is a successful `RequestFinished`, otherwise
-/// `None`.
 fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
     match event {
         AcpClientEvent::RequestFinished {
@@ -91,13 +94,16 @@ fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
 
 /// Collect events (with generous per-event waits) until a `RequestFinished`
 /// arrives; it is kept as the last element.
-fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AcpClientEvent> {
+fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
+        let finished = matches!(
+            event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+        );
         events.push(event);
         if finished {
             return events;
@@ -107,7 +113,10 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AcpClientEvent> {
 
 /// The `(id, method, stop reason)` of a successful `RequestFinished`, used to
 /// assert the identity and terminal shape of one prompt turn.
-fn finished_fields(event: &AcpClientEvent) -> (u64, &str, Option<&str>) {
+fn finished_fields(event: &AgentEvent) -> (u64, &str, Option<&str>) {
+    let AgentEvent::Acp(event) = event else {
+        unreachable!("expected an Acp-wrapped event")
+    };
     match event {
         AcpClientEvent::RequestFinished {
             id,
@@ -221,7 +230,9 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
     let chunks: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {
-            AcpClientEvent::SessionUpdate(notification) => chunk_text(&notification.update),
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) => {
+                chunk_text(&notification.update)
+            }
             _ => None,
         })
         .collect();
@@ -242,7 +253,12 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must arrive");
     assert!(usage_index < finish_index);
 
@@ -269,7 +285,7 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
             .expect("event during slow prompt");
         if matches!(
             &event,
-            AcpClientEvent::SessionUpdate(notification)
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                 if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
         ) {
             break;
@@ -349,7 +365,7 @@ fn busy_prompt_and_idle_cancel_are_rejected() {
             .expect("event during slow prompt");
         if matches!(
             &event,
-            AcpClientEvent::SessionUpdate(notification)
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                 if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
         ) {
             break;

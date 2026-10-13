@@ -19,6 +19,7 @@ use agent_client_protocol::schema::v1::{
 };
 use serde_json::Value;
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
 
@@ -72,7 +73,7 @@ pub fn map_record(record: &Value, session_id: &str) -> RpcMapping {
 /// Map one `message_update` record's `assistantMessageEvent`, if it carries
 /// text. Message starts/ends and streamed tool-call argument deltas carry no
 /// adapter output.
-fn map_message_update(record: &Value, session_id: &str, events: &mut Vec<AcpClientEvent>) -> bool {
+fn map_message_update(record: &Value, session_id: &str, events: &mut Vec<AgentEvent>) -> bool {
     let Some(event) = record.get("assistantMessageEvent") else {
         return false;
     };
@@ -164,10 +165,10 @@ fn record_reports_aborted(record: &Value) -> bool {
     )
 }
 
-fn push_update(update: SessionUpdate, session_id: &str, events: &mut Vec<AcpClientEvent>) {
-    events.push(AcpClientEvent::SessionUpdate(Box::new(
+fn push_update(update: SessionUpdate, session_id: &str, events: &mut Vec<AgentEvent>) {
+    events.push(AgentEvent::Acp(AcpClientEvent::SessionUpdate(Box::new(
         SessionNotification::new(session_id.to_string(), update),
-    )));
+    ))));
 }
 
 /// The `text` values of Pi content blocks, in order. Blocks without a string

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
@@ -43,20 +44,20 @@ fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     (process, handshake)
 }
 
-fn contains_agent_message_chunk(events: &[AcpClientEvent]) -> bool {
+fn contains_agent_message_chunk(events: &[AgentEvent]) -> bool {
     events.iter().any(|event| {
         matches!(
             event,
-            AcpClientEvent::SessionUpdate(notification)
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                 if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
         )
     })
 }
 
 /// The text of the first `AgentMessageChunk` in `events`, if one is present.
-fn agent_message_chunk_text(events: &[AcpClientEvent]) -> Option<&str> {
+fn agent_message_chunk_text(events: &[AgentEvent]) -> Option<&str> {
     events.iter().find_map(|event| {
-        let AcpClientEvent::SessionUpdate(notification) = event else {
+        let AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) = event else {
             return None;
         };
         match &notification.update {

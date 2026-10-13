@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
@@ -53,14 +54,18 @@ fn drain_until_finished(
         let event = client
             .wait_event(TIMEOUT)
             .unwrap_or_else(|| panic!("timed out waiting for request {expected_id} to finish"));
+        let acp = match &event {
+            AgentEvent::Acp(acp) => acp,
+            other => panic!("expected an ACP event, got {other:?}"),
+        };
         if matches!(
-            &event,
+            acp,
             AcpClientEvent::RequestFinished { id, .. } if *id == expected_id
         ) {
-            events.push(event.clone());
-            return (events, event);
+            events.push(acp.clone());
+            return (events, acp.clone());
         }
-        events.push(event);
+        events.push(acp.clone());
     }
     panic!("no RequestFinished for id {expected_id} within the bounded drain");
 }
@@ -108,8 +113,11 @@ fn abort_flow_finishes_cancelled() {
     // The fake emits the text delta before holding; the first mappable event
     // must surface as an AgentMessageChunk.
     let first = client.wait_event(TIMEOUT).expect("first prompt event");
+    let AgentEvent::Acp(first) = &first else {
+        panic!("expected an ACP event, got {first:?}")
+    };
     assert!(
-        is_agent_message_chunk(&first),
+        is_agent_message_chunk(first),
         "expected the first event to be an AgentMessageChunk: {first:?}"
     );
 

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, ToolCallStatus};
 use serde_json::Value;
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_map::map_sdk_message;
 use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
@@ -40,7 +41,17 @@ fn all_events(mappings: &[RpcMapping]) -> Vec<&AcpClientEvent> {
     mappings
         .iter()
         .flat_map(|mapping| mapping.events.iter())
+        .map(acp_event)
         .collect()
+}
+
+/// Unwrap one [`AgentEvent`] down to its ACP event. The SDK mapper emits no
+/// native events, so anything other than `AgentEvent::Acp` fails the test.
+fn acp_event(event: &AgentEvent) -> &AcpClientEvent {
+    match event {
+        AgentEvent::Acp(acp) => acp,
+        other => panic!("expected an ACP event, got {other:?}"),
+    }
 }
 
 /// The session update of an event that must be a `SessionUpdate`, failing on
@@ -146,6 +157,7 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
     let usage_in_finish = finish_mapping
         .events
         .iter()
+        .map(acp_event)
         .filter(|event| matches!(session_update(event), SessionUpdate::UsageUpdate(_)))
         .count();
     assert_eq!(
@@ -239,6 +251,7 @@ fn interrupt_transcript_aborts_then_restarts_with_usage() {
         !finished[0]
             .events
             .iter()
+            .map(acp_event)
             .any(|event| matches!(session_update(event), SessionUpdate::UsageUpdate(_))),
         "aborted zero-usage run must not emit a UsageUpdate"
     );
@@ -248,6 +261,7 @@ fn interrupt_transcript_aborts_then_restarts_with_usage() {
     let usage = finished[1]
         .events
         .iter()
+        .map(acp_event)
         .find_map(|event| match session_update(event) {
             SessionUpdate::UsageUpdate(usage) => Some(usage),
             _ => None,
@@ -297,11 +311,11 @@ fn tool_result_status_and_content() {
     });
     let mapping = map_sdk_message(&failed, SESSION_ID);
     assert_eq!(mapping.events.len(), 1);
-    match session_update(&mapping.events[0]) {
+    match session_update(acp_event(&mapping.events[0])) {
         SessionUpdate::ToolCallUpdate(update) => {
             assert_eq!(update.fields.status, Some(ToolCallStatus::Failed));
             assert_eq!(
-                update_result_text(session_update(&mapping.events[0])),
+                update_result_text(session_update(acp_event(&mapping.events[0]))),
                 "boom"
             );
         }
@@ -317,11 +331,11 @@ fn tool_result_status_and_content() {
     });
     let mapping = map_sdk_message(&joined, SESSION_ID);
     assert_eq!(mapping.events.len(), 1);
-    match session_update(&mapping.events[0]) {
+    match session_update(acp_event(&mapping.events[0])) {
         SessionUpdate::ToolCallUpdate(update) => {
             assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
             assert_eq!(
-                update_result_text(session_update(&mapping.events[0])),
+                update_result_text(session_update(acp_event(&mapping.events[0]))),
                 "a\nb"
             );
         }
@@ -362,7 +376,7 @@ fn non_aborted_error_result_finishes_with_an_error_event() {
     assert!(mapping.finished);
     assert!(!mapping.ended_aborted);
     assert_eq!(mapping.events.len(), 1, "expected exactly the error event");
-    match &mapping.events[0] {
+    match acp_event(&mapping.events[0]) {
         AcpClientEvent::Error(text) => assert!(text.contains("error_max_turns")),
         other => panic!("expected an Error event, got {other:?}"),
     }

@@ -261,7 +261,7 @@ fn raw_input_from_body(update_body: &Value) -> Option<&Value> {
         .or_else(|| update_body.get("raw_input"))
 }
 
-fn derive_tool_locations(
+pub(super) fn derive_tool_locations(
     explicit: Vec<String>,
     raw_input: Option<&Value>,
     content: &[ToolContent],
@@ -278,7 +278,7 @@ fn derive_tool_locations(
     Vec::new()
 }
 
-fn target_from_raw_input(raw_input: Option<&Value>) -> Option<String> {
+pub(super) fn target_from_raw_input(raw_input: Option<&Value>) -> Option<String> {
     let Value::Object(map) = raw_input? else {
         return None;
     };
