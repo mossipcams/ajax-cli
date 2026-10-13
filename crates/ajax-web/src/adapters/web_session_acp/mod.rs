@@ -6,6 +6,7 @@ mod claude_sdk_client;
 mod claude_sdk_map;
 mod claude_sdk_spawn;
 mod client;
+mod config_model;
 mod config_option_descriptors;
 mod config_options;
 mod jsonl_process;
@@ -22,6 +23,10 @@ mod session_client;
 
 pub use available_command_descriptors::{
     available_command_descriptors, AvailableCommandDescriptor,
+};
+pub use config_model::{
+    NeutralConfigCategory, NeutralConfigChoice, NeutralConfigKind, NeutralConfigOption,
+    NeutralConfigValue,
 };
 pub use config_option_descriptors::{config_option_descriptors, ConfigOptionDescriptor};
 pub use config_options::{
@@ -67,6 +72,9 @@ mod client_tests;
 mod available_commands_tests;
 #[cfg(test)]
 mod claude_sdk_spawn_tests;
+
+#[cfg(test)]
+mod config_model_tests;
 
 #[cfg(test)]
 mod config_options_tests;
