@@ -644,7 +644,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
   `Exited`) stay `Acp(..)`.
 - The web slice maps both to its own wire events: `acp_map` for ACP updates and
   `native_map::map_native_event` for native events; the wire output is identical.
-- Native events carry no session id; the session slice binds them to its slot.
+- Native events carry no session id.
 - Claude and Pi sessions remain ACP-shaped for config options, model apply,
   slash commands, and prompt capabilities (future work).
 - The adapter layer must not name slice wire types; the guard test
