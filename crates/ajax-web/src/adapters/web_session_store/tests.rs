@@ -356,6 +356,41 @@ fn list_persisted_handles_sees_numbered_migration_leftovers() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[test]
+fn record_child_identity_round_trips_and_clears() {
+    let dir = scratch_dir("child-identity");
+    let handle = "web/child-identity";
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+
+    record_child_identity(
+        &store,
+        &dir,
+        handle,
+        "unknown",
+        Some((4242, "Mon Oct 12 10:00:00 2026".to_string())),
+        "boot-a",
+    )
+    .unwrap();
+
+    let run = store.latest_run_for_task(handle).unwrap().unwrap();
+    assert_eq!(run.child, Some((4242, 4242)));
+    assert_eq!(
+        run.child_started,
+        Some("Mon Oct 12 10:00:00 2026".to_string())
+    );
+    assert_eq!(run.owner_boot_id, Some("boot-a".to_string()));
+
+    // A respawn with no live child clears the identity but keeps the owner.
+    record_child_identity(&store, &dir, handle, "unknown", None, "boot-a").unwrap();
+
+    let run = store.latest_run_for_task(handle).unwrap().unwrap();
+    assert_eq!(run.child, None);
+    assert_eq!(run.child_started, None);
+    assert_eq!(run.owner_boot_id, Some("boot-a".to_string()));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[cfg(unix)]
 #[test]
 fn migrated_transcript_copy_is_owner_only() {

@@ -65,6 +65,12 @@ impl TaskSessionDirectory {
         self.ownership.heartbeat();
     }
 
+    /// Test accessor for the owning host's boot id.
+    #[cfg(test)]
+    pub(crate) fn ownership_boot_id(&self) -> String {
+        self.ownership.boot_id().to_owned()
+    }
+
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {
         self.report_activity.lock().unwrap().clone()
     }

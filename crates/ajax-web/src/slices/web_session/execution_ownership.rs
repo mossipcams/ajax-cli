@@ -27,7 +27,6 @@ impl ExecutionOwnership {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn boot_id(&self) -> &str {
         &self.boot_id
     }

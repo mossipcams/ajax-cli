@@ -169,6 +169,35 @@ pub(super) fn ensure_run(
     Ok(run.run_id)
 }
 
+/// Records the live agent child's identity (pid, start-time token) and the
+/// owning host's boot id on the task's run row so a later host can find and
+/// clean up orphans. Nothing is killed here; `pgid` is stored equal to `pid`
+/// because the sweep does not use it. Passing `None` clears the child fields
+/// but keeps the owner boot id.
+pub fn record_child_identity(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    harness: &str,
+    child: Option<(i64, String)>,
+    owner_boot_id: &str,
+) -> io::Result<()> {
+    let run_id = ensure_run(store, state_dir, handle, harness)?;
+    store
+        .commit_execution(&ExecutionCommit {
+            run_id,
+            run_update: Some(RunUpdate {
+                child: Some(child.as_ref().map(|(pid, _)| (*pid, *pid))),
+                child_started: Some(child.map(|(_, token)| token)),
+                owner_boot_id: Some(Some(owner_boot_id.to_owned())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .map(|_| ())
+        .map_err(io::Error::other)
+}
+
 pub fn try_save_meta(
     store: &SqliteRegistryStore,
     state_dir: &Path,

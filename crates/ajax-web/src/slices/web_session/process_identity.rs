@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 /// Returns `Some(trimmed stdout)` only when the command ran, exited 0 and the
 /// trimmed output is non-empty; every other outcome is `None`. Pids `<= 0` are
 /// rejected without running anything.
-#[allow(dead_code)]
 pub(super) fn start_token(pid: i64) -> Option<String> {
     if pid <= 0 {
         return None;

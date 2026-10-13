@@ -91,6 +91,7 @@ pub(super) fn install_replaced_client(
     model: &str,
 ) -> Result<(), SessionError> {
     state.acp.client = Some(new_client);
+    state.record_child_identity();
     state.acp.acp_alive = false;
     match recover_prompt_ledger(state) {
         Ok(()) => {
