@@ -121,7 +121,7 @@ impl SessionClient {
     ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
         if uses_claude_sdk(agent) {
             spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
-                .map(|(client, report)| (SessionClient::from_claude(client), report.into_neutral()))
+                .map(|(client, report)| (SessionClient::from_claude(client), report))
         } else if uses_pi_rpc(agent) {
             SessionClient::spawn_pi_rpc(worktree_path, operator_pin, resume_session_id)
         } else {
@@ -357,7 +357,7 @@ impl SessionClient {
                 let error = apply_pin_to_claude(&session.client, desired_model);
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(neutral_options(&session.client.config_options())),
+                    config_options: Some(session.client.config_options()),
                     error,
                 })
             }
@@ -393,7 +393,7 @@ impl SessionClient {
                 };
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(neutral_options(&session.client.config_options())),
+                    config_options: Some(session.client.config_options()),
                     error,
                 })
             }

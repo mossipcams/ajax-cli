@@ -7,10 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, TextContent,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
@@ -119,32 +116,28 @@ fn finished_fields(event: &AgentEvent) -> (u64, &str, Option<&str>) {
 }
 
 /// Owned snapshot of one select option, so callers avoid lifetimes into the
-/// borrowed `SessionConfigOption`.
+/// borrowed [`super::NeutralConfigOption`].
 struct SelectView {
     current_value: String,
     values: Vec<String>,
-    category: Option<SessionConfigOptionCategory>,
+    category: Option<super::NeutralConfigCategory>,
 }
 
-fn select_view(options: &[SessionConfigOption], id: &str) -> SelectView {
+fn select_view(options: &[super::NeutralConfigOption], id: &str) -> SelectView {
     let option = options
         .iter()
-        .find(|option| option.id.0.as_ref() == id)
+        .find(|option| option.id == id)
         .unwrap_or_else(|| panic!("config option {id} must be advertised"));
-    let SessionConfigKind::Select(select) = &option.kind else {
+    let super::NeutralConfigKind::Select {
+        current_value,
+        choices,
+    } = &option.kind
+    else {
         panic!("config option {id} must be a select");
     };
-    let entries: &[agent_client_protocol::schema::v1::SessionConfigSelectOption] =
-        match &select.options {
-            SessionConfigSelectOptions::Ungrouped(entries) => entries,
-            _ => panic!("config option {id} must be ungrouped"),
-        };
     SelectView {
-        current_value: select.current_value.0.to_string(),
-        values: entries
-            .iter()
-            .map(|entry| entry.value.0.to_string())
-            .collect(),
+        current_value: current_value.clone(),
+        values: choices.iter().map(|choice| choice.value.clone()).collect(),
         category: option.category.clone(),
     }
 }
@@ -165,7 +158,7 @@ fn spawn_reports_generated_session_and_config_options() {
 
     let model = select_view(&options, "model");
     assert!(
-        matches!(model.category, Some(SessionConfigOptionCategory::Model)),
+        matches!(model.category, Some(super::NeutralConfigCategory::Model)),
         "model option category: {:?}",
         model.category
     );
@@ -179,7 +172,7 @@ fn spawn_reports_generated_session_and_config_options() {
     assert!(
         matches!(
             effort.category,
-            Some(SessionConfigOptionCategory::ThoughtLevel)
+            Some(super::NeutralConfigCategory::ThoughtLevel)
         ),
         "effort option category: {:?}",
         effort.category

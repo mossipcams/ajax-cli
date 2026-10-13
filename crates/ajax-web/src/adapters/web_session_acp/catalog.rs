@@ -140,7 +140,7 @@ pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
     };
     let options = client.config_options();
     client.shutdown();
-    catalog_from_config_options(&options)
+    catalog_from_config_options(&super::acp_options(&options))
 }
 
 pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {
