@@ -10,6 +10,7 @@ use agent_client_protocol::schema::v1::{
     SessionConfigOptionValue, SessionConfigSelect, SessionConfigSelectOption,
     SessionConfigSelectOptions,
 };
+use serde_json::Value;
 
 /// Neutral value for a session config set operation. Mirrors what
 /// `SessionConfigOptionValue` carries today: a string value id for select-style
@@ -220,4 +221,75 @@ impl From<NeutralConfigValue> for SessionConfigOptionValue {
             NeutralConfigValue::ValueId(id) => Self::value_id(id),
         }
     }
+}
+
+/// Convert a slice of ACP options into their neutral form.
+pub fn neutral_options(options: &[SessionConfigOption]) -> Vec<NeutralConfigOption> {
+    options.iter().map(NeutralConfigOption::from).collect()
+}
+
+/// Convert a slice of neutral options back into ACP form.
+pub fn acp_options(options: &[NeutralConfigOption]) -> Vec<SessionConfigOption> {
+    options.iter().map(SessionConfigOption::from).collect()
+}
+
+/// Build the wire descriptors directly from neutral options, so non-ACP adapters
+/// can describe their config surface without naming ACP types. `Unsupported`
+/// options are skipped, mirroring [`super::config_option_descriptors`].
+pub fn descriptors_from_neutral(
+    options: &[NeutralConfigOption],
+) -> Vec<super::config_option_descriptors::ConfigOptionDescriptor> {
+    use super::config_option_descriptors::{ConfigOptionChoiceDescriptor, ConfigOptionDescriptor};
+
+    options
+        .iter()
+        .filter_map(|option| {
+            let (kind, current_value, choices) = match &option.kind {
+                NeutralConfigKind::Select {
+                    current_value,
+                    choices,
+                } => (
+                    "select".to_string(),
+                    Value::String(current_value.clone()),
+                    choices
+                        .iter()
+                        .map(|choice| ConfigOptionChoiceDescriptor {
+                            value: choice.value.clone(),
+                            name: choice.name.clone(),
+                        })
+                        .collect(),
+                ),
+                NeutralConfigKind::Boolean { current_value } => (
+                    "boolean".to_string(),
+                    Value::Bool(*current_value),
+                    Vec::new(),
+                ),
+                // The ACP descriptor path skips kinds it cannot express; mirror that.
+                NeutralConfigKind::Unsupported => return None,
+            };
+            Some(ConfigOptionDescriptor {
+                id: option.id.clone(),
+                category: option.category.as_ref().map(|category| match category {
+                    NeutralConfigCategory::Model => "model".to_string(),
+                    NeutralConfigCategory::ThoughtLevel => "thought_level".to_string(),
+                    NeutralConfigCategory::Other(name) => name.clone(),
+                }),
+                name: option.name.clone(),
+                kind,
+                current_value,
+                choices,
+            })
+        })
+        .collect()
+}
+
+/// Encode the applied model id for persistence from neutral options.
+pub fn persisted_model_id(options: &[NeutralConfigOption]) -> Result<String, String> {
+    super::config_options::applied_model_id_for_persist(&acp_options(options))
+}
+
+/// Report whether setting `config_id` among these neutral options triggers a
+/// model persist, delegating to the ACP-aware check.
+pub fn triggers_model_persist(options: &[NeutralConfigOption], config_id: &str) -> bool {
+    super::config_options::option_triggers_model_persist(&acp_options(options), config_id)
 }

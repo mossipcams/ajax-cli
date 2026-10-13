@@ -62,7 +62,32 @@ Approval: user said "Just do it" on the plan with base #1264 / adapter-layer typ
 - [x] S2 Claude (S2a plumbing + S2b native mapper; verified fmt, clippy, nextest 950/951, doc, verify:arch) mapper emits `AgentEvent` natively; drop ACP imports from `claude_sdk_map`.
 - [x] S3 Pi mapper emits native events (verified fmt, clippy, nextest 950/951, doc, verify:arch).
       Note: Pi/RPC tests no longer assert `notification.session_id`, since `NativeEvent` carries no session id.
-- [ ] S4 Native config/model/commands/capabilities for Claude and Pi.
+- [ ] S4 Native config/model/commands/capabilities for Claude and Pi. Branch
+      `refactor/web-session/neutral-config-options` off `main` (after #1280).
+  - [x] S4a (d8184390) neutral `NeutralConfigOption`/`NeutralConfigValue` in
+        `config_model.rs` with ACP conversions. Additive. Verified by the
+        orchestrator: fmt, `clippy -p ajax-web --all-targets --all-features
+        -D warnings`, nextest `config_model` 7/7.
+  - [ ] S4b shared surface carries the neutral type: `SpawnReport`, the
+        apply-config outcome and value seen through `SessionClient`, and the
+        three slice-facing helpers (`config_option_descriptors`,
+        `applied_model_id_for_persist`, `option_triggers_model_persist`). The
+        ACP client converts at its edge. PROPOSED NARROWING, not yet approved:
+        `config_options.rs` and `apply_model` keep ACP types internally (they
+        are the Cursor/Codex pin logic), so `config_options_tests.rs` is not
+        rewritten.
+  - [ ] S4c Claude and Pi build neutral options directly; slice signatures
+        drop `SessionConfigOptionValue`/`SessionConfigOption`. BLOCKED on
+        sign-off: existing assertions on `config_options()` in the Claude, Pi
+        and `session_client*` test files must be retyped (shape only), which
+        contradicts "No test edits" below.
+  - [ ] S4d elicitation action off the ACP type; docs.
+  - [ ] S4e (user, 2026-10-13: "Pi and Claude should use native communication
+        for web not ACP") native lifecycle events: turn finished with stop
+        reason, error, exited, config changed, elicitation request become
+        `NativeEvent`s; Claude and Pi emit no `AgentEvent::Acp(..)`.
+  - [ ] S4f guard test: the Claude and Pi mappers and clients import nothing
+        from `agent_client_protocol`.
 - [x] S5 Docs: `docs/architecture/web-session-behavior.md`, `architecture.md`,
       `architecture_web_session.rs` guard rules.
 

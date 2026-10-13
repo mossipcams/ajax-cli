@@ -301,3 +301,102 @@ fn unsupported_kind_uses_documented_empty_select_placeholder() {
         other => panic!("expected empty select kind, got {other:?}"),
     }
 }
+
+#[test]
+fn descriptors_from_neutral_match_acp_descriptors() {
+    let acp = vec![
+        select_option(
+            "model",
+            "opus",
+            vec![
+                choice("opus", "Claude Opus 4.8", Some("Fast and intelligent.")),
+                choice("sonnet", "Claude Sonnet 4.5", None),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        select_option(
+            "thought_level",
+            "high",
+            vec![choice("low", "Low", None), choice("high", "High", None)],
+        )
+        .category(SessionConfigOptionCategory::ThoughtLevel),
+        SessionConfigOption::new(
+            "fast".to_string(),
+            "Fast mode".to_string(),
+            SessionConfigKind::Boolean(SessionConfigBoolean::new(true)),
+        )
+        .category(SessionConfigOptionCategory::ModelConfig),
+    ];
+
+    let neutral = super::config_model::neutral_options(&acp);
+    assert_eq!(super::config_model::descriptors_from_neutral(&neutral), {
+        super::config_option_descriptors::config_option_descriptors(&acp)
+    });
+}
+
+#[test]
+fn descriptors_from_neutral_skip_unsupported() {
+    let model = select_option("model", "opus", vec![choice("opus", "Opus", None)])
+        .category(SessionConfigOptionCategory::Model);
+    let mut neutral = super::config_model::neutral_options(&[model]);
+    neutral.insert(
+        0,
+        NeutralConfigOption {
+            id: "future".to_string(),
+            name: "Future kind".to_string(),
+            description: None,
+            category: Some(NeutralConfigCategory::Other("_custom".to_string())),
+            kind: NeutralConfigKind::Unsupported,
+        },
+    );
+
+    let descriptors = super::config_model::descriptors_from_neutral(&neutral);
+    assert_eq!(descriptors.len(), 1);
+    assert_eq!(descriptors[0].id, "model");
+}
+
+#[test]
+fn persist_helpers_match_acp_counterparts() {
+    let acp = vec![
+        select_option(
+            "model",
+            "opus",
+            vec![
+                choice("opus", "Opus", None),
+                choice("sonnet", "Sonnet", None),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        SessionConfigOption::new(
+            "fast".to_string(),
+            "Fast mode".to_string(),
+            SessionConfigKind::Boolean(SessionConfigBoolean::new(true)),
+        )
+        .category(SessionConfigOptionCategory::ModelConfig),
+    ];
+    let neutral = super::config_model::neutral_options(&acp);
+
+    assert_eq!(
+        super::config_model::persisted_model_id(&neutral),
+        super::config_options::applied_model_id_for_persist(&acp)
+    );
+    assert_eq!(
+        super::config_model::triggers_model_persist(&neutral, "model"),
+        super::config_options::option_triggers_model_persist(&acp, "model")
+    );
+}
+
+#[test]
+fn acp_options_round_trip_ungrouped_select() {
+    let acp = select_option(
+        "mode",
+        "code",
+        vec![
+            choice("chat", "Chat", None),
+            choice("code", "Code", Some("Writes code.")),
+        ],
+    );
+
+    let neutral = super::config_model::neutral_options(std::slice::from_ref(&acp));
+    assert_eq!(super::config_model::acp_options(&neutral), vec![acp]);
+}
