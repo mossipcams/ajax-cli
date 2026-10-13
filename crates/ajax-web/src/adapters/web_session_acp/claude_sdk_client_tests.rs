@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
 
 /// Generous per-step bound: node startup plus one scripted record burst.
@@ -375,4 +375,23 @@ fn production_embedded_script_launch_path_prompts_to_end_turn() {
     assert_eq!(reason, Some("end_turn"));
 
     assert!(!client.prompt_in_flight());
+}
+
+#[test]
+fn spawn_exposes_the_advertised_command_list_once() {
+    let client = spawn_client(None, None);
+
+    assert_eq!(
+        client.take_available_commands(),
+        [NativeCommand {
+            name: "compact".to_string(),
+            description: "Compact the conversation".to_string(),
+            input_hint: None,
+        }],
+        "the fake SDK fixture advertises exactly one command"
+    );
+    assert!(
+        client.take_available_commands().is_empty(),
+        "the second take must not re-deliver the handshake commands"
+    );
 }

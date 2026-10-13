@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::agent_event::AgentEvent;
+use super::agent_event::{AgentEvent, NativeCommand};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_client::RpcClientCore;
@@ -40,6 +40,9 @@ pub struct ClaudeSdkClient {
     core: RpcClientCore,
     // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
     state: Box<Mutex<ClaudeState>>,
+    // Slash commands advertised at handshake; handed to the first drain that
+    // asks for them, one-shot like an event.
+    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 struct ClaudeState {
@@ -181,16 +184,38 @@ impl ClaudeSdkClient {
             // ponytail: the SDK default is not reported yet; use medium until it is.
             current_effort: "medium".to_string(),
         };
+        // The handshake's advertised commands are exposed through
+        // `take_available_commands` once, like an event, rather than queued as
+        // one.
+        let commands: Vec<NativeCommand> = handshake
+            .commands
+            .iter()
+            .map(NativeCommand::from_rpc_command)
+            .collect();
+
         let session = RpcSession::new(process, handshake, map_sdk_message);
         Ok(ClaudeSdkClient {
             // The mapper emits usage from Claude's result message.
             core: RpcClientCore::new(session, None),
             state: Box::new(Mutex::new(state)),
+            commands: Mutex::new(Some(commands)),
         })
     }
 
     pub fn session_id(&self) -> String {
         self.core.session_id()
+    }
+
+    /// Slash commands advertised at handshake, returned by the first call
+    /// only (one-shot, like an event) so every later drain yields an empty
+    /// list; ACP `AvailableCommandsUpdated` updates replace the list within
+    /// the same drain.
+    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
+        self.commands
+            .lock()
+            .expect("claude_sdk_client mutex poisoned")
+            .take()
+            .unwrap_or_default()
     }
 
     pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {

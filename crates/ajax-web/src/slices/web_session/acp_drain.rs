@@ -95,8 +95,10 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
     let mut prompt_terminals = Vec::new();
     let mut applied_model = None;
     let mut session_config_options = None;
-    let mut session_available_commands = None;
     let mut session_title_update = None;
+    let handshake_commands = client.take_available_commands();
+    let mut session_available_commands =
+        (!handshake_commands.is_empty()).then_some(handshake_commands);
     let startup_info = client
         .session_new_result()
         .pointer("/_meta/piAcp/startupInfo")

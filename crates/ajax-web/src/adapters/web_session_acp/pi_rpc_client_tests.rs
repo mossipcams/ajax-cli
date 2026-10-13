@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::pi_rpc_client::PiRpcClient;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
@@ -239,4 +239,43 @@ fn issue_1283_resume_of_a_session_pi_never_persisted_keeps_that_id() {
     client
         .shutdown()
         .expect("shutdown after resume returns the session id");
+}
+
+#[test]
+fn spawn_exposes_the_advertised_command_list_once() {
+    let client = spawn_client(&[]);
+
+    assert_eq!(
+        client.take_available_commands(),
+        [
+            NativeCommand {
+                name: "compact".to_string(),
+                description: "Compact the conversation".to_string(),
+                input_hint: None,
+            },
+            // The fixture's last entry has no description; it becomes "".
+            NativeCommand {
+                name: "extensions".to_string(),
+                description: String::new(),
+                input_hint: None,
+            },
+        ],
+        "the fake pi rpc fixture advertises exactly two commands"
+    );
+    assert!(
+        client.take_available_commands().is_empty(),
+        "the second take must not re-deliver the handshake commands"
+    );
+}
+
+#[test]
+fn degraded_handshake_exposes_no_commands() {
+    let client = spawn_client(&["--degrade-optionals"]);
+    assert!(
+        client.take_available_commands().is_empty(),
+        "an empty handshake command list must expose no commands on the first take"
+    );
+    client
+        .shutdown()
+        .expect("shutdown after degraded handshake");
 }
