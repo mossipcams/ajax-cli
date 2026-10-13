@@ -130,7 +130,7 @@ while a child is non-terminal.
       test: a failed transaction leaves no partial rows.
 - [ ] 3. `HarnessRuntime` trait + `Capabilities`; ACP adapter over
       `AcpStdioClient`; mock runtime binary for crash tests.
-- [ ] 4. `TaskSession` writes through the kernel: prompt admission, dispatch
+- [x] 4. `TaskSession` writes through the kernel: prompt admission, dispatch
       checkpoint, events, completion. Publish after commit. One-time import of
       JSONL transcripts and prompt ledgers (ids and cursors preserved, source
       files kept as `.migrated`). Remove `web_session_store`.
@@ -272,6 +272,23 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   transaction and its deletion does not scrub disk blocks.
 - Stage 4c-C1: `try_persist_with_events` commits a ledger save and transcript
   events in one transaction (adapter only; the slice does not call it yet).
+- Stage 4c (C1/C2/S3): prompt admission + user bubble, and turn outcome +
+  final events, each commit in ONE transaction; memory changes only after the
+  commit. Terminal-state content clearing is one rule (fifth security finding).
+  Existing slice tests needed no edits. Workspace 2563 passed.
+- Stage 12a (dd0b2a6b): 8 crash scenarios with real `abort()` of a child
+  process against the kernel store: nothing admitted, admitted-not-dispatched
+  (kept once; re-admission is a no-op), dispatched-unsafe (interrupted, never
+  replayed), dispatched-reconcilable, result-committed (resumed from result),
+  running child blocks parent, cancel intent survives, multiple runs.
+- Stage 5a: single-owner lease on the registry database
+  (`ExecutionOwnership`, heartbeat 10s, stale 30s, dead-owner takeover via
+  `kill -0`). `ensure_entry_for_acquire` refuses to start an agent when a live
+  foreign host holds the lease; attach/read paths are not gated. An
+  unreadable registry reports `stored session is unreadable: ...` (existing
+  #1228 contract). Known unrelated flake:
+  `spawn_tests::live_cursor_initialize_advertises_load_session` needs the real
+  Cursor CLI and network.
 - Not yet done in stage 4: prompt admission and its user-message transcript
   event are still two commits (4c); nothing reads the checkpoints yet (stage 5).
 - Still owed from 4a-2's list: a slice-level restart test and an import test

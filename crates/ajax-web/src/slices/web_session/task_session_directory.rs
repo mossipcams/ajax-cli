@@ -1,4 +1,5 @@
 use super::{
+    execution_ownership::ExecutionOwnership,
     protocol::SessionChrome,
     task_session::{
         spawn_task_session, AttachSnapshot, EvictionSnapshot, OutboundBatch, TaskSessionCommand,
@@ -39,14 +40,17 @@ struct SessionEntry {
 
 pub(crate) struct TaskSessionDirectory {
     sessions: Mutex<HashMap<String, SessionEntry>>,
+    ownership: ExecutionOwnership,
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
 }
 
 impl TaskSessionDirectory {
     pub fn new(storage: SessionStorage) -> Arc<Self> {
+        let ownership = ExecutionOwnership::new(storage.clone());
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
+            ownership,
             storage,
             report_activity: Mutex::new(None),
         })
@@ -54,6 +58,11 @@ impl TaskSessionDirectory {
 
     pub(crate) fn set_report_session_activity(&self, report: ReportSessionActivity) {
         *self.report_activity.lock().unwrap() = Some(report);
+    }
+
+    /// Renews the chat execution owner lease; called from the runtime heartbeat task.
+    pub(crate) fn heartbeat_execution_ownership(&self) {
+        self.ownership.heartbeat();
     }
 
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {
@@ -93,6 +102,7 @@ impl TaskSessionDirectory {
         self: &Arc<Self>,
         handle: &str,
     ) -> Result<TaskSessionSender, String> {
+        self.ownership.ensure_owner()?;
         {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(entry) = sessions.get_mut(handle) {

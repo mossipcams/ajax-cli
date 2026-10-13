@@ -5,6 +5,7 @@ mod acp_slot;
 pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
+mod execution_ownership;
 pub(crate) mod model_change;
 
 pub mod native_map;
@@ -36,6 +37,7 @@ pub use prepare_session::prepare_task_session;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
+pub(crate) use execution_ownership::HEARTBEAT_EVERY;
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
@@ -374,6 +376,9 @@ pub enum SessionRouteError {
     /// The task was promoted to ACP Chat but the registry could not be saved.
     PromotionNotSaved,
 }
+
+#[cfg(test)]
+mod execution_ownership_tests;
 
 #[cfg(test)]
 mod session_activity_directory_tests;
