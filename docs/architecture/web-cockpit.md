@@ -199,9 +199,10 @@ names the package when it is missing, and the host falls back to
 
 #### Pi RPC transport
 
-Pi is not reached through ACP. Ajax launches `pi --mode rpc -na [--session <id>]`
-as a child process and speaks Pi's JSONL RPC mode over its stdio (one JSON object
-per LF-terminated line; framing splits on LF only). The core launch table selects
+Pi is not reached through ACP. Ajax launches `pi --mode rpc -na`
+`[--session-id <id>]` as a child process and speaks Pi's JSONL RPC mode over
+its stdio (one JSON object per LF-terminated line; framing splits on LF only).
+The core launch table selects
 the transport: `AcpLaunch.transport` is `HarnessTransport::PiRpc` for Pi and
 `HarnessTransport::Acp` for Cursor and Codex. Pi stays a chat-capable
 harness: `acp_launch_for_agent(Pi)` still returns `Some`, which is the "supports
@@ -217,10 +218,12 @@ Ajax Chat" test across the code base.
   degrade to empty lists when missing.
 - Session identity: Pi's own session id IS the Ajax session id — the native ids
   the old bridge handed out were already Pi's, so stored sessions keep resuming.
-  Restore relaunches with `--session <id>` and is fail-closed: if Pi comes back
-  with a different session id, spawn fails with the typed `ACP restore
-  unavailable` error (`Retry` / `Start fresh`) and never silently starts a fresh
-  session.
+  Restore relaunches with `--session-id <id>` and is fail-closed: if Pi
+  comes back with a different session id, spawn fails with the typed `ACP
+  restore unavailable` error (`Retry` / `Start fresh`) and never silently starts
+  a fresh session. Pi writes no session file until the first message, and
+  `--session-id` uses the stored id and creates the session when it is missing,
+  where `--session` would fail with `No session found` (#1283).
 - Model and thinking level: Pi's models are advertised as one `model` select
   whose values are `provider/id`; thinking levels come from
   `get_available_thinking_levels` and are advertised as a `thought_level` select
