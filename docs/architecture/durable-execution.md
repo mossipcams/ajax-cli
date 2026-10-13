@@ -164,10 +164,13 @@ Exactly one host executes against a given registry. This is enforced by the
 - The executing host **heartbeats every 10 seconds**; a lease is considered
   **stale after 30 seconds** without a heartbeat, and a dead owner's lease can
   be taken over.
-- Once the host loses its lease it refuses to **start or respawn an agent**,
-  refuse to **admit a prompt**, and refuses to **dispatch a queued prompt**.
-  Prompts already in the queue stay queued — they are not dropped, and no new
-  work leaves this host.
+- Once the host loses its lease (another host took it, or three heartbeats in
+  a row failed) it refuses to start or respawn an agent, refuses to admit a
+  prompt, and refuses to dispatch a queued prompt; queued prompts stay queued.
+  The refusal is not permanent: at each 10 s heartbeat tick, and on the next
+  acquire, the host tries to claim the lease again and resumes as soon as it is
+  free, stale, or held by a process that is gone. Agents that were already
+  running when the lease was lost are not stopped.
 - A dead owner is detected with `ps -p <pid>` and counts as dead **only on
   positive evidence** that the process is gone; a failed or inconclusive check
   does not authorize takeover.

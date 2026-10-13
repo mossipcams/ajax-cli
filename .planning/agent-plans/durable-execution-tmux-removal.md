@@ -289,6 +289,24 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   #1228 contract). Known unrelated flake:
   `spawn_tests::live_cursor_initialize_advertises_load_session` needs the real
   Cursor CLI and network.
+- Security reviews of stage 5a (three rounds; the last two arrived with titles
+  only): (1) liveness check failed open — `kill -0` could not tell a missing
+  process from one it was not allowed to signal, and a missing `kill` binary
+  read as 'dead'; now `ps -p` and 'dead' only on exit 1 with empty output;
+  (2) lost lease only logged — now sticky-until-recovered: a takeover or 3
+  failed heartbeats set `lost`, and `check()` blocks agent start/respawn,
+  prompt admission and queued dispatch; (3) review of (2): permanent loss was a
+  self-DoS — now recoverable: each 10 s heartbeat tick and each acquire
+  re-claims when the lease is free, stale, or held by a dead process. Agents
+  already running when the lease is lost are not stopped. **Test changed on
+  purpose:** `lost_lease_is_detected_by_heartbeat_and_blocks_ensure_owner`
+  lost its assertion that a lost lease can never be re-acquired (requested
+  behaviour change); recovery is covered by four new tests.
+  Orchestrator rerun: fmt, workspace clippy, verify:arch, nextest 2586/2587
+  (the Cursor CLI network test is the only failure).
+- Docs: `docs/architecture/durable-execution.md` (new), plus storage wording in
+  `web-session-behavior.md`, `web-cockpit.md`, `architecture.md`. The doc says
+  plainly that the host does not yet call `resolve_recovery`.
 - Not yet done in stage 4: prompt admission and its user-message transcript
   event are still two commits (4c); nothing reads the checkpoints yet (stage 5).
 - Still owed from 4a-2's list: a slice-level restart test and an import test

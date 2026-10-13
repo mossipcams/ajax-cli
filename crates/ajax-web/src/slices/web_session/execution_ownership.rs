@@ -32,14 +32,34 @@ impl ExecutionOwnership {
         &self.boot_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn mark_lost_for_test(&self) {
+        self.lost.store(true, Ordering::SeqCst);
+    }
+
     /// Claims the single chat-agent owner lease for this registry database.
-    /// Fails only when a live foreign process already holds it.
+    /// Fails only when a live foreign process already holds it. A lost
+    /// ownership is not permanent: every acquire attempts recovery, and the
+    /// heartbeat does the same each tick (see `heartbeat`).
     pub(crate) fn ensure_owner(&self) -> Result<(), String> {
-        self.check()?;
+        self.try_claim()
+    }
+
+    /// Attempts to claim (or re-claim) the execution owner lease for this
+    /// registry. Fails only when a live foreign process holds it. On success
+    /// clears `lost` and resets the heartbeat failure counter, so a host that
+    /// lost its lease recovers as soon as the lease is free, stale, or held by
+    /// a process that is gone.
+    fn try_claim(&self) -> Result<(), String> {
         let store = self.storage.registry_store();
         let pid = std::process::id() as i64;
         match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), STALE_AFTER_MS) {
-            Ok(OwnerClaim::Acquired { .. }) => Ok(()),
+            Ok(OwnerClaim::Acquired { .. }) => {
+                self.lost.store(false, Ordering::SeqCst);
+                self.consecutive_heartbeat_failures
+                    .store(0, Ordering::SeqCst);
+                Ok(())
+            }
             Ok(OwnerClaim::HeldBy {
                 boot_id: _,
                 pid: holder,
@@ -48,7 +68,12 @@ impl ExecutionOwnership {
                 // longer alive: re-claim with stale_after_ms = -1 so the staleness
                 // check always passes and the takeover does not wait STALE_AFTER_MS.
                 match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), -1) {
-                    Ok(OwnerClaim::Acquired { .. }) => Ok(()),
+                    Ok(OwnerClaim::Acquired { .. }) => {
+                        self.lost.store(false, Ordering::SeqCst);
+                        self.consecutive_heartbeat_failures
+                            .store(0, Ordering::SeqCst);
+                        Ok(())
+                    }
                     Ok(OwnerClaim::HeldBy { pid: holder, .. }) => Err(refused(holder)),
                     Err(error) => Err(unavailable(error)),
                 }
@@ -64,15 +89,25 @@ impl ExecutionOwnership {
     /// Refuses agent start when this host has lost the execution owner lease.
     pub(crate) fn check(&self) -> Result<(), String> {
         if self.lost.load(Ordering::SeqCst) {
-            Err("execution ownership lost; restart this host".to_string())
+            Err("execution ownership lost; reconnect to retry, or restart this host".to_string())
         } else {
             Ok(())
         }
     }
-    /// Renews the lease. A lost lease is sticky for the life of this host:
-    /// once `lost` is set it stays set (only a restart clears it) so agent
-    /// starts fail closed instead of racing a foreign owner.
+    /// Renews the lease. If ownership was already lost, each tick attempts a
+    /// re-claim instead of doing nothing: recovery happens here (or on the next
+    /// acquire) as soon as the lease is free, stale, or held by a process that
+    /// is gone; while a live foreign host holds it, `lost` stays set.
     pub(crate) fn heartbeat(&self) {
+        if self.lost.load(Ordering::SeqCst) {
+            match self.try_claim() {
+                Ok(()) => tracing::info!(target: "ajax_web", "chat execution ownership recovered"),
+                Err(error) => {
+                    tracing::debug!(target: "ajax_web", %error, "chat execution ownership still lost")
+                }
+            }
+            return;
+        }
         match self
             .storage
             .registry_store()

@@ -161,14 +161,97 @@ fn lost_lease_is_detected_by_heartbeat_and_blocks_ensure_owner() {
         .check()
         .expect_err("the lease must be lost after heartbeat");
     assert!(err.contains("ownership lost"), "unexpected error: {err}");
+}
 
-    let err = first
+#[test]
+fn lost_to_a_live_foreign_host_stays_lost_and_is_refused() {
+    let dir = test_support::scratch_dir("exec-ownership-lost-live-foreign");
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep helper");
+    let foreign_pid = child.id() as i64;
+
+    let store = SessionStorage::under(dir.clone()).registry_store();
+    let claim = store
+        .claim_execution_owner("other", foreign_pid, now_ms(), 30_000)
+        .unwrap();
+    assert!(matches!(claim, OwnerClaim::Acquired { .. }));
+
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
+    ownership.mark_lost_for_test();
+
+    // A live foreign holder keeps the refusal in place.
+    ownership.heartbeat();
+    assert!(ownership.check().is_err());
+
+    let err = ownership
         .ensure_owner()
-        .expect_err("a lost lease must refuse re-acquisition");
-    assert!(err.contains("ownership lost"), "unexpected error: {err}");
+        .expect_err("a live foreign owner must refuse");
+    assert!(
+        err.contains("another Ajax web host"),
+        "unexpected error: {err}"
+    );
 
-    // The second boot still owns the lease and keeps running.
-    assert!(second.ensure_owner().is_ok());
+    child.kill().expect("kill sleep helper");
+    child.wait().expect("wait on sleep helper");
+}
+
+#[test]
+fn lost_lease_recovers_when_the_foreign_host_dies() {
+    let dir = test_support::scratch_dir("exec-ownership-lost-dead-recovery");
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep helper");
+    let foreign_pid = child.id() as i64;
+
+    let store = SessionStorage::under(dir.clone()).registry_store();
+    let claim = store
+        .claim_execution_owner("other", foreign_pid, now_ms(), 30_000)
+        .unwrap();
+    assert!(matches!(claim, OwnerClaim::Acquired { .. }));
+
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
+    ownership.mark_lost_for_test();
+
+    child.kill().expect("kill sleep helper");
+    child.wait().expect("wait on sleep helper");
+
+    // The next heartbeat tick re-claims the dead host's lease.
+    ownership.heartbeat();
+    assert!(ownership.check().is_ok());
+    assert!(ownership.ensure_owner().is_ok());
+}
+
+#[test]
+fn lost_after_heartbeat_errors_recovers_when_the_database_is_healthy_again() {
+    let dir = test_support::scratch_dir("exec-ownership-lost-db-recovery");
+    // Make the registry database path a directory so it cannot be opened.
+    std::fs::create_dir_all(dir.join("ajax.db")).expect("create bogus db dir");
+
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
+
+    ownership.heartbeat();
+    ownership.heartbeat();
+    ownership.heartbeat();
+    assert!(ownership.check().is_err());
+
+    std::fs::remove_dir_all(dir.join("ajax.db")).expect("remove bogus db dir");
+
+    // The next heartbeat tick finds a healthy database and recovers.
+    ownership.heartbeat();
+    assert!(ownership.check().is_ok());
+}
+
+#[test]
+fn acquire_retry_recovers_a_lost_lease() {
+    let dir = test_support::scratch_dir("exec-ownership-lost-acquire-retry");
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
+    ownership.mark_lost_for_test();
+
+    assert!(ownership.ensure_owner().is_ok());
+    assert!(ownership.check().is_ok());
 }
 
 #[test]
