@@ -177,7 +177,7 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle,
   transcript cursor, replay, queue, permissions, and idle retention).
   `adapters::web_session_acp` owns ACP stdio only and returns typed
-`AcpClientEvent` values. `adapters::web_session_store` owns the chat
+  `AcpClientEvent` values. `adapters::web_session_store` owns the chat
   transcript, session meta and prompt ledger in the registry database (see
   durable-execution.md); legacy `web-session/` files are import sources only.
   not import slice or browser wire types; the slice may call session adapters but

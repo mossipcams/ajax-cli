@@ -486,7 +486,7 @@ excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
 | `transcript` | in-memory cursor and permission filter |
 | `ws_bridge` | socket forward to directory |
 | `session_cleanup` | registry-owned session retention |
-| execution_ownership | single-host lease for chat agents |
+| `execution_ownership` | single-host lease for chat agents |
 | `model_change` | harness-switch reset via directory |
 | `task_session*` / `acp_drain` | command loop, spawn, ACP poll (may call adapters) |
 | `adapters::web_session_acp` | ACP stdio only |
