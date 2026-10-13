@@ -315,15 +315,30 @@ impl std::fmt::Display for RestoreFailure {
     }
 }
 
-pub struct SpawnReport {
+pub struct SpawnReport<O = agent_client_protocol::schema::v1::SessionConfigOption> {
     pub load_session_advertised: bool,
     pub restore_advertised: bool,
     pub close_advertised: bool,
     pub resumed: bool,
     pub applied_model: String,
     pub model_apply_error: Option<String>,
-    pub config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
+    pub config_options: Option<Vec<O>>,
     pub prompt_capabilities: super::PromptCapabilityDescriptor,
+}
+
+impl SpawnReport {
+    pub fn into_neutral(self) -> SpawnReport<super::NeutralConfigOption> {
+        SpawnReport {
+            load_session_advertised: self.load_session_advertised,
+            restore_advertised: self.restore_advertised,
+            close_advertised: self.close_advertised,
+            resumed: self.resumed,
+            applied_model: self.applied_model,
+            model_apply_error: self.model_apply_error,
+            config_options: self.config_options.as_deref().map(super::neutral_options),
+            prompt_capabilities: self.prompt_capabilities,
+        }
+    }
 }
 
 pub const RESTORE_UNAVAILABLE_MARKER: &str = "ACP restore unavailable";

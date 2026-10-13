@@ -4,12 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema::v1::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
-};
+use agent_client_protocol::schema::v1::SessionConfigOptionValue;
 
-use super::client::SpawnReport;
 use super::session_client::{with_test_pi_program, SessionClient};
+use super::{NeutralConfigKind, NeutralConfigOption, SessionSpawnReport};
 use ajax_core::models::AgentClient;
 
 fn fixture_path() -> PathBuf {
@@ -20,18 +18,18 @@ fn worktree_path() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn spawn_pi_with_pin(pin: &str) -> (SessionClient, SpawnReport) {
+fn spawn_pi_with_pin(pin: &str) -> (SessionClient, SessionSpawnReport) {
     SessionClient::spawn_with_operator_pin(AgentClient::Pi, worktree_path(), pin, None)
         .expect("fake pi rpc spawn must succeed")
 }
 
-fn thought_level_current(options: Option<&Vec<SessionConfigOption>>) -> Option<String> {
+fn thought_level_current(options: Option<&Vec<NeutralConfigOption>>) -> Option<String> {
     let options = options?;
     options
         .iter()
-        .find(|option| &*option.id.0 == "thought_level")
+        .find(|option| option.id == "thought_level")
         .map(|option| match &option.kind {
-            SessionConfigKind::Select(select) => select.current_value.0.to_string(),
+            NeutralConfigKind::Select { current_value, .. } => current_value.clone(),
             _ => "not-a-select".to_string(),
         })
 }

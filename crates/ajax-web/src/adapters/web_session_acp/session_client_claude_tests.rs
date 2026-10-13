@@ -38,7 +38,7 @@ fn text_blocks(text: &str) -> Vec<ContentBlock> {
 }
 
 /// Spawn the Claude transport through the enum and return the variant's state.
-fn spawn_claude_variant() -> (SessionClient, super::client::SpawnReport) {
+fn spawn_claude_variant() -> (SessionClient, super::SessionSpawnReport) {
     SessionClient::spawn_with_operator_pin(AgentClient::Claude, manifest_dir(), "default", None)
         .expect("fake claude sdk spawn must succeed")
 }
@@ -58,7 +58,7 @@ fn spawn_returns_claude_variant_with_report() {
             .as_ref()
             .expect("config options must be advertised")
             .iter()
-            .map(|option| option.id.0.as_ref())
+            .map(|option| option.id.as_str())
             .collect();
         assert!(ids.contains(&"model"), "model option id: {ids:?}");
         assert!(ids.contains(&"effort"), "effort option id: {ids:?}");
@@ -212,13 +212,12 @@ fn model_pin_and_config_options_flow_through_the_enum() {
             .expect("config options must be advertised");
         let option = options
             .iter()
-            .find(|option| option.id.0.as_ref() == "effort")
+            .find(|option| option.id == "effort")
             .expect("effort option must be advertised");
-        let agent_client_protocol::schema::v1::SessionConfigKind::Select(select) = &option.kind
-        else {
+        let super::NeutralConfigKind::Select { current_value, .. } = &option.kind else {
             panic!("effort option must be a select");
         };
-        assert_eq!(select.current_value.0.as_ref(), "low");
+        assert_eq!(current_value.as_str(), "low");
 
         // An unknown model id surfaces as an outcome error, not a hard failure.
         let bad_model = SessionConfigOptionValue::ValueId {

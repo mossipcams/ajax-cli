@@ -23,9 +23,19 @@ use super::client::{
     AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
 };
 use super::pi_rpc_client::PiRpcClient;
-use super::{ApplyModelOutcome, CancelOutcome, PromptCapabilityDescriptor};
+use super::{
+    neutral_options, ApplyModelOutcome, CancelOutcome, NeutralConfigOption,
+    PromptCapabilityDescriptor,
+};
 
 use ajax_core::models::AgentClient;
+
+/// The spawn report shape the web session slice receives: ACP fields with a
+/// harness-neutral [`NeutralConfigOption`] list.
+pub type SessionSpawnReport = SpawnReport<NeutralConfigOption>;
+
+/// The apply-config outcome shape the web session slice receives.
+pub type SessionConfigOutcome = ApplyModelOutcome<NeutralConfigOption>;
 
 /// One live session transport: ACP stdio, Pi RPC, or Claude Agent SDK.
 pub enum SessionClient {
@@ -110,10 +120,10 @@ impl SessionClient {
         worktree_path: &Path,
         operator_pin: &str,
         resume_session_id: Option<&str>,
-    ) -> Result<(SessionClient, SpawnReport), AcpSpawnError> {
+    ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
         if uses_claude_sdk(agent) {
             spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
-                .map(|(client, report)| (SessionClient::from_claude(client), report))
+                .map(|(client, report)| (SessionClient::from_claude(client), report.into_neutral()))
         } else if uses_pi_rpc(agent) {
             SessionClient::spawn_pi_rpc(worktree_path, operator_pin, resume_session_id)
         } else {
@@ -123,7 +133,7 @@ impl SessionClient {
                 operator_pin,
                 resume_session_id,
             )
-            .map(|(client, report)| (SessionClient::from_acp(client), report))
+            .map(|(client, report)| (SessionClient::from_acp(client), report.into_neutral()))
         }
     }
 
@@ -134,7 +144,7 @@ impl SessionClient {
         worktree_path: &Path,
         operator_pin: &str,
         resume_session_id: Option<&str>,
-    ) -> Result<(SessionClient, SpawnReport), AcpSpawnError> {
+    ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
         let (program, extra_args) = pi_program_and_args()?;
         let client = PiRpcClient::spawn(
             &program,
@@ -160,14 +170,14 @@ impl SessionClient {
 
         let model_apply_error = apply_pin_to_pi(&client, operator_pin);
 
-        let report = SpawnReport {
+        let report = SessionSpawnReport {
             load_session_advertised: true,
             restore_advertised: true,
             close_advertised: false,
             resumed: resume_session_id.is_some(),
             applied_model: client.applied_model(),
             model_apply_error,
-            config_options: Some(client.config_options()),
+            config_options: Some(neutral_options(&client.config_options())),
             prompt_capabilities: PromptCapabilityDescriptor {
                 image: false,
                 embedded_context: false,
@@ -340,22 +350,24 @@ impl SessionClient {
         }
     }
 
-    pub fn apply_model_pin(&self, desired_model: &str) -> Result<ApplyModelOutcome, String> {
+    pub fn apply_model_pin(&self, desired_model: &str) -> Result<SessionConfigOutcome, String> {
         match self {
-            SessionClient::Acp(client) => client.apply_model_pin(desired_model),
+            SessionClient::Acp(client) => client
+                .apply_model_pin(desired_model)
+                .map(ApplyModelOutcome::into_neutral),
             SessionClient::Claude(session) => {
                 let error = apply_pin_to_claude(&session.client, desired_model);
-                Ok(ApplyModelOutcome {
+                Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(session.client.config_options()),
+                    config_options: Some(neutral_options(&session.client.config_options())),
                     error,
                 })
             }
             SessionClient::Pi(session) => {
                 let error = apply_pin_to_pi(&session.client, desired_model);
-                Ok(ApplyModelOutcome {
+                Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(session.client.config_options()),
+                    config_options: Some(neutral_options(&session.client.config_options())),
                     error,
                 })
             }
@@ -366,9 +378,11 @@ impl SessionClient {
         &self,
         config_id: &str,
         value: SessionConfigOptionValue,
-    ) -> Result<ApplyModelOutcome, String> {
+    ) -> Result<SessionConfigOutcome, String> {
         match self {
-            SessionClient::Acp(client) => client.apply_config_option(config_id, value),
+            SessionClient::Acp(client) => client
+                .apply_config_option(config_id, value)
+                .map(ApplyModelOutcome::into_neutral),
             SessionClient::Claude(session) => {
                 let error = match (config_id, &value) {
                     ("model", SessionConfigOptionValue::ValueId { value }) => {
@@ -379,9 +393,9 @@ impl SessionClient {
                     }
                     _ => Some(format!("unsupported Claude option {config_id}")),
                 };
-                Ok(ApplyModelOutcome {
+                Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(session.client.config_options()),
+                    config_options: Some(neutral_options(&session.client.config_options())),
                     error,
                 })
             }
@@ -397,9 +411,9 @@ impl SessionClient {
                     }
                     _ => Some(format!("unsupported Pi option {config_id}")),
                 };
-                Ok(ApplyModelOutcome {
+                Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(session.client.config_options()),
+                    config_options: Some(neutral_options(&session.client.config_options())),
                     error,
                 })
             }

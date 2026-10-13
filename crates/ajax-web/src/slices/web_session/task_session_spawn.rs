@@ -10,8 +10,8 @@ use super::task_session_replacement::{
 use super::transcript::{context_cleared_note, harness_switch_note, slot_must_replace};
 use super::{apply_cancel_to_queue, SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
-    applied_model_id_for_persist, config_option_descriptors, option_triggers_model_persist,
-    SessionClient, SpawnReport,
+    descriptors_from_neutral, persisted_model_id, triggers_model_persist, SessionClient,
+    SessionSpawnReport,
 };
 use crate::adapters::web_session_store::{self, StoredSession};
 use agent_client_protocol::schema::v1::SessionConfigOptionValue;
@@ -19,10 +19,10 @@ use ajax_core::adapters::{parse_model_selection, ModelSelection};
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
-fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
+fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SessionSpawnReport) {
     state.acp.restore_advertised = report.restore_advertised;
     if let Some(options) = report.config_options.as_deref() {
-        state.acp.session_config_options = Some(config_option_descriptors(options));
+        state.acp.session_config_options = Some(descriptors_from_neutral(options));
     }
     state.acp.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
 }
@@ -130,7 +130,7 @@ pub(super) async fn apply_config_option(
         Ok(outcome) if outcome.error.is_none() => {
             state.acp.applied_model = outcome.applied_model.clone();
             if let Some(options) = outcome.config_options.as_deref() {
-                state.acp.session_config_options = Some(config_option_descriptors(options));
+                state.acp.session_config_options = Some(descriptors_from_neutral(options));
             }
             let persist_warning = web_session_store::try_save_meta(
                 &state.storage.registry_store(),
@@ -148,8 +148,8 @@ pub(super) async fn apply_config_option(
             state.acp.pending_model_snapshot = Some(outcome.applied_model);
             state.acp.pending_config_snapshot = state.acp.session_config_options.clone();
             let (persist_model, model_warning) = match outcome.config_options.as_deref() {
-                Some(options) if option_triggers_model_persist(options, config_id) => {
-                    match applied_model_id_for_persist(options) {
+                Some(options) if triggers_model_persist(options, config_id) => {
+                    match persisted_model_id(options) {
                         Ok(model) => (Some(model), None),
                         Err(error) => (
                             None,
@@ -454,7 +454,7 @@ async fn spawn_acp(
     worktree_path: &Path,
     model: &str,
     resume_id: Option<&str>,
-) -> Result<(SessionClient, SpawnReport), SessionError> {
+) -> Result<(SessionClient, SessionSpawnReport), SessionError> {
     let worktree = worktree_path.to_path_buf();
     let resume = resume_id.map(str::to_string);
     tokio::task::block_in_place(|| {

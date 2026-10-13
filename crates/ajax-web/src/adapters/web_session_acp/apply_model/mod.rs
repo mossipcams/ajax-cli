@@ -20,10 +20,20 @@ use serde_json::Value;
 
 use super::client::HANDSHAKE_TIMEOUT;
 
-pub struct ApplyModelOutcome {
+pub struct ApplyModelOutcome<O = SessionConfigOption> {
     pub applied_model: String,
-    pub config_options: Option<Vec<SessionConfigOption>>,
+    pub config_options: Option<Vec<O>>,
     pub error: Option<String>,
+}
+
+impl ApplyModelOutcome {
+    pub fn into_neutral(self) -> ApplyModelOutcome<super::NeutralConfigOption> {
+        ApplyModelOutcome {
+            applied_model: self.applied_model,
+            config_options: self.config_options.as_deref().map(super::neutral_options),
+            error: self.error,
+        }
+    }
 }
 
 pub async fn apply_config_option(

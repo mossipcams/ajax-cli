@@ -4,9 +4,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigKind, SessionConfigOptionValue, SessionUpdate,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, SessionConfigOptionValue, SessionUpdate};
 
 use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
@@ -205,13 +203,13 @@ fn pi_variant_applies_model_and_option_changes() {
         .and_then(|options| {
             options
                 .iter()
-                .find(|option| &*option.id.0 == "thought_level")
+                .find(|option| option.id == "thought_level")
                 .map(|option| &option.kind)
         })
         .expect("thought_level option must be advertised");
     match current {
-        SessionConfigKind::Select(select) => {
-            assert_eq!(select.current_value.0.to_string(), "high");
+        super::NeutralConfigKind::Select { current_value, .. } => {
+            assert_eq!(current_value.as_str(), "high");
         }
         other => panic!("expected a select thought_level option, got {other:?}"),
     }

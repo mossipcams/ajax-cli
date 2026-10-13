@@ -132,7 +132,7 @@ pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
 pub(crate) use sdk_connection::CancelOutcome;
-pub use session_client::{AcpEventSource, SessionClient};
+pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
 
 #[cfg(test)]
 pub(crate) use client::{
