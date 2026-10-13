@@ -12,7 +12,6 @@
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
-use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
 
 /// Map one parsed Claude Agent SDK message to adapter events and run state.
@@ -221,7 +220,7 @@ fn tool_result_text(block: &Value) -> String {
 /// `result` message: settles the run. Emits a usage event when token counts and
 /// a model context window are available, then marks the run finished (aborted
 /// for `error_during_execution` / `aborted_streaming`). A non-aborted error
-/// result additionally emits an [`AcpClientEvent::Error`] after the usage
+/// result additionally emits an [`NativeEvent::Error`] after the usage
 /// event.
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     push_usage_update(message, events);
@@ -237,7 +236,7 @@ fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
         .unwrap_or(false)
         && !ended_aborted
     {
-        events.push(AgentEvent::Acp(AcpClientEvent::Error(format!(
+        events.push(AgentEvent::Native(NativeEvent::Error(format!(
             "Claude run failed: {subtype}"
         ))));
     }

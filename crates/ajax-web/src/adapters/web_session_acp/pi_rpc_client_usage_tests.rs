@@ -6,10 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 
 use super::agent_event::{AgentEvent, NativeEvent};
-use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
 /// Generous per-step bound: node startup plus one scripted record burst, and
@@ -33,17 +32,12 @@ fn text_blocks() -> Vec<ContentBlock> {
     vec![ContentBlock::Text(TextContent::new("hello"))]
 }
 
-/// The `(used, size)` pair when `event` is a `SessionUpdate` carrying a
-/// `UsageUpdate`, otherwise `None`. (The pi client's stats hook still emits the
-/// ACP usage update; the pi mapper now emits native events.)
+/// The `(used, size)` pair when `event` is a native usage event, otherwise
+/// `None`. (The pi client's stats hook emits a native usage event before each
+/// finished prompt; the pi mapper now emits native events.)
 fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     match event {
-        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) => {
-            match &notification.update {
-                SessionUpdate::UsageUpdate(update) => Some((update.used, update.size)),
-                _ => None,
-            }
-        }
+        AgentEvent::Native(NativeEvent::Usage { used, size }) => Some((*used, *size)),
         _ => None,
     }
 }

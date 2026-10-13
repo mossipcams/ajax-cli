@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
+use agent_client_protocol::schema::v1::ContentBlock;
 
 use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
 use super::session_client::SessionClient;
-use super::{AcpClientEvent, AgentEvent, CancelOutcome, SessionConfigValue};
+use super::{AgentEvent, CancelOutcome, SessionConfigValue};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -41,13 +41,9 @@ fn is_agent_message_chunk(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// True when `event` is a `SessionUpdate` carrying a `UsageUpdate`.
+/// True when `event` is a native usage event.
 fn is_usage_update(event: &AgentEvent) -> bool {
-    matches!(
-        event,
-        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-            if matches!(notification.update, SessionUpdate::UsageUpdate(_))
-    )
+    matches!(event, AgentEvent::Native(NativeEvent::Usage { .. }))
 }
 
 #[test]
@@ -82,11 +78,7 @@ fn pi_variant_prompt_flow_streams_chunk_then_request_finished() {
             .wait_event(WAIT)
             .expect("RequestFinished should follow the chunk");
         match event {
-            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-                if matches!(notification.update, SessionUpdate::UsageUpdate(_)) =>
-            {
-                continue
-            }
+            AgentEvent::Native(NativeEvent::Usage { .. }) => continue,
             AgentEvent::Native(NativeEvent::TurnFinished { .. }) => break event,
             other => panic!("expected RequestFinished, got {other:?}"),
         }

@@ -7,7 +7,6 @@ use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_map::map_sdk_message;
-use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
 
 const SESSION_ID: &str = "acp-session-1";
@@ -332,7 +331,7 @@ fn non_aborted_error_result_finishes_with_an_error_event() {
     assert!(!mapping.ended_aborted);
     assert_eq!(mapping.events.len(), 1, "expected exactly the error event");
     match &mapping.events[0] {
-        AgentEvent::Acp(AcpClientEvent::Error(text)) => assert!(text.contains("error_max_turns")),
+        AgentEvent::Native(NativeEvent::Error(text)) => assert!(text.contains("error_max_turns")),
         other => panic!("expected an Error event, got {other:?}"),
     }
 }
