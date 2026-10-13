@@ -1,11 +1,11 @@
 use super::acp_drain::AcpDrainOutcome;
 use super::acp_usage::UsageDeduper;
 use crate::adapters::web_session_acp::{
-    AcpStdioClient, AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
+    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor, SessionClient,
 };
 
 pub(super) struct AcpSlot {
-    pub client: Option<AcpStdioClient>,
+    pub client: Option<SessionClient>,
     pub model: String,
     pub applied_model: String,
     pub acp_alive: bool,

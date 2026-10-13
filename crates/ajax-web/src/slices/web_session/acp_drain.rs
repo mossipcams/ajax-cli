@@ -1,10 +1,12 @@
 use super::acp_usage::UsageDeduper;
+use super::native_map::map_native_event;
 use super::{
     map_acp_client_request, map_acp_session_notification, map_acp_session_update,
     normalize::StreamNormalizer, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::{
-    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpStdioClient,
+    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpEventSource,
+    AgentEvent,
 };
 use serde_json::{json, Value};
 
@@ -53,14 +55,14 @@ pub(crate) struct AcpDrainOutcome {
 
 #[cfg(test)]
 pub(crate) fn drain_acp_events(
-    client: &AcpStdioClient,
+    client: &impl AcpEventSource,
     deduper: &mut UsageDeduper,
 ) -> AcpDrainOutcome {
     drain_acp_events_with_prompt_cancel(client, deduper, None)
 }
 
 pub(crate) fn drain_acp_events_with_prompt_cancel(
-    client: &AcpStdioClient,
+    client: &impl AcpEventSource,
     deduper: &mut UsageDeduper,
     prompt_cancel: Option<(u64, bool)>,
 ) -> AcpDrainOutcome {
@@ -77,21 +79,21 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
         .and_then(Value::as_str);
     while let Some(event) = client.poll_event() {
         match event {
-            AcpClientEvent::ConfigOptionsUpdated {
+            AgentEvent::Acp(AcpClientEvent::ConfigOptionsUpdated {
                 applied_model: model,
                 config_options,
-            } => {
+            }) => {
                 applied_model = Some(model);
                 session_config_options = Some(config_option_descriptors(&config_options));
             }
-            AcpClientEvent::AvailableCommandsUpdated { available_commands } => {
+            AgentEvent::Acp(AcpClientEvent::AvailableCommandsUpdated { available_commands }) => {
                 session_available_commands =
                     Some(available_command_descriptors(&available_commands));
             }
-            AcpClientEvent::SessionInfoUpdated { title } => {
+            AgentEvent::Acp(AcpClientEvent::SessionInfoUpdated { title }) => {
                 session_title_update = Some(title);
             }
-            AcpClientEvent::SessionUpdate(params) => {
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(params)) => {
                 let mut mapped = map_acp_session_notification(&params);
                 for event in &mut mapped {
                     if let SessionServerEvent::Message { role, text, .. } = event {
@@ -102,21 +104,21 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 }
                 events.extend(mapped);
             }
-            AcpClientEvent::UnknownSessionUpdate(params) => {
+            AgentEvent::Acp(AcpClientEvent::UnknownSessionUpdate(params)) => {
                 events.extend(map_acp_session_update_with_startup(&params, startup_info));
             }
-            AcpClientEvent::ElicitationRequest {
+            AgentEvent::Acp(AcpClientEvent::ElicitationRequest {
                 request_id,
                 message,
                 schema,
-            } => {
+            }) => {
                 events.push(SessionServerEvent::ElicitationRequest {
                     request_id,
                     message,
                     schema,
                 });
             }
-            AcpClientEvent::ClientRequest { id, method, params } => {
+            AgentEvent::Acp(AcpClientEvent::ClientRequest { id, method, params }) => {
                 if let Some(mut mapped) = map_acp_client_request(&method, &params) {
                     if let SessionServerEvent::PermissionRequest { request_id, .. } = &mut mapped {
                         if let Some(rpc_id) = id.as_str() {
@@ -130,9 +132,9 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     events.push(mapped);
                 }
             }
-            AcpClientEvent::RequestFinished {
+            AgentEvent::Acp(AcpClientEvent::RequestFinished {
                 result, method, id, ..
-            } => {
+            }) => {
                 let cancel_requested = prompt_cancel
                     .filter(|(request_id, _)| *request_id == id)
                     .is_some_and(|(_, requested)| requested);
@@ -153,16 +155,19 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     events.extend(mapped);
                 }
             }
-            AcpClientEvent::Error(message) => {
+            AgentEvent::Acp(AcpClientEvent::Error(message)) => {
                 events.push(SessionServerEvent::Error {
                     message: map_operator_visible_acp_error(&message),
                 });
             }
-            AcpClientEvent::Exited => {
+            AgentEvent::Acp(AcpClientEvent::Exited) => {
                 host_exited = true;
                 events.push(SessionServerEvent::Error {
                     message: "ACP process exited".to_string(),
                 });
+            }
+            AgentEvent::Native(native) => {
+                events.extend(map_native_event(&native));
             }
         }
     }

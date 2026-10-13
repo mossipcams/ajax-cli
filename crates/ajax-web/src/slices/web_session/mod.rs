@@ -6,6 +6,8 @@ pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
 pub(crate) mod model_change;
+
+pub mod native_map;
 mod normalize;
 mod output_content;
 mod prepare_session;
@@ -372,6 +374,9 @@ pub enum SessionRouteError {
 
 #[cfg(test)]
 mod session_activity_directory_tests;
+
+#[cfg(test)]
+mod native_map_tests;
 
 #[cfg(test)]
 mod normalize_tests;

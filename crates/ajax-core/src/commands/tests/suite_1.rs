@@ -656,8 +656,8 @@ fn doctor_and_status_return_basic_health() {
         "tmux",
         "codex",
         "codex-acp",
-        "claude-agent-acp",
-        "pi-acp",
+        "node",
+        "pi",
     ])
     .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
 
@@ -675,23 +675,48 @@ fn doctor_names_the_missing_acp_adapter_package() {
 
     let doctor = doctor_with_environment(&context, &environment);
 
-    for (agent, package) in [
-        ("codex", "@agentclientprotocol/codex-acp"),
-        ("claude", "@agentclientprotocol/claude-agent-acp"),
-        ("pi", "pi-acp"),
-    ] {
-        let check = doctor
-            .checks
-            .iter()
-            .find(|check| check.name == format!("acp:{agent}"))
-            .unwrap_or_else(|| panic!("expected an acp:{agent} check"));
-        assert!(!check.ok, "{agent} adapter should report missing");
-        assert!(
-            check.message.contains(package),
-            "{agent} check should name {package}: {}",
-            check.message
-        );
-    }
+    let codex_check = doctor
+        .checks
+        .iter()
+        .find(|check| check.name == "acp:codex")
+        .unwrap_or_else(|| panic!("expected an acp:codex check"));
+    assert!(!codex_check.ok, "codex adapter should report missing");
+    assert!(
+        codex_check
+            .message
+            .contains("@agentclientprotocol/codex-acp"),
+        "codex check should name @agentclientprotocol/codex-acp: {}",
+        codex_check.message
+    );
+
+    assert!(
+        doctor.checks.iter().all(|check| check.name != "acp:claude"),
+        "claude no longer ships an ACP adapter package"
+    );
+    let sdk_check = doctor
+        .checks
+        .iter()
+        .find(|check| check.name == "sdk:claude")
+        .unwrap_or_else(|| panic!("expected an sdk:claude check"));
+    assert!(!sdk_check.ok, "claude sdk check should report missing");
+    assert!(
+        sdk_check.message.contains("@anthropic-ai/claude-agent-sdk"),
+        "claude sdk check should name the Agent SDK install hint: {}",
+        sdk_check.message
+    );
+
+    assert!(doctor.checks.iter().all(|check| check.name != "acp:pi"));
+    let pi_check = doctor
+        .checks
+        .iter()
+        .find(|check| check.name == "rpc:pi")
+        .unwrap_or_else(|| panic!("expected an rpc:pi check"));
+    assert!(!pi_check.ok, "pi rpc check should report missing");
+    assert!(
+        pi_check.message.contains("@earendil-works/pi-coding-agent"),
+        "pi check should name the pi install hint: {}",
+        pi_check.message
+    );
 }
 
 #[test]

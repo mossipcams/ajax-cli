@@ -1,0 +1,33 @@
+{"type":"response","id":"t0","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","timestamp":"2025-10-08T14:14:57.702Z"}}
+{"type":"message_end","message":{"role":"system","content":"","timestamp":"2025-10-08T14:14:57.702Z"}}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Run the bash command: echo hi\nThen reply with just: done"}],"timestamp":1791468497702}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Run the bash command: echo hi\nThen reply with just: done"}],"timestamp":1791468497702}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"The"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" user"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" wants"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":" me"}}
+{"type":"message_update","usage":{"input":16,"output":39,"cacheRead":10351,"cacheWrite":0,"reasoning":0,"totalTokens":10406,"cost":{"input":0.0000224,"output":0.0001716,"cacheRead":0.00269126,"cacheWrite":0,"total":0.00288526}},"assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"The user wants me to run `echo hi` and reply with just \"done\". Simple, no repo writes, no routing needed."}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"chatcmpl-tool-be93830d9b11882f","toolName":"bash"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"{\"command\": \""}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"echo"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":" hi"}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"\"}"}}
+{"type":"message_update","usage":{"input":16,"output":39,"cacheRead":10351,"cacheWrite":0,"reasoning":0,"totalTokens":10406,"cost":{"input":0.0000224,"output":0.0001716,"cacheRead":0.00269126,"cacheWrite":0,"total":0.00288526}},"assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"type":"toolCall","id":"chatcmpl-tool-be93830d9b11882f","name":"bash","arguments":{"command":"echo hi"}}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"The user wants me to run `echo hi` and reply with just \"done\". Simple, no repo writes, no routing needed.","thinkingSignature":"reasoning_content"},{"type":"toolCall","id":"chatcmpl-tool-be93830d9b11882f","name":"bash","arguments":{"command":"echo hi"}}],"stopReason":"toolUse","timestamp":1791468498902}}
+{"type":"tool_execution_start","toolCallId":"chatcmpl-tool-be93830d9b11882f","toolName":"bash","args":{"command":"echo hi"}}
+{"type":"tool_execution_update","toolCallId":"chatcmpl-tool-be93830d9b11882f","toolName":"bash","args":{"command":"echo hi"},"partialResult":{"content":[]}}
+{"type":"tool_execution_update","toolCallId":"chatcmpl-tool-be93830d9b11882f","toolName":"bash","args":{"command":"echo hi"},"partialResult":{"content":[{"type":"text","text":"hi\n"}]}}
+{"type":"tool_execution_end","toolCallId":"chatcmpl-tool-be93830d9b11882f","toolName":"bash","result":{"content":[{"type":"text","text":"hi\n"}]},"isError":false}
+{"type":"message_end","message":{"role":"toolResult","toolCallId":"chatcmpl-tool-be93830d9b11882f","toolName":"bash","content":[{"type":"text","text":"hi\n"}],"timestamp":1791468499310}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"done"}}
+{"type":"message_update","usage":{"input":46,"output":3,"cacheRead":10366,"cacheWrite":0,"reasoning":0,"totalTokens":10415,"cost":{"input":0.0000644,"output":0.0000132,"cacheRead":0.00269516,"cacheWrite":0,"total":0.00277276}},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"done"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1791468499425}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop","timestamp":1791468499425}}
+{"type":"agent_settled"}

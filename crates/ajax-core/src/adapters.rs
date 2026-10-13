@@ -11,9 +11,9 @@ pub use agent::{
     agent_launch_spec, canonical_cursor_model_intent, cursor_bracket_token_from_intent,
     cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
     cursor_model_intents_match, cursor_unspecified_spawn_satisfied, is_unspecified_acp_model,
-    parse_cursor_model_intent, parse_model_selection, valid_cursor_model_id, AcpLaunch,
-    AcpModelSelection, AgentLaunch, CursorModelIntent, ModelSelection, CURSOR_DEFAULT_MODEL,
-    CURSOR_DEFAULT_SPAWN_MODEL,
+    parse_cursor_model_intent, parse_model_selection, rpc_harness_programs, sdk_harness_programs,
+    valid_cursor_model_id, AcpLaunch, AcpModelSelection, AgentLaunch, CursorModelIntent,
+    HarnessTransport, ModelSelection, CURSOR_DEFAULT_MODEL, CURSOR_DEFAULT_SPAWN_MODEL,
 };
 pub use command::{
     CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
@@ -560,22 +560,32 @@ mod tests {
     #[test]
     fn acp_launch_maps_every_supported_harness_to_its_entry_point() {
         use crate::adapters::agent::acp_launch_for_agent;
+        use crate::adapters::HarnessTransport;
         use crate::models::AgentClient;
 
         let cursor = acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp");
         assert_eq!(cursor.candidates[0], ("agent", &["acp"][..]));
         assert!(cursor.model_pins_at_spawn());
 
-        for (client, program) in [
-            (AgentClient::Codex, "codex-acp"),
-            (AgentClient::Claude, "claude-agent-acp"),
-            (AgentClient::Pi, "pi-acp"),
-        ] {
-            let launch = acp_launch_for_agent(client).expect("bridge acp");
-            assert_eq!(launch.candidates[0].0, program);
-            assert!(launch.candidates[0].1.is_empty());
-            assert!(!launch.model_pins_at_spawn());
-        }
+        let codex = acp_launch_for_agent(AgentClient::Codex).expect("bridge acp");
+        assert_eq!(codex.candidates[0].0, "codex-acp");
+        assert!(codex.candidates[0].1.is_empty());
+        assert_eq!(codex.transport, HarnessTransport::Acp);
+        assert!(!codex.model_pins_at_spawn());
+
+        let claude = acp_launch_for_agent(AgentClient::Claude).expect("claude sdk");
+        assert_eq!(claude.candidates[0].0, "node");
+        assert_eq!(claude.transport, HarnessTransport::ClaudeSdk);
+        assert!(!claude.model_pins_at_spawn());
+        assert_eq!(claude.native_program, None);
+
+        let pi = acp_launch_for_agent(AgentClient::Pi).expect("pi bridge");
+        assert!(pi.candidates[0].1.is_empty());
+        assert_eq!(pi.candidates[0].0, "pi");
+        assert_eq!(pi.transport, HarnessTransport::PiRpc);
+        assert!(!pi.model_pins_at_spawn());
+
+        assert!(acp_launch_for_agent(AgentClient::Other).is_none());
 
         assert!(acp_launch_for_agent(AgentClient::Other).is_none());
     }

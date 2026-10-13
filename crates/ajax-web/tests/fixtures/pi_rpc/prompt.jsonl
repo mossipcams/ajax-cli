@@ -1,0 +1,21 @@
+{"type":"response","id":"p0","command":"get_state","success":true,"data":{"model":"claude-sonnet-4-5","thinkingLevel":"high","isStreaming":false,"isCompacting":false,"steeringMode":"supervised","followUpMode":"standalone","sessionFile":"session.jsonl","sessionId":"b76d42be-2e51-4155-b3ec-e59d1cd21d5b","autoCompactionEnabled":false,"messageCount":2,"pendingMessageCount":0}}
+{"type":"extension_ui_request","id":"6a1fd9c6-4713-4d4c-b496-74bb63be63f8","method":"setWidget","widgetKey":"pi-statusline"}
+{"type":"response","id":"2ef8ee09-5972-4b3c-964d-435777197e8b","command":"get_state","success":true,"data":{"model":"claude-sonnet-4-5","thinkingLevel":"high","isStreaming":false,"isCompacting":false,"steeringMode":"supervised","followUpMode":"standalone","sessionFile":"session.jsonl","sessionId":"b76d42be-2e51-4155-b3ec-e59d1cd21d5b","autoCompactionEnabled":false,"messageCount":2,"pendingMessageCount":0}}
+{"type":"extension_ui_request","id":"46766438-3f2b-4dbe-a111-3de781bc7c5c","method":"setStatus"}
+{"type":"extension_ui_request","id":"b1f49854-8d15-4719-8333-b8d5ea12d06b","method":"setStatus"}
+{"type":"response","id":"p1","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","timestamp":"2025-10-08T14:12:04.337Z"}}
+{"type":"message_end","message":{"role":"system","content":"","timestamp":"2025-10-08T14:12:04.337Z"}}
+{"type":"message_start","message":{"role":"user","content":"say ok","timestamp":"2025-10-08T14:12:04.337Z"}}
+{"type":"message_end","message":{"role":"user","content":"say ok","timestamp":"2025-10-08T14:12:04.337Z"}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"ok"}}
+{"type":"message_update","usage":{"input":704,"output":3,"cacheRead":9655,"cacheWrite":0,"reasoning":0,"totalTokens":10362,"cost":{"input":0.0009855999999999999,"output":0.0000132,"cacheRead":0.0025103,"cacheWrite":0,"total":0.0035091000000000002}},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"ok"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"timestamp":"2025-10-08T14:12:04.504Z","stopReason":"stop"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"timestamp":"2025-10-08T14:12:04.504Z","stopReason":"stop"}}
+{"type":"agent_settled"}
+{"type":"extension_ui_request","id":"c2b4f4f5-e2ce-4673-906d-6a97b4e8eb9c","method":"setWidget","widgetKey":"pi-statusline"}
+{"type":"response","id":"c2b4f4f5-e2ce-4673-906d-6a97b4e8eb9c","command":"get_state","success":true,"data":{"model":"claude-sonnet-4-5","thinkingLevel":"high","isStreaming":false,"isCompacting":false,"steeringMode":"supervised","followUpMode":"standalone","sessionFile":"session.jsonl","sessionId":"b76d42be-2e51-4155-b3ec-e59d1cd21d5b","autoCompactionEnabled":false,"messageCount":3,"pendingMessageCount":0}}

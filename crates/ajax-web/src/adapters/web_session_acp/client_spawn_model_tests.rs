@@ -95,15 +95,19 @@ fn every_bridge_harness_names_the_cli_that_could_speak_acp_natively() {
         None,
         "cursor's candidates are already its own binary"
     );
-    for (agent, program) in [
-        (AgentClient::Codex, "codex"),
-        (AgentClient::Claude, "claude"),
-        (AgentClient::Pi, "pi"),
-    ] {
+    #[allow(clippy::single_element_loop)]
+    for (agent, program) in [(AgentClient::Codex, "codex")] {
         assert_eq!(
             acp_launch_for_agent(agent).expect("bridge").native_program,
             Some(program),
             "{agent:?} should prefer its own CLI once it advertises acp"
+        );
+    }
+    for agent in [AgentClient::Claude, AgentClient::Pi] {
+        assert_eq!(
+            acp_launch_for_agent(agent).expect("launch").native_program,
+            None,
+            "{agent:?} is not an ACP harness, so it has no native ACP program"
         );
     }
 }

@@ -168,8 +168,10 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   task metadata, task actions, harness switching, mode preference, or Diff
   routing; the workspace composition layer does. Optional Home Screen install
   enables Declarative Web Push only.
-- Optional orchestration chat uses ACP over stdio via an `ajax-web` host, not
-  PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
+- Optional orchestration chat drives its harness over its own transport — ACP
+  over stdio for Cursor and Codex, JSONL RPC for Pi, and the Claude Agent SDK
+  sidecar for Claude, all behind the same `ajax-web` adapter surface — not
+PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   WebSocket uses protocol v2 snapshot and cursor-bearing event envelopes.
   `ajax-web::slices::web_session` owns per-task session policy and sequencing
   (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle,

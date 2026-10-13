@@ -5,7 +5,7 @@ use super::task_session_exit::{
 use super::transcript::{already_noted, context_reset_needed, context_reset_note};
 use super::{SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
-    applied_model_id_for_persist, config_option_descriptors, AcpStdioClient, SpawnReport,
+    applied_model_id_for_persist, config_option_descriptors, SessionClient, SpawnReport,
 };
 use crate::adapters::web_session_store;
 
@@ -33,7 +33,7 @@ fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) 
     state.acp.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
 }
 
-pub(super) fn discard_staged_client(mut client: AcpStdioClient) {
+pub(super) fn discard_staged_client(mut client: SessionClient) {
     if !client.host_exited() {
         let _ = client.cancel();
     }
@@ -84,7 +84,7 @@ pub(super) fn finalize_client_metadata(
 
 pub(super) fn install_replaced_client(
     state: &mut TaskSessionState,
-    new_client: AcpStdioClient,
+    new_client: SessionClient,
     report: &SpawnReport,
     model: &str,
 ) -> Result<(), SessionError> {
