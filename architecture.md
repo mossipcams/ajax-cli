@@ -290,5 +290,6 @@ Full gate before opening a PR: see
 | Command helpers and adapters | [`docs/architecture/commands-adapters.md`](docs/architecture/commands-adapters.md) |
 | CLI composition and supervisor | [`docs/architecture/cli-supervisor.md`](docs/architecture/cli-supervisor.md) |
 | Web Cockpit slices, runtime, terminal, speech | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
+| Ajax Chat session behavior (orchestration) | [`docs/architecture/web-session-behavior.md`](docs/architecture/web-session-behavior.md) |
 | Native Cockpit views | [`docs/architecture/cockpit.md`](docs/architecture/cockpit.md) |
 | Speech operator setup (not architecture ownership) | [`docs/speech-input.md`](docs/speech-input.md) |
