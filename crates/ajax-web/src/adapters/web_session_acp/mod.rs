@@ -1,3 +1,4 @@
+mod agent_event;
 mod apply_model;
 mod available_command_descriptors;
 mod catalog;
@@ -29,6 +30,8 @@ pub use config_options::{
 };
 pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapabilityDescriptor};
 
+#[cfg(test)]
+mod agent_event_tests;
 #[cfg(test)]
 mod apply_model_tests;
 
@@ -108,6 +111,7 @@ mod session_client_tests;
 #[cfg(test)]
 mod spawn_tests;
 
+pub use agent_event::{AgentEvent, NativeEvent};
 pub use apply_model::{
     apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,
     read_applied_model, ApplyModelOutcome,

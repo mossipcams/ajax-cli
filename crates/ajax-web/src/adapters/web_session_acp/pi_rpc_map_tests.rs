@@ -3,17 +3,16 @@
 
 use std::path::PathBuf;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, ToolCallStatus};
 use serde_json::Value;
 
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::pi_rpc_map::map_record;
 
 const SESSION_ID: &str = "acp-session-1";
 
 /// The result of folding [`map_record`] over one whole transcript.
 struct Replay {
-    events: Vec<AcpClientEvent>,
+    events: Vec<AgentEvent>,
     finished: bool,
     ended_aborted: bool,
 }
@@ -49,36 +48,12 @@ fn replay(records: &[Value]) -> Replay {
     }
 }
 
-/// The session update of an event that must be a `SessionUpdate`, failing on
-/// anything else (an `AcpClientEvent::Error` would fail the test here).
-fn session_update(event: &AcpClientEvent) -> &SessionUpdate {
+/// The native event of an event that must be `AgentEvent::Native`, failing on
+/// anything else (an ACP-wrapped event would fail the test here).
+fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
-        AcpClientEvent::SessionUpdate(notification) => &notification.update,
-        other => panic!("expected a SessionUpdate event, got {other:?}"),
-    }
-}
-
-/// The streamed text of a message/thought chunk update.
-fn chunk_text(update: &SessionUpdate) -> &str {
-    let chunk = match update {
-        SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => chunk,
-        other => panic!("expected a chunk update, got {other:?}"),
-    };
-    match &chunk.content {
-        ContentBlock::Text(text) => &text.text,
-        other => panic!("expected a text content block, got {other:?}"),
-    }
-}
-
-/// Every event's notification must carry the ACP session id.
-fn assert_events_carry_session_id(events: &[AcpClientEvent]) {
-    for event in events {
-        match event {
-            AcpClientEvent::SessionUpdate(notification) => {
-                assert_eq!(notification.session_id.to_string(), SESSION_ID);
-            }
-            other => panic!("expected only SessionUpdate events, got {other:?}"),
-        }
+        AgentEvent::Native(native) => native,
+        other => panic!("expected a Native event, got {other:?}"),
     }
 }
 
@@ -88,17 +63,11 @@ fn prompt_transcript_yields_one_message_chunk_and_settles() {
 
     // The trimmed prompt transcript streams exactly one text delta ("ok").
     // `setStatus` / `setWidget` / `response` records yield no events.
-    assert_events_carry_session_id(&replay.events);
-    let texts: Vec<&str> = replay
-        .events
-        .iter()
-        .map(|event| chunk_text(session_update(event)))
-        .collect();
-    assert_eq!(texts, ["ok"]);
-    assert!(matches!(
-        session_update(&replay.events[0]),
-        SessionUpdate::AgentMessageChunk(_)
-    ));
+    assert_eq!(replay.events.len(), 1);
+    match native_event(&replay.events[0]) {
+        NativeEvent::AgentText(text) => assert_eq!(text, "ok"),
+        other => panic!("expected an AgentText event, got {other:?}"),
+    }
     assert!(replay.finished, "agent_settled must finish the run");
     assert!(!replay.ended_aborted);
 }
@@ -106,66 +75,75 @@ fn prompt_transcript_yields_one_message_chunk_and_settles() {
 #[test]
 fn toolcall_transcript_yields_tool_call_and_updates() {
     let replay = replay(&fixture("toolcall.jsonl"));
-
-    assert_events_carry_session_id(&replay.events);
-    let updates: Vec<&SessionUpdate> = replay.events.iter().map(session_update).collect();
+    let events = &replay.events;
 
     // Four thought deltas, the tool call, one partial update, the completed
     // update, then the final "done" message chunk.
-    assert_eq!(updates.len(), 8);
+    assert_eq!(events.len(), 8);
 
-    let thought_text: String = updates[..4]
+    let thought_text: String = events[..4]
         .iter()
-        .map(|update| chunk_text(update).to_string())
+        .map(|event| match native_event(event) {
+            NativeEvent::AgentThought(text) => text.as_str(),
+            other => panic!("expected an AgentThought event, got {other:?}"),
+        })
         .collect();
     assert_eq!(thought_text, "The user wants me");
-    for update in &updates[..4] {
-        assert!(matches!(update, SessionUpdate::AgentThoughtChunk(_)));
-    }
 
-    let SessionUpdate::ToolCall(tool_call) = updates[4] else {
-        panic!("expected a tool call, got {:?}", updates[4]);
+    let NativeEvent::ToolCall {
+        id,
+        title,
+        kind,
+        status,
+        raw_input,
+    } = native_event(&events[4])
+    else {
+        panic!("expected a ToolCall event, got {:?}", events[4]);
     };
+    assert_eq!(id.as_str(), "chatcmpl-tool-be93830d9b11882f");
+    assert_eq!(title.as_str(), "echo hi");
+    assert_eq!(kind.as_str(), "execute");
+    assert_eq!(status.as_str(), "in_progress");
     assert_eq!(
-        tool_call.tool_call_id.to_string(),
-        "chatcmpl-tool-be93830d9b11882f"
-    );
-    assert_eq!(tool_call.title, "echo hi");
-    assert_eq!(tool_call.status, ToolCallStatus::InProgress);
-    assert_eq!(
-        tool_call
-            .raw_input
+        raw_input
             .as_ref()
-            .map(|value| value.get("command").and_then(Value::as_str)),
-        Some(Some("echo hi"))
+            .and_then(|raw| raw.get("command"))
+            .and_then(Value::as_str),
+        Some("echo hi")
     );
 
     // Partial result update: still in progress, carrying the partial text.
-    let SessionUpdate::ToolCallUpdate(partial) = updates[5] else {
-        panic!("expected a tool call update, got {:?}", updates[5]);
+    let NativeEvent::ToolCallUpdate {
+        id,
+        status,
+        content,
+        ..
+    } = native_event(&events[5])
+    else {
+        panic!("expected a ToolCallUpdate event, got {:?}", events[5]);
     };
-    assert_eq!(
-        partial.tool_call_id.to_string(),
-        "chatcmpl-tool-be93830d9b11882f"
-    );
-    assert_eq!(partial.fields.status, Some(ToolCallStatus::InProgress));
-    let content = partial.fields.content.as_deref().unwrap_or_default();
-    assert_eq!(content.len(), 1);
-    assert_eq!(tool_content_text(&content[0]), "hi\n");
+    assert_eq!(id.as_str(), "chatcmpl-tool-be93830d9b11882f");
+    assert_eq!(status.as_str(), "in_progress");
+    assert_eq!(content.as_deref(), Some("hi\n"));
 
     // Final update: completed with the tool result text.
-    let SessionUpdate::ToolCallUpdate(finished) = updates[6] else {
-        panic!("expected a tool call update, got {:?}", updates[6]);
+    let NativeEvent::ToolCallUpdate {
+        id,
+        status,
+        content,
+        ..
+    } = native_event(&events[6])
+    else {
+        panic!("expected a ToolCallUpdate event, got {:?}", events[6]);
     };
-    assert_eq!(finished.fields.status, Some(ToolCallStatus::Completed));
-    let content = finished.fields.content.as_deref().unwrap_or_default();
-    assert_eq!(tool_content_text(&content[0]), "hi\n");
+    assert_eq!(id.as_str(), "chatcmpl-tool-be93830d9b11882f");
+    assert_eq!(status.as_str(), "completed");
+    assert_eq!(content.as_deref(), Some("hi\n"));
 
-    assert!(matches!(
-        session_update(&replay.events[7]),
-        SessionUpdate::AgentMessageChunk(_)
-    ));
-    assert_eq!(chunk_text(updates[7]), "done");
+    match native_event(&events[7]) {
+        NativeEvent::AgentText(text) => assert_eq!(text, "done"),
+        other => panic!("expected an AgentText event, got {other:?}"),
+    }
     assert!(replay.finished);
     assert!(!replay.ended_aborted);
 }
@@ -183,31 +161,39 @@ fn failed_tool_execution_end_maps_to_failed_status() {
     let replay = replay(&[record]);
 
     assert_eq!(replay.events.len(), 1);
-    let SessionUpdate::ToolCallUpdate(failed) = session_update(&replay.events[0]) else {
-        panic!("expected a tool call update");
-    };
-    assert_eq!(failed.fields.status, Some(ToolCallStatus::Failed));
-    let content = failed.fields.content.as_deref().unwrap_or_default();
-    assert_eq!(tool_content_text(&content[0]), "boom\n");
+    match native_event(&replay.events[0]) {
+        NativeEvent::ToolCallUpdate {
+            status, content, ..
+        } => {
+            assert_eq!(status.as_str(), "failed");
+            assert_eq!(content.as_deref(), Some("boom\n"));
+        }
+        other => panic!("expected a ToolCallUpdate event, got {other:?}"),
+    }
     assert!(!replay.finished);
 }
 
 #[test]
 fn abort_transcript_reports_finished_and_aborted() {
     let replay = replay(&fixture("abort.jsonl"));
+    let events = &replay.events;
 
-    assert_events_carry_session_id(&replay.events);
-    let updates: Vec<&SessionUpdate> = replay.events.iter().map(session_update).collect();
     // Three thought deltas then three text deltas.
-    assert_eq!(updates.len(), 6);
-    let thought_text: String = updates[..3]
+    assert_eq!(events.len(), 6);
+    let thought_text: String = events[..3]
         .iter()
-        .map(|update| chunk_text(update).to_string())
+        .map(|event| match native_event(event) {
+            NativeEvent::AgentThought(text) => text.as_str(),
+            other => panic!("expected an AgentThought event, got {other:?}"),
+        })
         .collect();
     assert_eq!(thought_text, "A writing task");
-    let message_text: String = updates[3..]
+    let message_text: String = events[3..]
         .iter()
-        .map(|update| chunk_text(update).to_string())
+        .map(|event| match native_event(event) {
+            NativeEvent::AgentText(text) => text.as_str(),
+            other => panic!("expected an AgentText event, got {other:?}"),
+        })
         .collect();
     assert_eq!(message_text, "# Ocean T");
     assert!(replay.finished, "agent_settled must finish the aborted run");
@@ -314,18 +300,5 @@ fn malformed_records_never_panic() {
             !mapping.finished
                 || record.get("type").and_then(Value::as_str) == Some("agent_settled")
         );
-    }
-}
-
-/// The text of a tool-call content entry, failing on non-text content.
-fn tool_content_text(content: &agent_client_protocol::schema::v1::ToolCallContent) -> String {
-    match content {
-        agent_client_protocol::schema::v1::ToolCallContent::Content(inner) => {
-            match &inner.content {
-                ContentBlock::Text(text) => text.text.clone(),
-                other => panic!("expected a text content block, got {other:?}"),
-            }
-        }
-        other => panic!("expected tool call content, got {other:?}"),
     }
 }

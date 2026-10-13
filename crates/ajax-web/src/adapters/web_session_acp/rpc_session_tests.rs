@@ -7,9 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -43,29 +41,17 @@ fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     (process, handshake)
 }
 
-fn contains_agent_message_chunk(events: &[AcpClientEvent]) -> bool {
-    events.iter().any(|event| {
-        matches!(
-            event,
-            AcpClientEvent::SessionUpdate(notification)
-                if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-        )
-    })
+fn contains_agent_text(events: &[AgentEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Native(NativeEvent::AgentText(_))))
 }
 
-/// The text of the first `AgentMessageChunk` in `events`, if one is present.
-fn agent_message_chunk_text(events: &[AcpClientEvent]) -> Option<&str> {
-    events.iter().find_map(|event| {
-        let AcpClientEvent::SessionUpdate(notification) = event else {
-            return None;
-        };
-        match &notification.update {
-            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                ContentBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            },
-            _ => None,
-        }
+/// The text of the first native `AgentText` in `events`, if one is present.
+fn agent_text(events: &[AgentEvent]) -> Option<&str> {
+    events.iter().find_map(|event| match event {
+        AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text.as_str()),
+        _ => None,
     })
 }
 #[test]
@@ -88,8 +74,8 @@ fn prompt_flow_surfaces_events_then_finishes() {
     // first `message_update` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
-        "first step must carry an AgentMessageChunk: {step:?}"
+        matches!(&step, RpcStep::Events(events) if contains_agent_text(events)),
+        "first step must carry an AgentText: {step:?}"
     );
     assert!(session.run_active(), "run stays active until agent_settled");
 
@@ -112,8 +98,8 @@ fn abort_flow_finishes_with_aborted() {
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
-        "first step must carry an AgentMessageChunk: {step:?}"
+        matches!(&step, RpcStep::Events(events) if contains_agent_text(events)),
+        "first step must carry an AgentText: {step:?}"
     );
 
     session
@@ -150,7 +136,7 @@ fn begin_prompt_twice_while_active_is_an_error() {
 }
 
 #[test]
-fn abort_while_idle_is_an_error() {
+fn issue_1272_low_level_abort_remains_strict_while_idle() {
     let (process, handshake) = handshaken(&[]);
     let mut session = RpcSession::new(process, handshake, map_record);
 
@@ -159,6 +145,10 @@ fn abort_while_idle_is_an_error() {
         error.to_lowercase().contains("active"),
         "error must say there is no active run: {error}"
     );
+    // SessionClient adapts idle cancellation; the transport still requires a run.
+    assert!(!session.run_active());
+    session.begin_prompt("hello fake pi").expect("begin prompt");
+    session.abort().expect("active abort must still succeed");
 }
 
 #[test]
@@ -188,7 +178,7 @@ fn handshake_pending_records_are_processed_first() {
     // `message_update` captured during the handshake.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if agent_message_chunk_text(events) == Some("pending-text")),
+        matches!(&step, RpcStep::Events(events) if agent_text(events) == Some("pending-text")),
         "pending text record must come out first: {step:?}"
     );
 

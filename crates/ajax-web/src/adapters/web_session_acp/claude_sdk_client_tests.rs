@@ -9,9 +9,10 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, SessionUpdate, TextContent,
+    SessionConfigSelectOptions, TextContent,
 };
 
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
 use super::client::AcpClientEvent;
 
@@ -55,31 +56,24 @@ fn text_blocks(text: &str) -> Vec<ContentBlock> {
     vec![ContentBlock::Text(TextContent::new(text))]
 }
 
-/// The streamed text of an `AgentMessageChunk` update, otherwise `None`.
-fn chunk_text(update: &SessionUpdate) -> Option<&str> {
-    match update {
-        SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-            ContentBlock::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        },
+/// The streamed text of a native `AgentText` event, otherwise `None`.
+fn event_text(event: &AgentEvent) -> Option<&str> {
+    match event {
+        AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text),
         _ => None,
     }
 }
 
-/// The `(used, size)` pair when `event` is a `SessionUpdate` carrying a
-/// `UsageUpdate`, otherwise `None`.
-fn usage_update(event: &AcpClientEvent) -> Option<(u64, u64)> {
+/// The `(used, size)` pair when `event` carries a native usage update,
+/// otherwise `None`.
+fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     match event {
-        AcpClientEvent::SessionUpdate(notification) => match &notification.update {
-            SessionUpdate::UsageUpdate(update) => Some((update.used, update.size)),
-            _ => None,
-        },
+        AgentEvent::Native(NativeEvent::Usage { used, size }) => Some((*used, *size)),
         _ => None,
     }
 }
 
 /// The stop reason when `event` is a successful `RequestFinished`, otherwise
-/// `None`.
 fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
     match event {
         AcpClientEvent::RequestFinished {
@@ -91,13 +85,16 @@ fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
 
 /// Collect events (with generous per-event waits) until a `RequestFinished`
 /// arrives; it is kept as the last element.
-fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AcpClientEvent> {
+fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
+        let finished = matches!(
+            event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+        );
         events.push(event);
         if finished {
             return events;
@@ -107,7 +104,10 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AcpClientEvent> {
 
 /// The `(id, method, stop reason)` of a successful `RequestFinished`, used to
 /// assert the identity and terminal shape of one prompt turn.
-fn finished_fields(event: &AcpClientEvent) -> (u64, &str, Option<&str>) {
+fn finished_fields(event: &AgentEvent) -> (u64, &str, Option<&str>) {
+    let AgentEvent::Acp(event) = event else {
+        unreachable!("expected an Acp-wrapped event")
+    };
     match event {
         AcpClientEvent::RequestFinished {
             id,
@@ -218,13 +218,7 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
     let events = collect_until_finished(&client);
 
     // Exactly one message chunk carrying "ok".
-    let chunks: Vec<&str> = events
-        .iter()
-        .filter_map(|event| match event {
-            AcpClientEvent::SessionUpdate(notification) => chunk_text(&notification.update),
-            _ => None,
-        })
-        .collect();
+    let chunks: Vec<&str> = events.iter().filter_map(event_text).collect();
     assert_eq!(chunks, vec!["ok"], "events: {events:?}");
 
     // Exactly one UsageUpdate (size 200000, used > 0) before the finish.
@@ -242,7 +236,12 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must arrive");
     assert!(usage_index < finish_index);
 
@@ -267,11 +266,7 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event during slow prompt");
-        if matches!(
-            &event,
-            AcpClientEvent::SessionUpdate(notification)
-                if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
-        ) {
+        if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
             break;
         }
     }
@@ -347,11 +342,7 @@ fn busy_prompt_and_idle_cancel_are_rejected() {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event during slow prompt");
-        if matches!(
-            &event,
-            AcpClientEvent::SessionUpdate(notification)
-                if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
-        ) {
+        if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
             break;
         }
     }

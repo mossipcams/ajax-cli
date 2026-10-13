@@ -11,6 +11,7 @@ use agent_client_protocol::schema::v1::{
     SessionNotification, SessionUpdate, UsageUpdate,
 };
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
@@ -74,7 +75,7 @@ fn current_level_value(levels: &[String], current_level: Option<&str>) -> String
         .clone()
 }
 
-fn pi_usage_hook(session: &mut RpcSession) -> Option<AcpClientEvent> {
+fn pi_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
     let data = session
         .request("get_session_stats", serde_json::json!({}), USAGE_TIMEOUT)
         .ok()?;
@@ -82,12 +83,12 @@ fn pi_usage_hook(session: &mut RpcSession) -> Option<AcpClientEvent> {
     let tokens = context.get("tokens")?.as_u64()?;
     let window = context.get("contextWindow")?.as_u64()?;
     let session_id = session.session_id().to_string();
-    Some(AcpClientEvent::SessionUpdate(Box::new(
+    Some(AgentEvent::Acp(AcpClientEvent::SessionUpdate(Box::new(
         SessionNotification::new(
             session_id,
             SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)),
         ),
-    )))
+    ))))
 }
 
 impl PiRpcClient {
@@ -271,12 +272,12 @@ impl PiRpcClient {
 
     /// Non-blocking: returns the next queued event, or `None` if the queue is empty and no
     /// new step is immediately available. Uses `Duration::ZERO`.
-    pub fn poll_event(&self) -> Option<AcpClientEvent> {
+    pub fn poll_event(&self) -> Option<AgentEvent> {
         self.core.poll_event()
     }
 
     /// Block up to `timeout` for the next event. Returns `None` on timeout with no events.
-    pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         self.core.wait_event(timeout)
     }
 

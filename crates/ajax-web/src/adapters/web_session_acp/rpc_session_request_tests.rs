@@ -7,10 +7,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 use serde_json::json;
 
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -134,13 +133,8 @@ fn request_preserves_interleaved_events_for_next_step() {
             "one agent message chunk expected: {events:?}"
         );
         match &events[0] {
-            AcpClientEvent::SessionUpdate(update) => match &update.update {
-                SessionUpdate::AgentMessageChunk(chunk) => {
-                    assert!(matches!(chunk.content, ContentBlock::Text(_)))
-                }
-                other => panic!("expected AgentMessageChunk, got {other:?}"),
-            },
-            other => panic!("expected SessionUpdate, got {other:?}"),
+            AgentEvent::Native(NativeEvent::AgentText(_)) => {}
+            other => panic!("expected an AgentText, got {other:?}"),
         }
     }
 

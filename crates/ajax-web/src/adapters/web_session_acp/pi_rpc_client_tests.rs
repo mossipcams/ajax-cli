@@ -7,8 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
@@ -32,13 +33,9 @@ fn text_blocks() -> Vec<ContentBlock> {
     vec![ContentBlock::Text(TextContent::new("hello"))]
 }
 
-/// True when `event` is a `SessionUpdate` carrying an `AgentMessageChunk`.
-fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
-    matches!(
-        event,
-        AcpClientEvent::SessionUpdate(notification)
-            if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-    )
+/// True when `event` is a native `AgentText` (the pi message chunk).
+fn is_agent_text(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
 /// Collect events until a `RequestFinished` for `expected_id` arrives. The
@@ -47,18 +44,20 @@ fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
 fn drain_until_finished(
     client: &PiRpcClient,
     expected_id: u64,
-) -> (Vec<AcpClientEvent>, AcpClientEvent) {
+) -> (Vec<AgentEvent>, AcpClientEvent) {
     let mut events = Vec::new();
     for _ in 0..64 {
         let event = client
             .wait_event(TIMEOUT)
             .unwrap_or_else(|| panic!("timed out waiting for request {expected_id} to finish"));
-        if matches!(
-            &event,
-            AcpClientEvent::RequestFinished { id, .. } if *id == expected_id
-        ) {
-            events.push(event.clone());
-            return (events, event);
+        if let AgentEvent::Acp(AcpClientEvent::RequestFinished { id, .. }) = &event {
+            if *id == expected_id {
+                let AgentEvent::Acp(finished) = event else {
+                    unreachable!()
+                };
+                events.push(AgentEvent::Acp(finished.clone()));
+                return (events, finished);
+            }
         }
         events.push(event);
     }
@@ -85,8 +84,8 @@ fn prompt_flow_streams_chunk_then_finishes_end_turn() {
 
     let (events, finished) = drain_until_finished(&client, 1);
     assert!(
-        events.iter().any(is_agent_message_chunk),
-        "expected an AgentMessageChunk before the run finished: {events:?}"
+        events.iter().any(is_agent_text),
+        "expected an AgentText before the run finished: {events:?}"
     );
     match finished {
         AcpClientEvent::RequestFinished { id, method, result } => {
@@ -106,11 +105,11 @@ fn abort_flow_finishes_cancelled() {
     let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
 
     // The fake emits the text delta before holding; the first mappable event
-    // must surface as an AgentMessageChunk.
+    // must surface as a native AgentText.
     let first = client.wait_event(TIMEOUT).expect("first prompt event");
     assert!(
-        is_agent_message_chunk(&first),
-        "expected the first event to be an AgentMessageChunk: {first:?}"
+        is_agent_text(&first),
+        "expected the first event to be an AgentText: {first:?}"
     );
 
     client.cancel().expect("cancel while a run is in flight");
@@ -145,13 +144,17 @@ fn second_begin_prompt_while_run_active_is_err() {
 }
 
 #[test]
-fn cancel_without_run_is_err() {
+fn issue_1272_idle_cancel_is_adapted_at_session_boundary() {
     let client = spawn_client(&[]);
     assert!(!client.prompt_in_flight());
     let error = client
         .cancel()
         .expect_err("cancel with no run must be rejected");
     assert!(!error.is_empty());
+    let mut session = super::session_client::SessionClient::from_pi(client);
+    let outcome = session.cancel().expect("idle boundary cancel must succeed");
+    assert!(outcome.permissions.is_empty());
+    assert!(outcome.elicitations.is_empty());
 }
 
 #[test]

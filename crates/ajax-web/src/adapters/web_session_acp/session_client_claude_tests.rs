@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, SessionConfigOptionValue, SessionUpdate, TextContent,
+    ContentBlock, ElicitationAction, SessionConfigOptionValue, TextContent,
 };
 use ajax_core::models::AgentClient;
 
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
 use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
@@ -80,22 +81,16 @@ fn prompt_flow_streams_through_the_enum() {
                 .wait_event(TIMEOUT)
                 .expect("event before RequestFinished");
             match &event {
-                AcpClientEvent::SessionUpdate(notification) => match &notification.update {
-                    SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                        ContentBlock::Text(text) => {
-                            assert_eq!(text.text, "ok");
-                            chunk_seen = true;
-                        }
-                        _ => panic!("expected a text chunk, got {:?}", chunk.content),
-                    },
-                    SessionUpdate::UsageUpdate(_) => usage_seen = true,
-                    _ => {}
-                },
-                AcpClientEvent::RequestFinished {
+                AgentEvent::Native(NativeEvent::AgentText(text)) => {
+                    assert_eq!(text, "ok");
+                    chunk_seen = true;
+                }
+                AgentEvent::Native(NativeEvent::Usage { .. }) => usage_seen = true,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished {
                     id: finished_id,
                     result,
                     ..
-                } => {
+                }) => {
                     assert_eq!(*finished_id, id);
                     let stop_reason = result
                         .as_ref()
@@ -115,7 +110,7 @@ fn prompt_flow_streams_through_the_enum() {
 }
 
 #[test]
-fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
+fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
     with_fake(|| {
         let (mut client, _report) = spawn_claude_variant();
 
@@ -128,11 +123,7 @@ fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
             let event = client
                 .wait_event(TIMEOUT)
                 .expect("event during slow prompt");
-            if matches!(
-                &event,
-                AcpClientEvent::SessionUpdate(notification)
-                    if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
-            ) {
+            if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
                 break;
             }
         }
@@ -144,11 +135,11 @@ fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
         // Drain until the run ends with stopReason cancelled.
         loop {
             let event = client.wait_event(TIMEOUT).expect("event after cancel");
-            if let AcpClientEvent::RequestFinished {
+            if let AgentEvent::Acp(AcpClientEvent::RequestFinished {
                 id: finished_id,
                 result,
                 ..
-            } = &event
+            }) = &event
             {
                 assert_eq!(*finished_id, id);
                 let stop_reason = result
@@ -161,8 +152,24 @@ fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
             }
         }
 
-        // Cancel with no run in flight is an error.
-        assert!(client.cancel().is_err(), "cancel with no run must fail");
+        assert!(!client.prompt_in_flight());
+        let outcome = client.cancel().expect("idle cancel must succeed");
+        assert!(outcome.permissions.is_empty());
+        assert!(outcome.elicitations.is_empty());
+        assert!(!client.host_exited());
+    });
+}
+
+#[test]
+fn issue_1272_claude_idle_cancel_yields_empty_success() {
+    with_fake(|| {
+        let (mut client, _) = spawn_claude_variant();
+        assert!(!client.prompt_in_flight());
+        let outcome = client.cancel().expect("idle cancel must succeed");
+        assert!(outcome.permissions.is_empty());
+        assert!(outcome.elicitations.is_empty());
+        assert!(!client.prompt_in_flight());
+        assert!(!client.host_exited());
     });
 }
 
@@ -263,14 +270,26 @@ fn resume_missing_session_fails_through_the_enum() {
 }
 
 #[test]
-fn shutdown_reports_the_session_id_once() {
+fn issue_1273_claude_shutdown_and_detach_return_no_error() {
     with_fake(|| {
-        let (mut client, _report) = spawn_claude_variant();
-        let session_id = client.session_id().to_string();
-
-        let first = client.shutdown();
-        assert_eq!(first.as_deref(), Some(session_id.as_str()));
-        assert!(client.shutdown().is_none(), "second shutdown must be None");
+        for detach in [false, true] {
+            let (mut client, _) = spawn_claude_variant();
+            let session_id = client.session_id().to_string();
+            let error = if detach {
+                client.detach()
+            } else {
+                client.shutdown()
+            };
+            assert_eq!(error, None, "successful teardown must not report an error");
+            assert!(client.host_exited());
+            assert_eq!(client.session_id(), session_id);
+            assert_eq!(client.shutdown(), None);
+            assert_eq!(client.detach(), None);
+            assert!(
+                client.cancel().is_err(),
+                "a shut-down transport is unavailable"
+            );
+        }
     });
 }
 

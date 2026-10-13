@@ -8,9 +8,10 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, SessionConfigKind, SessionConfigOptionValue, SessionUpdate,
 };
 
+use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
 use super::session_client::SessionClient;
-use super::{AcpClientEvent, CancelOutcome};
+use super::{AcpClientEvent, AgentEvent, CancelOutcome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -38,19 +39,15 @@ fn text_block(text: &str) -> ContentBlock {
     ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new(text))
 }
 
-fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
-    matches!(
-        event,
-        AcpClientEvent::SessionUpdate(notification)
-            if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-    )
+fn is_agent_message_chunk(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
 /// True when `event` is a `SessionUpdate` carrying a `UsageUpdate`.
-fn is_usage_update(event: &AcpClientEvent) -> bool {
+fn is_usage_update(event: &AgentEvent) -> bool {
     matches!(
         event,
-        AcpClientEvent::SessionUpdate(notification)
+        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
             if matches!(notification.update, SessionUpdate::UsageUpdate(_))
     )
 }
@@ -87,19 +84,19 @@ fn pi_variant_prompt_flow_streams_chunk_then_request_finished() {
             .wait_event(WAIT)
             .expect("RequestFinished should follow the chunk");
         match event {
-            AcpClientEvent::SessionUpdate(notification)
+            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
                 if matches!(notification.update, SessionUpdate::UsageUpdate(_)) =>
             {
                 continue
             }
-            AcpClientEvent::RequestFinished { .. } => break event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. }) => break event,
             other => panic!("expected RequestFinished, got {other:?}"),
         }
     };
     match &second {
-        AcpClientEvent::RequestFinished {
+        AgentEvent::Acp(AcpClientEvent::RequestFinished {
             id: finished_id, ..
-        } => {
+        }) => {
             assert_eq!(*finished_id, id);
         }
         other => panic!("expected RequestFinished, got {other:?}"),
@@ -126,18 +123,25 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
     let finished = loop {
         match session.wait_event(WAIT) {
             None => panic!("run should finish after cancel"),
-            Some(event) if matches!(event, AcpClientEvent::RequestFinished { .. }) => break event,
+            Some(event)
+                if matches!(
+                    event,
+                    AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+                ) =>
+            {
+                break event
+            }
             Some(event) if is_agent_message_chunk(&event) => {}
             Some(event) if is_usage_update(&event) => {}
             Some(other) => panic!("expected chunk or RequestFinished after cancel, got {other:?}"),
         }
     };
     match &finished {
-        AcpClientEvent::RequestFinished {
+        AgentEvent::Acp(AcpClientEvent::RequestFinished {
             id: finished_id,
             result,
             ..
-        } => {
+        }) => {
             assert_eq!(*finished_id, id);
             let value = result
                 .as_ref()
@@ -154,11 +158,15 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
 }
 
 #[test]
-fn pi_variant_cancel_without_run_is_err() {
+fn issue_1272_pi_idle_cancel_yields_empty_success() {
     let mut session = spawn_pi(&[]);
 
     assert!(!session.prompt_in_flight());
-    assert!(session.cancel().is_err(), "cancel with no run should fail");
+    let outcome = session.cancel().expect("idle cancel must succeed");
+    assert!(outcome.permissions.is_empty());
+    assert!(outcome.elicitations.is_empty());
+    assert!(!session.prompt_in_flight());
+    assert!(!session.host_exited());
 
     let _ = session.shutdown();
 }
@@ -227,13 +235,23 @@ fn pi_variant_applies_model_and_option_changes() {
 }
 
 #[test]
-fn pi_variant_shutdown_returns_session_id_once_then_none() {
-    let mut session = spawn_pi(&[]);
-
-    let first = session
-        .shutdown()
-        .expect("first shutdown returns the session id");
-    assert_eq!(first, "fake-pi-rpc-session-1");
-
-    assert!(session.shutdown().is_none(), "second shutdown returns None");
+fn issue_1273_pi_shutdown_and_detach_return_no_error() {
+    for detach in [false, true] {
+        let mut session = spawn_pi(&[]);
+        let session_id = session.session_id().to_string();
+        let error = if detach {
+            session.detach()
+        } else {
+            session.shutdown()
+        };
+        assert_eq!(error, None, "successful teardown must not report an error");
+        assert!(session.host_exited());
+        assert_eq!(session.session_id(), session_id);
+        assert_eq!(session.shutdown(), None);
+        assert_eq!(session.detach(), None);
+        assert!(
+            session.cancel().is_err(),
+            "a shut-down transport is unavailable"
+        );
+    }
 }

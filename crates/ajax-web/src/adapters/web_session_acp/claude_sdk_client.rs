@@ -11,8 +11,8 @@ use agent_client_protocol::schema::v1::{
 };
 use serde_json::{json, Value};
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_map::map_sdk_message;
-use super::client::AcpClientEvent;
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_client::RpcClientCore;
 use super::rpc_handshake::{RpcCommand, RpcHandshake, RpcModel};
@@ -277,11 +277,11 @@ impl ClaudeSdkClient {
         self.core.prompt_in_flight()
     }
 
-    pub fn poll_event(&self) -> Option<AcpClientEvent> {
+    pub fn poll_event(&self) -> Option<AgentEvent> {
         self.core.poll_event()
     }
 
-    pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         self.core.wait_event(timeout)
     }
 

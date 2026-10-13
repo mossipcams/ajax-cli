@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
 
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
@@ -33,37 +34,48 @@ fn text_blocks() -> Vec<ContentBlock> {
 }
 
 /// The `(used, size)` pair when `event` is a `SessionUpdate` carrying a
-/// `UsageUpdate`, otherwise `None`.
-fn usage_update(event: &AcpClientEvent) -> Option<(u64, u64)> {
+/// `UsageUpdate`, otherwise `None`. (The pi client's stats hook still emits the
+/// ACP usage update; the pi mapper now emits native events.)
+fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     match event {
-        AcpClientEvent::SessionUpdate(notification) => match &notification.update {
-            SessionUpdate::UsageUpdate(update) => Some((update.used, update.size)),
-            _ => None,
-        },
+        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) => {
+            match &notification.update {
+                SessionUpdate::UsageUpdate(update) => Some((update.used, update.size)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
 
 /// The stop reason when `event` is a successful `RequestFinished`, otherwise
 /// `None`.
-fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
+fn stop_reason(event: &AgentEvent) -> Option<&str> {
     match event {
-        AcpClientEvent::RequestFinished {
+        AgentEvent::Acp(AcpClientEvent::RequestFinished {
             result: Ok(value), ..
-        } => value.get("stopReason").and_then(|s| s.as_str()),
+        }) => value.get("stopReason").and_then(|s| s.as_str()),
         _ => None,
     }
 }
 
+/// True when `event` is a native `AgentText` (the pi message chunk).
+fn is_agent_text(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
+}
+
 /// Collect events (with generous per-event waits) until a `RequestFinished`
 /// arrives; it is kept as the last element.
-fn collect_until_finished(client: &PiRpcClient) -> Vec<AcpClientEvent> {
+fn collect_until_finished(client: &PiRpcClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
+        let finished = matches!(
+            &event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+        );
         events.push(event);
         if finished {
             return events;
@@ -78,10 +90,15 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
 
     let events = collect_until_finished(&client);
 
-    // Order: message chunk(s), then exactly one UsageUpdate, then the finish.
+    // Order: message chunk(s), then exactly one Usage, then the finish.
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must arrive");
     assert_eq!(
         finish_index,
@@ -97,7 +114,7 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
     assert_eq!(
         usage_indices,
         vec![finish_index - 1],
-        "expected exactly one UsageUpdate right before the finish: {events:?}"
+        "expected exactly one Usage right before the finish: {events:?}"
     );
     assert_eq!(
         usage_update(&events[finish_index - 1]),
@@ -107,14 +124,8 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
 
     let chunk_index = events
         .iter()
-        .position(|event| {
-            matches!(
-                event,
-                AcpClientEvent::SessionUpdate(notification)
-                    if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-            )
-        })
-        .expect("an AgentMessageChunk must precede the usage update");
+        .position(is_agent_text)
+        .expect("an AgentText chunk must precede the usage update");
     assert!(
         chunk_index < usage_indices[0],
         "message chunk must come before the usage update: {events:?}"
@@ -123,7 +134,7 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
     assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
     assert!(matches!(
         &events[finish_index],
-        AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) }
+        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -137,11 +148,16 @@ fn silent_stats_still_finishes_without_usage() {
 
     assert!(
         events.iter().all(|event| usage_update(event).is_none()),
-        "no UsageUpdate may be reported when stats are silent: {events:?}"
+        "no Usage may be reported when stats are silent: {events:?}"
     );
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must still arrive");
     assert_eq!(
         finish_index,
@@ -151,7 +167,7 @@ fn silent_stats_still_finishes_without_usage() {
     assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
     assert!(matches!(
         &events[finish_index],
-        AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) }
+        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -175,7 +191,12 @@ fn aborted_run_reports_usage_before_cancelled_finish() {
 
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must arrive after cancel");
     assert_eq!(
         finish_index,
@@ -202,7 +223,7 @@ fn aborted_run_reports_usage_before_cancelled_finish() {
     assert_eq!(stop_reason(&events[finish_index]), Some("cancelled"));
     assert!(matches!(
         &events[finish_index],
-        AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) }
+        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -217,7 +238,10 @@ fn rejected_prompt_finishes_without_usage() {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(event, AcpClientEvent::RequestFinished { .. });
+        let finished = matches!(
+            event,
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+        );
         events.push(event);
         if finished {
             break;
@@ -230,7 +254,12 @@ fn rejected_prompt_finishes_without_usage() {
     );
     let finish_index = events
         .iter()
-        .rposition(|event| matches!(event, AcpClientEvent::RequestFinished { .. }))
+        .rposition(|event| {
+            matches!(
+                event,
+                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
+            )
+        })
         .expect("RequestFinished must arrive");
     assert_eq!(
         finish_index,
@@ -239,10 +268,7 @@ fn rejected_prompt_finishes_without_usage() {
     );
     assert!(matches!(
         &events[finish_index],
-        AcpClientEvent::RequestFinished {
-            id: finish_id,
-            method: "session/prompt",
-            result: Err(_),
-        } if *finish_id == id
+        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Err(_) })
+            if *finish_id == id
     ));
 }

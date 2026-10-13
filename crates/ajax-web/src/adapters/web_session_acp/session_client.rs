@@ -16,11 +16,11 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, ElicitationAction, SessionConfigOptionValue,
 };
 
+use super::agent_event::AgentEvent;
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
 use super::client::{
-    AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
-    HANDSHAKE_TIMEOUT,
+    AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
 };
 use super::pi_rpc_client::PiRpcClient;
 use super::{ApplyModelOutcome, CancelOutcome, PromptCapabilityDescriptor};
@@ -52,7 +52,7 @@ pub struct ClaudeSession {
 /// session client, so drain helpers can serve both.
 pub trait AcpEventSource {
     fn session_new_result(&self) -> &serde_json::Value;
-    fn poll_event(&self) -> Option<AcpClientEvent>;
+    fn poll_event(&self) -> Option<AgentEvent>;
 }
 
 impl AcpEventSource for AcpStdioClient {
@@ -60,8 +60,8 @@ impl AcpEventSource for AcpStdioClient {
         self.session_new_result()
     }
 
-    fn poll_event(&self) -> Option<AcpClientEvent> {
-        self.poll_event()
+    fn poll_event(&self) -> Option<AgentEvent> {
+        self.poll_event().map(AgentEvent::Acp)
     }
 }
 
@@ -70,7 +70,7 @@ impl AcpEventSource for SessionClient {
         SessionClient::session_new_result(self)
     }
 
-    fn poll_event(&self) -> Option<AcpClientEvent> {
+    fn poll_event(&self) -> Option<AgentEvent> {
         SessionClient::poll_event(self)
     }
 }
@@ -185,21 +185,24 @@ impl SessionClient {
     }
 
     pub fn shutdown(&mut self) -> Option<String> {
+        // RPC shutdown returns a session ID, not the optional error used by the slice.
         match self {
-            SessionClient::Acp(client) => client.shutdown(),
-            SessionClient::Pi(session) => session.client.shutdown(),
-            // Claude SDK has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Claude(session) => session.client.shutdown(),
+            SessionClient::Acp(client) => return client.shutdown(),
+            SessionClient::Pi(session) => {
+                session.client.shutdown();
+            }
+            SessionClient::Claude(session) => {
+                session.client.shutdown();
+            }
         }
+        None
     }
 
     pub fn detach(&mut self) -> Option<String> {
         match self {
             SessionClient::Acp(client) => client.detach(),
-            // Pi RPC has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Pi(session) => session.client.shutdown(),
-            // Claude SDK has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Claude(session) => session.client.shutdown(),
+            // RPC transports have no detached-host semantics.
+            SessionClient::Pi(_) | SessionClient::Claude(_) => self.shutdown(),
         }
     }
 
@@ -237,17 +240,17 @@ impl SessionClient {
         }
     }
 
-    pub fn poll_event(&self) -> Option<AcpClientEvent> {
+    pub fn poll_event(&self) -> Option<AgentEvent> {
         match self {
-            SessionClient::Acp(client) => client.poll_event(),
+            SessionClient::Acp(client) => client.poll_event().map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.poll_event(),
             SessionClient::Claude(session) => session.client.poll_event(),
         }
     }
 
-    pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         match self {
-            SessionClient::Acp(client) => client.wait_event(timeout),
+            SessionClient::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.wait_event(timeout),
             SessionClient::Claude(session) => session.client.wait_event(timeout),
         }
@@ -263,16 +266,23 @@ impl SessionClient {
 
     pub(crate) fn cancel(&mut self) -> Result<CancelOutcome, String> {
         match self {
-            SessionClient::Acp(client) => client.cancel(),
-            SessionClient::Pi(session) => session.client.cancel().map(|()| CancelOutcome {
-                permissions: vec![],
-                elicitations: vec![],
-            }),
-            SessionClient::Claude(session) => session.client.cancel().map(|()| CancelOutcome {
-                permissions: vec![],
-                elicitations: vec![],
-            }),
+            SessionClient::Acp(client) => return client.cancel(),
+            SessionClient::Pi(session) => {
+                if session.client.prompt_in_flight() || session.client.host_exited() {
+                    session.client.cancel()?;
+                }
+            }
+            SessionClient::Claude(session) => {
+                if session.client.prompt_in_flight() || session.client.host_exited() {
+                    session.client.cancel()?;
+                }
+            }
         }
+        // Releasing an idle live RPC host needs no abort; transport failures still propagate.
+        Ok(CancelOutcome {
+            permissions: vec![],
+            elicitations: vec![],
+        })
     }
 
     pub(crate) fn prompt_in_flight(&self) -> bool {

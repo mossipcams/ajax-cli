@@ -140,14 +140,10 @@ fn fake_call<'a>(records: &'a [Value], method: &str) -> &'a Value {
 fn assert_uuid_shaped(text: &str) {
     let parts: Vec<&str> = text.split('-').collect();
     let lengths: Vec<usize> = parts.iter().map(|part| part.len()).collect();
-    assert_eq!(
-        lengths,
-        vec![8, 4, 4, 4, 12],
-        "uuid group lengths in {text}"
-    );
+    assert_eq!(lengths, vec![8, 4, 4, 4, 12], "uuid group lengths");
     assert!(
         text.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
-        "uuid-shaped id is hex-and-dash: {text}"
+        "uuid-shaped id is hex-and-dash"
     );
 }
 

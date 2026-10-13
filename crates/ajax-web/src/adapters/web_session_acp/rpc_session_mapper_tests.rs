@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
@@ -84,7 +85,9 @@ fn provider_mappers_match_record_mapper_type() {
 fn events_and_finish_on_agent_start(record: &Value, _id: &str) -> RpcMapping {
     if record["type"] == "agent_start" {
         RpcMapping {
-            events: vec![AcpClientEvent::Error("usage-and-finish".to_string())],
+            events: vec![AgentEvent::Acp(AcpClientEvent::Error(
+                "usage-and-finish".to_string(),
+            ))],
             finished: true,
             ended_aborted: false,
         }
@@ -106,7 +109,10 @@ fn finishing_record_with_events_yields_events_then_finish() {
     match session.next_step(Duration::from_secs(10)) {
         RpcStep::Events(events) => {
             assert_eq!(events.len(), 1);
-            match &events[0] {
+            let AgentEvent::Acp(event) = &events[0] else {
+                panic!("expected an ACP event")
+            };
+            match event {
                 AcpClientEvent::Error(text) => assert_eq!(text, "usage-and-finish"),
                 other => panic!("expected Error event, got {other:?}"),
             }

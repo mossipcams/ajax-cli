@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, ToolCallStatus};
 use serde_json::Value;
 
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_map::map_sdk_message;
 use super::client::AcpClientEvent;
 use super::rpc_session::RpcMapping;
@@ -36,51 +36,19 @@ fn replay(records: &[Value]) -> Vec<RpcMapping> {
 }
 
 /// All events of all mappings, flattened in order.
-fn all_events(mappings: &[RpcMapping]) -> Vec<&AcpClientEvent> {
+fn all_events(mappings: &[RpcMapping]) -> Vec<&AgentEvent> {
     mappings
         .iter()
         .flat_map(|mapping| mapping.events.iter())
         .collect()
 }
 
-/// The session update of an event that must be a `SessionUpdate`, failing on
-/// anything else (an `AcpClientEvent::Error` would fail the test here).
-fn session_update(event: &AcpClientEvent) -> &SessionUpdate {
+/// The native event of an event that must be `AgentEvent::Native`, failing on
+/// anything else (an ACP-wrapped event would fail the test here).
+fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
-        AcpClientEvent::SessionUpdate(notification) => &notification.update,
-        other => panic!("expected a SessionUpdate event, got {other:?}"),
-    }
-}
-
-/// The streamed text of a message/thought chunk update.
-fn chunk_text(update: &SessionUpdate) -> &str {
-    let chunk = match update {
-        SessionUpdate::AgentMessageChunk(chunk) | SessionUpdate::AgentThoughtChunk(chunk) => chunk,
-        other => panic!("expected a chunk update, got {other:?}"),
-    };
-    match &chunk.content {
-        ContentBlock::Text(text) => &text.text,
-        other => panic!("expected a text content block, got {other:?}"),
-    }
-}
-
-/// The first tool-result text carried in one `ToolCallUpdate`'s content.
-fn update_result_text(update: &SessionUpdate) -> String {
-    let tool_call_update = match update {
-        SessionUpdate::ToolCallUpdate(tool_call_update) => tool_call_update,
-        other => panic!("expected a ToolCallUpdate, got {other:?}"),
-    };
-    match tool_call_update.fields.content.as_ref() {
-        Some(contents) => match &contents[0] {
-            agent_client_protocol::schema::v1::ToolCallContent::Content(content) => {
-                match &content.content {
-                    ContentBlock::Text(text) => text.text.clone(),
-                    other => panic!("expected a text content block, got {other:?}"),
-                }
-            }
-            other => panic!("expected a content item, got {other:?}"),
-        },
-        None => String::new(),
+        AgentEvent::Native(native) => native,
+        other => panic!("expected a Native event, got {other:?}"),
     }
 }
 
@@ -90,20 +58,16 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
     let mappings = replay(&records);
     let events = all_events(&mappings);
 
-    // Every streamed chunk event must be a message/thought chunk; the text is
-    // emitted exactly once (the assistant message re-emits nothing), and no
+    // Every streamed chunk event must be a text/thought native event; the text
+    // is emitted exactly once (the assistant message re-emits nothing), and no
     // chunk is empty.
     let mut message_text: Vec<&str> = Vec::new();
     for event in &events {
-        match session_update(event) {
-            SessionUpdate::AgentMessageChunk(_) => {
-                message_text.push(chunk_text(session_update(event)))
-            }
-            SessionUpdate::AgentThoughtChunk(_) => {
-                assert!(!chunk_text(session_update(event)).is_empty())
-            }
-            SessionUpdate::UsageUpdate(_) => {}
-            other => panic!("unexpected update in prompt transcript: {other:?}"),
+        match native_event(event) {
+            NativeEvent::AgentText(text) => message_text.push(text),
+            NativeEvent::AgentThought(thinking) => assert!(!thinking.is_empty()),
+            NativeEvent::Usage { .. } => {}
+            other => panic!("unexpected event in prompt transcript: {other:?}"),
         }
     }
     let ok_chunks = message_text.iter().filter(|text| **text == "ok").count();
@@ -117,16 +81,16 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
     let usage_positions: Vec<usize> = events
         .iter()
         .enumerate()
-        .filter(|(_, event)| matches!(session_update(event), SessionUpdate::UsageUpdate(_)))
+        .filter(|(_, event)| matches!(native_event(event), NativeEvent::Usage { .. }))
         .map(|(position, _)| position)
         .collect();
-    assert_eq!(usage_positions.len(), 1, "expected exactly one UsageUpdate");
-    let usage = match session_update(events[usage_positions[0]]) {
-        SessionUpdate::UsageUpdate(usage) => usage,
-        other => panic!("expected a UsageUpdate, got {other:?}"),
+    assert_eq!(usage_positions.len(), 1, "expected exactly one Usage event");
+    let usage = match native_event(events[usage_positions[0]]) {
+        NativeEvent::Usage { used, size } => (*used, *size),
+        other => panic!("expected a Usage event, got {other:?}"),
     };
-    assert_eq!(usage.used, 25875);
-    assert_eq!(usage.size, 200000);
+    assert_eq!(usage.0, 25875);
+    assert_eq!(usage.1, 200000);
 
     let finished_positions: Vec<usize> = mappings
         .iter()
@@ -140,13 +104,13 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
         "expected exactly one finished mapping"
     );
     let finished_index = finished_positions[0];
-    // The usage update arrives with the finishing message (nothing is emitted
+    // The usage event arrives with the finishing message (nothing is emitted
     // after it).
     let finish_mapping = &mappings[finished_index];
     let usage_in_finish = finish_mapping
         .events
         .iter()
-        .filter(|event| matches!(session_update(event), SessionUpdate::UsageUpdate(_)))
+        .filter(|event| matches!(native_event(event), NativeEvent::Usage { .. }))
         .count();
     assert_eq!(
         usage_in_finish, 1,
@@ -155,7 +119,7 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
     assert_eq!(
         finish_mapping.events.len(),
         1,
-        "no events may follow the usage update"
+        "no events may follow the usage event"
     );
 
     assert!(
@@ -173,25 +137,22 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
     // The content_block_start opens an Edit tool call in progress.
     let tool_call_position = events
         .iter()
-        .position(|event| matches!(session_update(event), SessionUpdate::ToolCall(_)))
+        .position(|event| matches!(native_event(event), NativeEvent::ToolCall { .. }))
         .expect("expected a ToolCall event");
-    match session_update(events[tool_call_position]) {
-        SessionUpdate::ToolCall(tool_call) => {
-            assert_eq!(
-                tool_call.kind,
-                agent_client_protocol::schema::v1::ToolKind::Edit
-            );
-            assert_eq!(tool_call.status, ToolCallStatus::InProgress);
+    match native_event(events[tool_call_position]) {
+        NativeEvent::ToolCall { kind, status, .. } => {
+            assert_eq!(*kind, "edit");
+            assert_eq!(*status, "in_progress");
         }
-        other => panic!("expected a ToolCall update, got {other:?}"),
+        other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
     // A later assistant tool_use update carries the complete raw input.
     let _raw_input_position: usize = events[tool_call_position + 1..]
         .iter()
-        .position(|event| match session_update(event) {
-            SessionUpdate::ToolCallUpdate(update) => matches!(
-                &update.fields.raw_input,
+        .position(|event| match native_event(event) {
+            NativeEvent::ToolCallUpdate { raw_input, .. } => matches!(
+                raw_input,
                 Some(Value::Object(object)) if object.contains_key("file_path")
             ),
             _ => false,
@@ -202,25 +163,26 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
     // The tool_result settles the call as completed with non-empty text.
     let completed_position = events[tool_call_position + 1..]
         .iter()
-        .position(|event| match session_update(event) {
-            SessionUpdate::ToolCallUpdate(update) => {
-                update.fields.status == Some(ToolCallStatus::Completed)
-            }
-            _ => false,
-        })
+        .position(|event| matches!(native_event(event), NativeEvent::ToolCallUpdate { status, .. } if *status == "completed"))
         .map(|offset| tool_call_position + 1 + offset)
-        .expect("expected a Completed ToolCallUpdate");
-    assert!(!update_result_text(session_update(events[completed_position])).is_empty());
+        .expect("expected a completed ToolCallUpdate");
+    assert!(matches!(
+        native_event(events[completed_position]),
+        NativeEvent::ToolCallUpdate {
+            content: Some(content),
+            ..
+        } if !content.is_empty()
+    ));
 
     let usage = events
         .iter()
-        .find_map(|event| match session_update(event) {
-            SessionUpdate::UsageUpdate(usage) => Some(usage),
+        .find_map(|event| match native_event(event) {
+            NativeEvent::Usage { used, size } => Some((*used, *size)),
             _ => None,
         })
-        .expect("expected a UsageUpdate");
-    assert_eq!(usage.used, 55672);
-    assert_eq!(usage.size, 200000);
+        .expect("expected a Usage event");
+    assert_eq!(usage.0, 55672);
+    assert_eq!(usage.1, 200000);
 
     let finished_count = mappings.iter().filter(|mapping| mapping.finished).count();
     assert_eq!(finished_count, 1, "expected exactly one finished mapping");
@@ -233,14 +195,14 @@ fn interrupt_transcript_aborts_then_restarts_with_usage() {
     let finished: Vec<&RpcMapping> = mappings.iter().filter(|mapping| mapping.finished).collect();
     assert_eq!(finished.len(), 2, "expected exactly two finished mappings");
 
-    // The interrupted run is aborted and must not emit a zero usage update.
+    // The interrupted run is aborted and must not emit a zero usage event.
     assert!(finished[0].ended_aborted, "first run must be aborted");
     assert!(
         !finished[0]
             .events
             .iter()
-            .any(|event| matches!(session_update(event), SessionUpdate::UsageUpdate(_))),
-        "aborted zero-usage run must not emit a UsageUpdate"
+            .any(|event| matches!(native_event(event), NativeEvent::Usage { .. })),
+        "aborted zero-usage run must not emit a Usage event"
     );
 
     // The restarted run finishes cleanly with real usage.
@@ -248,13 +210,13 @@ fn interrupt_transcript_aborts_then_restarts_with_usage() {
     let usage = finished[1]
         .events
         .iter()
-        .find_map(|event| match session_update(event) {
-            SessionUpdate::UsageUpdate(usage) => Some(usage),
+        .find_map(|event| match native_event(event) {
+            NativeEvent::Usage { used, size } => Some((*used, *size)),
             _ => None,
         })
-        .expect("expected a UsageUpdate in the second run");
-    assert_eq!(usage.used, 26781);
-    assert_eq!(usage.size, 200000);
+        .expect("expected a Usage event in the second run");
+    assert_eq!(usage.0, 26781);
+    assert_eq!(usage.1, 200000);
 
     // The '[Request interrupted by user]' user message produces no events.
     let interrupt_records: Vec<&Value> = records
@@ -297,13 +259,17 @@ fn tool_result_status_and_content() {
     });
     let mapping = map_sdk_message(&failed, SESSION_ID);
     assert_eq!(mapping.events.len(), 1);
-    match session_update(&mapping.events[0]) {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Failed));
-            assert_eq!(
-                update_result_text(session_update(&mapping.events[0])),
-                "boom"
-            );
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCallUpdate {
+            id,
+            status,
+            content,
+            raw_input,
+        } => {
+            assert_eq!(*id, "t1");
+            assert_eq!(status.as_str(), "failed");
+            assert_eq!(content.as_deref(), Some("boom"));
+            assert!(raw_input.is_none());
         }
         other => panic!("expected a ToolCallUpdate, got {other:?}"),
     }
@@ -317,13 +283,16 @@ fn tool_result_status_and_content() {
     });
     let mapping = map_sdk_message(&joined, SESSION_ID);
     assert_eq!(mapping.events.len(), 1);
-    match session_update(&mapping.events[0]) {
-        SessionUpdate::ToolCallUpdate(update) => {
-            assert_eq!(update.fields.status, Some(ToolCallStatus::Completed));
-            assert_eq!(
-                update_result_text(session_update(&mapping.events[0])),
-                "a\nb"
-            );
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCallUpdate {
+            id,
+            status,
+            content,
+            ..
+        } => {
+            assert_eq!(*id, "t2");
+            assert_eq!(status.as_str(), "completed");
+            assert_eq!(content.as_deref(), Some("a\nb"));
         }
         other => panic!("expected a ToolCallUpdate, got {other:?}"),
     }
@@ -363,7 +332,7 @@ fn non_aborted_error_result_finishes_with_an_error_event() {
     assert!(!mapping.ended_aborted);
     assert_eq!(mapping.events.len(), 1, "expected exactly the error event");
     match &mapping.events[0] {
-        AcpClientEvent::Error(text) => assert!(text.contains("error_max_turns")),
+        AgentEvent::Acp(AcpClientEvent::Error(text)) => assert!(text.contains("error_max_turns")),
         other => panic!("expected an Error event, got {other:?}"),
     }
 }

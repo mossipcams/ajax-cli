@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
+use super::agent_event::AgentEvent;
 use super::client::AcpClientEvent;
 use super::rpc_session::{RpcSession, RpcStep};
 
-pub type RunFinishedHook = fn(&mut RpcSession) -> Option<AcpClientEvent>;
+pub type RunFinishedHook = fn(&mut RpcSession) -> Option<AgentEvent>;
 
 pub struct RpcClientCore {
     inner: Mutex<CoreInner>,
@@ -18,7 +19,7 @@ pub struct RpcClientCore {
 struct CoreInner {
     session: Option<RpcSession>,
     /// Remainder of a `RpcStep::Events` batch not yet consumed by callers.
-    event_queue: VecDeque<AcpClientEvent>,
+    event_queue: VecDeque<AgentEvent>,
     /// The request id assigned by the most recent `begin_prompt`, cleared on finish.
     active_request_id: Option<u64>,
     /// Monotonically increasing counter for request ids (starts at 1).
@@ -113,12 +114,12 @@ impl RpcClientCore {
 
     /// Non-blocking: returns the next queued event, or `None` if the queue is empty and no
     /// new step is immediately available. Uses `Duration::ZERO`.
-    pub fn poll_event(&self) -> Option<AcpClientEvent> {
+    pub fn poll_event(&self) -> Option<AgentEvent> {
         self.wait_event(Duration::ZERO)
     }
 
     /// Block up to `timeout` for the next event. Returns `None` on timeout with no events.
-    pub fn wait_event(&self, timeout: Duration) -> Option<AcpClientEvent> {
+    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         let mut g = self.inner.lock().expect("rpc_client mutex poisoned");
 
         // Drain the remainder of a previous Events batch first.
@@ -145,11 +146,11 @@ impl RpcClientCore {
                     _ => None,
                 };
 
-                let finished = AcpClientEvent::RequestFinished {
+                let finished = AgentEvent::Acp(AcpClientEvent::RequestFinished {
                     id,
                     method: "session/prompt",
                     result: Ok(serde_json::json!({ "stopReason": stop_reason })),
-                };
+                });
 
                 match usage {
                     Some(usage_event) => {
@@ -161,16 +162,16 @@ impl RpcClientCore {
             }
             RpcStep::PromptRejected(e) => {
                 let _id = g.active_request_id.take();
-                Some(AcpClientEvent::RequestFinished {
+                Some(AgentEvent::Acp(AcpClientEvent::RequestFinished {
                     id: _id.unwrap_or(0),
                     method: "session/prompt",
                     result: Err(e),
-                })
+                }))
             }
-            RpcStep::Error(t) => Some(AcpClientEvent::Error(t)),
+            RpcStep::Error(t) => Some(AgentEvent::Acp(AcpClientEvent::Error(t))),
             RpcStep::Exited => {
                 g.host_exited = true;
-                Some(AcpClientEvent::Exited)
+                Some(AgentEvent::Acp(AcpClientEvent::Exited))
             }
             RpcStep::Idle => None,
         }
