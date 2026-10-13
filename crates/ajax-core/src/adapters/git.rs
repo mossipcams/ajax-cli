@@ -133,10 +133,16 @@ impl GitAdapter {
     ) -> CommandSpec {
         let local_flag = if force { "-D" } else { "-d" };
         let script = if branch.starts_with("ajax/") {
+            // `git branch -d/-D` reports both success and failure on stdout
+            // (e.g. "fatal: cannot delete branch ... used by worktree at ...").
+            // Capture the delete output into a variable so a blocked local deletion is
+            // re-emitted on stderr instead of vanishing; without this the push leg can
+            // tolerate a missing remote ref and exit 0 while the local branch survives.
+            // See issue #1260.
             format!(
                 concat!(
                     "ref=\"refs/heads/$2\"; ",
-                    "git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\"; ",
+                    "git -C \"$1\" show-ref --verify --quiet \"$ref\" && {{ del_err=$(git -C \"$1\" branch {local_flag} \"$2\" 2>&1) || {{ printf '%s\\n' \"$del_err\" >&2; exit 1; }}; }}; ",
                     "push_err=$(git -C \"$1\" push origin --delete \"$2\" 2>&1) || ",
                     "case \"$push_err\" in ",
                     "*\"remote ref does not exist\"*|*\"does not exist\"*|*\"matches no refs\"*) ;; ",
@@ -148,7 +154,7 @@ impl GitAdapter {
             )
         } else {
             format!(
-                "ref=\"refs/heads/$2\"; git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\""
+                "ref=\"refs/heads/$2\"; del_err=$(git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\" 2>&1) || {{ printf '%s\\n' \"$del_err\" >&2; exit 1; }}"
             )
         };
         CommandSpec::new(

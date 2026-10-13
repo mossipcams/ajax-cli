@@ -83,6 +83,7 @@ impl SessionEvidence {
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {
                 self.activity_reporter.commit(activity);
+                self.pending_activity_report = None;
                 self.activity_report_fault = None;
             }
             Err(error) => {
@@ -138,6 +139,67 @@ mod tests {
         };
         evidence.flush_pending_activity_report("web/fix-login");
         assert!(evidence.activity_report_fault.is_none());
+        assert!(evidence.pending_activity_report.is_none());
+    }
+
+    #[test]
+    fn issue_1136_deferred_turn_start_is_not_replayed_over_a_reported_turn_end() {
+        use crate::slices::web_session::session_activity::ACTIVITY_REPORT_MAX_ATTEMPTS;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        };
+
+        let busy_calls = Arc::new(AtomicUsize::new(2 * ACTIVITY_REPORT_MAX_ATTEMPTS));
+        let reported = Arc::new(Mutex::new(Vec::new()));
+        let lane = Arc::clone(&busy_calls);
+        let log = Arc::clone(&reported);
+        let mut evidence = SessionEvidence {
+            activity_reporter: SessionActivityReporter::default(),
+            pending_activity_report: None,
+            report_activity: Some(Arc::new(move |_handle: &str, activity: SessionActivity| {
+                if lane
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                        left.checked_sub(1)
+                    })
+                    .is_ok()
+                {
+                    return false;
+                }
+                log.lock().unwrap().push(activity);
+                true
+            })),
+            activity_report_fault: None,
+            pending_activity_report_error_snapshot: false,
+            last_logged_spawn_error_id: None,
+            transcript_durability_fault: None,
+            pending_transcript_error_snapshot: false,
+            transcript_corruption: None,
+        };
+
+        evidence.report_activity_for_event(
+            "web/fix-login",
+            &SessionServerEvent::PromptAccepted {
+                client_message_id: "prompt-1".to_string(),
+            },
+        );
+        assert_eq!(
+            evidence.pending_activity_report,
+            Some(SessionActivity::TurnStarted)
+        );
+
+        evidence.flush_pending_activity_report("web/fix-login");
+        evidence.report_activity_for_event(
+            "web/fix-login",
+            &SessionServerEvent::TurnEnd { stop_reason: None },
+        );
+        evidence.retry_pending_activity_report("web/fix-login");
+
+        assert_eq!(
+            *reported.lock().unwrap(),
+            vec![SessionActivity::TurnEnded],
+            "a turn start that was never delivered must not land after the turn end"
+        );
         assert!(evidence.pending_activity_report.is_none());
     }
 }

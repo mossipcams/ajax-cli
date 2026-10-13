@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
+import Skeleton from "@/shared/ui/Skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { useTrainingStatus } from "./useTrainingStatus";
+import TrainingProfileList from "./TrainingProfileList";
+import TrainingStatusPanel from "./TrainingStatusPanel";
 import * as trainingApi from "./trainingApi";
 
 interface Props {
@@ -17,30 +20,64 @@ const JOB_LABELS: Record<trainingApi.TrainingJobKind, string> = {
   "wake-train": "Wake train",
 };
 
+// Jobs that sit behind the primary Unsloth train action.
+const SECONDARY_JOBS: trainingApi.TrainingJobKind[] = [
+  "generate",
+  "lfm-eval",
+  "wake-train",
+];
+
 type PendingAction =
   | { kind: "job"; job: trainingApi.TrainingJobKind }
   | { kind: "stop" }
   | { kind: "serve" }
+  | { kind: "serve-stop" }
   | { kind: "switch"; profile: string };
 
-function formatEta(seconds: number): string {
-  const minutes = Math.round(seconds / 60);
-  return minutes >= 1
-    ? `~${minutes} min`
-    : `~${Math.max(1, Math.round(seconds))}s`;
+
+function confirmDescription(action: PendingAction): string {
+  switch (action.kind) {
+    case "job":
+      return `Start the ${JOB_LABELS[action.job]} job?`;
+    case "stop":
+      return "Stop the current training run?";
+    case "serve":
+      return "Start llama.cpp serving for the active profile?";
+    case "serve-stop":
+      return "Stop llama.cpp serving?";
+    case "switch":
+      return `Switch the active profile to ${action.profile}?`;
+  }
 }
 
-function progressWidth(fraction: number): string {
-  const percent = Math.min(100, Math.max(0, fraction * 100));
-  return `${Number(percent.toFixed(1))}%`;
+function busyText(action: PendingAction): string {
+  switch (action.kind) {
+    case "job":
+      return `Starting ${JOB_LABELS[action.job]}`;
+    case "stop":
+      return "Stopping run";
+    case "serve":
+      return "Starting serving";
+    case "serve-stop":
+      return "Stopping serving";
+    case "switch":
+      return `Switching to ${action.profile}`;
+  }
 }
 
 export default function TrainingModal({ open, onOpenChange }: Props) {
   const { status, error, refresh } = useTrainingStatus(open);
   const [models, setModels] = useState<trainingApi.TrainingModels | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [active, setActive] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
+  // Mirrors `open` for event handlers: a POST that rejects after the user
+  // closed the dialog must not surface a stale error banner on next open.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -51,7 +88,8 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         if (cancelled) return;
         setModels(result);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (!cancelled) setProfilesError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       cancelled = true;
@@ -59,7 +97,12 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   }, [open]);
 
   useEffect(() => {
-    if (!open) setPending(null);
+    if (!open) {
+      setPending(null);
+      setActive(null);
+      setActionError(null);
+      setProfilesError(null);
+    }
   }, [open]);
 
   const run = status?.run ?? null;
@@ -68,39 +111,94 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
     ? status.state.slice("train:".length).split(" ")[0]
     : null;
   const details = status?.profile_details ?? null;
-  const activeProfile =
-    models?.active_profile ?? status?.active_profile ?? null;
+  const activeProfile = models?.active_profile ?? status?.active_profile ?? null;
   const runtimeUp = models?.running ?? status?.runtime_up === true;
-  const busyReason =
-    run?.running || (generation && generation.running)
-      ? "a training job is in progress"
-      : status && status.state.startsWith("train:")
-        ? `state is ${status.state}`
-        : null;
+  const busy = active !== null;
+  const runRunning = Boolean(run?.running);
+  const genRunning = Boolean(generation && generation.running);
+  const heroMode: "run" | "generation" | "live" | "idle" = runRunning
+    ? "run"
+    : genRunning
+      ? "generation"
+      : trainLabel
+        ? "live"
+        : "idle";
+
+  function armJob(job: trainingApi.TrainingJobKind): void {
+    setPending({ kind: "job", job });
+  }
+
+  function armStop(): void {
+    setPending({ kind: "stop" });
+  }
+
+  function armServe(): void {
+    setPending({ kind: "serve" });
+  }
+
+  function armServeStop(): void {
+    setPending({ kind: "serve-stop" });
+  }
+
+  function armSwitch(profile: string): void {
+    setPending({ kind: "switch", profile });
+  }
+
+  function cancelPending(): void {
+    setPending(null);
+  }
+
+  function confirmPending(): void {
+    if (pending) void execute(pending);
+  }
 
   async function execute(action: PendingAction): Promise<void> {
-    setBusy(true);
+    setActive(action);
     setActionError(null);
     try {
       if (action.kind === "job") await trainingApi.startTrainingJob(action.job);
-      else if (action.kind === "stop") await trainingApi.stopTraining();
+      else if (action.kind === "stop" || action.kind === "serve-stop")
+        await trainingApi.stopTraining();
       else if (action.kind === "serve") await trainingApi.serveLlama();
       else await trainingApi.switchTrainingProfile(action.profile);
       setPending(null);
-      void refresh();
+      // Skip the refetch if the dialog closed while the action completed;
+      // reopening reloads fresh state anyway (same guard as the error path).
+      if (openRef.current) void refresh();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
+      if (openRef.current) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setBusy(false);
+      setActive(null);
     }
+  }
+
+  function handleClose(): void {
+    onOpenChange(false);
   }
 
   if (!open) return null;
 
+  const switchBlocked =
+    runRunning || genRunning ? "a job is in progress" : trainLabel ? `state is ${status?.state}` : null;
+  const confirmInFlight = busy && active !== null && pending === active;
+
+  const heroTitle =
+    heroMode === "run" && run
+      ? `${JOB_LABELS[run.kind as trainingApi.TrainingJobKind] ?? run.kind} running`
+      : heroMode === "generation"
+        ? "Data generation running"
+        : heroMode === "live"
+          ? `Training in progress: ${trainLabel}`
+          : runtimeUp
+            ? "Runtime ready"
+            : "Idle";
+
   return (
     <FullscreenLayer zIndex={50}>
       <Sheet open onOpenChange={onOpenChange}>
-        <SheetContent className="training-modal" aria-describedby={undefined}>
+        <SheetContent className="training-modal" aria-describedby={undefined} data-testid="training">
           <div className="training-header">
             <SheetTitle asChild>
               <h2>Training</h2>
@@ -109,7 +207,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
               type="button"
               className="training-close"
               aria-label="Close"
-              onClick={() => onOpenChange(false)}
+              onClick={handleClose}
             >
               ×
             </button>
@@ -126,272 +224,110 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
           ) : null}
 
           {!status && !error ? (
-            <p className="training-muted" data-testid="training-loading">
-              Loading training status…
-            </p>
+            <Skeleton rows={4} testid="training-loading" />
           ) : null}
 
-          <section
-            className="training-section"
-            aria-labelledby="training-models-heading"
-          >
-            <h3 id="training-models-heading">llama.cpp</h3>
-            <p className="training-muted" data-testid="llama-state">
-              {runtimeUp ? "Serving" : "Stopped"}
-              {activeProfile ? ` · ${activeProfile}` : ""}
-            </p>
-            <div className="training-llama-actions">
-              <Button
-                type="button"
-                disabled={busy || runtimeUp || !activeProfile}
-                onClick={() => void execute({ kind: "serve" })}
-              >
-                Start
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={busy || !runtimeUp}
-                onClick={() => void execute({ kind: "stop" })}
-              >
-                Stop
-              </Button>
-            </div>
-            <ul className="training-profile-list">
-              {(models?.profiles ?? []).map((name) => {
-                const detail = details?.[name] ?? {};
-                const isActive = name === activeProfile;
-                return (
-                  <li
-                    key={name}
-                    className={`training-profile${isActive ? " is-active" : ""}`}
-                  >
-                    <button
-                      type="button"
-                      className="training-profile-picker"
-                      aria-pressed={isActive}
-                      disabled={isActive || busy || Boolean(busyReason)}
-                      onClick={() =>
-                        void execute({ kind: "switch", profile: name })
-                      }
-                    >
-                      <span className="training-profile-text">
-                        <strong>{detail.label ?? name}</strong>
-                        {isActive ? (
-                          <em className="training-tag">active</em>
-                        ) : null}
-                        {isActive ? (
-                          runtimeUp ? (
-                            <em className="training-tag">serving</em>
-                          ) : (
-                            <em className="training-tag is-muted">stopped</em>
-                          )
-                        ) : null}
-                        {detail.model ? (
-                          <span className="training-model">{detail.model}</span>
-                        ) : null}
-                        {detail.serving ? (
-                          <span className="training-serving">
-                            {detail.serving}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            {busyReason ? (
-              <p className="training-muted">
-                Switching is unavailable while {busyReason}.
-              </p>
-            ) : null}
-          </section>
+          {status ? (
+            <>
+              <TrainingStatusPanel
+                heroMode={heroMode}
+                heroTitle={heroTitle}
+                state={status.state}
+                run={run}
+                generation={generation}
+                runtimeUp={runtimeUp}
+                activeProfile={activeProfile}
+                busy={busy}
+                runRunning={runRunning}
+                genRunning={genRunning}
+                onStop={armStop}
+                onServeStop={armServeStop}
+                onTrain={() => armJob("lfm-train")}
+              />
 
-          <section
-            className="training-section"
-            aria-labelledby="training-runs-heading"
-          >
-            <h3 id="training-runs-heading">Training runs</h3>
-            {status ? (
-              <p className="training-state" data-testid="training-state">
-                {status.state}
-              </p>
-            ) : null}
-            {run ? (
-              <div className="training-run" data-testid="training-run">
-                <p className="training-muted">{run.kind}</p>
-                {run.progress ? (
-                  <>
-                    <div
-                      className="training-progress"
-                      role="progressbar"
-                      aria-label={`${run.kind} progress`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={
-                        run.progress.total
-                          ? Math.round(
-                              (run.progress.step / run.progress.total) * 100,
-                            )
-                          : undefined
-                      }
-                    >
-                      <div
-                        className="training-progress-fill"
-                        style={{
-                          width: run.progress.total
-                            ? progressWidth(
-                                run.progress.step / run.progress.total,
-                              )
-                            : "100%",
-                        }}
-                      />
-                    </div>
-                    <p className="training-muted">
-                      step {run.progress.step}
-                      {run.progress.total !== null
-                        ? ` / ${run.progress.total}`
-                        : ""}
-                      {run.progress.loss !== null
-                        ? ` · loss ${run.progress.loss.toFixed(4)}`
-                        : ""}
-                      {run.progress.eta_s !== null
-                        ? ` · ETA ${formatEta(run.progress.eta_s)}`
-                        : ""}
-                    </p>
-                  </>
-                ) : (
-                  <p className="training-muted">running</p>
-                )}
-                {run.log_tail.length ? (
-                  <ul className="training-log" data-testid="training-log">
-                    {run.log_tail.map((line, index) => (
-                      <li key={index}>{line}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : trainLabel ? (
-              <div data-testid="training-live-state">
-                <p className="training-muted">
-                  Training in progress: {trainLabel}
-                </p>
-                <div
-                  className="training-progress"
-                  role="progressbar"
-                  aria-label="Training in progress"
-                />
-              </div>
-            ) : status ? (
-              <p className="training-muted">No run in progress.</p>
-            ) : null}
-            <div className="training-actions">
-              {(Object.keys(JOB_LABELS) as trainingApi.TrainingJobKind[]).map(
-                (job) => {
-                  const isPending =
-                    pending?.kind === "job" && pending.job === job;
-                  return isPending ? (
+              {/* Finished-but-recent run summary (run object present, not running). */}
+              {run && !run.running ? (
+                <div className="training-run" data-testid="training-run-idle">
+                  <p className="training-muted">
+                    {JOB_LABELS[run.kind as trainingApi.TrainingJobKind] ?? run.kind} finished
+                  </p>
+                </div>
+              ) : null}
+
+              {/* Actions: primary train job, secondary jobs grouped. */}
+              <section className="training-section" aria-labelledby="training-jobs-heading">
+                <h3 id="training-jobs-heading">Jobs</h3>
+<Button
+                  type="button"
+                  className="training-actions-primary"
+                  disabled={runRunning || busy}
+                  onClick={() => armJob("lfm-train")}
+                >
+                  Unsloth train
+                </Button>
+                <div className="training-actions-secondary">
+                  {SECONDARY_JOBS.map((job) => (
                     <Button
                       key={job}
                       type="button"
                       variant="secondary"
-                      disabled={busy}
-                      onClick={() => void execute(pending)}
-                    >
-                      Confirm {JOB_LABELS[job]}
-                    </Button>
-                  ) : (
-                    <Button
-                      key={job}
-                      type="button"
-                      variant="secondary"
-                      disabled={Boolean(run?.running) || busy}
-                      onClick={() => setPending({ kind: "job", job })}
+                      disabled={runRunning || busy}
+                      onClick={() => armJob(job)}
                     >
                       {JOB_LABELS[job]}
                     </Button>
-                  );
-                },
-              )}
-              {run?.running ? (
-                pending?.kind === "stop" ? (
-                  <Button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void execute(pending)}
-                  >
-                    Confirm stop run
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => setPending({ kind: "stop" })}
-                  >
-                    Stop run
-                  </Button>
-                )
-              ) : null}
-            </div>
-          </section>
+                  ))}
+                </div>
+              </section>
 
-          <section
-            className="training-section"
-            aria-labelledby="training-generation-heading"
-          >
-            <h3 id="training-generation-heading">Data generation</h3>
-            {generation ? (
-              generation.target !== null ? (
-                <>
-                  <div
-                    className="training-progress"
-                    role="progressbar"
-                    aria-label="Data generation progress"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(
-                      ((generation.rows ?? 0) / generation.target) * 100,
-                    )}
-                  >
-                    <div
-                      className="training-progress-fill"
-                      style={{
-                        width: progressWidth(
-                          (generation.rows ?? 0) / generation.target,
-                        ),
-                      }}
-                    />
+              <TrainingProfileList
+                runtimeUp={runtimeUp}
+                activeProfile={activeProfile}
+                busy={busy}
+                switchBlocked={switchBlocked}
+                switchingKind={active?.kind === "switch" ? "switch" : null}
+                switchingProfile={active?.kind === "switch" ? active.profile : null}
+                profiles={models?.profiles ?? []}
+                details={details}
+                profilesError={profilesError}
+                onServe={armServe}
+                onServeStop={armServeStop}
+                onSwitch={armSwitch}
+              />
+
+              {/* One consistent confirmation bar for every mutating action. */}
+              {pending ? (
+                <div className="training-confirm" data-testid="training-confirm">
+                  <p className="training-confirm-text">{confirmDescription(pending)}</p>
+                  <div className="training-confirm-buttons">
+                    <Button
+                      type="button"
+                      disabled={busy && !confirmInFlight}
+                      aria-busy={confirmInFlight || undefined}
+                      onClick={confirmPending}
+                    >
+                      {confirmInFlight ? (
+                        <>
+                          <span className="training-busy-dot" aria-hidden />
+                          {busyText(active)}…
+                        </>
+                      ) : (
+                        "Confirm"
+                      )}
+                    </Button>
+                    <Button type="button" variant="secondary" disabled={busy} onClick={cancelPending}>
+                      Cancel
+                    </Button>
                   </div>
-                  <p className="training-muted">
-                    {generation.phase ? `${generation.phase}: ` : ""}
-                    {generation.rows ?? 0} / {generation.target}
-                    {generation.phase ? "" : " rows"}
-                    {generation.running ? " · generating" : ""}
-                  </p>
-                </>
-              ) : (
-                <p
-                  className="training-muted"
-                  data-testid="training-generation-rows"
-                >
-                  {generation.rows ?? 0} rows
-                  {generation.running ? " · generating" : ""}
-                </p>
-              )
-            ) : status ? (
-              <p className="training-muted">No generation activity.</p>
-            ) : null}
-          </section>
+                </div>
+              ) : null}
 
-          {actionError ? (
-            <p
-              role="alert"
-              className="training-banner"
-              data-testid="training-action-error"
-            >
-              {actionError}
-            </p>
+              {actionError ? (
+                <p role="alert" className="training-banner" data-testid="training-action-error">
+                  {actionError}
+                </p>
+              ) : null}
+            </>
           ) : null}
         </SheetContent>
       </Sheet>

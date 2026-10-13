@@ -264,6 +264,7 @@ mod suite_1;
 mod suite_2;
 mod suite_3;
 mod suite_4;
+mod suite_5;
 
 pub(super) fn context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
     let mut context = context_with_reviewable_task();
