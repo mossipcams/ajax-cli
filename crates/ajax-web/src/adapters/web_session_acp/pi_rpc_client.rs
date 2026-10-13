@@ -94,7 +94,10 @@ impl PiRpcClient {
     /// Spawn the Pi RPC process, perform the handshake, and wrap it in a session.
     ///
     /// Arguments passed to the child are exactly:
-    /// `["--mode", "rpc", "-na"]` then optionally `["--session", <id>]`, then `extra_args`.
+    /// `["--mode", "rpc", "-na"]` then optionally `["--session-id", <id>]`, then `extra_args`.
+    /// (`--session` only matches sessions already on disk; Pi persists a
+    /// session only after its first message, so `--session-id` is required for
+    /// resume; issue #1283.)
     pub fn spawn(
         program: &Path,
         extra_args: &[String],
@@ -104,7 +107,7 @@ impl PiRpcClient {
     ) -> Result<PiRpcClient, String> {
         let mut args: Vec<String> = vec!["--mode".into(), "rpc".into(), "-na".into()];
         if let Some(id) = resume_session_id {
-            args.push("--session".into());
+            args.push("--session-id".into());
             args.push(id.to_string());
         }
         args.extend_from_slice(extra_args);

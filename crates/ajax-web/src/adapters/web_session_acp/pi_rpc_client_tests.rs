@@ -169,7 +169,7 @@ fn rejected_prompt_reports_error_result() {
 
 #[test]
 fn resume_reports_passed_session_id() {
-    // The client injects `--session <id>` into the child argv itself.
+    // The client injects `--session-id <id>` into the child argv itself.
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
     let client = PiRpcClient::spawn(
         &fixture_path(),
@@ -220,4 +220,25 @@ fn second_prompt_after_finish_gets_request_id_two() {
         .expect("second begin_prompt");
     assert_eq!(second_id, 2);
     drain_until_finished(&client, 2);
+}
+
+#[test]
+fn issue_1283_resume_of_a_session_pi_never_persisted_keeps_that_id() {
+    // Real Pi writes no session file until the first message; resuming such a
+    // session must use `--session-id` (which creates it), not `--session`
+    // (the fixture, like real Pi, exits 1 with 'No session found matching
+    // ...' for that flag - issue #1283).
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let client = PiRpcClient::spawn(
+        &fixture_path(),
+        &[],
+        cwd,
+        Some("never-persisted-1283"),
+        TIMEOUT,
+    )
+    .expect("fake pi rpc fixture must spawn with --session-id for an unpersisted session");
+    assert_eq!(client.session_id(), "never-persisted-1283");
+    client
+        .shutdown()
+        .expect("shutdown after resume returns the session id");
 }

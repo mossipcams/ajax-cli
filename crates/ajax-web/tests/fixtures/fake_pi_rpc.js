@@ -7,16 +7,29 @@
 const readline = require('readline');
 
 const sessionId = 'fake-pi-rpc-session-1';
-// A `--session <id>` argv pair (as sent by resuming clients) overrides the
+// A `--session-id <id>` argv pair (as sent by resuming clients) overrides the
 // fixed session id reported by get_state; without it behavior is unchanged.
 // `--ignore-session` suppresses that override, so get_state keeps the fixed
-// id even when --session is present (fail-closed restore fixture behavior).
-const sessionArgIndex = process.argv.indexOf('--session');
+// id even when --session-id is present (fail-closed restore fixture behavior).
+const sessionArgIndex = process.argv.indexOf('--session-id');
 const ignoreSession = process.argv.includes('--ignore-session');
 const overriddenSessionId =
   !ignoreSession && sessionArgIndex >= 0 && typeof process.argv[sessionArgIndex + 1] === 'string'
     ? process.argv[sessionArgIndex + 1]
     : null;
+
+// Real Pi refuses to resume a session it has never persisted: `--session` only
+// matches session files already on disk (issue #1283), and a chat that started
+// but received no prompt was never written. Mimic that: exit nonzero with the
+// real Pi error before any JSON is emitted.
+const legacySessionArgIndex = process.argv.indexOf('--session');
+if (
+  legacySessionArgIndex >= 0 &&
+  typeof process.argv[legacySessionArgIndex + 1] === 'string'
+) {
+  process.stderr.write(`No session found matching '${process.argv[legacySessionArgIndex + 1]}'\n`);
+  process.exit(1);
+}
 const sessionFile = '/tmp/fake-pi-rpc/sessions/2026-01-01T00-00-00Z_fake-pi-rpc-session-1.jsonl';
 const fakeModel = {
   id: 'fake-model',
