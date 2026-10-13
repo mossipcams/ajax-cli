@@ -155,6 +155,11 @@ impl PiRpcClient {
         self.core.session_id()
     }
 
+    /// OS process id of the live child while a session exists; `None` after shutdown.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.core.child_pid()
+    }
+
     /// The Pi model and thinking-level options in the ACP config-option shape.
     ///
     /// The model option (id "model") is omitted when no models were reported, and

@@ -52,6 +52,10 @@ struct ClaudeState {
 }
 
 impl ClaudeSdkClient {
+    /// OS process id of the live child while a session exists; `None` after shutdown.
+    pub fn child_pid(&self) -> Option<u32> {
+        self.core.child_pid()
+    }
     pub fn spawn(
         program: &Path,
         program_args: &[String],

@@ -196,6 +196,12 @@ impl RpcClientCore {
         g.host_exited || g.session.is_none()
     }
 
+    /// OS process id of the live child while a session exists; `None` after shutdown.
+    pub fn child_pid(&self) -> Option<u32> {
+        let g = self.inner.lock().expect("rpc_client mutex poisoned");
+        g.session.as_ref().map(|session| session.child_pid())
+    }
+
     pub fn with_session<R>(&self, f: impl FnOnce(&mut RpcSession) -> R) -> Result<R, String> {
         let mut g = self.inner.lock().expect("rpc_client mutex poisoned");
         let session = g

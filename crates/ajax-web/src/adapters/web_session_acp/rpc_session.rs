@@ -101,6 +101,11 @@ impl RpcSession {
         &self.session_id
     }
 
+    /// OS process id of the child driving this session.
+    pub fn child_pid(&self) -> u32 {
+        self.process.pid()
+    }
+
     /// Whether a prompt run is currently active (sent, not yet settled).
     pub fn run_active(&self) -> bool {
         self.run_active
