@@ -87,13 +87,14 @@ fn pi_variant_prompt_flow_streams_chunk_then_request_finished() {
             {
                 continue
             }
-            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. }) => break event,
+            AgentEvent::Native(NativeEvent::TurnFinished { .. }) => break event,
             other => panic!("expected RequestFinished, got {other:?}"),
         }
     };
     match &second {
-        AgentEvent::Acp(AcpClientEvent::RequestFinished {
-            id: finished_id, ..
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id: finished_id,
+            ..
         }) => {
             assert_eq!(*finished_id, id);
         }
@@ -122,10 +123,7 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
         match session.wait_event(WAIT) {
             None => panic!("run should finish after cancel"),
             Some(event)
-                if matches!(
-                    event,
-                    AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-                ) =>
+                if matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })) =>
             {
                 break event
             }
@@ -135,8 +133,8 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
         }
     };
     match &finished {
-        AgentEvent::Acp(AcpClientEvent::RequestFinished {
-            id: finished_id,
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id: finished_id,
             result,
             ..
         }) => {
@@ -145,8 +143,8 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
                 .as_ref()
                 .expect("held run should finish with a result");
             assert!(
-                value.to_string().contains("cancelled"),
-                "stopReason should be cancelled, got {value:?}"
+                value.contains("cancelled"),
+                "stop reason should be cancelled, got {value:?}"
             );
         }
         other => panic!("expected RequestFinished after cancel, got {other:?}"),

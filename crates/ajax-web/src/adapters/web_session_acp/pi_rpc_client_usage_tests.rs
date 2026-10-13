@@ -48,13 +48,13 @@ fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     }
 }
 
-/// The stop reason when `event` is a successful `RequestFinished`, otherwise
-/// `None`.
+/// The stop reason when `event` is a successful native turn-finished event,
+/// otherwise `None`.
 fn stop_reason(event: &AgentEvent) -> Option<&str> {
     match event {
-        AgentEvent::Acp(AcpClientEvent::RequestFinished {
-            result: Ok(value), ..
-        }) => value.get("stopReason").and_then(|s| s.as_str()),
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            result: Ok(stop), ..
+        }) => Some(stop.as_str()),
         _ => None,
     }
 }
@@ -72,10 +72,7 @@ fn collect_until_finished(client: &PiRpcClient) -> Vec<AgentEvent> {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(
-            &event,
-            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-        );
+        let finished = matches!(&event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
         events.push(event);
         if finished {
             return events;
@@ -93,12 +90,7 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
     // Order: message chunk(s), then exactly one Usage, then the finish.
     let finish_index = events
         .iter()
-        .rposition(|event| {
-            matches!(
-                event,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-            )
-        })
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must arrive");
     assert_eq!(
         finish_index,
@@ -134,7 +126,7 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
     assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
     assert!(matches!(
         &events[finish_index],
-        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
+        AgentEvent::Native(NativeEvent::TurnFinished { request_id: finish_id, result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -152,12 +144,7 @@ fn silent_stats_still_finishes_without_usage() {
     );
     let finish_index = events
         .iter()
-        .rposition(|event| {
-            matches!(
-                event,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-            )
-        })
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must still arrive");
     assert_eq!(
         finish_index,
@@ -167,7 +154,7 @@ fn silent_stats_still_finishes_without_usage() {
     assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
     assert!(matches!(
         &events[finish_index],
-        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
+        AgentEvent::Native(NativeEvent::TurnFinished { request_id: finish_id, result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -191,12 +178,7 @@ fn aborted_run_reports_usage_before_cancelled_finish() {
 
     let finish_index = events
         .iter()
-        .rposition(|event| {
-            matches!(
-                event,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-            )
-        })
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must arrive after cancel");
     assert_eq!(
         finish_index,
@@ -223,7 +205,7 @@ fn aborted_run_reports_usage_before_cancelled_finish() {
     assert_eq!(stop_reason(&events[finish_index]), Some("cancelled"));
     assert!(matches!(
         &events[finish_index],
-        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Ok(_) })
+        AgentEvent::Native(NativeEvent::TurnFinished { request_id: finish_id, result: Ok(_) })
             if *finish_id == id
     ));
 }
@@ -238,10 +220,7 @@ fn rejected_prompt_finishes_without_usage() {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(
-            event,
-            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-        );
+        let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
         events.push(event);
         if finished {
             break;
@@ -254,12 +233,7 @@ fn rejected_prompt_finishes_without_usage() {
     );
     let finish_index = events
         .iter()
-        .rposition(|event| {
-            matches!(
-                event,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-            )
-        })
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must arrive");
     assert_eq!(
         finish_index,
@@ -268,7 +242,7 @@ fn rejected_prompt_finishes_without_usage() {
     );
     assert!(matches!(
         &events[finish_index],
-        AgentEvent::Acp(AcpClientEvent::RequestFinished { id: finish_id, method: "session/prompt", result: Err(_) })
+        AgentEvent::Native(NativeEvent::TurnFinished { request_id: finish_id, result: Err(_) })
             if *finish_id == id
     ));
 }

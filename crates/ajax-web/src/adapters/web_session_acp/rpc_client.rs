@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
-use super::agent_event::AgentEvent;
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::rpc_session::{RpcSession, RpcStep};
 
 pub type RunFinishedHook = fn(&mut RpcSession) -> Option<AgentEvent>;
@@ -146,10 +145,9 @@ impl RpcClientCore {
                     _ => None,
                 };
 
-                let finished = AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id,
-                    method: "session/prompt",
-                    result: Ok(serde_json::json!({ "stopReason": stop_reason })),
+                let finished = AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: id,
+                    result: Ok(stop_reason.to_string()),
                 });
 
                 match usage {
@@ -161,17 +159,16 @@ impl RpcClientCore {
                 }
             }
             RpcStep::PromptRejected(e) => {
-                let _id = g.active_request_id.take();
-                Some(AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id: _id.unwrap_or(0),
-                    method: "session/prompt",
+                let id = g.active_request_id.take();
+                Some(AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: id.unwrap_or(0),
                     result: Err(e),
                 }))
             }
-            RpcStep::Error(t) => Some(AgentEvent::Acp(AcpClientEvent::Error(t))),
+            RpcStep::Error(t) => Some(AgentEvent::Native(NativeEvent::Error(t))),
             RpcStep::Exited => {
                 g.host_exited = true;
-                Some(AgentEvent::Acp(AcpClientEvent::Exited))
+                Some(AgentEvent::Native(NativeEvent::Exited))
             }
             RpcStep::Idle => None,
         }
