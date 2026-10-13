@@ -27,7 +27,7 @@ pub use available_command_descriptors::{
 pub use config_model::{
     acp_options, descriptors_from_neutral, neutral_options, persisted_model_id,
     triggers_model_persist, NeutralConfigCategory, NeutralConfigChoice, NeutralConfigKind,
-    NeutralConfigOption, NeutralConfigValue,
+    NeutralConfigOption,
 };
 pub use config_option_descriptors::{config_option_descriptors, ConfigOptionDescriptor};
 pub use config_options::{

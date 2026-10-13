@@ -69,7 +69,7 @@ pub(crate) enum TaskSessionCommand {
     },
     ApplyConfigOption {
         config_id: String,
-        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+        value: crate::adapters::web_session_acp::SessionConfigValue,
         reply: oneshot::Sender<Result<task_session_spawn::ApplyConfigOptionResult, SessionError>>,
     },
     ResetHarness {

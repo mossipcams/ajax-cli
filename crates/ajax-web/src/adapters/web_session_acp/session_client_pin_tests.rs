@@ -4,10 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema::v1::SessionConfigOptionValue;
-
 use super::session_client::{with_test_pi_program, SessionClient};
-use super::{NeutralConfigKind, NeutralConfigOption, SessionSpawnReport};
+use super::{NeutralConfigKind, NeutralConfigOption, SessionConfigValue, SessionSpawnReport};
 use ajax_core::models::AgentClient;
 
 fn fixture_path() -> PathBuf {
@@ -140,7 +138,10 @@ fn apply_config_option_updates_thought_level() {
         let (mut client, _) = spawn_pi_with_pin("");
 
         let outcome = client
-            .apply_config_option("thought_level", SessionConfigOptionValue::value_id("low"))
+            .apply_config_option(
+                "thought_level",
+                SessionConfigValue::Select("low".to_string()),
+            )
             .expect("apply_config_option should report rather than fail");
         assert!(outcome.error.is_none());
         assert_eq!(
@@ -158,7 +159,7 @@ fn apply_config_option_unknown_id_reports_error() {
         let (mut client, _) = spawn_pi_with_pin("");
 
         let outcome = client
-            .apply_config_option("nope", SessionConfigOptionValue::value_id("x"))
+            .apply_config_option("nope", SessionConfigValue::Select("x".to_string()))
             .expect("apply_config_option should report rather than fail");
         let error = outcome
             .error
@@ -179,7 +180,7 @@ fn apply_config_option_model_boolean_reports_error() {
         let (mut client, _) = spawn_pi_with_pin("");
 
         let outcome = client
-            .apply_config_option("model", SessionConfigOptionValue::Boolean { value: true })
+            .apply_config_option("model", SessionConfigValue::Boolean(true))
             .expect("apply_config_option should report rather than fail");
         assert!(
             outcome.error.is_some(),

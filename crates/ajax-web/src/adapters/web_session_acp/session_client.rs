@@ -12,9 +12,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, SessionConfigOptionValue,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, ElicitationAction};
 
 use super::agent_event::AgentEvent;
 use super::claude_sdk_client::ClaudeSdkClient;
@@ -25,7 +23,7 @@ use super::client::{
 use super::pi_rpc_client::PiRpcClient;
 use super::{
     neutral_options, ApplyModelOutcome, CancelOutcome, NeutralConfigOption,
-    PromptCapabilityDescriptor,
+    PromptCapabilityDescriptor, SessionConfigValue,
 };
 
 use ajax_core::models::AgentClient;
@@ -377,19 +375,19 @@ impl SessionClient {
     pub fn apply_config_option(
         &self,
         config_id: &str,
-        value: SessionConfigOptionValue,
+        value: SessionConfigValue,
     ) -> Result<SessionConfigOutcome, String> {
         match self {
             SessionClient::Acp(client) => client
-                .apply_config_option(config_id, value)
+                .apply_config_option(config_id, super::wire_value_to_session_value(value))
                 .map(ApplyModelOutcome::into_neutral),
             SessionClient::Claude(session) => {
-                let error = match (config_id, &value) {
-                    ("model", SessionConfigOptionValue::ValueId { value }) => {
-                        session.client.set_model(value.0.as_ref()).err()
+                let error = match (config_id, value) {
+                    ("model", SessionConfigValue::Select(value)) => {
+                        session.client.set_model(&value).err()
                     }
-                    ("effort", SessionConfigOptionValue::ValueId { value }) => {
-                        session.client.set_effort(value.0.as_ref()).err()
+                    ("effort", SessionConfigValue::Select(value)) => {
+                        session.client.set_effort(&value).err()
                     }
                     _ => Some(format!("unsupported Claude option {config_id}")),
                 };
@@ -400,14 +398,12 @@ impl SessionClient {
                 })
             }
             SessionClient::Pi(session) => {
-                let error = match (config_id, &value) {
-                    ("model", SessionConfigOptionValue::ValueId { value }) => {
-                        let model = value.0.to_string();
-                        session.client.set_model(&model).err()
+                let error = match (config_id, value) {
+                    ("model", SessionConfigValue::Select(value)) => {
+                        session.client.set_model(&value).err()
                     }
-                    ("thought_level", SessionConfigOptionValue::ValueId { value }) => {
-                        let level = value.0.to_string();
-                        session.client.set_thinking_level(&level).err()
+                    ("thought_level", SessionConfigValue::Select(value)) => {
+                        session.client.set_thinking_level(&value).err()
                     }
                     _ => Some(format!("unsupported Pi option {config_id}")),
                 };

@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionConfigOptionValue, SessionUpdate};
+use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
 
 use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
 use super::session_client::SessionClient;
-use super::{AcpClientEvent, AgentEvent, CancelOutcome};
+use super::{AcpClientEvent, AgentEvent, CancelOutcome, SessionConfigValue};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -217,7 +217,7 @@ fn pi_variant_applies_model_and_option_changes() {
     let outcome = session
         .apply_config_option(
             "model",
-            SessionConfigOptionValue::value_id("fake-provider/does-not-exist"),
+            SessionConfigValue::Select("fake-provider/does-not-exist".to_string()),
         )
         .expect("apply_config_option should report rather than fail");
     let error = outcome

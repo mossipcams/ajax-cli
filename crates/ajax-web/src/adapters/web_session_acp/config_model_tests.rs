@@ -2,13 +2,11 @@
 //! reproduce every shape `config_options.rs` handles today (select, grouped
 //! select, boolean, categories, descriptions, values).
 
-use super::config_model::{
-    NeutralConfigCategory, NeutralConfigKind, NeutralConfigOption, NeutralConfigValue,
-};
+use super::config_model::{NeutralConfigCategory, NeutralConfigKind, NeutralConfigOption};
 use agent_client_protocol::schema::v1::{
     SessionConfigBoolean, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SessionConfigSelect, SessionConfigSelectGroup,
-    SessionConfigSelectOption, SessionConfigSelectOptions,
+    SessionConfigSelect, SessionConfigSelectGroup, SessionConfigSelectOption,
+    SessionConfigSelectOptions,
 };
 
 fn choice(value: &str, name: &str, description: Option<&str>) -> SessionConfigSelectOption {
@@ -229,27 +227,7 @@ fn absent_category_and_description_round_trip() {
 }
 
 #[test]
-fn value_types_round_trip_both_directions() {
-    // ACP -> neutral.
-    assert_eq!(
-        NeutralConfigValue::from(&SessionConfigOptionValue::value_id("opus".to_string())),
-        NeutralConfigValue::ValueId("opus".to_string())
-    );
-    assert_eq!(
-        NeutralConfigValue::from(&SessionConfigOptionValue::boolean(true)),
-        NeutralConfigValue::Boolean(true)
-    );
-
-    // neutral -> ACP.
-    assert_eq!(
-        SessionConfigOptionValue::from(NeutralConfigValue::value_id("opus")),
-        SessionConfigOptionValue::value_id("opus".to_string())
-    );
-    assert_eq!(
-        SessionConfigOptionValue::from(NeutralConfigValue::boolean(false)),
-        SessionConfigOptionValue::boolean(false)
-    );
-
+fn select_current_value_round_trips() {
     // Full both-direction round trip on an option carrying a select current value.
     let acp = select_option("model", "sonnet", vec![choice("sonnet", "Sonnet", None)]);
     let neutral: NeutralConfigOption = (&acp).into();

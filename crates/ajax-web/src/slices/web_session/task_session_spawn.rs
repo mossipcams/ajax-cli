@@ -11,10 +11,9 @@ use super::transcript::{context_cleared_note, harness_switch_note, slot_must_rep
 use super::{apply_cancel_to_queue, SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     descriptors_from_neutral, persisted_model_id, triggers_model_persist, SessionClient,
-    SessionSpawnReport,
+    SessionConfigValue, SessionSpawnReport,
 };
 use crate::adapters::web_session_store::{self, StoredSession};
-use agent_client_protocol::schema::v1::SessionConfigOptionValue;
 use ajax_core::adapters::{parse_model_selection, ModelSelection};
 use ajax_core::models::AgentClient;
 use std::path::Path;
@@ -103,7 +102,7 @@ pub(crate) struct ApplyConfigOptionResult {
 pub(super) async fn apply_config_option(
     state: &mut TaskSessionState,
     config_id: &str,
-    value: SessionConfigOptionValue,
+    value: SessionConfigValue,
 ) -> Result<ApplyConfigOptionResult, SessionError> {
     let Some(client) = state.acp.client.as_mut() else {
         return Err(SessionError::protocol("session slot missing"));
@@ -466,12 +465,11 @@ async fn spawn_acp(
 fn merge_config_into_desired_pin(
     state: &mut TaskSessionState,
     config_id: &str,
-    value: &SessionConfigOptionValue,
+    value: &SessionConfigValue,
 ) {
     let wire = match value {
-        SessionConfigOptionValue::ValueId { value } => value.0.to_string(),
-        SessionConfigOptionValue::Boolean { value } => value.to_string(),
-        _ => return,
+        SessionConfigValue::Select(value) => value.clone(),
+        SessionConfigValue::Boolean(value) => value.to_string(),
     };
     if let Some(mut selection) = parse_model_selection(state.acp.model.trim()) {
         if config_id == "model" {

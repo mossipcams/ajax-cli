@@ -7,31 +7,9 @@
 
 use agent_client_protocol::schema::v1::{
     SessionConfigBoolean, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigOptionValue, SessionConfigSelect, SessionConfigSelectOption,
-    SessionConfigSelectOptions,
+    SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions,
 };
 use serde_json::Value;
-
-/// Neutral value for a session config set operation. Mirrors what
-/// `SessionConfigOptionValue` carries today: a string value id for select-style
-/// options or a boolean toggle value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NeutralConfigValue {
-    /// A string value id (select-style option).
-    ValueId(String),
-    /// A boolean toggle value.
-    Boolean(bool),
-}
-
-impl NeutralConfigValue {
-    pub fn value_id(value: impl Into<String>) -> Self {
-        Self::ValueId(value.into())
-    }
-
-    pub fn boolean(value: bool) -> Self {
-        Self::Boolean(value)
-    }
-}
 
 /// Neutral semantic category for a session config option (UX only). The web adapter
 /// treats everything that is neither `Model` nor `ThoughtLevel` as an opaque name.
@@ -201,28 +179,6 @@ impl From<&NeutralConfigCategory> for SessionConfigOptionCategory {
         }
     }
 }
-
-impl From<&SessionConfigOptionValue> for NeutralConfigValue {
-    fn from(value: &SessionConfigOptionValue) -> Self {
-        match value {
-            SessionConfigOptionValue::Boolean { value } => Self::Boolean(*value),
-            SessionConfigOptionValue::ValueId { value } => Self::ValueId(value.0.to_string()),
-            // `SessionConfigOptionValue` is `#[non_exhaustive]`; unknown value
-            // shapes degrade to an empty value id.
-            _ => Self::ValueId(String::new()),
-        }
-    }
-}
-
-impl From<NeutralConfigValue> for SessionConfigOptionValue {
-    fn from(value: NeutralConfigValue) -> Self {
-        match value {
-            NeutralConfigValue::Boolean(value) => Self::boolean(value),
-            NeutralConfigValue::ValueId(id) => Self::value_id(id),
-        }
-    }
-}
-
 /// Convert a slice of ACP options into their neutral form.
 pub fn neutral_options(options: &[SessionConfigOption]) -> Vec<NeutralConfigOption> {
     options.iter().map(NeutralConfigOption::from).collect()

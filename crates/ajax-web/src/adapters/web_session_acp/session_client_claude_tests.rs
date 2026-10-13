@@ -6,15 +6,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, SessionConfigOptionValue, TextContent,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, ElicitationAction, TextContent};
 use ajax_core::models::AgentClient;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
 use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
+use super::SessionConfigValue;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -199,9 +198,7 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         assert_eq!(outcome.applied_model, "haiku");
 
         // Effort option updates through apply_config_option.
-        let effort = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("low"),
-        };
+        let effort = SessionConfigValue::Select("low".to_string());
         let outcome = client
             .apply_config_option("effort", effort)
             .expect("apply effort");
@@ -220,9 +217,7 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         assert_eq!(current_value.as_str(), "low");
 
         // An unknown model id surfaces as an outcome error, not a hard failure.
-        let bad_model = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("not-a-model"),
-        };
+        let bad_model = SessionConfigValue::Select("not-a-model".to_string());
         let outcome = client
             .apply_config_option("model", bad_model)
             .expect("apply model");
@@ -236,9 +231,7 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         );
 
         // An unsupported option id is likewise an outcome error.
-        let nope = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("x"),
-        };
+        let nope = SessionConfigValue::Select("x".to_string());
         let outcome = client
             .apply_config_option("nope", nope)
             .expect("apply nope");
