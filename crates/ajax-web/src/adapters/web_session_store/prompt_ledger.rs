@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
 };
+
+mod kernel;
 
 pub const LEDGER_VERSION: u32 = 1;
 const LEDGER_KIND: &str = "prompt_ledger";
@@ -182,10 +183,10 @@ impl PromptLedger {
     }
 }
 
-pub fn load(state_dir: &Path, handle: &str) -> Result<PromptLedger, LedgerLoadError> {
+fn read_legacy(state_dir: &Path, handle: &str) -> Result<Option<PromptLedger>, LedgerLoadError> {
     let path = ledger_path(state_dir, handle);
     if !path.is_file() {
-        return Ok(PromptLedger::default());
+        return Ok(None);
     }
     let contents = fs::read_to_string(&path).map_err(|_| LedgerLoadError::Unreadable)?;
     let disk: DiskLedger =
@@ -199,15 +200,113 @@ pub fn load(state_dir: &Path, handle: &str) -> Result<PromptLedger, LedgerLoadEr
     if disk.v != LEDGER_VERSION {
         return Err(LedgerLoadError::Malformed);
     }
-    Ok(PromptLedger {
+    Ok(Some(PromptLedger {
         entries: disk.entries,
-    })
+    }))
 }
 
-pub fn persist(
+pub fn try_load(
+    store: &ajax_core::registry::SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+) -> Result<PromptLedger, LedgerLoadError> {
+    let legacy = read_legacy(state_dir, handle)?;
+    if let Some(legacy) = legacy {
+        let run_id = super::ensure_run(store, state_dir, handle, "unknown")
+            .map_err(|_| LedgerLoadError::Unreadable)?;
+        let current = store
+            .prompts_for_run(&run_id)
+            .map_err(|_| LedgerLoadError::Unreadable)?;
+        if current.is_empty() {
+            // The ledger content is now durable in the database: delete the
+            // legacy file instead of preserving it.
+            let commit = kernel::plan_commit(&run_id, &[], &legacy)
+                .map_err(|_| LedgerLoadError::Unreadable)?;
+            if legacy.entries.is_empty() || commit.is_some() {
+                if let Some(commit) = commit {
+                    store
+                        .commit_execution(&commit)
+                        .map_err(|_| LedgerLoadError::Unreadable)?;
+                }
+                delete_legacy_file(state_dir, handle)?;
+            } else {
+                migrate_legacy_file(state_dir, handle)?;
+            }
+        } else {
+            // The database already has prompts for the run; the sidecar was not
+            // imported, so preserve it under a `.migrated` name.
+            migrate_legacy_file(state_dir, handle)?;
+        }
+    }
+    let run = super::load_run(store, state_dir, handle, "unknown")
+        .map_err(|_| LedgerLoadError::Unreadable)?;
+    match run {
+        None => Ok(PromptLedger::default()),
+        Some(run) => store
+            .prompts_for_run(&run.run_id)
+            .map_err(|_| LedgerLoadError::Unreadable)
+            .map(|prompts| kernel::ledger_from_prompts(&prompts)),
+    }
+}
+
+/// Delete a legacy ledger file whose content was imported into the database in
+/// this call. `NotFound` is fine; any other failure is `Unreadable`.
+fn delete_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
+    match fs::remove_file(ledger_path(state_dir, handle)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(LedgerLoadError::Unreadable),
+    }
+}
+
+/// Rename the legacy ledger file to the first free `.migrated` name; never
+/// overwrite. Used only when an import was skipped because the database already
+/// has prompts for the run and the sidecar content was not trusted into it.
+fn migrate_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
+    let path = ledger_path(state_dir, handle);
+    if !path.try_exists().map_err(|_| LedgerLoadError::Unreadable)? {
+        return Ok(());
+    }
+    let base = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(LedgerLoadError::Unreadable)?;
+    let dir = path.parent().ok_or(LedgerLoadError::Unreadable)?;
+    let mut suffix = 0u32;
+    loop {
+        let name = if suffix == 0 {
+            format!("{base}.migrated")
+        } else {
+            format!("{base}.migrated.{suffix}")
+        };
+        let migrated = dir.join(name);
+        if !migrated
+            .try_exists()
+            .map_err(|_| LedgerLoadError::Unreadable)?
+        {
+            fs::rename(&path, &migrated).map_err(|_| LedgerLoadError::Unreadable)?;
+            return Ok(());
+        }
+        suffix += 1;
+    }
+}
+
+pub fn try_persist(
+    store: &ajax_core::registry::SqliteRegistryStore,
     state_dir: &Path,
     handle: &str,
     ledger: &PromptLedger,
+) -> Result<(), std::io::Error> {
+    try_persist_with_events::<serde_json::Value>(store, state_dir, handle, ledger, &[])
+}
+
+/// Persist the prompt ledger and transcript events in one database transaction.
+pub fn try_persist_with_events<T: serde::Serialize>(
+    store: &ajax_core::registry::SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    ledger: &PromptLedger,
+    events: &[T],
 ) -> Result<(), std::io::Error> {
     #[cfg(test)]
     if force_persist_fail() {
@@ -216,47 +315,91 @@ pub fn persist(
         ));
     }
 
-    let dir = state_dir.join(super::WEB_SESSION_DIR);
-    fs::create_dir_all(&dir)?;
-    let path = ledger_path(state_dir, handle);
-    let tmp_path = path.with_extension("prompt-ledger.tmp");
-    let disk = DiskLedger {
-        kind: LEDGER_KIND.to_string(),
-        v: LEDGER_VERSION,
-        entries: ledger.entries.clone(),
-    };
-    let body = serde_json::to_string_pretty(&disk).map_err(std::io::Error::other)?;
-    let mut file = fs::File::create(&tmp_path)?;
-    file.write_all(body.as_bytes())?;
-    file.sync_all()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))?;
+    let run_id = super::ensure_run(store, state_dir, handle, "unknown")?;
+    let current = store
+        .prompts_for_run(&run_id)
+        .map_err(std::io::Error::other)?;
+    let event_strings = events
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)?;
+    match kernel::plan_commit(&run_id, &current, ledger).map_err(std::io::Error::other)? {
+        Some(mut commit) => {
+            commit.events = event_strings;
+            let receipt = store
+                .commit_execution(&commit)
+                .map_err(std::io::Error::other)?;
+            if !receipt.duplicate_prompts.is_empty() {
+                return Err(std::io::Error::other("prompt id already used"));
+            }
+        }
+        None if !event_strings.is_empty() => {
+            store
+                .commit_execution(&ajax_core::registry::ExecutionCommit {
+                    run_id: run_id.clone(),
+                    events: event_strings,
+                    ..Default::default()
+                })
+                .map_err(std::io::Error::other)?;
+        }
+        None => return Ok(()),
     }
-    fs::rename(&tmp_path, &path)?;
-    sync_parent_dir(&path)?;
+    // A retention failure must not make a committed append look unsuccessful.
+    if let Err(error) = store.prune_execution_events(&run_id, super::MAX_LOG_EVENTS as u64) {
+        tracing::warn!(%error, handle, "failed to prune web session transcript");
+    }
     Ok(())
 }
 
-fn sync_parent_dir(path: &Path) -> Result<(), std::io::Error> {
-    let Some(parent) = path.parent() else {
-        return Ok(());
-    };
-    let dir = fs::File::open(parent)?;
-    dir.sync_all()
+#[cfg(test)]
+pub fn load(state_dir: &Path, handle: &str) -> Result<PromptLedger, LedgerLoadError> {
+    let store = ajax_core::registry::SqliteRegistryStore::new(state_dir.join("ajax.db"));
+    try_load(&store, state_dir, handle)
+}
+
+#[cfg(test)]
+pub fn persist(
+    state_dir: &Path,
+    handle: &str,
+    ledger: &PromptLedger,
+) -> Result<(), std::io::Error> {
+    let store = ajax_core::registry::SqliteRegistryStore::new(state_dir.join("ajax.db"));
+    try_persist(&store, state_dir, handle, ledger)
 }
 
 pub fn delete_ledger(state_dir: &Path, handle: &str) -> bool {
     let path = ledger_path(state_dir, handle);
+    let mut removed = false;
     match fs::remove_file(&path) {
-        Ok(()) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Ok(()) => removed = true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             tracing::warn!(%error, handle, "failed to delete web session prompt ledger");
-            false
+            return false;
         }
     }
+    let base = match path.file_name().and_then(|name| name.to_str()) {
+        Some(base) => base.to_owned(),
+        None => return removed,
+    };
+    let Some(dir) = path.parent() else {
+        return removed;
+    };
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+            let is_migration = name == format!("{base}.migrated")
+                || name.starts_with(&format!("{base}.migrated."));
+            if is_migration && fs::remove_file(entry.path()).is_ok() {
+                removed = true;
+            }
+        }
+    }
+    removed
 }
 
 pub fn ledger_path(state_dir: &Path, handle: &str) -> PathBuf {

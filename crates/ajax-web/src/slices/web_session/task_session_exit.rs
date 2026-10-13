@@ -17,8 +17,9 @@ pub(super) fn is_acp_exit_error(event: &SessionServerEvent) -> bool {
 }
 
 pub(super) fn persist_prompt_ledger(state: &TaskSessionState) -> Result<(), SessionError> {
-    crate::adapters::web_session_store::prompt_ledger::persist(
-        &state.state_dir,
+    crate::adapters::web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
         &state.qualified_handle,
         &state.prompts.prompt_ledger,
     )
@@ -31,8 +32,9 @@ pub(super) fn persist_ledger_update(
 ) -> Result<(), SessionError> {
     let mut next = state.prompts.prompt_ledger.clone();
     update(&mut next);
-    crate::adapters::web_session_store::prompt_ledger::persist(
-        &state.state_dir,
+    crate::adapters::web_session_store::prompt_ledger::try_persist(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
         &state.qualified_handle,
         &next,
     )
@@ -223,14 +225,17 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
     let outcome = terminal.outcome;
 
     if let Some(client_message_id) = client_message_id {
-        let result = persist_ledger_update(state, |ledger| match outcome {
-            PromptTerminalOutcome::Success | PromptTerminalOutcome::Cancelled => {
-                ledger.mark_completed(&client_message_id);
-            }
-            PromptTerminalOutcome::Failed => {
-                ledger.mark_interrupted(&client_message_id);
-            }
-        });
+        let result = state.commit_ledger_with_events(
+            |ledger| match outcome {
+                PromptTerminalOutcome::Success | PromptTerminalOutcome::Cancelled => {
+                    ledger.mark_completed(&client_message_id);
+                }
+                PromptTerminalOutcome::Failed => {
+                    ledger.mark_interrupted(&client_message_id);
+                }
+            },
+            terminal.events.clone(),
+        );
         if let Err(error) = result {
             let active = state
                 .prompts
@@ -245,6 +250,9 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
             }
             return;
         }
+
+        state.prompts.active_prompt = None;
+        return;
     }
 
     let terminal = state
@@ -269,8 +277,9 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
         ));
     }
 
-    state.prompts.prompt_ledger = crate::adapters::web_session_store::prompt_ledger::load(
-        &state.state_dir,
+    state.prompts.prompt_ledger = crate::adapters::web_session_store::prompt_ledger::try_load(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
         &state.qualified_handle,
     )
     .map_err(|error| SessionError::persist(error.to_string()))?;
@@ -326,6 +335,9 @@ pub(super) fn submit_prompt(
     text: String,
     content_blocks: Vec<prompt_content::PromptContentBlockWire>,
 ) -> Result<(), SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     if let Some(reason) = &state.prompts.ledger_unusable {
         return Err(SessionError::persist(format!(
             "prompt ownership unavailable: {reason}"
@@ -391,14 +403,22 @@ pub(super) fn submit_prompt(
             return Err(SessionError::operator("prompt queue is full"));
         }
         if !client_message_id.is_empty() {
-            persist_ledger_update(state, |ledger| {
-                ledger.upsert_queued(
-                    client_message_id.clone(),
-                    payload.transcript_text.clone(),
-                    text.trim().to_string(),
-                    wire_blocks_to_json(&content_blocks),
-                );
-            })?;
+            state.commit_ledger_with_events(
+                |ledger| {
+                    ledger.upsert_queued(
+                        client_message_id.clone(),
+                        payload.transcript_text.clone(),
+                        text.trim().to_string(),
+                        wire_blocks_to_json(&content_blocks),
+                    );
+                },
+                vec![
+                    user_event.clone(),
+                    SessionServerEvent::PromptAccepted {
+                        client_message_id: client_message_id.clone(),
+                    },
+                ],
+            )?;
         }
         state.prompts.queued.push_back(super::QueuedPrompt {
             client_message_id: client_message_id.clone(),
@@ -407,39 +427,27 @@ pub(super) fn submit_prompt(
             wire_blocks: content_blocks,
             blocks: payload.blocks,
         });
-        state.append_to_log(vec![user_event])?;
-        if !client_message_id.is_empty() {
-            state.append_to_log(vec![SessionServerEvent::PromptAccepted {
-                client_message_id,
-            }])?;
+        if client_message_id.is_empty() {
+            state.append_to_log(vec![user_event])?;
         }
         return Ok(());
     }
     if !client_message_id.is_empty() {
-        persist_ledger_update(state, |ledger| {
-            ledger.upsert_queued(
-                client_message_id.clone(),
-                payload.transcript_text.clone(),
-                text.trim().to_string(),
-                wire_blocks_to_json(&content_blocks),
-            );
-            ledger.mark_dispatching(&client_message_id);
-        })?;
+        state.commit_ledger_with_events(
+            |ledger| {
+                ledger.upsert_queued(
+                    client_message_id.clone(),
+                    payload.transcript_text.clone(),
+                    text.trim().to_string(),
+                    wire_blocks_to_json(&content_blocks),
+                );
+                ledger.mark_dispatching(&client_message_id);
+            },
+            vec![user_event],
+        )?;
+    } else {
+        state.append_to_log(vec![user_event])?;
     }
-    state
-        .append_to_log(vec![user_event])
-        .inspect_err(|_error| {
-            if !client_message_id.is_empty() {
-                let _ = persist_ledger_update(state, |ledger| {
-                    ledger.upsert_queued(
-                        client_message_id.clone(),
-                        payload.transcript_text.clone(),
-                        text.trim().to_string(),
-                        wire_blocks_to_json(&content_blocks),
-                    );
-                });
-            }
-        })?;
     let Some(client) = state.acp.client.as_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
@@ -470,6 +478,9 @@ pub(super) fn dispatch_queued_prompt(
     state: &mut TaskSessionState,
     next: &super::QueuedPrompt,
 ) -> Result<(), SessionError> {
+    if let Err(message) = state.ownership.check() {
+        return Err(SessionError::operator(message));
+    }
     if let Some(reason) = &state.evidence.transcript_durability_fault {
         return Err(SessionError::persist(reason.clone()));
     }
@@ -637,6 +648,9 @@ pub(super) fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(
 }
 
 pub(super) fn try_dispatch_next_if_idle(state: &mut TaskSessionState) {
+    if state.ownership.check().is_err() {
+        return;
+    }
     if state.prompts.active_prompt.is_some() || state.prompts.pending_exit_interruption.is_some() {
         return;
     }

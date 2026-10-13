@@ -229,15 +229,20 @@ impl SessionClient {
         }
     }
 
+    /// OS process id of the live agent child while the transport is alive. The
+    /// ACP and Pi variants always report a pid; the Claude variant reports
+    /// `None` once its host has been shut down.
+    pub fn child_pid(&self) -> Option<u32> {
+        match self {
+            SessionClient::Acp(client) => Some(client.child_id()),
+            SessionClient::Pi(session) => session.client.child_pid(),
+            SessionClient::Claude(session) => session.client.child_pid(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn child_id(&self) -> u32 {
-        match self {
-            SessionClient::Acp(client) => client.child_id(),
-            // ponytail: PiRpcClient exposes no pid yet; follow up to surface one.
-            SessionClient::Pi(_) => 0,
-            // Claude SDK mirrors the Pi arm: no pid exposed, report 0.
-            SessionClient::Claude(_) => 0,
-        }
+        self.child_pid().unwrap_or(0)
     }
 
     pub fn poll_event(&self) -> Option<AgentEvent> {

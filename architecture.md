@@ -177,8 +177,9 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   (`TaskSessionDirectory`, one `TaskSession` Tokio command loop per handle,
   transcript cursor, replay, queue, permissions, and idle retention).
   `adapters::web_session_acp` owns ACP stdio only and returns typed
-  `AcpClientEvent` values. `adapters::web_session_store` owns JSONL transcripts
-  under `state_dir` (`web-session/`), not registry or tmux. Session adapters must
+  `AcpClientEvent` values. `adapters::web_session_store` owns the chat
+  transcript, session meta and prompt ledger in the registry database (see
+  durable-execution.md); legacy `web-session/` files are import sources only.
   not import slice or browser wire types; the slice may call session adapters but
   must not import `ajax-web::runtime`. HTTP/WebSocket routes acquire directory
   handles and delegate through `ws_bridge` without interpreting queue, model,
@@ -290,5 +291,6 @@ Full gate before opening a PR: see
 | Command helpers and adapters | [`docs/architecture/commands-adapters.md`](docs/architecture/commands-adapters.md) |
 | CLI composition and supervisor | [`docs/architecture/cli-supervisor.md`](docs/architecture/cli-supervisor.md) |
 | Web Cockpit slices, runtime, terminal, speech | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
+| Durable chat execution: kernel tables, checkpoints, recovery, ownership | [`docs/architecture/durable-execution.md`](docs/architecture/durable-execution.md) |
 | Native Cockpit views | [`docs/architecture/cockpit.md`](docs/architecture/cockpit.md) |
 | Speech operator setup (not architecture ownership) | [`docs/speech-input.md`](docs/speech-input.md) |

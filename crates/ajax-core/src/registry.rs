@@ -9,7 +9,11 @@ use serde::{Deserialize, Serialize};
 
 mod sqlite;
 
-pub use sqlite::SqliteRegistryStore;
+pub use sqlite::{
+    CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
+    NewExecutionTask, NewPrompt, NewRun, OwnerClaim, PromptContentUpdate, RunPrompt, RunRecord,
+    RunUpdate, SqliteRegistryStore, TaskTransition, UnfinishedExecution,
+};
 
 pub trait Registry {
     fn create_task(&mut self, task: Task) -> Result<(), RegistryError>;

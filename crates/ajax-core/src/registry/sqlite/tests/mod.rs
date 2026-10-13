@@ -29,6 +29,12 @@ pub(super) fn task(id: &str, repo: &str, handle: &str) -> Task {
     )
 }
 
+mod execution_child;
+mod execution_crash;
+mod execution_history;
+mod execution_prompts;
+mod execution_recovery;
+mod execution_store;
 mod suite_1;
 mod suite_2;
 mod suite_3;

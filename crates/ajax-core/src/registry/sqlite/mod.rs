@@ -6,6 +6,8 @@ use super::{refresh_task_annotations, InMemoryRegistry, RegistrySnapshotError};
 use crate::ghost_task::is_registry_ghost_task;
 
 mod enums;
+mod execution_recovery;
+mod execution_store;
 mod load;
 mod migrations;
 mod row_codec;
@@ -14,6 +16,12 @@ mod save;
 use load::{load_events, load_step_receipts, load_tasks};
 use row_codec::database_error;
 use save::save_registry;
+
+pub use execution_recovery::{OwnerClaim, RunPrompt, RunRecord, UnfinishedExecution};
+pub use execution_store::{
+    CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
+    NewExecutionTask, NewPrompt, NewRun, PromptContentUpdate, RunUpdate, TaskTransition,
+};
 
 #[cfg(test)]
 pub(crate) use enums::{
@@ -50,7 +58,49 @@ impl SqliteRegistryStore {
     }
 
     fn open(&self) -> Result<Connection, RegistrySnapshotError> {
-        Connection::open(&self.path).map_err(database_error)
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+        }
+        // On unix, create a new database file owner-only before SQLite sees it, so
+        // it is never briefly world-readable under the process umask.
+        #[cfg(unix)]
+        if !self.path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&self.path)
+            {
+                Ok(_file) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(RegistrySnapshotError::Io(error.to_string())),
+            }
+        }
+        let connection = Connection::open(&self.path).map_err(database_error)?;
+        #[cfg(unix)]
+        {
+            // Chat transcripts and prompt text live here: owner-only, like the ledger file was.
+            // SQLite gives its -journal/-wal files the same mode as the database, so nothing more is needed for them.
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&self.path)
+                .map(|meta| meta.permissions().mode())
+                .unwrap_or(0);
+            if mode & 0o777 != 0o600 {
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+            }
+        }
+        // Freed transcript and prompt content is overwritten with zeros, not left in free pages.
+        connection
+            .pragma_update(None, "secure_delete", "ON")
+            .map_err(database_error)?;
+        Ok(connection)
     }
 
     pub fn current_revision(&self) -> Result<u64, RegistrySnapshotError> {

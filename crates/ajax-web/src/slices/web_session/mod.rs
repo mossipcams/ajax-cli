@@ -5,12 +5,14 @@ mod acp_slot;
 pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
+mod execution_ownership;
 pub(crate) mod model_change;
 
 pub mod native_map;
 mod normalize;
 mod output_content;
 mod prepare_session;
+mod process_identity;
 mod prompt_content;
 mod prompt_queue;
 mod protocol;
@@ -19,9 +21,12 @@ mod session_activity;
 mod session_cleanup;
 mod session_error;
 mod session_evidence;
+mod session_storage;
 mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
+mod task_session_child;
+mod task_session_commit;
 mod task_session_directory;
 mod task_session_exit;
 mod task_session_outbound;
@@ -34,6 +39,7 @@ pub use prepare_session::prepare_task_session;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
+pub(crate) use execution_ownership::HEARTBEAT_EVERY;
 pub use protocol::{
     parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
@@ -42,6 +48,7 @@ pub(crate) use session_activity::{
 };
 pub(crate) use session_cleanup::owned_session_handles;
 pub(crate) use session_error::SessionError;
+pub use session_storage::SessionStorage;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
 pub(crate) use ws_bridge::bridge_task_session_socket;
@@ -373,6 +380,12 @@ pub enum SessionRouteError {
 }
 
 #[cfg(test)]
+mod execution_ownership_tests;
+
+#[cfg(test)]
+mod process_identity_tests;
+
+#[cfg(test)]
 mod session_activity_directory_tests;
 
 #[cfg(test)]
@@ -404,6 +417,12 @@ mod task_session_reliability_tests;
 
 #[cfg(test)]
 mod task_session_durability_tests;
+
+#[cfg(test)]
+mod task_session_commit_tests;
+
+#[cfg(test)]
+mod task_session_child_tests;
 
 #[cfg(test)]
 mod task_session_phase2_tests;

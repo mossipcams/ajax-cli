@@ -328,7 +328,7 @@ fn sqlite_registry_store_records_current_schema_version() {
         .unwrap();
     std::fs::remove_file(&path).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
 }
 
 #[test]
@@ -415,7 +415,7 @@ fn sqlite_registry_store_migrates_v4_probe_error_column() {
     let columns = table_columns(&connection, "registry_task_runtime_projection");
     std::fs::remove_file(&path).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert!(columns.contains(&"runtime_observation_error".to_string()));
 }
 
@@ -771,7 +771,7 @@ fn sqlite_registry_store_migrates_v2_tasks_to_runtime_projection_columns() {
     std::fs::remove_file(&path).unwrap();
     let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert!(columns.contains(&"runtime_health".to_string()));
     assert!(columns.contains(&"runtime_observation_error".to_string()));
     assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);

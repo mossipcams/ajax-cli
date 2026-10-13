@@ -1,4 +1,5 @@
 use super::acp_slot::AcpSlot;
+use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
@@ -7,7 +8,7 @@ use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
     acp_drain::{drain_acp_events_with_prompt_cancel, normalize_session_events},
-    SessionError, SessionServerEvent,
+    SessionError, SessionServerEvent, SessionStorage,
 };
 use crate::adapters::web_session_store::{self, prompt_ledger::PromptLedger};
 use ajax_core::models::AgentClient;
@@ -146,7 +147,7 @@ impl HolderCount {
 
 pub(crate) struct TaskSessionState {
     pub(super) qualified_handle: String,
-    pub(super) state_dir: PathBuf,
+    pub(super) storage: SessionStorage,
     pub(super) acp: AcpSlot,
     pub(super) prompts: PromptQueue,
     pub(super) evidence: SessionEvidence,
@@ -157,8 +158,18 @@ pub(crate) struct TaskSessionState {
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
     pub(super) worktree_path: Option<PathBuf>,
+    pub(super) ownership: std::sync::Arc<ExecutionOwnership>,
 }
 
+pub(super) fn agent_client_name(agent: AgentClient) -> &'static str {
+    match agent {
+        AgentClient::Claude => "claude",
+        AgentClient::Codex => "codex",
+        AgentClient::Cursor => "cursor",
+        AgentClient::Pi => "pi",
+        AgentClient::Other => "other",
+    }
+}
 impl TaskSessionState {
     pub(super) fn acquire_holder(&mut self) {
         self.holders.acquire();
@@ -168,15 +179,15 @@ impl TaskSessionState {
         self.holders.reset_to_one();
     }
 
-    pub(super) fn append_to_log(
+    /// Flushes pending activity and drops duplicate spawn errors; reports the
+    /// rest as evidence the ACP client is alive.
+    pub(super) fn filter_events_for_log(
         &mut self,
         events: Vec<SessionServerEvent>,
-    ) -> Result<(), SessionError> {
-        if events.is_empty() {
-            return Ok(());
-        }
+    ) -> Vec<SessionServerEvent> {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
+
         let mut filtered = Vec::with_capacity(events.len());
         for event in events {
             if self
@@ -185,16 +196,35 @@ impl TaskSessionState {
             {
                 continue;
             }
+
             self.evidence
                 .report_activity_for_event(&self.qualified_handle, &event);
             filtered.push(event);
         }
+
+        filtered
+    }
+
+    pub(super) fn append_to_log(
+        &mut self,
+        events: Vec<SessionServerEvent>,
+    ) -> Result<(), SessionError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let filtered = self.filter_events_for_log(events);
         if filtered.is_empty() {
             return Ok(());
         }
-        if let Err(error) =
-            web_session_store::try_append_events(&self.state_dir, &self.qualified_handle, &filtered)
-        {
+
+        if let Err(error) = web_session_store::try_append_events(
+            &self.storage.registry_store(),
+            &self.storage.state_dir,
+            &self.qualified_handle,
+            agent_client_name(self.agent),
+            &filtered,
+        ) {
             let reason = format!("transcript could not be saved: {error}");
             self.evidence
                 .note_transcript_durability_fault(reason.clone());
@@ -269,23 +299,27 @@ impl TaskSessionState {
 
 pub(crate) fn spawn_task_session(
     qualified_handle: String,
-    state_dir: PathBuf,
+    storage: SessionStorage,
     report_activity: Option<super::ReportSessionActivity>,
+    ownership: std::sync::Arc<ExecutionOwnership>,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
     tokio::task::JoinHandle<()>,
 ) {
     let (tx, mut rx) = mpsc::channel(COMMAND_CAPACITY);
     let handle = qualified_handle.clone();
-    let (prompt_ledger, ledger_unusable) =
-        match web_session_store::prompt_ledger::load(&state_dir, &handle) {
-            Ok(ledger) => (ledger, None),
-            Err(error) => (PromptLedger::default(), Some(error.to_string())),
-        };
+    let (prompt_ledger, ledger_unusable) = match web_session_store::prompt_ledger::try_load(
+        &storage.registry_store(),
+        &storage.state_dir,
+        &handle,
+    ) {
+        Ok(ledger) => (ledger, None),
+        Err(error) => (PromptLedger::default(), Some(error.to_string())),
+    };
     let join = tokio::spawn(async move {
         let mut state = TaskSessionState {
             qualified_handle: handle,
-            state_dir,
+            storage,
             acp: AcpSlot {
                 client: None,
                 model: String::new(),
@@ -331,6 +365,7 @@ pub(crate) fn spawn_task_session(
             last_released: None,
             agent: AgentClient::Cursor,
             worktree_path: None,
+            ownership,
         };
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -522,8 +557,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         TaskSessionCommand::EvictionSnapshot { reply } => {
             // Unreadable metadata is not evictable: eviction relies on a restore.
             let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
-                &state.state_dir,
+                &state.storage.registry_store(),
+                &state.storage.state_dir,
                 &state.qualified_handle,
+                agent_client_name(state.agent),
             )
             .is_ok_and(|stored| stored.acp_session_id.is_some());
             let _ = reply.send(EvictionSnapshot {

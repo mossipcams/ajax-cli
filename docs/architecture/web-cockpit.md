@@ -347,7 +347,7 @@ field is refused (`unsupported_capability`). Same-harness Switch is refused;
 connected model, effort, and Fast changes use the composer controls. Cross-harness
 Switch clears the prior harness model pin, resets backend context on the live slot
 (cancel in-flight work, shut down the old ACP child, spawn the new harness with
-empty context), and keeps the TaskSession slot and JSONL transcript; with no live
+empty context), and keeps the TaskSession slot and stored transcript; with no live
 slot, persist `agent` with `session_model: None` and clear the stored resume id so
 the next attach uses `session/new`. Switch is refused for a task that was launched
 interactively, because that task's agent is live in its tmux pane and the registry
@@ -426,7 +426,7 @@ detach stdio without close so `session/resume` / `session/load` can restore the
 stored id ([#1061](https://github.com/mossipcams/ajax-cli/issues/1061),
 [#1181](https://github.com/mossipcams/ajax-cli/issues/1181)). Harnesses that never
 advertised restore are not idle-evicted; host-caused restore failure is a defect.
-Close ends the ACP session on the child only; Ajax task truth, JSONL transcripts,
+Close ends the ACP session on the child only; Ajax task truth, stored transcripts,
 and tmux terminals are unchanged. Close failure or timeout still tears down the
 child and surfaces a session error event.
 
@@ -447,10 +447,11 @@ harness (no model picker). It clears the prior harness model pin, resets ACP
 context, and keeps the transcript. Same-harness model changes use the connected
 composer controls (`set_config_option`), not Switch.
 
-Orchestration chat transcripts persist as JSONL under ajax-web `state_dir`
-(`web-session/<encoded-handle>.jsonl`), not in the registry or tmux. Prompt
-ownership and idempotency persist separately in an atomic sidecar ledger
-(`web-session/<encoded-handle>.prompt-ledger.json`). The
+Orchestration chat transcripts, the stored session id and model, prompt
+ownership and idempotency, and dispatch checkpoints persist in the registry
+database tables described in `docs/architecture/durable-execution.md`, not in
+tmux; legacy `web-session/<encoded-handle>.jsonl` and `.prompt-ledger.json`
+files are imported once on first use. The
 `web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
 one `TaskSession` Tokio command loop per handle): FIFO prompt queueing,
 request-ID-correlated one-in-flight turns, durable terminal-before-next
@@ -458,8 +459,8 @@ advancement, cancellation, model switching, permission answers,
 elicitation answers,
   idempotency, subscriber fan-out, idle LRU retention, ACP child-exit reconciliation,
   transactional replacement, and transcript cursors.
-JSONL persistence lives in `adapters::web_session_store` (transcript append +
-prompt ledger sidecar). ACP stdio and typed
+Persistence lives in `adapters::web_session_store` (transcript, session meta,
+prompt ledger) on top of the registry database. ACP stdio and typed
 request/notification I/O remain in `web_session_acp`; the slice maps
 `AcpClientEvent` values into persisted session events and normalizes streamed
 agent/thought text to full-content updates with stable host `itemId` values
@@ -484,11 +485,12 @@ excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
 | `replay` | cursor replay planning |
 | `transcript` | in-memory cursor and permission filter |
 | `ws_bridge` | socket forward to directory |
-| `session_cleanup` | registry-owned JSONL retention |
+| `session_cleanup` | registry-owned session retention |
+| `execution_ownership` | single-host lease for chat agents |
 | `model_change` | harness-switch reset via directory |
 | `task_session*` / `acp_drain` | command loop, spawn, ACP poll (may call adapters) |
 | `adapters::web_session_acp` | ACP stdio only |
-| `adapters::web_session_store` | JSONL transcript + prompt ledger sidecar |
+| `adapters::web_session_store` | transcript, session meta and prompt ledger in the registry database |
 | `runtime` production | cookie/origin, attach plan, delegate to `ws_bridge` |
 
 Each row's production code must not import sibling internals listed in the

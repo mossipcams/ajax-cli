@@ -574,7 +574,6 @@ impl AcpStdioClient {
         let _ = self.child.wait();
     }
 
-    #[cfg(test)]
     pub(crate) fn child_id(&self) -> u32 {
         self.child.id()
     }

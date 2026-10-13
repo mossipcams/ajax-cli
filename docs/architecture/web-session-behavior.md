@@ -97,14 +97,14 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   and any later replacement, the host stores the complete advertised list and
   exposes it on the snapshot as `availableCommands` (`name`, `description`,
   optional `inputHint`). Replace the list; do not merge. Updates are live session
-  capability state, not JSONL transcript rows. The chat composer completes
+  capability state, not transcript rows. The chat composer completes
   advertised `/name` tokens (keyboard Tab/Enter and tappable rows on iOS Safari)
   and sends the operator's text unchanged on `session/prompt`. Ajax also owns
   one built-in slash command, `/clear`: the browser sends WebSocket
   `{ type: "clear" }` (never `session/prompt`), and the host cancels any active
   turn and queued prompts, clears the stored ACP resume id, spawns
   `session/new` with the same harness and model, appends a host note
-  (`Context cleared.`), and keeps the TaskSession slot, JSONL transcript, and
+  (`Context cleared.`), and keeps the TaskSession slot, stored transcript, and
   WebSocket identity. Prior transcript rows remain visible after the reset
   snapshot and replay.
 - Harness switches and Clear-context append `usage_reset` after the host note, clearing browser context and turn usage; replay omits `usage` and `turn_usage` rows before the latest reset marker.
@@ -121,13 +121,13 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   WebSocket `{ type: "prompt", text, clientMessageId, contentBlocks? }` remains
   backward compatible; omitted `contentBlocks` is text-only. The host validates block
   types against advertised capabilities, sends a real ACP `ContentBlock` array on
-  `session/prompt`, and records only operator text plus attachment names in JSONL
+  `session/prompt`, and records only operator text plus attachment names in the stored transcript
   (no base64 in the operator transcript).
 - Non-text **output** from ACP `session/update` (agent/user/thought chunks and tool-call
   content) maps `image`, `resource_link`, and embedded `resource` blocks into wire
   `message.contentBlocks` and extended `tool_call.content` (text chunks and diffs
   unchanged). The host normalizer accumulates non-text blocks per message lane alongside
-  streamed text. JSONL keeps compact wire shapes: prefer `uri` + `mimeType` over inline
+  streamed text. The stored transcript keeps compact wire shapes: prefer `uri` + `mimeType` over inline
   base64 when the agent supplies a durable URI; otherwise image data stays on the replay
   event. ACP `ToolCallContent::Terminal` and `terminal/*` are never advertised, mapped, or
   rendered.
@@ -137,7 +137,7 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   connected browsers without reconnect or model change. This is agent-reported session
   chrome only — it does not replace the Ajax task handle or become Core task truth.
   The shared task workspace header does not render it (Core `detail.title` / handle is
-  the only header identity). Updates are not JSONL transcript rows.
+  the only header identity). Updates are not transcript rows.
 - Ajax `initialize` advertises `clientCapabilities.session.configOptions.boolean:
   {}` so harnesses may expose boolean Fast; filesystem and terminal capabilities
   remain false. Cursor `_meta.parameterizedModelPicker` is a vendor extra, not the
@@ -169,7 +169,7 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Live model pins
   use only WebSocket `set_config_option` → ACP `session/set_config_option`; the
   browser sends the exact advertised descriptor value, never an Ajax catalog id.
-  JSONL meta stores pipe-form, not bare handshake `currentValue`. A dead child is
+  Stored session meta keeps pipe-form, not bare handshake `currentValue`. A dead child is
   respawned before applying the pin; in-band refusal is a typed error and a live
   child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
@@ -194,7 +194,7 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   in-flight turn, discard the host queue, shut down the old ACP child, clear the
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
   transcript replay), append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot, JSONL transcript, and WebSocket
+  reset.`), and keep the TaskSession slot, stored transcript, and WebSocket
   identity. With no live slot, persist only and clear the stored resume id so the
   next attach uses empty context. Switch sends only `{ agent }`; a model field is
   refused. Persist `None` for Auto/unspecified; never store the literal string
@@ -235,13 +235,15 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order
-  (cap 8). The host appends the user `Message` row to JSONL when the prompt is
+  (cap 8). The host appends the user `Message` row to the stored transcript when the prompt is
   queued, not only when it is dispatched to ACP. When the cap is reached the host
   **rejects** the new submit with
   `prompt queue is full`; it must not drop already-acknowledged queued work.
-- Prompt ownership lives in a versioned sidecar ledger
-  (`web-session/<handle>.prompt-ledger.json`), separate from bounded transcript
-  JSONL. The host persists **queued** rows before `prompt_accepted`, and
+- Prompt ownership lives in the registry database as prompt tasks (one per
+  `clientMessageId`) with their dispatch checkpoints, committed in the same
+  transaction as the transcript rows they relate to; the bounded transcript is
+  kept separately by sequence number. The host persists **queued** rows before
+  `prompt_accepted`, and
   **dispatching** rows before ACP `session/prompt`. The ledger is the dedupe
   authority for `clientMessageId`; transcript `prompt_accepted` events remain for
   browser replay but are not consulted for idempotency.
@@ -321,7 +323,7 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   clears the stored queue entry.
 - Each browser prompt has a stable `clientMessageId`; the host persists a
   `prompt_accepted` acknowledgement and dispatches each ID at most once. Dedupe
-  and queue ownership are enforced by the sidecar prompt ledger, not by scanning
+  and queue ownership are enforced by the stored prompt ledger, not by scanning
   transcript rows. The browser retries only prompts still absent from that
   acknowledgement.
 - A CI failure notification uses the same `submit_prompt_with_id` command and
@@ -344,7 +346,7 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   editable follow-up held in the composer; it does not maintain a second FIFO
   queue. Submitting while a turn is in flight **stages** that follow-up on the
   host immediately — the browser calls `session/prompt` with a stable
-  `clientMessageId`, the host appends the user `Message` row to JSONL, and the
+  `clientMessageId`, the host appends the user `Message` row to the stored transcript, and the
   prompt ledger records **queued** before `prompt_accepted`. `localStorage`
   queue text is presentation state for reload; it is not the only copy of a
   staged follow-up ([#1139](https://github.com/mossipcams/ajax-cli/issues/1139)):
@@ -398,11 +400,11 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 ## Shutdown and slot retention
 
 - Dropping a task or cross-harness Switch shuts down the live ACP child; the
-  TaskSession slot and JSONL transcript stay unless the task is dropped.
+  TaskSession slot and stored transcript stay unless the task is dropped.
 - A task owns its orchestration session only while it exists in the registry and
   is not in the `Removed` lifecycle ([#977](https://github.com/mossipcams/ajax-cli/issues/977)).
   Sessions with no such owner are stale: Web Cockpit initialization deletes
-  their persisted JSONL transcript, and a successful Drop performs the same
+  their persisted stored transcript, and a successful Drop performs the same
   cleanup (live ACP slot plus transcript) before the qualified handle can be
   reused. Ownership is derived from registry task handles only, not browser
   routes, `localStorage`, or ACP slot state.
@@ -422,15 +424,14 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   harnesses are never evicted regardless of grace.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
-- `ajax-web` restart reloads JSONL transcripts and cursors from disk; live ACP
+- `ajax-web` restart reloads stored transcripts and cursors from the registry database; live ACP
   children do not survive process exit.
 
 ## Model switching on the live ACP session
 
 - `set_config_option` applies an exact advertised model/config value in-band via
   ACP `session/set_config_option`, then persists the confirmed pipe-form model.
-  The ACP process, `sessionId`, and JSONL
-  transcript stay put; `snapshot.model` updates from the harness-reported applied
+  The ACP process, `sessionId`, and stored transcript stay put; `snapshot.model` updates from the harness-reported applied
   id. In-band apply that is unadvertised or refused is a typed error; the child
   keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989),
   [#997](https://github.com/mossipcams/ajax-cli/issues/997)). When the child is
@@ -444,7 +445,7 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   state when `reset` is false; only reconnect-after-drop with `reset: true` or a
   generation-change snapshot may clear and replay.
 - Cold attach (no browser `?cursor=`) must send protocol v2 `snapshot.reset:
-  true` so a reducer that already painted cached JSONL stand-in history is cleared
+  true` so a reducer that already painted cached stand-in history is cleared
   before the authoritative replay from disk ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
 - A later protocol-v2 `snapshot` on an already-ready WebSocket with `reset: true`
   (for example after host generation change) must dispatch `ready` with
@@ -496,7 +497,7 @@ replacement while the child is healthy.
 
 ## Restart and transcript recovery
 
-- UI transcript survives `ajax-web` restart via JSONL under `state_dir`.
+- UI transcript survives `ajax-web` restart in the registry database; legacy `web-session/<handle>.jsonl` files are imported once on first use.
 - On acquire after restart, the host restores the stored ACP session id with
   `session/resume` when advertised, otherwise `session/load`. If resume fails
   and load is advertised, load is attempted before giving up. Restart and idle
@@ -522,16 +523,21 @@ whole transcript inside `session/load` before responding.
   `session/load` until the live session is installed on the slot. Capability
   updates (`config_option_update`, `available_commands_update`,
   `session_info_update`) still flow during handshake. Transcript replay must not
-  land in JSONL even when notifications arrive after spawn returns
+  land in the stored transcript even when notifications arrive after spawn returns
   ([#1031](https://github.com/mossipcams/ajax-cli/issues/1031)).
-- If restore is unavailable, the JSONL transcript still reloads and the attach
+- If restore is unavailable, the stored transcript still reloads and the attach
   surfaces the typed restore error while keeping the WebSocket open. Ajax Chat
   offers explicit `Retry` and `Start fresh` actions: `Retry` retains the stored
   id and repeats restore; `Start fresh` clears that id, creates a new session,
   and appends the normal `Context cleared.` note. Failed restores never create
   a fresh session or append that note.
-- Transcript events append to JSONL without a per-event full rewrite; bounded
-  compaction preserves absolute replay cursors. Streamed agent/thought text is
+- A prompt that was dispatching when the host died is shown as interrupted
+  (`Prompt <id> was interrupted by host restart and was not retried.`) and is
+  never resent automatically; queued prompts survive and dispatch in order. See
+  `docs/architecture/durable-execution.md`.
+- Transcript events are appended as database rows without rewriting earlier
+  rows; bounded retention (2000 events) never renumbers or reuses a sequence
+  number, so absolute replay cursors stay valid. Streamed agent/thought text is
   normalized to full-content `message` updates with stable host `itemId` values
   before persistence. Agent/thought stream lanes close when a user prompt is
   recorded, on `turn_end`, or on an event that takes a transcript row of its own
@@ -713,7 +719,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
   timeout) before killing stdio. When close is not advertised, teardown still
   cancels then kills.
 - ACP `session/close` ends only the agent-side session on the child. It does not
-  Drop the Ajax task, delete JSONL, or touch Ajax Terminal/tmux.
+  Drop the Ajax task, delete the stored transcript, or touch Ajax Terminal/tmux.
 - Close failure or timeout still tears down the child; the host appends a typed
   `error` session event rather than hanging the slot.
 
@@ -749,7 +755,7 @@ only the chat live head knew a turn was in flight.
   evidence, it does not add a second status vocabulary, and the browser remains a
   projection.
 - Transitions are derived from the same session events the host appends to the
-  JSONL transcript, but not by a hand-written table. Each event is translated
+  stored transcript, but not by a hand-written table. Each event is translated
   to a neutral fact (`web_session::acp_execution_map`), folded into one
   per-session `ajax_core::acp_execution_state::AcpExecutionState` (root turn,
   open tool calls by `toolCallId`, pending permission/input requests, optional
@@ -842,7 +848,7 @@ dividers for cancellations, reconnects, harness switches and context resets.
 - First paint of a long in-memory transcript renders only a recent window
   (`DEFAULT_HISTORY_WINDOW` = 150 conversation rows). Older rows remain in the
   session reducer; the browser does not become a second transcript authority.
-  Wire replay and JSONL attach still deliver the full transcript into reducer
+  Wire replay and stored-transcript attach still deliver the full transcript into reducer
   state; the window only limits what Conversation paints.
 - The window start snaps forward to a user-turn boundary within the length cap
   when one exists; otherwise the cap cut applies so a huge agent-only tail never
@@ -862,6 +868,10 @@ dividers for cancellations, reconnects, harness switches and context resets.
 
 ## Duplicate process and prompt prevention
 
+- Only one Ajax web host may run chat agents against a registry database. A
+  host that holds no lease, or has lost it, refuses to start or respawn an
+  agent, admit a prompt or dispatch a queued prompt; queued prompts stay
+  queued. Attach and read paths are not gated.
 - At most one ACP stdio process may hold a given task session slot; acquire must
   not spawn a second child for the same handle while one is live.
 - A second composer submit while a turn is in flight is queued (not a second

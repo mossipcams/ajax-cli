@@ -98,6 +98,11 @@ impl JsonlProcess {
         self.child.id()
     }
 
+    /// OS process id of the child, for recording it so a restarted host can clean up.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Wait for the next stdout record. A `RecvError` means the reader thread
     /// finished (EOF already delivered [`JsonlRecord::Exited`]).
     pub fn recv(&self) -> Result<JsonlRecord, mpsc::RecvError> {

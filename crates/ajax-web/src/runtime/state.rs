@@ -11,7 +11,7 @@ use crate::{
         dev_deploy,
         push::PushHub,
         training::{SshTrainingRunner, TrainingCommandRunner},
-        web_session::{owned_session_handles, TaskSessionDirectory},
+        web_session::{owned_session_handles, SessionStorage, TaskSessionDirectory},
     },
     WebError,
 };
@@ -390,7 +390,7 @@ impl<C, B> WebAppState<C, B> {
         context: CommandContext<InMemoryRegistry>,
         runner: C,
         bridge: B,
-        state_dir: PathBuf,
+        storage: impl Into<SessionStorage>,
     ) -> Self
     where
         C: Clone + CommandRunner + Send + Sync + 'static,
@@ -401,9 +401,9 @@ impl<C, B> WebAppState<C, B> {
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
         let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
         let stt_language = context.config.stt.language.clone();
-        let state_dir = Arc::new(state_dir.clone());
-        let hub_dir = state_dir.as_ref().clone();
-        let task_session_directory = TaskSessionDirectory::new(hub_dir);
+        let storage = storage.into();
+        let state_dir = Arc::new(storage.state_dir.clone());
+        let task_session_directory = TaskSessionDirectory::new(storage);
         task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
         let state = Self {
             shared: Arc::new(Mutex::new(WebSharedState {
@@ -459,12 +459,14 @@ impl<C, B> WebAppState<C, B> {
         context: CommandContext<InMemoryRegistry>,
         runner: C,
         bridge: B,
-        state_dir: PathBuf,
+        storage: impl Into<SessionStorage>,
     ) -> Result<Self, WebError>
     where
         C: Clone + CommandRunner + Send + Sync + 'static,
         B: Clone + RuntimeBridge<C> + Send + Sync + 'static,
     {
+        let storage = storage.into();
+        let state_dir = storage.state_dir.clone();
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
         let push = PushHub::load_or_create(&state_dir).map_err(WebError::CommandFailed)?;
         let cloudflare_access = CloudflareAccessConfig::from_env()?;
@@ -473,9 +475,8 @@ impl<C, B> WebAppState<C, B> {
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
         let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
         let stt_language = context.config.stt.language.clone();
-        let hub_dir = state_dir.clone();
         let state_dir = Arc::new(state_dir);
-        let task_session_directory = TaskSessionDirectory::new(hub_dir);
+        let task_session_directory = TaskSessionDirectory::new(storage);
         task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
         let state = Self {
             shared: Arc::new(Mutex::new(WebSharedState {

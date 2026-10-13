@@ -2,7 +2,7 @@ use super::database_error;
 use crate::registry::RegistrySnapshotError;
 use rusqlite::Connection;
 
-pub(super) const SQLITE_SCHEMA_VERSION: i64 = 9;
+pub(super) const SQLITE_SCHEMA_VERSION: i64 = 10;
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     let user_version = sqlite_user_version(connection)?;
@@ -27,6 +27,10 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
     if sqlite_user_version(connection)? == 7 {
         migrate_v7_to_current_schema(connection)?;
     }
+
+    if sqlite_user_version(connection)? == 9 {
+        migrate_v9_to_v10(connection)?;
+    }
     let user_version = sqlite_user_version(connection)?;
     if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
         return Err(RegistrySnapshotError::IncompatibleSchema {
@@ -35,9 +39,38 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
         });
     }
     create_current_schema(connection)?;
+    ensure_agent_runs_columns(connection)?;
     connection
         .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
         .map_err(database_error)
+}
+
+/// Version 10 only adds the durable execution tables; existing rows are
+/// untouched by `create_current_schema`.
+fn migrate_v9_to_v10(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    create_current_schema(connection)?;
+    connection
+        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
+        .map_err(database_error)
+}
+
+/// Repairs `agent_runs` databases created by earlier builds of this unreleased
+/// schema 10, which may predate the trailing columns.
+fn ensure_agent_runs_columns(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    for (column, ddl) in [
+        (
+            "unreadable_history_rows",
+            "unreadable_history_rows INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("child_started", "child_started TEXT"),
+    ] {
+        if !table_has_column(connection, "agent_runs", column)? {
+            connection
+                .execute_batch(&format!("ALTER TABLE agent_runs ADD COLUMN {ddl}"))
+                .map_err(database_error)?;
+        }
+    }
+    Ok(())
 }
 
 fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -167,6 +200,68 @@ fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshot
                 value INTEGER NOT NULL
             );
             INSERT OR IGNORE INTO registry_meta (key, value) VALUES ('revision', 0);
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                model TEXT NOT NULL,
+                native_session_id TEXT,
+                capabilities_json TEXT NOT NULL DEFAULT '{}',
+                child_pid INTEGER,
+                child_pgid INTEGER,
+                owner_boot_id TEXT,
+                schema_version INTEGER NOT NULL,
+                next_event_seq INTEGER NOT NULL DEFAULT 1,
+                created_unix_ms INTEGER NOT NULL,
+                unreadable_history_rows INTEGER NOT NULL DEFAULT 0,
+                child_started TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_tasks (
+                task_exec_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                parent_id TEXT,
+                kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                outcome_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS prompt_submissions (
+                submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                task_exec_id TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                UNIQUE(run_id, idempotency_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_checkpoints (
+                task_exec_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                operation TEXT NOT NULL,
+                replay_policy TEXT NOT NULL,
+                external_operation_id TEXT,
+                schema_version INTEGER NOT NULL,
+                intent_json TEXT NOT NULL,
+                result_json TEXT,
+                PRIMARY KEY (task_exec_id, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_events (
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY (run_id, seq)
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_owner (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                boot_id TEXT NOT NULL,
+                pid INTEGER NOT NULL,
+                heartbeat_unix_ms INTEGER NOT NULL
+            );
             "#,
         )
         .map_err(database_error)

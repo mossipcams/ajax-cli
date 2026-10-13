@@ -103,6 +103,8 @@ mod rpc_session_request_tests;
 #[cfg(test)]
 mod session_client_claude_tests;
 #[cfg(test)]
+mod session_client_pid_tests;
+#[cfg(test)]
 mod session_client_pin_tests;
 #[cfg(test)]
 mod session_client_spawn_tests;
