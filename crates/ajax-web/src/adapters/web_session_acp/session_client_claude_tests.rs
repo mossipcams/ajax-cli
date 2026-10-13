@@ -115,7 +115,7 @@ fn prompt_flow_streams_through_the_enum() {
 }
 
 #[test]
-fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
+fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
     with_fake(|| {
         let (mut client, _report) = spawn_claude_variant();
 
@@ -161,8 +161,24 @@ fn cancel_of_slow_run_and_idle_cancel_through_the_enum() {
             }
         }
 
-        // Cancel with no run in flight is an error.
-        assert!(client.cancel().is_err(), "cancel with no run must fail");
+        assert!(!client.prompt_in_flight());
+        let outcome = client.cancel().expect("idle cancel must succeed");
+        assert!(outcome.permissions.is_empty());
+        assert!(outcome.elicitations.is_empty());
+        assert!(!client.host_exited());
+    });
+}
+
+#[test]
+fn issue_1272_claude_idle_cancel_yields_empty_success() {
+    with_fake(|| {
+        let (mut client, _) = spawn_claude_variant();
+        assert!(!client.prompt_in_flight());
+        let outcome = client.cancel().expect("idle cancel must succeed");
+        assert!(outcome.permissions.is_empty());
+        assert!(outcome.elicitations.is_empty());
+        assert!(!client.prompt_in_flight());
+        assert!(!client.host_exited());
     });
 }
 
@@ -263,14 +279,26 @@ fn resume_missing_session_fails_through_the_enum() {
 }
 
 #[test]
-fn shutdown_reports_the_session_id_once() {
+fn issue_1273_claude_shutdown_and_detach_return_no_error() {
     with_fake(|| {
-        let (mut client, _report) = spawn_claude_variant();
-        let session_id = client.session_id().to_string();
-
-        let first = client.shutdown();
-        assert_eq!(first.as_deref(), Some(session_id.as_str()));
-        assert!(client.shutdown().is_none(), "second shutdown must be None");
+        for detach in [false, true] {
+            let (mut client, _) = spawn_claude_variant();
+            let session_id = client.session_id().to_string();
+            let error = if detach {
+                client.detach()
+            } else {
+                client.shutdown()
+            };
+            assert_eq!(error, None, "successful teardown must not report an error");
+            assert!(client.host_exited());
+            assert_eq!(client.session_id(), session_id);
+            assert_eq!(client.shutdown(), None);
+            assert_eq!(client.detach(), None);
+            assert!(
+                client.cancel().is_err(),
+                "a shut-down transport is unavailable"
+            );
+        }
     });
 }
 

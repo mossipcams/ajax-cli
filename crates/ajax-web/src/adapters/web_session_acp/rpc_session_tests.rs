@@ -150,7 +150,7 @@ fn begin_prompt_twice_while_active_is_an_error() {
 }
 
 #[test]
-fn abort_while_idle_is_an_error() {
+fn issue_1272_low_level_abort_remains_strict_while_idle() {
     let (process, handshake) = handshaken(&[]);
     let mut session = RpcSession::new(process, handshake, map_record);
 
@@ -159,6 +159,10 @@ fn abort_while_idle_is_an_error() {
         error.to_lowercase().contains("active"),
         "error must say there is no active run: {error}"
     );
+    // SessionClient adapts idle cancellation; the transport still requires a run.
+    assert!(!session.run_active());
+    session.begin_prompt("hello fake pi").expect("begin prompt");
+    session.abort().expect("active abort must still succeed");
 }
 
 #[test]

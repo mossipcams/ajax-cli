@@ -145,13 +145,17 @@ fn second_begin_prompt_while_run_active_is_err() {
 }
 
 #[test]
-fn cancel_without_run_is_err() {
+fn issue_1272_idle_cancel_is_adapted_at_session_boundary() {
     let client = spawn_client(&[]);
     assert!(!client.prompt_in_flight());
     let error = client
         .cancel()
         .expect_err("cancel with no run must be rejected");
     assert!(!error.is_empty());
+    let mut session = super::session_client::SessionClient::from_pi(client);
+    let outcome = session.cancel().expect("idle boundary cancel must succeed");
+    assert!(outcome.permissions.is_empty());
+    assert!(outcome.elicitations.is_empty());
 }
 
 #[test]

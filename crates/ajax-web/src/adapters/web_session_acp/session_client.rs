@@ -185,21 +185,24 @@ impl SessionClient {
     }
 
     pub fn shutdown(&mut self) -> Option<String> {
+        // RPC shutdown returns a session ID, not the optional error used by the slice.
         match self {
-            SessionClient::Acp(client) => client.shutdown(),
-            SessionClient::Pi(session) => session.client.shutdown(),
-            // Claude SDK has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Claude(session) => session.client.shutdown(),
+            SessionClient::Acp(client) => return client.shutdown(),
+            SessionClient::Pi(session) => {
+                session.client.shutdown();
+            }
+            SessionClient::Claude(session) => {
+                session.client.shutdown();
+            }
         }
+        None
     }
 
     pub fn detach(&mut self) -> Option<String> {
         match self {
             SessionClient::Acp(client) => client.detach(),
-            // Pi RPC has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Pi(session) => session.client.shutdown(),
-            // Claude SDK has no detached-host semantics; shutting down is the only exit.
-            SessionClient::Claude(session) => session.client.shutdown(),
+            // RPC transports have no detached-host semantics.
+            SessionClient::Pi(_) | SessionClient::Claude(_) => self.shutdown(),
         }
     }
 
@@ -263,16 +266,23 @@ impl SessionClient {
 
     pub(crate) fn cancel(&mut self) -> Result<CancelOutcome, String> {
         match self {
-            SessionClient::Acp(client) => client.cancel(),
-            SessionClient::Pi(session) => session.client.cancel().map(|()| CancelOutcome {
-                permissions: vec![],
-                elicitations: vec![],
-            }),
-            SessionClient::Claude(session) => session.client.cancel().map(|()| CancelOutcome {
-                permissions: vec![],
-                elicitations: vec![],
-            }),
+            SessionClient::Acp(client) => return client.cancel(),
+            SessionClient::Pi(session) => {
+                if session.client.prompt_in_flight() || session.client.host_exited() {
+                    session.client.cancel()?;
+                }
+            }
+            SessionClient::Claude(session) => {
+                if session.client.prompt_in_flight() || session.client.host_exited() {
+                    session.client.cancel()?;
+                }
+            }
         }
+        // Releasing an idle live RPC host needs no abort; transport failures still propagate.
+        Ok(CancelOutcome {
+            permissions: vec![],
+            elicitations: vec![],
+        })
     }
 
     pub(crate) fn prompt_in_flight(&self) -> bool {

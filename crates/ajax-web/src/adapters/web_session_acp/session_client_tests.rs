@@ -154,11 +154,15 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
 }
 
 #[test]
-fn pi_variant_cancel_without_run_is_err() {
+fn issue_1272_pi_idle_cancel_yields_empty_success() {
     let mut session = spawn_pi(&[]);
 
     assert!(!session.prompt_in_flight());
-    assert!(session.cancel().is_err(), "cancel with no run should fail");
+    let outcome = session.cancel().expect("idle cancel must succeed");
+    assert!(outcome.permissions.is_empty());
+    assert!(outcome.elicitations.is_empty());
+    assert!(!session.prompt_in_flight());
+    assert!(!session.host_exited());
 
     let _ = session.shutdown();
 }
@@ -227,13 +231,23 @@ fn pi_variant_applies_model_and_option_changes() {
 }
 
 #[test]
-fn pi_variant_shutdown_returns_session_id_once_then_none() {
-    let mut session = spawn_pi(&[]);
-
-    let first = session
-        .shutdown()
-        .expect("first shutdown returns the session id");
-    assert_eq!(first, "fake-pi-rpc-session-1");
-
-    assert!(session.shutdown().is_none(), "second shutdown returns None");
+fn issue_1273_pi_shutdown_and_detach_return_no_error() {
+    for detach in [false, true] {
+        let mut session = spawn_pi(&[]);
+        let session_id = session.session_id().to_string();
+        let error = if detach {
+            session.detach()
+        } else {
+            session.shutdown()
+        };
+        assert_eq!(error, None, "successful teardown must not report an error");
+        assert!(session.host_exited());
+        assert_eq!(session.session_id(), session_id);
+        assert_eq!(session.shutdown(), None);
+        assert_eq!(session.detach(), None);
+        assert!(
+            session.cancel().is_err(),
+            "a shut-down transport is unavailable"
+        );
+    }
 }
