@@ -424,6 +424,7 @@ fn run_updates_preserve_unset_fields_and_clear_nullable_fields() {
             capabilities_json: Some("{\"resume\":true}".into()),
             model: Some("new-model".into()),
             child: Some(Some((42, 43))),
+            child_started: None,
             owner_boot_id: Some(Some("boot".into())),
         }),
         ..commit()

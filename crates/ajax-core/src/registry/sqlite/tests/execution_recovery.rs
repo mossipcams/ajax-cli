@@ -152,6 +152,7 @@ fn latest_run_uses_insertion_order_and_reads_all_fields() {
                 model: Some("updated".into()),
                 child: Some(Some((42, 43))),
                 owner_boot_id: Some(Some("boot".into())),
+                child_started: None,
             }),
             ..Default::default()
         })
@@ -170,6 +171,7 @@ fn latest_run_uses_insertion_order_and_reads_all_fields() {
             schema_version: CHECKPOINT_SCHEMA_VERSION,
             next_event_seq: 1,
             unreadable_history_rows: 0,
+            child_started: None,
         })
     );
 }

@@ -39,6 +39,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
         });
     }
     create_current_schema(connection)?;
+    ensure_agent_runs_columns(connection)?;
     connection
         .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
         .map_err(database_error)
@@ -51,6 +52,25 @@ fn migrate_v9_to_v10(connection: &Connection) -> Result<(), RegistrySnapshotErro
     connection
         .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
         .map_err(database_error)
+}
+
+/// Repairs `agent_runs` databases created by earlier builds of this unreleased
+/// schema 10, which may predate the trailing columns.
+fn ensure_agent_runs_columns(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    for (column, ddl) in [
+        (
+            "unreadable_history_rows",
+            "unreadable_history_rows INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("child_started", "child_started TEXT"),
+    ] {
+        if !table_has_column(connection, "agent_runs", column)? {
+            connection
+                .execute_batch(&format!("ALTER TABLE agent_runs ADD COLUMN {ddl}"))
+                .map_err(database_error)?;
+        }
+    }
+    Ok(())
 }
 
 fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -194,7 +214,8 @@ fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshot
                 schema_version INTEGER NOT NULL,
                 next_event_seq INTEGER NOT NULL DEFAULT 1,
                 created_unix_ms INTEGER NOT NULL,
-                unreadable_history_rows INTEGER NOT NULL DEFAULT 0
+                unreadable_history_rows INTEGER NOT NULL DEFAULT 0,
+                child_started TEXT
             );
 
             CREATE TABLE IF NOT EXISTS execution_tasks (

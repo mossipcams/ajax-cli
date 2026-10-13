@@ -83,6 +83,9 @@ pub struct RunUpdate {
     pub model: Option<String>,
     /// `(child_pid, child_pgid)`; the inner `None` clears both.
     pub child: Option<Option<(i64, i64)>>,
+    /// Start-time token of the child process recorded with `child`; the inner
+    /// `None` clears it. Callers set both together.
+    pub child_started: Option<Option<String>>,
     pub owner_boot_id: Option<Option<String>>,
 }
 
@@ -458,6 +461,13 @@ impl SqliteRegistryStore {
                         child.map(|(pid, _)| pid),
                         child.map(|(_, pgid)| pgid)
                     ],
+                )?;
+            }
+
+            if let Some(child_started) = &run_update.child_started {
+                transaction.execute(
+                    "UPDATE agent_runs SET child_started = ?2 WHERE run_id = ?1",
+                    params![commit.run_id, child_started],
                 )?;
             }
             if let Some(owner_boot_id) = &run_update.owner_boot_id {

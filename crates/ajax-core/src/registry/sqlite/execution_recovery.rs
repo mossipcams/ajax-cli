@@ -22,6 +22,7 @@ pub struct RunRecord {
     pub schema_version: u32,
     pub next_event_seq: u64,
     pub unreadable_history_rows: u64,
+    pub child_started: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +53,28 @@ pub struct RunPrompt {
     pub state: ExecutionState,
 }
 
+fn run_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
+    Ok(RunRecord {
+        run_id: row.get(0)?,
+        task_id: row.get(1)?,
+        harness: row.get(2)?,
+        model: row.get(3)?,
+        native_session_id: row.get(4)?,
+        capabilities_json: row.get(5)?,
+        child: row.get::<_, Option<i64>>(6)?.zip(row.get(7)?),
+        owner_boot_id: row.get(8)?,
+        schema_version: row.get(9)?,
+        next_event_seq: {
+            let seq = row.get::<_, i64>(10)?;
+            u64::try_from(seq).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(10, seq))?
+        },
+        unreadable_history_rows: {
+            let value = row.get::<_, i64>(11)?;
+            u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, value))?
+        },
+        child_started: row.get(12)?,
+    })
+}
 impl SqliteRegistryStore {
     /// Lists the distinct registry task ids with execution runs, in sorted order.
     pub fn list_run_task_ids(&self) -> Result<Vec<String>, RegistrySnapshotError> {
@@ -102,35 +125,31 @@ impl SqliteRegistryStore {
             .query_row(
                 "SELECT run_id, task_id, harness, model, native_session_id, capabilities_json, \
              child_pid, child_pgid, owner_boot_id, schema_version, next_event_seq, \
-             unreadable_history_rows \
+             unreadable_history_rows, child_started \
              FROM agent_runs WHERE task_id = ?1 ORDER BY rowid DESC LIMIT 1",
                 [task_id],
-                |row| {
-                    Ok(RunRecord {
-                        run_id: row.get(0)?,
-                        task_id: row.get(1)?,
-                        harness: row.get(2)?,
-                        model: row.get(3)?,
-                        native_session_id: row.get(4)?,
-                        capabilities_json: row.get(5)?,
-                        child: row.get::<_, Option<i64>>(6)?.zip(row.get(7)?),
-                        owner_boot_id: row.get(8)?,
-                        schema_version: row.get(9)?,
-                        next_event_seq: {
-                            let seq = row.get::<_, i64>(10)?;
-                            u64::try_from(seq)
-                                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(10, seq))?
-                        },
-                        unreadable_history_rows: {
-                            let value = row.get::<_, i64>(11)?;
-                            u64::try_from(value)
-                                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, value))?
-                        },
-                    })
-                },
+                run_record_from_row,
             )
             .optional()
             .map_err(database_error)
+    }
+
+    /// Returns every run that has a recorded child pid, in creation order.
+    pub fn runs_with_children(&self) -> Result<Vec<RunRecord>, RegistrySnapshotError> {
+        let connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT run_id, task_id, harness, model, native_session_id, capabilities_json, \
+             child_pid, child_pgid, owner_boot_id, schema_version, next_event_seq, \
+             unreadable_history_rows, child_started \
+             FROM agent_runs WHERE child_pid IS NOT NULL ORDER BY rowid",
+            )
+            .map_err(database_error)?;
+        let rows = statement
+            .query_map([], run_record_from_row)
+            .map_err(database_error)?;
+        rows.map(|row| row.map_err(database_error)).collect()
     }
 
     /// Imports a run and its history atomically, preserving the event sequence.
