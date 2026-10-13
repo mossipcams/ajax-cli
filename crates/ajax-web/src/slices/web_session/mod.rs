@@ -12,6 +12,7 @@ pub mod native_map;
 mod normalize;
 mod output_content;
 mod prepare_session;
+mod process_identity;
 mod prompt_content;
 mod prompt_queue;
 mod protocol;
@@ -379,6 +380,9 @@ pub enum SessionRouteError {
 
 #[cfg(test)]
 mod execution_ownership_tests;
+
+#[cfg(test)]
+mod process_identity_tests;
 
 #[cfg(test)]
 mod session_activity_directory_tests;
