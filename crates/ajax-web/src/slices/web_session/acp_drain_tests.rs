@@ -4,16 +4,18 @@ use super::acp_drain::{
     CONNECTION_INTERRUPTED_MESSAGE,
 };
 use super::map_acp_session_notification;
-use crate::adapters::web_session_acp::{AcpClientEvent, AcpEventSource, AgentEvent, NativeEvent};
+use crate::adapters::web_session_acp::{
+    AcpClientEvent, AcpEventSource, AgentEvent, AvailableCommandDescriptor, NativeEvent,
+};
 use crate::slices::web_session::acp_usage::UsageDeduper;
 use crate::slices::web_session::SessionServerEvent;
 use agent_client_protocol::schema::v1::{
-    ConfigOptionUpdate, ContentBlock, ContentChunk, CurrentModeUpdate, Plan, PlanEntry,
-    PlanEntryPriority, PlanEntryStatus, SessionInfoUpdate, SessionNotification, SessionUpdate,
-    TextContent, ToolCall, ToolCallLocation, ToolCallUpdate, UsageUpdate,
+    AvailableCommand, ConfigOptionUpdate, ContentBlock, ContentChunk, CurrentModeUpdate, Plan,
+    PlanEntry, PlanEntryPriority, PlanEntryStatus, SessionInfoUpdate, SessionNotification,
+    SessionUpdate, TextContent, ToolCall, ToolCallLocation, ToolCallUpdate, UsageUpdate,
 };
 use serde_json::json;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 #[test]
@@ -550,4 +552,104 @@ fn native_exit_matches_acp_exit() {
     let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Exited));
     assert_outcomes_match(native.clone(), acp);
     assert!(native.host_exited);
+}
+
+/// A source whose handshake advertised one slash command, yielded on the
+/// first drain only, with no further events unless queued.
+struct HandshakeCommandSource {
+    events: RefCell<VecDeque<AgentEvent>>,
+    commands_taken: Cell<bool>,
+}
+
+impl HandshakeCommandSource {
+    fn fresh(events: VecDeque<AgentEvent>) -> Self {
+        HandshakeCommandSource {
+            events: RefCell::new(events),
+            commands_taken: Cell::new(false),
+        }
+    }
+}
+
+impl AcpEventSource for HandshakeCommandSource {
+    fn session_new_result(&self) -> &serde_json::Value {
+        static NEW_RESULT: serde_json::Value = serde_json::Value::Null;
+        &NEW_RESULT
+    }
+
+    fn poll_event(&self) -> Option<AgentEvent> {
+        self.events.borrow_mut().pop_front()
+    }
+
+    fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
+        if self.commands_taken.replace(true) {
+            return Vec::new();
+        }
+        vec![AvailableCommandDescriptor {
+            name: "compact".to_string(),
+            description: "Compact the conversation".to_string(),
+            input_hint: None,
+        }]
+    }
+}
+
+#[test]
+fn handshake_available_commands_set_session_state_without_events() {
+    let source = HandshakeCommandSource::fresh(VecDeque::new());
+    let outcome = drain_acp_events(&source, &mut UsageDeduper::default());
+
+    assert_eq!(
+        outcome.session_available_commands,
+        Some(vec![AvailableCommandDescriptor {
+            name: "compact".to_string(),
+            description: "Compact the conversation".to_string(),
+            input_hint: None,
+        }]),
+        "handshake-advertised commands fill session_available_commands"
+    );
+    assert!(outcome.events.is_empty());
+}
+
+#[test]
+fn acp_available_commands_update_replaces_the_handshake_list() {
+    let source = HandshakeCommandSource::fresh(VecDeque::from([AgentEvent::Acp(
+        AcpClientEvent::AvailableCommandsUpdated {
+            available_commands: vec![AvailableCommand::new("extensions", "")],
+        },
+    )]));
+    let outcome = drain_acp_events(&source, &mut UsageDeduper::default());
+
+    assert_eq!(
+        outcome.session_available_commands,
+        Some(vec![AvailableCommandDescriptor {
+            name: "extensions".to_string(),
+            description: String::new(),
+            input_hint: None,
+        }]),
+        "the ACP AvailableCommandsUpdated update replaces the handshake list, not merges"
+    );
+    assert!(outcome.events.is_empty());
+}
+
+#[test]
+fn handshake_commands_are_delivered_once_across_drains() {
+    let source = HandshakeCommandSource::fresh(VecDeque::new());
+    let mut deduper = UsageDeduper::default();
+
+    let first = drain_acp_events(&source, &mut deduper);
+    assert_eq!(
+        first.session_available_commands,
+        Some(vec![AvailableCommandDescriptor {
+            name: "compact".to_string(),
+            description: "Compact the conversation".to_string(),
+            input_hint: None,
+        }]),
+        "the first drain delivers the handshake commands"
+    );
+
+    let second = drain_acp_events(&source, &mut deduper);
+    assert_eq!(
+        second.session_available_commands, None,
+        "a second drain must not re-deliver the handshake command snapshot"
+    );
+    assert!(second.events.is_empty());
 }

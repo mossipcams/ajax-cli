@@ -53,6 +53,28 @@ pub enum NativeEvent {
     Exited,
 }
 
+/// One slash command a native harness advertises. ACP-free by construction:
+/// `description` and `input_hint` are plain strings owned by this module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeCommand {
+    pub name: String,
+    pub description: String,
+    pub input_hint: Option<String>,
+}
+
+impl NativeCommand {
+    /// The native view of one transport-neutral handshake command entry:
+    /// a missing `description` becomes the empty string, and no harness
+    /// currently advertises an input hint.
+    pub fn from_rpc_command(command: &super::rpc_handshake::RpcCommand) -> Self {
+        Self {
+            name: command.name.clone(),
+            description: command.description.clone().unwrap_or_default(),
+            input_hint: None,
+        }
+    }
+}
+
 /// Every event a session client can emit: an ACP-protocol event for harnesses
 /// that speak ACP, or a native event from the Claude Agent SDK / Pi RPC
 /// adapters. The web session slice maps both to its own wire events.

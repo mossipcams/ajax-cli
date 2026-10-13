@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -22,6 +22,9 @@ pub struct PiRpcClient {
     core: RpcClientCore,
     /// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).
     catalog: Box<Mutex<Catalog>>,
+    /// Slash commands advertised at handshake; handed to the first drain that
+    /// asks for them, one-shot like an event.
+    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 /// Model and thinking-level state snapshotted from the Pi handshake and kept
@@ -129,6 +132,15 @@ impl PiRpcClient {
             .map(|m| m.provider.clone());
         let current_thinking_level = hs.thinking_level.clone();
 
+        // The handshake's advertised commands are exposed through
+        // `take_available_commands` once, like an event, rather than queued as
+        // one.
+        let commands: Vec<NativeCommand> = hs
+            .commands
+            .iter()
+            .map(NativeCommand::from_rpc_command)
+            .collect();
+
         let session = RpcSession::new(process, hs, map_record);
 
         Ok(PiRpcClient {
@@ -140,6 +152,7 @@ impl PiRpcClient {
                 current_model_provider,
                 current_thinking_level,
             })),
+            commands: Mutex::new(Some(commands)),
         })
     }
 
@@ -147,6 +160,18 @@ impl PiRpcClient {
     /// session has been shut down.
     pub fn session_id(&self) -> String {
         self.core.session_id()
+    }
+
+    /// Slash commands the Pi RPC process advertised at handshake, returned by
+    /// the first call only (one-shot, like an event) so every later drain
+    /// yields an empty list; ACP `AvailableCommandsUpdated` updates replace
+    /// the list within the same drain.
+    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
+        self.commands
+            .lock()
+            .expect("pi_rpc_client mutex poisoned")
+            .take()
+            .unwrap_or_default()
     }
 
     /// OS process id of the live child while a session exists; `None` after shutdown.

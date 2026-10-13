@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
-use super::agent_event::AgentEvent;
+use super::agent_event::{AgentEvent, NativeCommand};
+use super::available_command_descriptors::AvailableCommandDescriptor;
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
 use super::client::{
@@ -61,6 +62,14 @@ pub struct ClaudeSession {
 pub trait AcpEventSource {
     fn session_new_result(&self) -> &serde_json::Value;
     fn poll_event(&self) -> Option<AgentEvent>;
+
+    /// Slash commands newly advertised since the last drain. Native sources
+    /// yield the handshake list exactly once (one-shot, like an event), so a
+    /// repeated drain delivers no snapshot; empty for sources without a
+    /// native command list.
+    fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
+        Vec::new()
+    }
 }
 
 impl AcpEventSource for AcpStdioClient {
@@ -73,6 +82,17 @@ impl AcpEventSource for AcpStdioClient {
     }
 }
 
+/// Maps native harness commands onto the wire descriptor shape.
+fn native_command_descriptors(commands: &[NativeCommand]) -> Vec<AvailableCommandDescriptor> {
+    commands
+        .iter()
+        .map(|command| AvailableCommandDescriptor {
+            name: command.name.clone(),
+            description: command.description.clone(),
+            input_hint: command.input_hint.clone(),
+        })
+        .collect()
+}
 impl AcpEventSource for SessionClient {
     fn session_new_result(&self) -> &serde_json::Value {
         SessionClient::session_new_result(self)
@@ -80,6 +100,18 @@ impl AcpEventSource for SessionClient {
 
     fn poll_event(&self) -> Option<AgentEvent> {
         SessionClient::poll_event(self)
+    }
+
+    fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
+        match self {
+            SessionClient::Acp(_) => Vec::new(),
+            SessionClient::Pi(session) => {
+                native_command_descriptors(&session.client.take_available_commands())
+            }
+            SessionClient::Claude(session) => {
+                native_command_descriptors(&session.client.take_available_commands())
+            }
+        }
     }
 }
 impl SessionClient {

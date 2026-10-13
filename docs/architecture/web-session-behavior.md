@@ -656,6 +656,14 @@ all-zero usage is skipped so cancelling does not reset the meter.
   options and takes the wire `SessionConfigValue`, ACP harnesses convert at
   their own edge, and the Claude and Pi model catalog is built from the neutral
   options.
+- Native harnesses advertise slash commands at handshake (Claude
+  `supportedCommands`, Pi `get_commands`). The client yields that list exactly
+  once through `AcpEventSource::take_available_commands`; the drain stores it as
+  `availableCommands` with replace semantics, and an ACP
+  `available_commands_update` in the same drain replaces it. The list is session
+  capability state: it is never delivered as a turn-stream event, so it cannot
+  reorder a turn's first event, and a repeated drain produces no
+  second snapshot.
 - Prompts reach the Claude and Pi clients as plain text: `SessionClient`
   flattens the slice's content blocks (text, resource-link URI, `[image
   omitted]` placeholder).
