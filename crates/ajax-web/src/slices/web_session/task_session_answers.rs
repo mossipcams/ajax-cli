@@ -10,32 +10,10 @@ pub(super) fn answer_elicitation(
     action: &str,
     content: Option<&serde_json::Value>,
 ) -> Result<(), SessionError> {
-    use crate::adapters::web_session_acp::sdk_elicitation::{
-        accept_action, wire_content_from_json,
-    };
-    use agent_client_protocol::schema::v1::ElicitationAction;
-
     let Some(client) = state.acp.client.as_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
-    let acp_action = match action {
-        "accept" => {
-            let payload = content.ok_or_else(|| {
-                SessionError::protocol(
-                    "elicitation accept requires content matching the requested schema",
-                )
-            })?;
-            accept_action(wire_content_from_json(payload).map_err(SessionError::protocol)?)
-        }
-        "decline" => ElicitationAction::Decline,
-        "cancel" => ElicitationAction::Cancel,
-        other => {
-            return Err(SessionError::protocol(format!(
-                "unsupported elicitation action: {other}"
-            )))
-        }
-    };
-    let result = client.respond_elicitation(request_id, acp_action);
+    let result = client.respond_elicitation(request_id, action, content);
     if result.is_ok()
         || result
             .as_ref()

@@ -6,12 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionNotification, SessionUpdate, UsageUpdate,
-};
-
-use super::agent_event::AgentEvent;
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -81,20 +76,20 @@ fn pi_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
     let context = data.get("contextUsage")?;
     let tokens = context.get("tokens")?.as_u64()?;
     let window = context.get("contextWindow")?.as_u64()?;
-    let session_id = session.session_id().to_string();
-    Some(AgentEvent::Acp(AcpClientEvent::SessionUpdate(Box::new(
-        SessionNotification::new(
-            session_id,
-            SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)),
-        ),
-    ))))
+    Some(AgentEvent::Native(NativeEvent::Usage {
+        used: tokens,
+        size: window,
+    }))
 }
 
 impl PiRpcClient {
     /// Spawn the Pi RPC process, perform the handshake, and wrap it in a session.
     ///
     /// Arguments passed to the child are exactly:
-    /// `["--mode", "rpc", "-na"]` then optionally `["--session", <id>]`, then `extra_args`.
+    /// `["--mode", "rpc", "-na"]` then optionally `["--session-id", <id>]`, then `extra_args`.
+    /// (`--session` only matches sessions already on disk; Pi persists a
+    /// session only after its first message, so `--session-id` is required for
+    /// resume; issue #1283.)
     pub fn spawn(
         program: &Path,
         extra_args: &[String],
@@ -104,7 +99,7 @@ impl PiRpcClient {
     ) -> Result<PiRpcClient, String> {
         let mut args: Vec<String> = vec!["--mode".into(), "rpc".into(), "-na".into()];
         if let Some(id) = resume_session_id {
-            args.push("--session".into());
+            args.push("--session-id".into());
             args.push(id.to_string());
         }
         args.extend_from_slice(extra_args);
@@ -276,12 +271,9 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Build the prompt text from content blocks and begin a prompt run.
-    ///
-    /// Text blocks are joined with `"\n\n"`; ResourceLink blocks contribute their URI as a line;
-    /// all other block kinds produce a short placeholder. Returns the request id for tracking.
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        self.core.begin_prompt(blocks)
+    /// Begin a prompt run from a plain-text message.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
+        self.core.begin_prompt(message)
     }
 
     /// Abort the active prompt run. Returns `Err` when no run is in flight.

@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, ElicitationAction};
+use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
 use super::agent_event::AgentEvent;
 use super::claude_sdk_client::ClaudeSdkClient;
@@ -272,8 +272,8 @@ impl SessionClient {
     pub fn begin_prompt(&mut self, blocks: &[ContentBlock]) -> Result<u64, String> {
         match self {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
-            SessionClient::Pi(session) => session.client.begin_prompt(blocks),
-            SessionClient::Claude(session) => session.client.begin_prompt(blocks),
+            SessionClient::Pi(session) => session.client.begin_prompt(&prompt_text(blocks)),
+            SessionClient::Claude(session) => session.client.begin_prompt(&prompt_text(blocks)),
         }
     }
 
@@ -326,8 +326,10 @@ impl SessionClient {
     pub fn respond_elicitation(
         &mut self,
         request_id: &str,
-        action: ElicitationAction,
+        action: &str,
+        content: Option<&serde_json::Value>,
     ) -> Result<(), String> {
+        let action = super::sdk_elicitation::action_from_wire(action, content)?;
         match self {
             SessionClient::Acp(client) => client.respond_elicitation(request_id, action),
             // ponytail: follow up when Pi RPC needs elicitation responses.
@@ -493,4 +495,26 @@ where
     let result = f();
     TEST_PI_PROGRAM.with(|slot| *slot.borrow_mut() = None);
     result
+}
+
+/// Flatten ACP content blocks into a single plain-text prompt.
+pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    for block in blocks {
+        match block {
+            ContentBlock::Text(tc @ TextContent { .. }) => {
+                parts.push(tc.text.clone());
+            }
+            ContentBlock::ResourceLink(rl @ ResourceLink { .. }) => {
+                parts.push(rl.uri.clone());
+            }
+            // ponytail: images are not forwarded yet — only a placeholder is emitted
+            _ => {
+                parts.push("[image omitted]".to_string());
+            }
+        }
+    }
+
+    parts.join("\n\n")
 }

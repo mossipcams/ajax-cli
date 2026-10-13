@@ -7,11 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
-use super::client::AcpClientEvent;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -49,8 +46,8 @@ fn spawn_client(model: Option<&str>, resume: Option<&str>) -> ClaudeSdkClient {
     .expect("claude sdk sidecar must spawn against the fake fixture (is node installed?)")
 }
 
-fn text_blocks(text: &str) -> Vec<ContentBlock> {
-    vec![ContentBlock::Text(TextContent::new(text))]
+fn text_blocks(text: &str) -> String {
+    text.to_string()
 }
 
 /// The streamed text of a native `AgentText` event, otherwise `None`.
@@ -70,12 +67,12 @@ fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     }
 }
 
-/// The stop reason when `event` is a successful `RequestFinished`, otherwise
-fn stop_reason(event: &AcpClientEvent) -> Option<&str> {
+/// The stop reason when `event` is a successful native turn-finished event,
+fn stop_reason(event: &AgentEvent) -> Option<&str> {
     match event {
-        AcpClientEvent::RequestFinished {
-            result: Ok(value), ..
-        } => value.get("stopReason").and_then(|s| s.as_str()),
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            result: Ok(stop), ..
+        }) => Some(stop.as_str()),
         _ => None,
     }
 }
@@ -88,10 +85,7 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
         let event = client
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
-        let finished = matches!(
-            event,
-            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-        );
+        let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
         events.push(event);
         if finished {
             return events;
@@ -99,19 +93,15 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     }
 }
 
-/// The `(id, method, stop reason)` of a successful `RequestFinished`, used to
+/// The `(request_id, stop reason)` of a successful turn-finished event, used to
 /// assert the identity and terminal shape of one prompt turn.
-fn finished_fields(event: &AgentEvent) -> (u64, &str, Option<&str>) {
-    let AgentEvent::Acp(event) = event else {
-        unreachable!("expected an Acp-wrapped event")
-    };
+fn finished_fields(event: &AgentEvent) -> (u64, Option<&str>) {
     match event {
-        AcpClientEvent::RequestFinished {
-            id,
-            method,
-            result: _,
-        } => (*id, method, stop_reason(event)),
-        other => panic!("expected a RequestFinished, got {other:?}"),
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id,
+            result: Ok(stop),
+        }) => (*request_id, Some(stop.as_str())),
+        other => panic!("expected a TurnFinished, got {other:?}"),
     }
 }
 
@@ -229,19 +219,13 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 
     let finish_index = events
         .iter()
-        .rposition(|event| {
-            matches!(
-                event,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-            )
-        })
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must arrive");
     assert!(usage_index < finish_index);
 
-    let (finished_id, method, reason) = finished_fields(&events[finish_index]);
+    let (finished_id, _) = finished_fields(&events[finish_index]);
     assert_eq!(finished_id, 1);
-    assert_eq!(method, "session/prompt");
-    assert_eq!(reason, Some("end_turn"));
+    assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
 
     assert!(!client.prompt_in_flight());
 }
@@ -268,9 +252,8 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
 
     let events = collect_until_finished(&client);
     let last = &events[events.len() - 1];
-    let (finished_id, method, reason) = finished_fields(last);
+    let (finished_id, reason) = finished_fields(last);
     assert_eq!(finished_id, 1);
-    assert_eq!(method, "session/prompt");
     assert_eq!(reason, Some("cancelled"));
 
     // A second plain prompt on the same client finishes with id 2 (no respawn).
@@ -281,9 +264,8 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
 
     let events = collect_until_finished(&client);
     let last = &events[events.len() - 1];
-    let (finished_id, method, reason) = finished_fields(last);
+    let (finished_id, reason) = finished_fields(last);
     assert_eq!(finished_id, 2);
-    assert_eq!(method, "session/prompt");
     assert_eq!(reason, Some("end_turn"));
 
     assert!(!client.prompt_in_flight());
@@ -388,9 +370,8 @@ fn production_embedded_script_launch_path_prompts_to_end_turn() {
 
     let events = collect_until_finished(&client);
     let last = &events[events.len() - 1];
-    let (finished_id, method, reason) = finished_fields(last);
+    let (finished_id, reason) = finished_fields(last);
     assert_eq!(finished_id, id);
-    assert_eq!(method, "session/prompt");
     assert_eq!(reason, Some("end_turn"));
 
     assert!(!client.prompt_in_flight());

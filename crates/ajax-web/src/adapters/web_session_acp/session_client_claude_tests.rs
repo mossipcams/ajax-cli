@@ -6,12 +6,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, ElicitationAction, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::models::AgentClient;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
-use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
+use super::client::{AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
 use super::SessionConfigValue;
 
@@ -85,18 +85,14 @@ fn prompt_flow_streams_through_the_enum() {
                     chunk_seen = true;
                 }
                 AgentEvent::Native(NativeEvent::Usage { .. }) => usage_seen = true,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id: finished_id,
+                AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: finished_id,
                     result,
                     ..
                 }) => {
                     assert_eq!(*finished_id, id);
-                    let stop_reason = result
-                        .as_ref()
-                        .expect("ok result")
-                        .get("stopReason")
-                        .and_then(|s| s.as_str());
-                    assert_eq!(stop_reason, Some("end_turn"));
+                    let stop_reason = result.as_ref().expect("ok result");
+                    assert_eq!(stop_reason, "end_turn");
                     break;
                 }
                 _ => {}
@@ -134,19 +130,15 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
         // Drain until the run ends with stopReason cancelled.
         loop {
             let event = client.wait_event(TIMEOUT).expect("event after cancel");
-            if let AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                id: finished_id,
+            if let AgentEvent::Native(NativeEvent::TurnFinished {
+                request_id: finished_id,
                 result,
                 ..
             }) = &event
             {
                 assert_eq!(*finished_id, id);
-                let stop_reason = result
-                    .as_ref()
-                    .expect("ok result")
-                    .get("stopReason")
-                    .and_then(|s| s.as_str());
-                assert_eq!(stop_reason, Some("cancelled"));
+                let stop_reason = result.as_ref().expect("ok result");
+                assert_eq!(stop_reason, "cancelled");
                 break;
             }
         }
@@ -181,7 +173,7 @@ fn request_responses_are_rejected_in_claude_mode() {
             .respond_client_request(&serde_json::json!(1), serde_json::json!({}))
             .expect_err("respond_client_request must be rejected");
         client
-            .respond_elicitation("r-1", ElicitationAction::Decline)
+            .respond_elicitation("r-1", "decline", None)
             .expect_err("respond_elicitation must be rejected");
     });
 }
