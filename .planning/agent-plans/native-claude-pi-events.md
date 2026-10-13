@@ -63,7 +63,7 @@ Approval: user said "Just do it" on the plan with base #1264 / adapter-layer typ
 - [x] S3 Pi mapper emits native events (verified fmt, clippy, nextest 950/951, doc, verify:arch).
       Note: Pi/RPC tests no longer assert `notification.session_id`, since `NativeEvent` carries no session id.
 - [ ] S4 Native config/model/commands/capabilities for Claude and Pi.
-- [ ] S5 Docs: `docs/architecture/web-session-behavior.md`, `architecture.md`,
+- [x] S5 Docs: `docs/architecture/web-session-behavior.md`, `architecture.md`,
       `architecture_web_session.rs` guard rules.
 
 ## Non-goals

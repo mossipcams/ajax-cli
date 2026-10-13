@@ -632,6 +632,24 @@ all-zero usage is skipped so cancelling does not reset the meter.
   also why `ToolCallContent::Terminal` has no mapping: no agent can create a
   terminal to embed, and execute output arrives as text.
 
+## Native Claude SDK and Pi RPC events
+
+- Session clients yield one `AgentEvent` vocabulary: `Acp(AcpClientEvent)` for
+  ACP-over-stdio harnesses (Cursor, Codex) and `Native(NativeEvent)` for the
+  Claude Agent SDK sidecar and Pi RPC children.
+- `NativeEvent` carries no `agent_client_protocol` types: it covers exactly the
+  transcript shapes those adapters previously emitted as ACP session updates —
+  text and thought chunks, tool call open/update (with `raw_input`), plan
+  entries, and usage. Run-lifecycle events (`RequestFinished`, `Error`,
+  `Exited`) stay `Acp(..)`.
+- The web slice maps both to its own wire events: `acp_map` for ACP updates and
+  `native_map::map_native_event` for native events; the wire output is identical.
+- Native events carry no session id.
+- Claude and Pi sessions remain ACP-shaped for config options, model apply,
+  slash commands, and prompt capabilities (future work).
+- The adapter layer must not name slice wire types; the guard test
+  `web_session_acp_adapter_does_not_import_slice_wire_types` enforces this.
+
 ## Permission persistence
 
 - Unrecognized ACP `sessionUpdate` kinds (except dropped capability announcements) are
