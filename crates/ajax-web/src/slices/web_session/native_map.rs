@@ -35,12 +35,13 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             id,
             status,
             content,
+            raw_input,
         } => vec![native_tool_event(
             id,
             "",
             "",
             status,
-            None,
+            raw_input.as_ref(),
             native_tool_content(content),
         )],
         NativeEvent::Plan(entries) => vec![SessionServerEvent::Plan {

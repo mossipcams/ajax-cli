@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, SessionConfigOptionValue, SessionUpdate, TextContent,
+    ContentBlock, ElicitationAction, SessionConfigOptionValue, TextContent,
 };
 use ajax_core::models::AgentClient;
 
-use super::agent_event::AgentEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
 use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
@@ -81,19 +81,11 @@ fn prompt_flow_streams_through_the_enum() {
                 .wait_event(TIMEOUT)
                 .expect("event before RequestFinished");
             match &event {
-                AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) => {
-                    match &notification.update {
-                        SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                            ContentBlock::Text(text) => {
-                                assert_eq!(text.text, "ok");
-                                chunk_seen = true;
-                            }
-                            _ => panic!("expected a text chunk, got {:?}", chunk.content),
-                        },
-                        SessionUpdate::UsageUpdate(_) => usage_seen = true,
-                        _ => {}
-                    }
+                AgentEvent::Native(NativeEvent::AgentText(text)) => {
+                    assert_eq!(text, "ok");
+                    chunk_seen = true;
                 }
+                AgentEvent::Native(NativeEvent::Usage { .. }) => usage_seen = true,
                 AgentEvent::Acp(AcpClientEvent::RequestFinished {
                     id: finished_id,
                     result,
@@ -131,11 +123,7 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
             let event = client
                 .wait_event(TIMEOUT)
                 .expect("event during slow prompt");
-            if matches!(
-                &event,
-                AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-                    if matches!(&notification.update, SessionUpdate::AgentMessageChunk(_))
-            ) {
+            if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
                 break;
             }
         }

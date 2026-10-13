@@ -52,12 +52,14 @@ fn tool_call_variants_carry_fields() {
         id: "t1".to_string(),
         status: "completed".to_string(),
         content: Some("done".to_string()),
+        raw_input: None,
     };
     match &update {
         NativeEvent::ToolCallUpdate {
             id,
             status,
             content,
+            ..
         } => {
             assert_eq!(id, "t1");
             assert_eq!(status, "completed");

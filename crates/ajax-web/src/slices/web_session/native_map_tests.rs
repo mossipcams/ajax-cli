@@ -96,6 +96,7 @@ fn tool_call_update_with_content_matches_acp_tool_call_update() {
             id: "t1".to_string(),
             status: "completed".to_string(),
             content: Some("done".to_string()),
+            raw_input: None,
         }),
         acp_events(&SessionUpdate::ToolCallUpdate(
             agent_client_protocol::schema::v1::ToolCallUpdate::new(
@@ -119,6 +120,7 @@ fn tool_call_update_without_content_matches_acp_tool_call_update() {
             id: "t1".to_string(),
             status: "failed".to_string(),
             content: None,
+            raw_input: None,
         }),
         acp_events(&SessionUpdate::ToolCallUpdate(
             agent_client_protocol::schema::v1::ToolCallUpdate::new(
@@ -130,6 +132,26 @@ fn tool_call_update_without_content_matches_acp_tool_call_update() {
     );
 }
 
+#[test]
+fn tool_call_update_with_raw_input_matches_acp_tool_call_update() {
+    let raw_input = serde_json::json!({"file_path": "/tmp/a.txt"});
+    assert_eq!(
+        map_native_event(&NativeEvent::ToolCallUpdate {
+            id: "t3".to_string(),
+            status: "in_progress".to_string(),
+            content: None,
+            raw_input: Some(raw_input.clone()),
+        }),
+        acp_events(&SessionUpdate::ToolCallUpdate(
+            agent_client_protocol::schema::v1::ToolCallUpdate::new(
+                "t3",
+                agent_client_protocol::schema::v1::ToolCallUpdateFields::default()
+                    .status(AcpToolCallStatus::InProgress)
+                    .raw_input(raw_input),
+            )
+        )),
+    );
+}
 #[test]
 fn plan_matches_acp_plan() {
     assert_eq!(

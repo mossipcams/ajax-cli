@@ -28,11 +28,13 @@ pub enum NativeEvent {
         raw_input: Option<Value>,
     },
     /// A status/content update to an already-open tool call; `content` is the
-    /// joined text output, if any.
+    /// joined text output, if any, and `raw_input` carries the complete tool
+    /// input so the mapper can derive locations from it (as ACP does).
     ToolCallUpdate {
         id: String,
         status: String,
         content: Option<String>,
+        raw_input: Option<Value>,
     },
     /// Plan entries as `(content, status)` pairs.
     Plan(Vec<(String, String)>),
