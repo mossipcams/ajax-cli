@@ -307,6 +307,14 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
 - Docs: `docs/architecture/durable-execution.md` (new), plus storage wording in
   `web-session-behavior.md`, `web-cockpit.md`, `architecture.md`. The doc says
   plainly that the host does not yet call `resolve_recovery`.
+- #1264 (Claude Agent SDK + Pi RPC) merged into this branch as 2211313c after a
+  clean trial: compile, fmt, clippy, verify:arch, nextest 2746/2747. Security
+  review of its Claude path: the sidecar's `canUseTool` always allows and MCP
+  elicitation is declined. Accepted, not changed: it matches the operator-
+  approved all-ACP-chats-full-access policy (acp-auto-approve-permissions.md,
+  2026-08-20) and `main` already sets `bypassPermissions` for Claude. Open
+  question for Matt: keep, or build operator approval + elicitation forwarding
+  (a security-assumption change needing its own plan).
 - Not yet done in stage 4: prompt admission and its user-message transcript
   event are still two commits (4c); nothing reads the checkpoints yet (stage 5).
 - Still owed from 4a-2's list: a slice-level restart test and an import test
