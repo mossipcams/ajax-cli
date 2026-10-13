@@ -6,15 +6,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, ElicitationAction, SessionConfigOptionValue, TextContent,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::models::AgentClient;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_spawn::with_test_claude_sdk_module;
-use super::client::{AcpClientEvent, AcpSpawnError, RestoreFailure};
+use super::client::{AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
+use super::SessionConfigValue;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,7 +37,7 @@ fn text_blocks(text: &str) -> Vec<ContentBlock> {
 }
 
 /// Spawn the Claude transport through the enum and return the variant's state.
-fn spawn_claude_variant() -> (SessionClient, super::client::SpawnReport) {
+fn spawn_claude_variant() -> (SessionClient, super::SessionSpawnReport) {
     SessionClient::spawn_with_operator_pin(AgentClient::Claude, manifest_dir(), "default", None)
         .expect("fake claude sdk spawn must succeed")
 }
@@ -58,7 +57,7 @@ fn spawn_returns_claude_variant_with_report() {
             .as_ref()
             .expect("config options must be advertised")
             .iter()
-            .map(|option| option.id.0.as_ref())
+            .map(|option| option.id.as_str())
             .collect();
         assert!(ids.contains(&"model"), "model option id: {ids:?}");
         assert!(ids.contains(&"effort"), "effort option id: {ids:?}");
@@ -86,18 +85,14 @@ fn prompt_flow_streams_through_the_enum() {
                     chunk_seen = true;
                 }
                 AgentEvent::Native(NativeEvent::Usage { .. }) => usage_seen = true,
-                AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id: finished_id,
+                AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: finished_id,
                     result,
                     ..
                 }) => {
                     assert_eq!(*finished_id, id);
-                    let stop_reason = result
-                        .as_ref()
-                        .expect("ok result")
-                        .get("stopReason")
-                        .and_then(|s| s.as_str());
-                    assert_eq!(stop_reason, Some("end_turn"));
+                    let stop_reason = result.as_ref().expect("ok result");
+                    assert_eq!(stop_reason, "end_turn");
                     break;
                 }
                 _ => {}
@@ -135,19 +130,15 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
         // Drain until the run ends with stopReason cancelled.
         loop {
             let event = client.wait_event(TIMEOUT).expect("event after cancel");
-            if let AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                id: finished_id,
+            if let AgentEvent::Native(NativeEvent::TurnFinished {
+                request_id: finished_id,
                 result,
                 ..
             }) = &event
             {
                 assert_eq!(*finished_id, id);
-                let stop_reason = result
-                    .as_ref()
-                    .expect("ok result")
-                    .get("stopReason")
-                    .and_then(|s| s.as_str());
-                assert_eq!(stop_reason, Some("cancelled"));
+                let stop_reason = result.as_ref().expect("ok result");
+                assert_eq!(stop_reason, "cancelled");
                 break;
             }
         }
@@ -182,7 +173,7 @@ fn request_responses_are_rejected_in_claude_mode() {
             .respond_client_request(&serde_json::json!(1), serde_json::json!({}))
             .expect_err("respond_client_request must be rejected");
         client
-            .respond_elicitation("r-1", ElicitationAction::Decline)
+            .respond_elicitation("r-1", "decline", None)
             .expect_err("respond_elicitation must be rejected");
     });
 }
@@ -199,9 +190,7 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         assert_eq!(outcome.applied_model, "haiku");
 
         // Effort option updates through apply_config_option.
-        let effort = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("low"),
-        };
+        let effort = SessionConfigValue::Select("low".to_string());
         let outcome = client
             .apply_config_option("effort", effort)
             .expect("apply effort");
@@ -212,18 +201,15 @@ fn model_pin_and_config_options_flow_through_the_enum() {
             .expect("config options must be advertised");
         let option = options
             .iter()
-            .find(|option| option.id.0.as_ref() == "effort")
+            .find(|option| option.id == "effort")
             .expect("effort option must be advertised");
-        let agent_client_protocol::schema::v1::SessionConfigKind::Select(select) = &option.kind
-        else {
+        let super::NeutralConfigKind::Select { current_value, .. } = &option.kind else {
             panic!("effort option must be a select");
         };
-        assert_eq!(select.current_value.0.as_ref(), "low");
+        assert_eq!(current_value.as_str(), "low");
 
         // An unknown model id surfaces as an outcome error, not a hard failure.
-        let bad_model = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("not-a-model"),
-        };
+        let bad_model = SessionConfigValue::Select("not-a-model".to_string());
         let outcome = client
             .apply_config_option("model", bad_model)
             .expect("apply model");
@@ -237,9 +223,7 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         );
 
         // An unsupported option id is likewise an outcome error.
-        let nope = SessionConfigOptionValue::ValueId {
-            value: agent_client_protocol::schema::v1::SessionConfigValueId::new("x"),
-        };
+        let nope = SessionConfigValue::Select("x".to_string());
         let outcome = client
             .apply_config_option("nope", nope)
             .expect("apply nope");

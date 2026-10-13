@@ -41,10 +41,8 @@ fn pi_spawn_returns_client_and_report() {
         let options = report
             .config_options
             .expect("pi rpc advertises config options");
-        assert!(options.iter().any(|option| &*option.id.0 == "model"));
-        assert!(options
-            .iter()
-            .any(|option| &*option.id.0 == "thought_level"));
+        assert!(options.iter().any(|option| option.id == "model"));
+        assert!(options.iter().any(|option| option.id == "thought_level"));
     });
 }
 

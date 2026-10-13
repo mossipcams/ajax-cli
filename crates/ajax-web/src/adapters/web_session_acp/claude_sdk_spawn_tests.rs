@@ -4,7 +4,6 @@
 
 use std::path::Path;
 
-use agent_client_protocol::schema::v1::{SessionConfigKind, SessionConfigOption};
 use ajax_core::models::AgentClient;
 
 use super::claude_sdk_spawn::{spawn_claude_sdk, uses_claude_sdk, with_test_claude_sdk_module};
@@ -41,15 +40,15 @@ fn missing_sdk_error_names_the_install_command() {
 }
 
 /// The current value of one select config option, panicking when it is absent.
-fn current_value(options: &[SessionConfigOption], id: &str) -> String {
+fn current_value(options: &[super::NeutralConfigOption], id: &str) -> String {
     let option = options
         .iter()
-        .find(|option| option.id.0.as_ref() == id)
+        .find(|option| option.id == id)
         .unwrap_or_else(|| panic!("config option {id} must be advertised"));
-    let SessionConfigKind::Select(select) = &option.kind else {
+    let super::NeutralConfigKind::Select { current_value, .. } = &option.kind else {
         panic!("config option {id} must be a select");
     };
-    select.current_value.0.to_string()
+    current_value.clone()
 }
 
 #[test]
@@ -69,7 +68,7 @@ fn spawn_returns_client_and_report() {
             .config_options
             .as_ref()
             .expect("config options must be advertised");
-        let ids: Vec<&str> = options.iter().map(|option| option.id.0.as_ref()).collect();
+        let ids: Vec<&str> = options.iter().map(|option| option.id.as_str()).collect();
         assert!(ids.contains(&"model"), "model option id: {ids:?}");
         assert!(ids.contains(&"effort"), "effort option id: {ids:?}");
     });

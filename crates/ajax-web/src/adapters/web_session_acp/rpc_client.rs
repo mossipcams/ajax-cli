@@ -1,14 +1,10 @@
 //! The transport-neutral client core shared by every RPC-style harness transport: it owns the session, the event queue and the prompt request ids.
 
+use super::agent_event::{AgentEvent, NativeEvent};
+use super::rpc_session::{RpcSession, RpcStep};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
-
-use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
-
-use super::agent_event::AgentEvent;
-use super::client::AcpClientEvent;
-use super::rpc_session::{RpcSession, RpcStep};
 
 pub type RunFinishedHook = fn(&mut RpcSession) -> Option<AgentEvent>;
 
@@ -53,29 +49,10 @@ impl RpcClientCore {
             .unwrap_or_default()
     }
 
-    /// Build the prompt text from content blocks and begin a prompt run.
+    /// Begin a prompt run from a plain-text message.
     ///
-    /// Text blocks are joined with `"\n\n"`; ResourceLink blocks contribute their URI as a line;
-    /// all other block kinds produce a short placeholder. Returns the request id for tracking.
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        let mut parts: Vec<String> = Vec::new();
-
-        for block in blocks {
-            match block {
-                ContentBlock::Text(tc @ TextContent { .. }) => {
-                    parts.push(tc.text.clone());
-                }
-                ContentBlock::ResourceLink(rl @ ResourceLink { .. }) => {
-                    parts.push(rl.uri.clone());
-                }
-                // ponytail: images are not forwarded yet — only a placeholder is emitted
-                _ => {
-                    parts.push("[image omitted]".to_string());
-                }
-            }
-        }
-
-        let message = parts.join("\n\n");
+    /// Returns the request id for tracking.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
         if message.is_empty() {
             return Err("empty prompt content: no blocks supplied".to_string());
         }
@@ -86,7 +63,7 @@ impl RpcClientCore {
             .as_mut()
             .ok_or_else(|| "session not available (shut down)".to_string())?;
         session
-            .begin_prompt(&message)
+            .begin_prompt(message)
             .map_err(|e| format!("begin_prompt failed: {e}"))?;
 
         let id = g.next_request_id;
@@ -146,10 +123,9 @@ impl RpcClientCore {
                     _ => None,
                 };
 
-                let finished = AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id,
-                    method: "session/prompt",
-                    result: Ok(serde_json::json!({ "stopReason": stop_reason })),
+                let finished = AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: id,
+                    result: Ok(stop_reason.to_string()),
                 });
 
                 match usage {
@@ -161,17 +137,16 @@ impl RpcClientCore {
                 }
             }
             RpcStep::PromptRejected(e) => {
-                let _id = g.active_request_id.take();
-                Some(AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                    id: _id.unwrap_or(0),
-                    method: "session/prompt",
+                let id = g.active_request_id.take();
+                Some(AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: id.unwrap_or(0),
                     result: Err(e),
                 }))
             }
-            RpcStep::Error(t) => Some(AgentEvent::Acp(AcpClientEvent::Error(t))),
+            RpcStep::Error(t) => Some(AgentEvent::Native(NativeEvent::Error(t))),
             RpcStep::Exited => {
                 g.host_exited = true;
-                Some(AgentEvent::Acp(AcpClientEvent::Exited))
+                Some(AgentEvent::Native(NativeEvent::Exited))
             }
             RpcStep::Idle => None,
         }

@@ -6,13 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionNotification, SessionUpdate, UsageUpdate,
-};
-
-use super::agent_event::AgentEvent;
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -82,13 +76,10 @@ fn pi_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
     let context = data.get("contextUsage")?;
     let tokens = context.get("tokens")?.as_u64()?;
     let window = context.get("contextWindow")?.as_u64()?;
-    let session_id = session.session_id().to_string();
-    Some(AgentEvent::Acp(AcpClientEvent::SessionUpdate(Box::new(
-        SessionNotification::new(
-            session_id,
-            SessionUpdate::UsageUpdate(UsageUpdate::new(tokens, window)),
-        ),
-    ))))
+    Some(AgentEvent::Native(NativeEvent::Usage {
+        used: tokens,
+        size: window,
+    }))
 }
 
 impl PiRpcClient {
@@ -163,17 +154,17 @@ impl PiRpcClient {
         self.core.child_pid()
     }
 
-    /// The Pi model and thinking-level options in the ACP config-option shape.
+    /// The Pi model and thinking-level options as harness-neutral values.
     ///
     /// The model option (id "model") is omitted when no models were reported, and
     /// the thinking option (id "thought_level") when no levels were reported.
     /// Both reflect the latest successful `set_model` / `set_thinking_level`.
-    pub fn config_options(&self) -> Vec<SessionConfigOption> {
+    pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let c = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         let mut options = Vec::new();
 
         if !c.models.is_empty() {
-            let entries: Vec<SessionConfigSelectOption> = c
+            let choices: Vec<super::NeutralConfigChoice> = c
                 .models
                 .iter()
                 .map(|m| {
@@ -183,28 +174,48 @@ impl PiRpcClient {
                     } else {
                         m.name.clone()
                     };
-                    SessionConfigSelectOption::new(value, name)
+                    super::NeutralConfigChoice {
+                        value,
+                        name,
+                        description: None,
+                    }
                 })
                 .collect();
-            let current_value = current_model_value(&c.models, c.current_model_id.as_deref());
-            options.push(
-                SessionConfigOption::select("model", "Model", current_value, entries)
-                    .category(SessionConfigOptionCategory::Model),
-            );
+            options.push(super::NeutralConfigOption {
+                id: "model".to_string(),
+                name: "Model".to_string(),
+                description: None,
+                category: Some(super::NeutralConfigCategory::Model),
+                kind: super::NeutralConfigKind::Select {
+                    current_value: current_model_value(&c.models, c.current_model_id.as_deref()),
+                    choices,
+                },
+            });
         }
 
         if !c.thinking_levels.is_empty() {
-            let entries: Vec<SessionConfigSelectOption> = c
+            let choices: Vec<super::NeutralConfigChoice> = c
                 .thinking_levels
                 .iter()
-                .map(|level| SessionConfigSelectOption::new(level.clone(), level.clone()))
+                .map(|level| super::NeutralConfigChoice {
+                    value: level.clone(),
+                    name: level.clone(),
+                    description: None,
+                })
                 .collect();
-            let current =
-                current_level_value(&c.thinking_levels, c.current_thinking_level.as_deref());
-            options.push(
-                SessionConfigOption::select("thought_level", "Thinking", current, entries)
-                    .category(SessionConfigOptionCategory::ThoughtLevel),
-            );
+            options.push(super::NeutralConfigOption {
+                id: "thought_level".to_string(),
+                name: "Thinking".to_string(),
+                description: None,
+                category: Some(super::NeutralConfigCategory::ThoughtLevel),
+                kind: super::NeutralConfigKind::Select {
+                    current_value: current_level_value(
+                        &c.thinking_levels,
+                        c.current_thinking_level.as_deref(),
+                    ),
+                    choices,
+                },
+            });
         }
 
         options
@@ -260,12 +271,9 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Build the prompt text from content blocks and begin a prompt run.
-    ///
-    /// Text blocks are joined with `"\n\n"`; ResourceLink blocks contribute their URI as a line;
-    /// all other block kinds produce a short placeholder. Returns the request id for tracking.
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        self.core.begin_prompt(blocks)
+    /// Begin a prompt run from a plain-text message.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
+        self.core.begin_prompt(message)
     }
 
     /// Abort the active prompt run. Returns `Err` when no run is in flight.

@@ -124,7 +124,7 @@ pub(super) fn spawn_claude_sdk(
     worktree_path: &Path,
     operator_pin: &str,
     resume_session_id: Option<&str>,
-) -> Result<(ClaudeSdkClient, SpawnReport), AcpSpawnError> {
+) -> Result<(ClaudeSdkClient, SpawnReport<super::NeutralConfigOption>), AcpSpawnError> {
     let (program, args) = claude_launch()?;
     let client = ClaudeSdkClient::spawn(
         &program,
@@ -157,7 +157,7 @@ pub(super) fn spawn_claude_sdk(
 
     let model_apply_error = apply_pin_to_claude(&client, operator_pin);
 
-    let report = SpawnReport {
+    let report = SpawnReport::<super::NeutralConfigOption> {
         load_session_advertised: true,
         restore_advertised: true,
         close_advertised: false,

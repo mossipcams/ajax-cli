@@ -152,6 +152,23 @@ pub(crate) fn accept_action(
     ElicitationAction::Accept(ElicitationAcceptAction::new().content(content))
 }
 
+pub(crate) fn action_from_wire(
+    action: &str,
+    content: Option<&serde_json::Value>,
+) -> Result<ElicitationAction, String> {
+    match action {
+        "accept" => {
+            let payload = content.ok_or_else(|| {
+                "elicitation accept requires content matching the requested schema".to_string()
+            })?;
+            Ok(accept_action(wire_content_from_json(payload)?))
+        }
+        "decline" => Ok(ElicitationAction::Decline),
+        "cancel" => Ok(ElicitationAction::Cancel),
+        other => Err(format!("unsupported elicitation action: {other}")),
+    }
+}
+
 fn json_to_content_value(value: &Value) -> Result<ElicitationContentValue, String> {
     match value {
         Value::String(text) => Ok(ElicitationContentValue::String(text.clone())),

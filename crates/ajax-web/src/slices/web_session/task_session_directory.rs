@@ -22,7 +22,6 @@ async fn send_command<T>(
     rx.await
         .map_err(|_| SessionError::protocol("session task dropped reply"))
 }
-use crate::adapters::web_session_acp::wire_value_to_session_value;
 use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{
@@ -379,7 +378,7 @@ impl TaskSessionDirectory {
         &self,
         handle: &str,
         config_id: &str,
-        value: agent_client_protocol::schema::v1::SessionConfigOptionValue,
+        value: crate::adapters::web_session_acp::SessionConfigValue,
     ) -> Result<task_session_spawn::ApplyConfigOptionResult, String> {
         let tx = self.command_tx(handle)?;
         let config_id = config_id.to_string();
@@ -627,12 +626,11 @@ pub(crate) async fn apply_client_message(
             if config_id.is_empty() {
                 return Err("configId is required".to_string());
             }
-            let wire = wire_value_to_session_value(value);
             if !directory.has_live_entry(handle) {
                 return Err("session slot missing".to_string());
             }
             let outcome = directory
-                .apply_config_option(handle, &config_id, wire)
+                .apply_config_option(handle, &config_id, value)
                 .await?;
             *generation = outcome.generation;
             let persistence_warning = outcome

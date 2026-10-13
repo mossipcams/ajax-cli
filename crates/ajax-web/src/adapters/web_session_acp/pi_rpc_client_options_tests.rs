@@ -6,11 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionConfigSelectOptions,
-};
-
 use super::pi_rpc_client::PiRpcClient;
 
 /// Generous per-request bound: node startup plus one scripted record burst.
@@ -27,30 +22,30 @@ fn spawn_client() -> PiRpcClient {
 }
 
 /// Owned snapshot of one select option, so callers avoid lifetimes into the
-/// borrowed `SessionConfigOption`.
+/// borrowed [`super::NeutralConfigOption`].
 struct SelectView {
     current_value: String,
     values: Vec<String>,
     names: Vec<String>,
-    category: Option<SessionConfigOptionCategory>,
+    category: Option<super::NeutralConfigCategory>,
 }
 
-fn select_view(options: &[SessionConfigOption], id: &str) -> SelectView {
+fn select_view(options: &[super::NeutralConfigOption], id: &str) -> SelectView {
     let option = options
         .iter()
-        .find(|option| option.id.0.as_ref() == id)
+        .find(|option| option.id == id)
         .unwrap_or_else(|| panic!("config option {id} must be advertised"));
-    let SessionConfigKind::Select(select) = &option.kind else {
+    let super::NeutralConfigKind::Select {
+        current_value,
+        choices,
+    } = &option.kind
+    else {
         panic!("config option {id} must be a select");
     };
-    let entries: &[SessionConfigSelectOption] = match &select.options {
-        SessionConfigSelectOptions::Ungrouped(entries) => entries,
-        _ => panic!("config option {id} must be ungrouped"),
-    };
     SelectView {
-        current_value: select.current_value.0.to_string(),
-        values: entries.iter().map(|e| e.value.0.to_string()).collect(),
-        names: entries.iter().map(|e| e.name.clone()).collect(),
+        current_value: current_value.clone(),
+        values: choices.iter().map(|choice| choice.value.clone()).collect(),
+        names: choices.iter().map(|choice| choice.name.clone()).collect(),
         category: option.category.clone(),
     }
 }
@@ -65,7 +60,7 @@ fn config_options_advertise_model_and_thinking_level() {
     let model = select_view(&options, "model");
     assert!(matches!(
         model.category,
-        Some(SessionConfigOptionCategory::Model)
+        Some(super::NeutralConfigCategory::Model)
     ));
     assert_eq!(model.current_value, "fake-provider/fake-model");
     assert_eq!(model.values.len(), 2);
@@ -79,7 +74,7 @@ fn config_options_advertise_model_and_thinking_level() {
     let thinking = select_view(&options, "thought_level");
     assert!(matches!(
         thinking.category,
-        Some(SessionConfigOptionCategory::ThoughtLevel)
+        Some(super::NeutralConfigCategory::ThoughtLevel)
     ));
     assert_eq!(thinking.current_value, "medium");
     assert_eq!(thinking.values, ["off", "low", "medium", "high"]);

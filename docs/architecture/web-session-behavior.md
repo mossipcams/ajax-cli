@@ -643,16 +643,27 @@ all-zero usage is skipped so cancelling does not reset the meter.
 - Session clients yield one `AgentEvent` vocabulary: `Acp(AcpClientEvent)` for
   ACP-over-stdio harnesses (Cursor, Codex) and `Native(NativeEvent)` for the
   Claude Agent SDK sidecar and Pi RPC children.
-- `NativeEvent` carries no `agent_client_protocol` types: it covers exactly the
-  transcript shapes those adapters previously emitted as ACP session updates —
-  text and thought chunks, tool call open/update (with `raw_input`), plan
-  entries, and usage. Run-lifecycle events (`RequestFinished`, `Error`,
-  `Exited`) stay `Acp(..)`.
+- `NativeEvent` carries no `agent_client_protocol` types: it covers text and
+  thought chunks, tool call open/update (with `raw_input`), plan entries, usage,
+  and the run-lifecycle events turn finished (request id plus stop reason or
+  rejection text), error and exited. The Claude Agent SDK and Pi RPC code emits
+  only `Native(..)`.
 - The web slice maps both to its own wire events: `acp_map` for ACP updates and
   `native_map::map_native_event` for native events; the wire output is identical.
 - Native events carry no session id.
-- Claude and Pi sessions remain ACP-shaped for config options, model apply,
-  slash commands, and prompt capabilities (future work).
+- Claude and Pi describe their model and effort / thinking options with the
+  harness-neutral `NeutralConfigOption`; `SessionClient` hands the slice neutral
+  options and takes the wire `SessionConfigValue`, ACP harnesses convert at
+  their own edge, and the Claude and Pi model catalog is built from the neutral
+  options.
+- Prompts reach the Claude and Pi clients as plain text: `SessionClient`
+  flattens the slice's content blocks (text, resource-link URI, `[image
+  omitted]` placeholder).
+- The guard test `native_harness_code_never_names_the_acp_protocol` keeps
+  `agent_client_protocol` and `AcpClientEvent` out of the Claude, Pi and shared
+  RPC files.
+- The remaining limit: the slice still builds prompt payloads as ACP content
+  blocks before `SessionClient`.
 - The adapter layer must not name slice wire types; the guard test
   `web_session_acp_adapter_does_not_import_slice_wire_types` enforces this.
 

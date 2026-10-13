@@ -214,8 +214,8 @@ fn live_model_apply_reenter_resumes_without_session_close() {
                     .apply_config_option(
                         handle,
                         "model",
-                        agent_client_protocol::schema::v1::SessionConfigOptionValue::value_id(
-                            "grok-4.6",
+                        crate::adapters::web_session_acp::SessionConfigValue::Select(
+                            "grok-4.6".to_string(),
                         ),
                     )
                     .expect("live model apply");

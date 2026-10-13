@@ -6,9 +6,6 @@ use std::path::Path;
 use std::sync::{mpsc::TryRecvError, Mutex};
 use std::time::{Duration, Instant};
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-};
 use serde_json::{json, Value};
 
 use super::agent_event::AgentEvent;
@@ -196,28 +193,48 @@ impl ClaudeSdkClient {
         self.core.session_id()
     }
 
-    pub fn config_options(&self) -> Vec<SessionConfigOption> {
+    pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let state = self.state.lock().expect("claude_sdk_client mutex poisoned");
         let mut options = Vec::new();
         if !state.models.is_empty() {
-            let entries: Vec<SessionConfigSelectOption> = state
+            let choices: Vec<super::NeutralConfigChoice> = state
                 .models
                 .iter()
-                .map(|(value, name)| SessionConfigSelectOption::new(value.clone(), name.clone()))
+                .map(|(value, name)| super::NeutralConfigChoice {
+                    value: value.clone(),
+                    name: name.clone(),
+                    description: None,
+                })
                 .collect();
-            options.push(
-                SessionConfigOption::select("model", "Model", state.current_model.clone(), entries)
-                    .category(SessionConfigOptionCategory::Model),
-            );
+            options.push(super::NeutralConfigOption {
+                id: "model".to_string(),
+                name: "Model".to_string(),
+                description: None,
+                category: Some(super::NeutralConfigCategory::Model),
+                kind: super::NeutralConfigKind::Select {
+                    current_value: state.current_model.clone(),
+                    choices,
+                },
+            });
         }
-        let entries: Vec<SessionConfigSelectOption> = EFFORT_LEVELS
+        let choices: Vec<super::NeutralConfigChoice> = EFFORT_LEVELS
             .iter()
-            .map(|level| SessionConfigSelectOption::new(*level, *level))
+            .map(|level| super::NeutralConfigChoice {
+                value: (*level).to_string(),
+                name: (*level).to_string(),
+                description: None,
+            })
             .collect();
-        options.push(
-            SessionConfigOption::select("effort", "Effort", state.current_effort.clone(), entries)
-                .category(SessionConfigOptionCategory::ThoughtLevel),
-        );
+        options.push(super::NeutralConfigOption {
+            id: "effort".to_string(),
+            name: "Effort".to_string(),
+            description: None,
+            category: Some(super::NeutralConfigCategory::ThoughtLevel),
+            kind: super::NeutralConfigKind::Select {
+                current_value: state.current_effort.clone(),
+                choices,
+            },
+        });
         options
     }
 
@@ -269,8 +286,9 @@ impl ClaudeSdkClient {
         Ok(())
     }
 
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        self.core.begin_prompt(blocks)
+    /// Begin a prompt run from a plain-text message.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
+        self.core.begin_prompt(message)
     }
 
     pub fn cancel(&self) -> Result<(), String> {

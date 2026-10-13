@@ -7,10 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
-
 use super::agent_event::{AgentEvent, NativeEvent};
-use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
@@ -29,8 +26,8 @@ fn spawn_client(extra_args: &[&str]) -> PiRpcClient {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-fn text_blocks() -> Vec<ContentBlock> {
-    vec![ContentBlock::Text(TextContent::new("hello"))]
+fn text_blocks() -> String {
+    "hello".to_string()
 }
 
 /// True when `event` is a native `AgentText` (the pi message chunk).
@@ -38,35 +35,32 @@ fn is_agent_text(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// Collect events until a `RequestFinished` for `expected_id` arrives. The
-/// finished request's result is returned; earlier events are kept. Panics on
+/// Collect events until a native `TurnFinished` for `expected_id` arrives. The
+/// finished turn's result is returned; earlier events are kept. Panics on
 /// any other terminal shape (bounded loop so a hang is a failure, not a stall).
-fn drain_until_finished(
-    client: &PiRpcClient,
-    expected_id: u64,
-) -> (Vec<AgentEvent>, AcpClientEvent) {
+fn drain_until_finished(client: &PiRpcClient, expected_id: u64) -> (Vec<AgentEvent>, NativeEvent) {
     let mut events = Vec::new();
     for _ in 0..64 {
         let event = client
             .wait_event(TIMEOUT)
             .unwrap_or_else(|| panic!("timed out waiting for request {expected_id} to finish"));
-        if let AgentEvent::Acp(AcpClientEvent::RequestFinished { id, .. }) = &event {
-            if *id == expected_id {
-                let AgentEvent::Acp(finished) = event else {
+        if let AgentEvent::Native(NativeEvent::TurnFinished { request_id, .. }) = &event {
+            if *request_id == expected_id {
+                let AgentEvent::Native(finished) = event else {
                     unreachable!()
                 };
-                events.push(AgentEvent::Acp(finished.clone()));
+                events.push(AgentEvent::Native(finished.clone()));
                 return (events, finished);
             }
         }
         events.push(event);
     }
-    panic!("no RequestFinished for id {expected_id} within the bounded drain");
+    panic!("no TurnFinished for request_id {expected_id} within the bounded drain");
 }
 
-/// The `stopReason` string of a successful prompt result, if present.
-fn stop_reason(result: &serde_json::Value) -> Option<&str> {
-    result.get("stopReason")?.as_str()
+/// The stop-reason string of a successful turn result, if present.
+fn stop_reason(result: &Result<String, String>) -> Option<&str> {
+    result.as_ref().ok().map(|s| s.as_str())
 }
 
 #[test]
@@ -88,11 +82,9 @@ fn prompt_flow_streams_chunk_then_finishes_end_turn() {
         "expected an AgentText before the run finished: {events:?}"
     );
     match finished {
-        AcpClientEvent::RequestFinished { id, method, result } => {
-            assert_eq!(id, 1);
-            assert_eq!(method, "session/prompt");
-            let value = result.expect("prompt should succeed");
-            assert_eq!(stop_reason(&value), Some("end_turn"));
+        NativeEvent::TurnFinished { request_id, result } => {
+            assert_eq!(request_id, 1);
+            assert_eq!(stop_reason(&result), Some("end_turn"));
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
@@ -116,15 +108,12 @@ fn abort_flow_finishes_cancelled() {
 
     let (_, finished) = drain_until_finished(&client, id);
     match finished {
-        AcpClientEvent::RequestFinished {
-            id: finished_id,
-            method,
+        NativeEvent::TurnFinished {
+            request_id: finished_id,
             result,
         } => {
             assert_eq!(finished_id, 1);
-            assert_eq!(method, "session/prompt");
-            let value = result.expect("aborted run should settle as Ok");
-            assert_eq!(stop_reason(&value), Some("cancelled"));
+            assert_eq!(stop_reason(&result), Some("cancelled"));
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
@@ -164,13 +153,11 @@ fn rejected_prompt_reports_error_result() {
 
     let (_, finished) = drain_until_finished(&client, id);
     match finished {
-        AcpClientEvent::RequestFinished {
-            id: finished_id,
-            method,
+        NativeEvent::TurnFinished {
+            request_id: finished_id,
             result,
         } => {
             assert_eq!(finished_id, 1);
-            assert_eq!(method, "session/prompt");
             let message = result.expect_err("rejected prompt must finish as Err");
             assert_eq!(message, "rejected for test");
         }
@@ -212,7 +199,7 @@ fn shutdown_returns_session_id_once_then_host_exited() {
 fn empty_block_list_is_err() {
     let client = spawn_client(&[]);
     let error = client
-        .begin_prompt(&[])
+        .begin_prompt("")
         .expect_err("an empty prompt must be rejected");
     assert!(!error.is_empty());
 }

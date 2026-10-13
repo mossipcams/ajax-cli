@@ -1,8 +1,10 @@
 use super::acp_drain::{
-    coalesce_session_events, map_acp_session_update_with_startup, map_request_finished,
-    permission_response, CONNECTION_INTERRUPTED_MESSAGE,
+    coalesce_session_events, drain_acp_events, map_acp_session_update_with_startup,
+    map_request_finished, permission_response, PromptTerminalOutcome,
+    CONNECTION_INTERRUPTED_MESSAGE,
 };
 use super::map_acp_session_notification;
+use crate::adapters::web_session_acp::{AcpClientEvent, AcpEventSource, AgentEvent, NativeEvent};
 use crate::slices::web_session::acp_usage::UsageDeduper;
 use crate::slices::web_session::SessionServerEvent;
 use agent_client_protocol::schema::v1::{
@@ -11,6 +13,8 @@ use agent_client_protocol::schema::v1::{
     TextContent, ToolCall, ToolCallLocation, ToolCallUpdate, UsageUpdate,
 };
 use serde_json::json;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 
 #[test]
 fn finished_prompt_reports_turn_end_with_stop_reason() {
@@ -451,4 +455,99 @@ fn permission_response_matches_779_shape() {
         permission_response(true, Some("because")),
         json!({ "approved": true, "reason": "because" })
     );
+}
+
+struct FakeAcpSource {
+    new_result: serde_json::Value,
+    events: RefCell<VecDeque<AgentEvent>>,
+}
+
+impl AcpEventSource for FakeAcpSource {
+    fn session_new_result(&self) -> &serde_json::Value {
+        &self.new_result
+    }
+
+    fn poll_event(&self) -> Option<AgentEvent> {
+        self.events.borrow_mut().pop_front()
+    }
+}
+
+fn drain_one(event: AgentEvent) -> super::acp_drain::AcpDrainOutcome {
+    let client = FakeAcpSource {
+        new_result: json!({}),
+        events: RefCell::new(VecDeque::from([event])),
+    };
+    drain_acp_events(&client, &mut UsageDeduper::default())
+}
+
+fn assert_outcomes_match(
+    native: super::acp_drain::AcpDrainOutcome,
+    acp: super::acp_drain::AcpDrainOutcome,
+) {
+    assert_eq!(native.events, acp.events);
+    assert_eq!(native.host_exited, acp.host_exited);
+    assert_eq!(native.prompt_terminals.len(), acp.prompt_terminals.len());
+    for (nat, a) in native.prompt_terminals.iter().zip(&acp.prompt_terminals) {
+        assert_eq!(nat.request_id, a.request_id);
+        assert_eq!(nat.outcome, a.outcome);
+        assert_eq!(nat.events, a.events);
+    }
+}
+
+#[test]
+fn native_turn_finished_matches_acp_request_finished() {
+    let native = drain_one(AgentEvent::Native(NativeEvent::TurnFinished {
+        request_id: 7,
+        result: Ok("end_turn".to_string()),
+    }));
+    let acp = drain_one(AgentEvent::Acp(AcpClientEvent::RequestFinished {
+        id: 7,
+        method: "session/prompt",
+        result: Ok(json!({ "stopReason": "end_turn" })),
+    }));
+    assert_outcomes_match(native.clone(), acp);
+    assert_eq!(native.prompt_terminals.len(), 1);
+    let terminal = &native.prompt_terminals[0];
+    assert_eq!(terminal.request_id, 7u64);
+    assert_eq!(terminal.outcome, PromptTerminalOutcome::Success);
+    assert_eq!(
+        terminal.events,
+        vec![SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".to_string())
+        }]
+    );
+}
+
+#[test]
+fn native_turn_rejection_matches_acp() {
+    let native = drain_one(AgentEvent::Native(NativeEvent::TurnFinished {
+        request_id: 7,
+        result: Err("boom".to_string()),
+    }));
+    let acp = drain_one(AgentEvent::Acp(AcpClientEvent::RequestFinished {
+        id: 7,
+        method: "session/prompt",
+        result: Err("boom".to_string()),
+    }));
+    assert_outcomes_match(native.clone(), acp);
+    assert_eq!(native.prompt_terminals.len(), 1);
+    assert_eq!(
+        native.prompt_terminals[0].outcome,
+        PromptTerminalOutcome::Failed
+    );
+}
+
+#[test]
+fn native_error_matches_acp_error() {
+    let native = drain_one(AgentEvent::Native(NativeEvent::Error("x".to_string())));
+    let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Error("x".to_string())));
+    assert_outcomes_match(native, acp);
+}
+
+#[test]
+fn native_exit_matches_acp_exit() {
+    let native = drain_one(AgentEvent::Native(NativeEvent::Exited));
+    let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Exited));
+    assert_outcomes_match(native.clone(), acp);
+    assert!(native.host_exited);
 }

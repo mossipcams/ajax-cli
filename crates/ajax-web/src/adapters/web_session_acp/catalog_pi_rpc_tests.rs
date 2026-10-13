@@ -59,3 +59,77 @@ fn non_pi_agents_stay_on_the_acp_path() {
         assert!(!uses_pi_rpc(AgentClient::Claude));
     });
 }
+
+#[test]
+fn native_catalog_matches_the_acp_parser() {
+    let neutral = vec![
+        super::NeutralConfigOption {
+            id: "model".to_string(),
+            name: "Model".to_string(),
+            description: None,
+            category: Some(super::NeutralConfigCategory::Model),
+            kind: super::NeutralConfigKind::Select {
+                current_value: "p/a".to_string(),
+                choices: vec![
+                    super::NeutralConfigChoice {
+                        value: "p/a".to_string(),
+                        name: "A".to_string(),
+                        description: None,
+                    },
+                    super::NeutralConfigChoice {
+                        value: "p/b".to_string(),
+                        name: "B".to_string(),
+                        description: None,
+                    },
+                ],
+            },
+        },
+        super::NeutralConfigOption {
+            id: "thought_level".to_string(),
+            name: "Thinking".to_string(),
+            description: None,
+            category: Some(super::NeutralConfigCategory::ThoughtLevel),
+            kind: super::NeutralConfigKind::Select {
+                current_value: "high".to_string(),
+                choices: vec![
+                    super::NeutralConfigChoice {
+                        value: "low".to_string(),
+                        name: "Low".to_string(),
+                        description: None,
+                    },
+                    super::NeutralConfigChoice {
+                        value: "high".to_string(),
+                        name: "High".to_string(),
+                        description: None,
+                    },
+                ],
+            },
+        },
+    ];
+
+    assert_eq!(
+        super::catalog::catalog_from_neutral(&neutral),
+        super::catalog::parse_session_new_catalog(&serde_json::json!({
+            "configOptions": serde_json::to_value(super::acp_options(&neutral)).unwrap()
+        }))
+    );
+    let catalog = super::catalog::catalog_from_neutral(&neutral);
+    assert_eq!(
+        catalog.models,
+        vec![
+            ("p/a".to_string(), "A".to_string()),
+            ("p/b".to_string(), "B".to_string())
+        ]
+    );
+    assert_eq!(catalog.default_model.as_deref(), Some("p/a"));
+    assert_eq!(
+        catalog.reasoning.as_ref().unwrap().current.as_deref(),
+        Some("high")
+    );
+
+    let thinking_only = std::slice::from_ref(&neutral[1]);
+    let catalog = super::catalog::catalog_from_neutral(thinking_only);
+    assert!(catalog.models.is_empty());
+    assert!(catalog.default_model.is_none());
+    assert!(catalog.reasoning.is_some());
+}

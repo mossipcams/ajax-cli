@@ -62,7 +62,46 @@ Approval: user said "Just do it" on the plan with base #1264 / adapter-layer typ
 - [x] S2 Claude (S2a plumbing + S2b native mapper; verified fmt, clippy, nextest 950/951, doc, verify:arch) mapper emits `AgentEvent` natively; drop ACP imports from `claude_sdk_map`.
 - [x] S3 Pi mapper emits native events (verified fmt, clippy, nextest 950/951, doc, verify:arch).
       Note: Pi/RPC tests no longer assert `notification.session_id`, since `NativeEvent` carries no session id.
-- [ ] S4 Native config/model/commands/capabilities for Claude and Pi.
+- [x] S4 Native config/model/catalog/lifecycle/prompt for Claude and Pi. Stack:
+      #1285 `refactor/web-session/neutral-config-options` (S4a-S4c, S4e-1) and
+      #1286 `refactor/web-session/native-lifecycle-events` (the rest). Every
+      packet went to Qwen; the orchestrator reran fmt, workspace clippy
+      `-D warnings`, `npm run verify:arch` and `cargo nextest run -p ajax-web
+      --no-fail-fast` on each. The only failing test throughout is
+      `live_cursor_initialize_advertises_load_session` (needs the real Cursor
+      CLI).
+  - [x] S4a (a02005ef) neutral `NeutralConfigOption` in `config_model.rs` with
+        ACP conversions.
+  - [x] S4b (47e289ed, 44e1bf40, 339269e3) the slice receives neutral options
+        from `SessionClient` (`SessionSpawnReport`, `SessionConfigOutcome`) and
+        passes the existing wire value `SessionConfigValue`. NARROWED (user
+        "Yes", 2026-10-13): `config_options.rs` and `apply_model` keep ACP
+        types internally as the Cursor/Codex pin logic, so
+        `config_options_tests.rs` was not rewritten; `persisted_model_id` and
+        `triggers_model_persist` convert neutral options back to ACP to reuse
+        it. `NeutralConfigValue` from S4a was deleted as a duplicate.
+  - [x] S4c (49de9693, 15e679e2) Claude and Pi build neutral options directly;
+        the Claude and Pi model catalog is built natively (user, 2026-10-13:
+        "The model catalog should not be ACP").
+  - [x] S4d (in the S4d/S4f commit) the slice passes the wire elicitation
+        action and content; `sdk_elicitation::action_from_wire` builds the ACP
+        action.
+  - [x] S4e (a7b684fb, 5988864f, 499f85b1, 7c67f276) native turn-finished,
+        error, exited and usage events; prompts reach the Claude and Pi clients
+        as plain text (`session_client::prompt_text` flattens content blocks).
+        Claude and Pi emit no `AgentEvent::Acp(..)`.
+  - [x] S4f guard `native_harness_code_never_names_the_acp_protocol` over the
+        ten Claude, Pi and shared RPC files.
+  - Existing tests changed, shape only, approved by the user ("Yes"): helpers
+    and matches in `session_client_{pin,claude,spawn,}_tests.rs`,
+    `claude_sdk_{client,hardening,spawn,map}_tests.rs`,
+    `pi_rpc_client_{options,usage,}_tests.rs`, `session_close_tests.rs`.
+    Assertions removed because the field no longer exists: five
+    `method == "session/prompt"` checks (native turn-finished has no method).
+  - Not done, never in scope: the slice still builds prompts as ACP
+    `ContentBlock`s (`prompt_content.rs`) and hands them to `SessionClient`.
+  - Defect found on the way: #1283 (Pi resume of a never-persisted session),
+    fixed in 74660397 and shipped separately as #1284.
 - [x] S5 Docs: `docs/architecture/web-session-behavior.md`, `architecture.md`,
       `architecture_web_session.rs` guard rules.
 

@@ -6,8 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{SessionConfigKind, SessionConfigSelectOption};
-
 use super::claude_sdk_client::ClaudeSdkClient;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
@@ -47,34 +45,25 @@ fn spawn_client() -> ClaudeSdkClient {
 }
 
 /// Current value of the `model` config option.
-fn model_option_value(
-    options: &[agent_client_protocol::schema::v1::SessionConfigOption],
-) -> String {
+fn model_option_value(options: &[super::NeutralConfigOption]) -> String {
     let option = options
         .iter()
-        .find(|option| option.id.0 == "model".into())
+        .find(|option| option.id == "model")
         .expect("the fake SDK advertises a model config option");
     match &option.kind {
-        SessionConfigKind::Select(select) => select.current_value.0.to_string(),
+        super::NeutralConfigKind::Select { current_value, .. } => current_value.clone(),
         other => panic!("model option should be a select, got {other:?}"),
     }
 }
 
 /// The advertised `model` entries of the client's config options.
-fn model_option_entries(
-    options: &[agent_client_protocol::schema::v1::SessionConfigOption],
-) -> Vec<SessionConfigSelectOption> {
+fn model_option_entries(options: &[super::NeutralConfigOption]) -> Vec<super::NeutralConfigChoice> {
     let option = options
         .iter()
-        .find(|option| option.id.0 == "model".into())
+        .find(|option| option.id == "model")
         .expect("the fake SDK advertises a model config option");
     match &option.kind {
-        SessionConfigKind::Select(select) => match &select.options {
-            agent_client_protocol::schema::v1::SessionConfigSelectOptions::Ungrouped(entries) => {
-                entries.clone()
-            }
-            other => panic!("model option should be ungrouped, got {other:?}"),
-        },
+        super::NeutralConfigKind::Select { choices, .. } => choices.clone(),
         other => panic!("model option should be a select, got {other:?}"),
     }
 }
@@ -104,7 +93,7 @@ fn set_model_accepts_a_value_advertised_by_the_fake_sdk() {
     // "haiku" must be advertised by the fake fixture for this test to mean anything.
     let entries: Vec<String> = model_option_entries(&client.config_options())
         .iter()
-        .map(|entry| entry.value.0.to_string())
+        .map(|entry| entry.value.clone())
         .collect();
     assert!(
         entries.contains(&"haiku".to_string()),

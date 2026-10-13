@@ -5,30 +5,30 @@ use super::task_session_exit::{
 use super::transcript::{already_noted, context_reset_needed, context_reset_note};
 use super::{SessionError, SessionServerEvent};
 use crate::adapters::web_session_acp::{
-    applied_model_id_for_persist, config_option_descriptors, SessionClient, SpawnReport,
+    descriptors_from_neutral, persisted_model_id, SessionClient, SessionSpawnReport,
 };
 use crate::adapters::web_session_store;
 
-pub(super) fn meta_model_for_persist(report: &SpawnReport, operator_model: &str) -> String {
+pub(super) fn meta_model_for_persist(report: &SessionSpawnReport, operator_model: &str) -> String {
     meta_model_from_config_options(report.config_options.as_deref(), operator_model)
 }
 
 pub(super) fn meta_model_from_config_options(
-    config_options: Option<&[agent_client_protocol::schema::v1::SessionConfigOption]>,
+    config_options: Option<&[crate::adapters::web_session_acp::NeutralConfigOption]>,
     operator_model: &str,
 ) -> String {
     if let Some(options) = config_options {
-        if let Ok(pipe) = applied_model_id_for_persist(options) {
+        if let Ok(pipe) = persisted_model_id(options) {
             return pipe;
         }
     }
     operator_model.trim().to_string()
 }
 
-fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SpawnReport) {
+fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SessionSpawnReport) {
     state.acp.restore_advertised = report.restore_advertised;
     if let Some(options) = report.config_options.as_deref() {
-        state.acp.session_config_options = Some(config_option_descriptors(options));
+        state.acp.session_config_options = Some(descriptors_from_neutral(options));
     }
     state.acp.session_prompt_capabilities = Some(report.prompt_capabilities.clone());
 }
@@ -50,7 +50,7 @@ fn discard_unsaved_client(state: &mut TaskSessionState) {
 pub(super) fn finalize_client_metadata(
     state: &mut TaskSessionState,
     session_id: &str,
-    report: &SpawnReport,
+    report: &SessionSpawnReport,
     model: &str,
     bump_generation: bool,
 ) -> Result<(), SessionError> {
@@ -87,7 +87,7 @@ pub(super) fn finalize_client_metadata(
 pub(super) fn install_replaced_client(
     state: &mut TaskSessionState,
     new_client: SessionClient,
-    report: &SpawnReport,
+    report: &SessionSpawnReport,
     model: &str,
 ) -> Result<(), SessionError> {
     state.acp.client = Some(new_client);
@@ -121,7 +121,7 @@ pub(super) fn install_replaced_client(
 
 pub(super) fn finish_first_acquire(
     state: &mut TaskSessionState,
-    report: &SpawnReport,
+    report: &SessionSpawnReport,
     model: &str,
 ) -> Result<(), SessionError> {
     let session_id = state

@@ -4,14 +4,12 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigKind, SessionConfigOptionValue, SessionUpdate,
-};
+use agent_client_protocol::schema::v1::{ContentBlock, ImageContent, ResourceLink, TextContent};
 
 use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
-use super::session_client::SessionClient;
-use super::{AcpClientEvent, AgentEvent, CancelOutcome};
+use super::session_client::{prompt_text, SessionClient};
+use super::{AgentEvent, CancelOutcome, SessionConfigValue};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -43,13 +41,9 @@ fn is_agent_message_chunk(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// True when `event` is a `SessionUpdate` carrying a `UsageUpdate`.
+/// True when `event` is a native usage event.
 fn is_usage_update(event: &AgentEvent) -> bool {
-    matches!(
-        event,
-        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-            if matches!(notification.update, SessionUpdate::UsageUpdate(_))
-    )
+    matches!(event, AgentEvent::Native(NativeEvent::Usage { .. }))
 }
 
 #[test]
@@ -84,18 +78,15 @@ fn pi_variant_prompt_flow_streams_chunk_then_request_finished() {
             .wait_event(WAIT)
             .expect("RequestFinished should follow the chunk");
         match event {
-            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-                if matches!(notification.update, SessionUpdate::UsageUpdate(_)) =>
-            {
-                continue
-            }
-            AgentEvent::Acp(AcpClientEvent::RequestFinished { .. }) => break event,
+            AgentEvent::Native(NativeEvent::Usage { .. }) => continue,
+            AgentEvent::Native(NativeEvent::TurnFinished { .. }) => break event,
             other => panic!("expected RequestFinished, got {other:?}"),
         }
     };
     match &second {
-        AgentEvent::Acp(AcpClientEvent::RequestFinished {
-            id: finished_id, ..
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id: finished_id,
+            ..
         }) => {
             assert_eq!(*finished_id, id);
         }
@@ -124,10 +115,7 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
         match session.wait_event(WAIT) {
             None => panic!("run should finish after cancel"),
             Some(event)
-                if matches!(
-                    event,
-                    AgentEvent::Acp(AcpClientEvent::RequestFinished { .. })
-                ) =>
+                if matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })) =>
             {
                 break event
             }
@@ -137,8 +125,8 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
         }
     };
     match &finished {
-        AgentEvent::Acp(AcpClientEvent::RequestFinished {
-            id: finished_id,
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id: finished_id,
             result,
             ..
         }) => {
@@ -147,8 +135,8 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
                 .as_ref()
                 .expect("held run should finish with a result");
             assert!(
-                value.to_string().contains("cancelled"),
-                "stopReason should be cancelled, got {value:?}"
+                value.contains("cancelled"),
+                "stop reason should be cancelled, got {value:?}"
             );
         }
         other => panic!("expected RequestFinished after cancel, got {other:?}"),
@@ -181,10 +169,7 @@ fn pi_variant_rejects_request_and_elicitation_responses() {
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
     let err = session
-        .respond_elicitation(
-            "elicit-1",
-            agent_client_protocol::schema::v1::ElicitationAction::Decline,
-        )
+        .respond_elicitation("elicit-1", "decline", None)
         .expect_err("respond_elicitation should be unsupported");
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
@@ -205,13 +190,13 @@ fn pi_variant_applies_model_and_option_changes() {
         .and_then(|options| {
             options
                 .iter()
-                .find(|option| &*option.id.0 == "thought_level")
+                .find(|option| option.id == "thought_level")
                 .map(|option| &option.kind)
         })
         .expect("thought_level option must be advertised");
     match current {
-        SessionConfigKind::Select(select) => {
-            assert_eq!(select.current_value.0.to_string(), "high");
+        super::NeutralConfigKind::Select { current_value, .. } => {
+            assert_eq!(current_value.as_str(), "high");
         }
         other => panic!("expected a select thought_level option, got {other:?}"),
     }
@@ -219,7 +204,7 @@ fn pi_variant_applies_model_and_option_changes() {
     let outcome = session
         .apply_config_option(
             "model",
-            SessionConfigOptionValue::value_id("fake-provider/does-not-exist"),
+            SessionConfigValue::Select("fake-provider/does-not-exist".to_string()),
         )
         .expect("apply_config_option should report rather than fail");
     let error = outcome
@@ -254,4 +239,20 @@ fn issue_1273_pi_shutdown_and_detach_return_no_error() {
             "a shut-down transport is unavailable"
         );
     }
+}
+
+#[test]
+fn prompt_text_flattens_text_links_and_images() {
+    let blocks = vec![
+        ContentBlock::Text(TextContent::new("one")),
+        ContentBlock::ResourceLink(ResourceLink::new("f", "file:///a.rs")),
+        ContentBlock::Image(ImageContent::new("aGVsbG8=", "image/png")),
+        ContentBlock::Text(TextContent::new("two")),
+    ];
+
+    assert_eq!(
+        prompt_text(&blocks),
+        "one\n\nfile:///a.rs\n\n[image omitted]\n\ntwo"
+    );
+    assert_eq!(prompt_text(&[]), "");
 }
