@@ -7,8 +7,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::pi_rpc_client::PiRpcClient;
 
@@ -28,8 +26,8 @@ fn spawn_client(extra_args: &[&str]) -> PiRpcClient {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-fn text_blocks() -> Vec<ContentBlock> {
-    vec![ContentBlock::Text(TextContent::new("hello"))]
+fn text_blocks() -> String {
+    "hello".to_string()
 }
 
 /// True when `event` is a native `AgentText` (the pi message chunk).
@@ -201,7 +199,7 @@ fn shutdown_returns_session_id_once_then_host_exited() {
 fn empty_block_list_is_err() {
     let client = spawn_client(&[]);
     let error = client
-        .begin_prompt(&[])
+        .begin_prompt("")
         .expect_err("an empty prompt must be rejected");
     assert!(!error.is_empty());
 }

@@ -6,8 +6,6 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::ContentBlock;
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
@@ -273,12 +271,9 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Build the prompt text from content blocks and begin a prompt run.
-    ///
-    /// Text blocks are joined with `"\n\n"`; ResourceLink blocks contribute their URI as a line;
-    /// all other block kinds produce a short placeholder. Returns the request id for tracking.
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        self.core.begin_prompt(blocks)
+    /// Begin a prompt run from a plain-text message.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
+        self.core.begin_prompt(message)
     }
 
     /// Abort the active prompt run. Returns `Err` when no run is in flight.

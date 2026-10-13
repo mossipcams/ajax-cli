@@ -7,8 +7,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
 
@@ -48,8 +46,8 @@ fn spawn_client(model: Option<&str>, resume: Option<&str>) -> ClaudeSdkClient {
     .expect("claude sdk sidecar must spawn against the fake fixture (is node installed?)")
 }
 
-fn text_blocks(text: &str) -> Vec<ContentBlock> {
-    vec![ContentBlock::Text(TextContent::new(text))]
+fn text_blocks(text: &str) -> String {
+    text.to_string()
 }
 
 /// The streamed text of a native `AgentText` event, otherwise `None`.

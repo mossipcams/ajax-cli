@@ -6,8 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::pi_rpc_client::PiRpcClient;
 
@@ -28,8 +26,8 @@ fn spawn_client(extra_args: &[&str]) -> PiRpcClient {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-fn text_blocks() -> Vec<ContentBlock> {
-    vec![ContentBlock::Text(TextContent::new("hello"))]
+fn text_blocks() -> String {
+    "hello".to_string()
 }
 
 /// The `(used, size)` pair when `event` is a native usage event, otherwise

@@ -6,7 +6,6 @@ use std::path::Path;
 use std::sync::{mpsc::TryRecvError, Mutex};
 use std::time::{Duration, Instant};
 
-use agent_client_protocol::schema::v1::ContentBlock;
 use serde_json::{json, Value};
 
 use super::agent_event::AgentEvent;
@@ -287,8 +286,9 @@ impl ClaudeSdkClient {
         Ok(())
     }
 
-    pub fn begin_prompt(&self, blocks: &[ContentBlock]) -> Result<u64, String> {
-        self.core.begin_prompt(blocks)
+    /// Begin a prompt run from a plain-text message.
+    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
+        self.core.begin_prompt(message)
     }
 
     pub fn cancel(&self) -> Result<(), String> {

@@ -4,11 +4,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::ContentBlock;
+use agent_client_protocol::schema::v1::{ContentBlock, ImageContent, ResourceLink, TextContent};
 
 use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
-use super::session_client::SessionClient;
+use super::session_client::{prompt_text, SessionClient};
 use super::{AgentEvent, CancelOutcome, SessionConfigValue};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -242,4 +242,20 @@ fn issue_1273_pi_shutdown_and_detach_return_no_error() {
             "a shut-down transport is unavailable"
         );
     }
+}
+
+#[test]
+fn prompt_text_flattens_text_links_and_images() {
+    let blocks = vec![
+        ContentBlock::Text(TextContent::new("one")),
+        ContentBlock::ResourceLink(ResourceLink::new("f", "file:///a.rs")),
+        ContentBlock::Image(ImageContent::new("aGVsbG8=", "image/png")),
+        ContentBlock::Text(TextContent::new("two")),
+    ];
+
+    assert_eq!(
+        prompt_text(&blocks),
+        "one\n\nfile:///a.rs\n\n[image omitted]\n\ntwo"
+    );
+    assert_eq!(prompt_text(&[]), "");
 }
