@@ -6,7 +6,7 @@ use super::{
 };
 use crate::adapters::web_session_acp::{
     available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpEventSource,
-    AgentEvent,
+    AgentEvent, NativeEvent,
 };
 use serde_json::{json, Value};
 
@@ -41,6 +41,7 @@ pub(crate) struct PromptTerminal {
     pub events: Vec<SessionServerEvent>,
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct AcpDrainOutcome {
     pub events: Vec<SessionServerEvent>,
     pub host_exited: bool,
@@ -61,6 +62,29 @@ pub(crate) fn drain_acp_events(
     drain_acp_events_with_prompt_cancel(client, deduper, None)
 }
 
+fn apply_request_finished(
+    method: &'static str,
+    result: &Result<Value, String>,
+    id: u64,
+    prompt_cancel: Option<(u64, bool)>,
+    deduper: &mut UsageDeduper,
+    events: &mut Vec<SessionServerEvent>,
+    prompt_terminals: &mut Vec<PromptTerminal>,
+) {
+    let cancel_requested = prompt_cancel
+        .filter(|(request_id, _)| *request_id == id)
+        .is_some_and(|(_, requested)| requested);
+    let mapped = map_request_finished(method, result.clone(), Some(id), deduper, cancel_requested);
+    if method == "session/prompt" {
+        prompt_terminals.push(PromptTerminal {
+            request_id: id,
+            outcome: classify_prompt_terminal(result, cancel_requested),
+            events: mapped,
+        });
+    } else {
+        events.extend(mapped);
+    }
+}
 pub(crate) fn drain_acp_events_with_prompt_cancel(
     client: &impl AcpEventSource,
     deduper: &mut UsageDeduper,
@@ -132,35 +156,35 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     events.push(mapped);
                 }
             }
-            AgentEvent::Acp(AcpClientEvent::RequestFinished {
-                result, method, id, ..
-            }) => {
-                let cancel_requested = prompt_cancel
-                    .filter(|(request_id, _)| *request_id == id)
-                    .is_some_and(|(_, requested)| requested);
-                let mapped = map_request_finished(
+            AgentEvent::Acp(AcpClientEvent::RequestFinished { result, method, id }) => {
+                apply_request_finished(
                     method,
-                    result.clone(),
-                    Some(id),
+                    &result,
+                    id,
+                    prompt_cancel,
                     deduper,
-                    cancel_requested,
+                    &mut events,
+                    &mut prompt_terminals,
                 );
-                if method == "session/prompt" {
-                    prompt_terminals.push(PromptTerminal {
-                        request_id: id,
-                        outcome: classify_prompt_terminal(&result, cancel_requested),
-                        events: mapped,
-                    });
-                } else {
-                    events.extend(mapped);
-                }
             }
-            AgentEvent::Acp(AcpClientEvent::Error(message)) => {
+            AgentEvent::Native(NativeEvent::TurnFinished { request_id, result }) => {
+                apply_request_finished(
+                    "session/prompt",
+                    &result.map(|stop_reason| json!({ "stopReason": stop_reason })),
+                    request_id,
+                    prompt_cancel,
+                    deduper,
+                    &mut events,
+                    &mut prompt_terminals,
+                );
+            }
+            AgentEvent::Acp(AcpClientEvent::Error(message))
+            | AgentEvent::Native(NativeEvent::Error(message)) => {
                 events.push(SessionServerEvent::Error {
                     message: map_operator_visible_acp_error(&message),
                 });
             }
-            AgentEvent::Acp(AcpClientEvent::Exited) => {
+            AgentEvent::Acp(AcpClientEvent::Exited) | AgentEvent::Native(NativeEvent::Exited) => {
                 host_exited = true;
                 events.push(SessionServerEvent::Error {
                     message: "ACP process exited".to_string(),

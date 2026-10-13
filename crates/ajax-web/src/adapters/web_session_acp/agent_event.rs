@@ -1,8 +1,9 @@
 //! Shared event vocabulary for native (Claude Agent SDK / Pi RPC) adapters and
 //! the web session slice. `NativeEvent` carries no `agent_client_protocol`
-//! types: it covers exactly what `claude_sdk_map.rs` and `pi_rpc_map.rs`
-//! currently emit as ACP `SessionUpdate`s, so those mappers can stop
-//! translating through ACP without changing the wire output.
+//! types: in addition to everything `claude_sdk_map.rs` and `pi_rpc_map.rs`
+//! currently emit as ACP `SessionUpdate`s, it carries lifecycle events (turn
+//! finished, error, exited), so those mappers can stop translating through
+//! ACP without changing the wire output.
 
 use serde_json::Value;
 
@@ -40,6 +41,16 @@ pub enum NativeEvent {
     Plan(Vec<(String, String)>),
     /// Turn usage: tokens used against the model context window size.
     Usage { used: u64, size: u64 },
+    /// A turn finished; `Ok` carries the stop reason (e.g. `"end_turn"` or
+    /// `"cancelled"`) and `Err` carries the rejection text.
+    TurnFinished {
+        request_id: u64,
+        result: Result<String, String>,
+    },
+    /// An operator-visible adapter error.
+    Error(String),
+    /// The harness process exited.
+    Exited,
 }
 
 /// Every event a session client can emit: an ACP-protocol event for harnesses
