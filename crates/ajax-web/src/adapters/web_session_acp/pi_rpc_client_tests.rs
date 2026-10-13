@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 
-use super::agent_event::AgentEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::client::AcpClientEvent;
 use super::pi_rpc_client::PiRpcClient;
 
@@ -33,13 +33,9 @@ fn text_blocks() -> Vec<ContentBlock> {
     vec![ContentBlock::Text(TextContent::new("hello"))]
 }
 
-/// True when `event` is a `SessionUpdate` carrying an `AgentMessageChunk`.
-fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
-    matches!(
-        event,
-        AcpClientEvent::SessionUpdate(notification)
-            if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-    )
+/// True when `event` is a native `AgentText` (the pi message chunk).
+fn is_agent_text(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
 /// Collect events until a `RequestFinished` for `expected_id` arrives. The
@@ -48,24 +44,22 @@ fn is_agent_message_chunk(event: &AcpClientEvent) -> bool {
 fn drain_until_finished(
     client: &PiRpcClient,
     expected_id: u64,
-) -> (Vec<AcpClientEvent>, AcpClientEvent) {
+) -> (Vec<AgentEvent>, AcpClientEvent) {
     let mut events = Vec::new();
     for _ in 0..64 {
         let event = client
             .wait_event(TIMEOUT)
             .unwrap_or_else(|| panic!("timed out waiting for request {expected_id} to finish"));
-        let acp = match &event {
-            AgentEvent::Acp(acp) => acp,
-            other => panic!("expected an ACP event, got {other:?}"),
-        };
-        if matches!(
-            acp,
-            AcpClientEvent::RequestFinished { id, .. } if *id == expected_id
-        ) {
-            events.push(acp.clone());
-            return (events, acp.clone());
+        if let AgentEvent::Acp(AcpClientEvent::RequestFinished { id, .. }) = &event {
+            if *id == expected_id {
+                let AgentEvent::Acp(finished) = event else {
+                    unreachable!()
+                };
+                events.push(AgentEvent::Acp(finished.clone()));
+                return (events, finished);
+            }
         }
-        events.push(acp.clone());
+        events.push(event);
     }
     panic!("no RequestFinished for id {expected_id} within the bounded drain");
 }
@@ -90,8 +84,8 @@ fn prompt_flow_streams_chunk_then_finishes_end_turn() {
 
     let (events, finished) = drain_until_finished(&client, 1);
     assert!(
-        events.iter().any(is_agent_message_chunk),
-        "expected an AgentMessageChunk before the run finished: {events:?}"
+        events.iter().any(is_agent_text),
+        "expected an AgentText before the run finished: {events:?}"
     );
     match finished {
         AcpClientEvent::RequestFinished { id, method, result } => {
@@ -111,14 +105,11 @@ fn abort_flow_finishes_cancelled() {
     let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
 
     // The fake emits the text delta before holding; the first mappable event
-    // must surface as an AgentMessageChunk.
+    // must surface as a native AgentText.
     let first = client.wait_event(TIMEOUT).expect("first prompt event");
-    let AgentEvent::Acp(first) = &first else {
-        panic!("expected an ACP event, got {first:?}")
-    };
     assert!(
-        is_agent_message_chunk(first),
-        "expected the first event to be an AgentMessageChunk: {first:?}"
+        is_agent_text(&first),
+        "expected the first event to be an AgentText: {first:?}"
     );
 
     client.cancel().expect("cancel while a run is in flight");

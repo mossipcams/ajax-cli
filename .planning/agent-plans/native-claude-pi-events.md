@@ -59,8 +59,9 @@ Approval: user said "Just do it" on the plan with base #1264 / adapter-layer typ
       `live_cursor_initialize_advertises_load_session`, which needs the real Cursor CLI/network and is
       unrelated) `SessionClient::poll_event`/`wait_event` return `AgentEvent`; `acp_drain` handles
       `Native` via `map_native_event`; ACP behavior identical (existing tests are the oracle).
-- [ ] S2 Claude mapper emits `AgentEvent` natively; drop ACP imports from `claude_sdk_map`.
-- [ ] S3 Pi mapper emits `AgentEvent` natively.
+- [x] S2 Claude (S2a plumbing + S2b native mapper; verified fmt, clippy, nextest 950/951, doc, verify:arch) mapper emits `AgentEvent` natively; drop ACP imports from `claude_sdk_map`.
+- [x] S3 Pi mapper emits native events (verified fmt, clippy, nextest 950/951, doc, verify:arch).
+      Note: Pi/RPC tests no longer assert `notification.session_id`, since `NativeEvent` carries no session id.
 - [ ] S4 Native config/model/commands/capabilities for Claude and Pi.
 - [ ] S5 Docs: `docs/architecture/web-session-behavior.md`, `architecture.md`,
       `architecture_web_session.rs` guard rules.

@@ -7,10 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
-
-use super::agent_event::AgentEvent;
-use super::client::AcpClientEvent;
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -44,29 +41,17 @@ fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     (process, handshake)
 }
 
-fn contains_agent_message_chunk(events: &[AgentEvent]) -> bool {
-    events.iter().any(|event| {
-        matches!(
-            event,
-            AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-                if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-        )
-    })
+fn contains_agent_text(events: &[AgentEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::Native(NativeEvent::AgentText(_))))
 }
 
-/// The text of the first `AgentMessageChunk` in `events`, if one is present.
-fn agent_message_chunk_text(events: &[AgentEvent]) -> Option<&str> {
-    events.iter().find_map(|event| {
-        let AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification)) = event else {
-            return None;
-        };
-        match &notification.update {
-            SessionUpdate::AgentMessageChunk(chunk) => match &chunk.content {
-                ContentBlock::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            },
-            _ => None,
-        }
+/// The text of the first native `AgentText` in `events`, if one is present.
+fn agent_text(events: &[AgentEvent]) -> Option<&str> {
+    events.iter().find_map(|event| match event {
+        AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text.as_str()),
+        _ => None,
     })
 }
 #[test]
@@ -89,8 +74,8 @@ fn prompt_flow_surfaces_events_then_finishes() {
     // first `message_update` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
-        "first step must carry an AgentMessageChunk: {step:?}"
+        matches!(&step, RpcStep::Events(events) if contains_agent_text(events)),
+        "first step must carry an AgentText: {step:?}"
     );
     assert!(session.run_active(), "run stays active until agent_settled");
 
@@ -113,8 +98,8 @@ fn abort_flow_finishes_with_aborted() {
 
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if contains_agent_message_chunk(events)),
-        "first step must carry an AgentMessageChunk: {step:?}"
+        matches!(&step, RpcStep::Events(events) if contains_agent_text(events)),
+        "first step must carry an AgentText: {step:?}"
     );
 
     session
@@ -193,7 +178,7 @@ fn handshake_pending_records_are_processed_first() {
     // `message_update` captured during the handshake.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
-        matches!(&step, RpcStep::Events(events) if agent_message_chunk_text(events) == Some("pending-text")),
+        matches!(&step, RpcStep::Events(events) if agent_text(events) == Some("pending-text")),
         "pending text record must come out first: {step:?}"
     );
 

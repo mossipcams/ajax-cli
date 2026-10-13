@@ -8,6 +8,7 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, SessionConfigKind, SessionConfigOptionValue, SessionUpdate,
 };
 
+use super::agent_event::NativeEvent;
 use super::pi_rpc_client::PiRpcClient;
 use super::session_client::SessionClient;
 use super::{AcpClientEvent, AgentEvent, CancelOutcome};
@@ -39,11 +40,7 @@ fn text_block(text: &str) -> ContentBlock {
 }
 
 fn is_agent_message_chunk(event: &AgentEvent) -> bool {
-    matches!(
-        event,
-        AgentEvent::Acp(AcpClientEvent::SessionUpdate(notification))
-            if matches!(notification.update, SessionUpdate::AgentMessageChunk(_))
-    )
+    matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
 /// True when `event` is a `SessionUpdate` carrying a `UsageUpdate`.
