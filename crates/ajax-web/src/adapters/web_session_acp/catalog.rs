@@ -1,5 +1,4 @@
 use super::client::AcpStdioClient;
-use agent_client_protocol::schema::v1::SessionConfigOption;
 use ajax_core::adapters::parse_cursor_model_intent;
 use ajax_core::models::AgentClient;
 use serde_json::Value;
@@ -92,8 +91,8 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
 }
 
 /// Build the model catalog for a Pi RPC agent from its handshake config
-/// options, reusing [`parse_session_new_catalog`] for the parsing instead of
-/// an ACP session/new round trip.
+/// options, parsed natively from the neutral values instead of an ACP
+/// session/new round trip.
 pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
     let Ok((program, extra_args)) = super::session_client::pi_program_and_args() else {
         return AgentModelCatalog::empty();
@@ -109,21 +108,75 @@ pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
     };
     let options = client.config_options();
     client.shutdown();
-    catalog_from_config_options(&options)
+    catalog_from_neutral(&options)
 }
 
-/// Serialise handshake config options and parse them through the shared
-/// [`parse_session_new_catalog`] path, returning an empty catalog when
-/// serialisation fails.
-fn catalog_from_config_options(options: &[SessionConfigOption]) -> AgentModelCatalog {
-    let Ok(options_value) = serde_json::to_value(options) else {
-        return AgentModelCatalog::empty();
+/// Build a model catalog directly from neutral config options, mirroring the
+/// lookups and group construction of [`parse_session_new_catalog`] without any
+/// ACP JSON.
+pub(super) fn catalog_from_neutral(options: &[super::NeutralConfigOption]) -> AgentModelCatalog {
+    let reasoning = neutral_option_in(
+        options,
+        &super::NeutralConfigCategory::ThoughtLevel,
+        "thought_level",
+    )
+    .and_then(neutral_option_group);
+
+    if let Some(group) = neutral_option_in(options, &super::NeutralConfigCategory::Model, "model")
+        .and_then(neutral_option_group)
+    {
+        return AgentModelCatalog {
+            models: group.options,
+            default_model: group.current,
+            reasoning,
+        };
+    }
+
+    AgentModelCatalog {
+        reasoning,
+        ..AgentModelCatalog::empty()
+    }
+}
+
+/// Find the first option with the given category, else the first with the
+/// fallback id (mirrors `config_option_in`).
+fn neutral_option_in<'a>(
+    options: &'a [super::NeutralConfigOption],
+    category: &super::NeutralConfigCategory,
+    fallback_id: &str,
+) -> Option<&'a super::NeutralConfigOption> {
+    options
+        .iter()
+        .find(|option| option.category.as_ref() == Some(category))
+        .or_else(|| options.iter().find(|option| option.id == fallback_id))
+}
+
+/// Convert a select-style neutral option into an [`AgentOptionGroup`], or
+/// `None` for non-select kinds and empty choice lists (mirrors `option_group`).
+fn neutral_option_group(option: &super::NeutralConfigOption) -> Option<AgentOptionGroup> {
+    let (current, choices) = match &option.kind {
+        super::NeutralConfigKind::Select {
+            current_value,
+            choices,
+        } => (current_value, choices),
+        _ => return None,
     };
-    parse_session_new_catalog(&serde_json::json!({ "configOptions": options_value }))
+    if choices.is_empty() {
+        return None;
+    }
+    Some(AgentOptionGroup {
+        id: option.id.clone(),
+        label: option.name.clone(),
+        options: choices
+            .iter()
+            .map(|choice| (choice.value.clone(), choice.name.clone()))
+            .collect(),
+        current: Some(current.clone()),
+    })
 }
 
 /// Build the model catalog for a Claude Agent SDK agent from its handshake
-/// config options, reusing [`parse_session_new_catalog`] for the parsing.
+/// config options, parsed natively from the neutral values.
 pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
     let Ok((program, extra_args)) = super::claude_sdk_spawn::claude_launch() else {
         return AgentModelCatalog::empty();
@@ -140,7 +193,7 @@ pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
     };
     let options = client.config_options();
     client.shutdown();
-    catalog_from_config_options(&super::acp_options(&options))
+    catalog_from_neutral(&options)
 }
 
 pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {

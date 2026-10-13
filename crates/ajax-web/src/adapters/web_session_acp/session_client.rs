@@ -22,8 +22,8 @@ use super::client::{
 };
 use super::pi_rpc_client::PiRpcClient;
 use super::{
-    neutral_options, ApplyModelOutcome, CancelOutcome, NeutralConfigOption,
-    PromptCapabilityDescriptor, SessionConfigValue,
+    ApplyModelOutcome, CancelOutcome, NeutralConfigOption, PromptCapabilityDescriptor,
+    SessionConfigValue,
 };
 
 use ajax_core::models::AgentClient;
@@ -175,7 +175,7 @@ impl SessionClient {
             resumed: resume_session_id.is_some(),
             applied_model: client.applied_model(),
             model_apply_error,
-            config_options: Some(neutral_options(&client.config_options())),
+            config_options: Some(client.config_options()),
             prompt_capabilities: PromptCapabilityDescriptor {
                 image: false,
                 embedded_context: false,
@@ -365,7 +365,7 @@ impl SessionClient {
                 let error = apply_pin_to_pi(&session.client, desired_model);
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(neutral_options(&session.client.config_options())),
+                    config_options: Some(session.client.config_options()),
                     error,
                 })
             }
@@ -409,7 +409,7 @@ impl SessionClient {
                 };
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
-                    config_options: Some(neutral_options(&session.client.config_options())),
+                    config_options: Some(session.client.config_options()),
                     error,
                 })
             }

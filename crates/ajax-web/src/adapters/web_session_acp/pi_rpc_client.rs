@@ -7,8 +7,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionNotification, SessionUpdate, UsageUpdate,
+    ContentBlock, SessionNotification, SessionUpdate, UsageUpdate,
 };
 
 use super::agent_event::AgentEvent;
@@ -160,17 +159,17 @@ impl PiRpcClient {
         self.core.child_pid()
     }
 
-    /// The Pi model and thinking-level options in the ACP config-option shape.
+    /// The Pi model and thinking-level options as harness-neutral values.
     ///
     /// The model option (id "model") is omitted when no models were reported, and
     /// the thinking option (id "thought_level") when no levels were reported.
     /// Both reflect the latest successful `set_model` / `set_thinking_level`.
-    pub fn config_options(&self) -> Vec<SessionConfigOption> {
+    pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let c = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         let mut options = Vec::new();
 
         if !c.models.is_empty() {
-            let entries: Vec<SessionConfigSelectOption> = c
+            let choices: Vec<super::NeutralConfigChoice> = c
                 .models
                 .iter()
                 .map(|m| {
@@ -180,28 +179,48 @@ impl PiRpcClient {
                     } else {
                         m.name.clone()
                     };
-                    SessionConfigSelectOption::new(value, name)
+                    super::NeutralConfigChoice {
+                        value,
+                        name,
+                        description: None,
+                    }
                 })
                 .collect();
-            let current_value = current_model_value(&c.models, c.current_model_id.as_deref());
-            options.push(
-                SessionConfigOption::select("model", "Model", current_value, entries)
-                    .category(SessionConfigOptionCategory::Model),
-            );
+            options.push(super::NeutralConfigOption {
+                id: "model".to_string(),
+                name: "Model".to_string(),
+                description: None,
+                category: Some(super::NeutralConfigCategory::Model),
+                kind: super::NeutralConfigKind::Select {
+                    current_value: current_model_value(&c.models, c.current_model_id.as_deref()),
+                    choices,
+                },
+            });
         }
 
         if !c.thinking_levels.is_empty() {
-            let entries: Vec<SessionConfigSelectOption> = c
+            let choices: Vec<super::NeutralConfigChoice> = c
                 .thinking_levels
                 .iter()
-                .map(|level| SessionConfigSelectOption::new(level.clone(), level.clone()))
+                .map(|level| super::NeutralConfigChoice {
+                    value: level.clone(),
+                    name: level.clone(),
+                    description: None,
+                })
                 .collect();
-            let current =
-                current_level_value(&c.thinking_levels, c.current_thinking_level.as_deref());
-            options.push(
-                SessionConfigOption::select("thought_level", "Thinking", current, entries)
-                    .category(SessionConfigOptionCategory::ThoughtLevel),
-            );
+            options.push(super::NeutralConfigOption {
+                id: "thought_level".to_string(),
+                name: "Thinking".to_string(),
+                description: None,
+                category: Some(super::NeutralConfigCategory::ThoughtLevel),
+                kind: super::NeutralConfigKind::Select {
+                    current_value: current_level_value(
+                        &c.thinking_levels,
+                        c.current_thinking_level.as_deref(),
+                    ),
+                    choices,
+                },
+            });
         }
 
         options
