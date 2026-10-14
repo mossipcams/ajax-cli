@@ -3,16 +3,16 @@
 #![allow(dead_code)]
 
 use std::path::Path;
-use std::sync::{mpsc::TryRecvError, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use super::agent_event::{AgentEvent, NativeCommand};
 use super::claude_sdk_map::map_sdk_message;
-use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::jsonl_process::JsonlProcess;
 use super::rpc_client::RpcClientCore;
-use super::rpc_handshake::{RpcCommand, RpcHandshake, RpcModel};
+use super::rpc_handshake::{await_init_response, RpcCommand, RpcHandshake, RpcModel};
 use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.mjs");
@@ -74,47 +74,8 @@ impl ClaudeSdkClient {
             fields["resume"] = json!(resume);
         }
         let init_id = process.send("init", fields)?;
-        let started = Instant::now();
-        let mut pending = Vec::new();
-        let response = loop {
-            if started.elapsed() >= init_timeout {
-                return Err(format!(
-                    "claude sdk init timed out: {}",
-                    process.stderr_tail()
-                ));
-            }
-            match process.try_recv() {
-                Ok(JsonlRecord::Record(record)) => {
-                    if record.get("type").and_then(Value::as_str) == Some("response")
-                        && record.get("id").and_then(Value::as_str) == Some(init_id.as_str())
-                    {
-                        break record;
-                    }
-                    pending.push(record);
-                }
-                Ok(JsonlRecord::Error(error)) => {
-                    return Err(format!(
-                        "claude sdk init failed: {error}; stderr: {}",
-                        process.stderr_tail()
-                    ));
-                }
-                Ok(JsonlRecord::Exited) | Err(TryRecvError::Disconnected) => {
-                    return Err(format!(
-                        "claude sdk sidecar exited before init response: {}",
-                        process.stderr_tail()
-                    ));
-                }
-                Err(TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(5)),
-            }
-        };
-        if response.get("success").and_then(Value::as_bool) != Some(true) {
-            let error = response
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("missing successful init response");
-            return Err(format!("claude sdk init failed: {error}"));
-        }
-        let data = &response["data"];
+        let (data, pending) =
+            await_init_response(&mut process, &init_id, init_timeout, "claude sdk")?;
         let session_id = data
             .get("sessionId")
             .and_then(Value::as_str)

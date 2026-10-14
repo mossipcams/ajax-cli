@@ -3,7 +3,12 @@
 //! The Pi-specific command exchange that fills it lives in `pi_rpc_handshake`.
 #![allow(dead_code)]
 
+use std::sync::mpsc::TryRecvError;
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
+
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
 /// The four discovery commands and the handshake response that completes them.
 #[derive(Debug)]
 pub struct RpcHandshake {
@@ -42,4 +47,52 @@ pub struct RpcModel {
 pub struct RpcCommand {
     pub name: String,
     pub description: Option<String>,
+}
+
+/// Wait for the `response` record answering `init_id`, collecting every other
+/// record read meanwhile. Returns the response's `data` and those pending records.
+pub fn await_init_response(
+    process: &mut JsonlProcess,
+    init_id: &str,
+    timeout: Duration,
+    label: &str, // e.g. "claude sdk"
+) -> Result<(Value, Vec<Value>), String> {
+    let started = Instant::now();
+    let mut pending = Vec::new();
+    let response = loop {
+        if started.elapsed() >= timeout {
+            return Err(format!("{label} init timed out: {}", process.stderr_tail()));
+        }
+        match process.try_recv() {
+            Ok(JsonlRecord::Record(record)) => {
+                if record.get("type").and_then(Value::as_str) == Some("response")
+                    && record.get("id").and_then(Value::as_str) == Some(init_id)
+                {
+                    break record;
+                }
+                pending.push(record);
+            }
+            Ok(JsonlRecord::Error(error)) => {
+                return Err(format!(
+                    "{label} init failed: {error}; stderr: {}",
+                    process.stderr_tail()
+                ));
+            }
+            Ok(JsonlRecord::Exited) | Err(TryRecvError::Disconnected) => {
+                return Err(format!(
+                    "{label} sidecar exited before init response: {}",
+                    process.stderr_tail()
+                ));
+            }
+            Err(TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    };
+    if response.get("success").and_then(Value::as_bool) != Some(true) {
+        let error = response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("missing successful init response");
+        return Err(format!("{label} init failed: {error}"));
+    }
+    Ok((response["data"].clone(), pending))
 }

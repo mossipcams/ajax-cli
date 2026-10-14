@@ -9,6 +9,7 @@ mod client;
 mod config_model;
 mod config_option_descriptors;
 mod config_options;
+mod cursor_sdk_map;
 mod jsonl_process;
 mod pi_rpc_client;
 mod pi_rpc_handshake;
@@ -59,6 +60,8 @@ mod claude_sdk_client_tests;
 mod claude_sdk_hardening_tests;
 #[cfg(test)]
 mod claude_sdk_map_tests;
+#[cfg(test)]
+mod cursor_sdk_map_tests;
 
 #[cfg(test)]
 mod client_restore_tests;
