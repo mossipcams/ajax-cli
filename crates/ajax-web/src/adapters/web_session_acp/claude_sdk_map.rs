@@ -221,7 +221,8 @@ fn tool_result_text(block: &Value) -> String {
 /// a model context window are available, then marks the run finished (aborted
 /// for `error_during_execution` / `aborted_streaming`). A non-aborted error
 /// result additionally emits an [`NativeEvent::Error`] after the usage
-/// event.
+/// event. API errors can use subtype `success` with `is_error: true`; their
+/// `result` text carries the provider's explanation (including quota resets).
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     push_usage_update(message, events);
     let subtype = message
@@ -236,8 +237,13 @@ fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
         .unwrap_or(false)
         && !ended_aborted
     {
+        let detail = message
+            .get("result")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(subtype);
         events.push(AgentEvent::Native(NativeEvent::Error(format!(
-            "Claude run failed: {subtype}"
+            "Claude run failed: {detail}"
         ))));
     }
     (true, ended_aborted)

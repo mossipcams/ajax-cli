@@ -349,3 +349,116 @@ fn result_without_usage_finishes_silently() {
     assert!(!mapping.ended_aborted);
     assert!(mapping.events.is_empty());
 }
+
+#[test]
+fn rate_limited_turn_displays_claude_session_limit_text() {
+    // #1287: native transcript d78a4640, line 89, supplies the assistant error.
+    // SDK 0.3.296's result path carries its text in SDKResultSuccess.result
+    // with is_error=true; Ajax event 60 previously reduced this to "success".
+    let assistant = serde_json::json!({
+        "type": "assistant",
+        "error": "rate_limit",
+        "parent_tool_use_id": null,
+        "message": {"role": "assistant", "model": "<synthetic>",
+        "stop_reason": "stop_sequence", "content": [
+            {"type": "text", "text": "You've hit your session limit · resets 6:30pm (America/Chicago)"}
+        ]}
+    });
+    let assistant_mapping = map_sdk_message(&assistant, SESSION_ID);
+    assert!(
+        assistant_mapping.events.is_empty(),
+        "the synthetic assistant message must not emit a duplicate or an error"
+    );
+    assert!(!assistant_mapping.finished);
+    assert!(!assistant_mapping.ended_aborted);
+
+    let result = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": true,
+        "result": "You've hit your session limit · resets 6:30pm (America/Chicago)",
+        "usage": {
+            "input_tokens": 3,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 459829,
+            "output_tokens": 0
+        },
+        "modelUsage": {"claude-sonnet-4-6": {"contextWindow": 1000000}},
+        "stop_reason": null
+    });
+    let mapping = map_sdk_message(&result, SESSION_ID);
+
+    // Existing turn-end behavior is preserved: the result finishes the turn,
+    // not aborted, with the usage event before the single error event.
+    assert!(mapping.finished);
+    assert!(!mapping.ended_aborted);
+    assert_eq!(
+        mapping.events.len(),
+        2,
+        "expected one usage event and one error event"
+    );
+    match native_event(&mapping.events[0]) {
+        NativeEvent::Usage { used, size } => assert_eq!((*used, *size), (459832, 1000000)),
+        other => panic!("expected a Usage event, got {other:?}"),
+    }
+    match native_event(&mapping.events[1]) {
+        NativeEvent::Error(text) => {
+            assert_eq!(
+                text,
+                "Claude run failed: You've hit your session limit · resets 6:30pm (America/Chicago)"
+            );
+            assert!(
+                text.contains("You've hit your session limit"),
+                "the error must display Claude's session-limit text, got: {text}"
+            );
+            assert!(
+                !text.trim_end().ends_with("success"),
+                "the error must not reduce to the subtype, got: {text}"
+            );
+        }
+        other => panic!("expected an Error event, got {other:?}"),
+    }
+}
+
+#[test]
+fn error_result_without_usable_text_falls_back_to_subtype() {
+    for result in [
+        Value::Null,
+        serde_json::json!(42),
+        serde_json::json!(" \n\t"),
+    ] {
+        let mapping = map_sdk_message(
+            &serde_json::json!({
+                "type": "result", "subtype": "error_max_turns",
+                "is_error": true, "result": result
+            }),
+            SESSION_ID,
+        );
+        assert!(mapping.finished);
+        assert!(!mapping.ended_aborted);
+        assert_eq!(mapping.events.len(), 1);
+        assert!(matches!(
+            native_event(&mapping.events[0]),
+            NativeEvent::Error(text) if text == "Claude run failed: error_max_turns"
+        ));
+    }
+}
+
+#[test]
+fn result_text_does_not_emit_an_error_on_success_or_cancellation() {
+    for (subtype, is_error, terminal_reason, aborted) in [
+        ("success", false, "completed", false),
+        ("error_during_execution", true, "aborted_streaming", true),
+    ] {
+        let mapping = map_sdk_message(
+            &serde_json::json!({
+                "type": "result", "subtype": subtype, "is_error": is_error,
+                "terminal_reason": terminal_reason, "result": "provider text"
+            }),
+            SESSION_ID,
+        );
+        assert!(mapping.finished);
+        assert_eq!(mapping.ended_aborted, aborted);
+        assert!(mapping.events.is_empty());
+    }
+}
