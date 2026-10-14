@@ -75,21 +75,19 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
 }
 
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
-    if super::cursor_sdk_spawn::uses_cursor_sdk(agent) {
-        return AgentModelCatalog::empty();
+    match super::session_client::transport_for(agent) {
+        ajax_core::adapters::HarnessTransport::CursorSdk => AgentModelCatalog::empty(),
+        ajax_core::adapters::HarnessTransport::ClaudeSdk => read_claude_sdk_catalog(cwd),
+        ajax_core::adapters::HarnessTransport::PiRpc => read_pi_rpc_catalog(cwd),
+        ajax_core::adapters::HarnessTransport::Acp => {
+            let Ok((client, _report)) = AcpStdioClient::spawn(agent, cwd, None, None) else {
+                return AgentModelCatalog::empty();
+            };
+            let catalog = parse_session_new_catalog(client.session_new_result());
+            drop(client);
+            catalog
+        }
     }
-    if super::claude_sdk_spawn::uses_claude_sdk(agent) {
-        return read_claude_sdk_catalog(cwd);
-    }
-    if super::session_client::uses_pi_rpc(agent) {
-        return read_pi_rpc_catalog(cwd);
-    }
-    let Ok((client, _report)) = AcpStdioClient::spawn(agent, cwd, None, None) else {
-        return AgentModelCatalog::empty();
-    };
-    let catalog = parse_session_new_catalog(client.session_new_result());
-    drop(client);
-    catalog
 }
 
 /// Read the Cursor model catalog from a Cursor SDK sidecar handshake.
@@ -118,7 +116,9 @@ pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::Curs
 pub fn read_cursor_catalog_if_sdk(
     cwd: &Path,
 ) -> Option<Vec<super::cursor_sdk_client::CursorCatalogModel>> {
-    if !super::cursor_sdk_spawn::uses_cursor_sdk(AgentClient::Cursor) {
+    if super::session_client::transport_for(AgentClient::Cursor)
+        != ajax_core::adapters::HarnessTransport::CursorSdk
+    {
         return None;
     }
     let models = read_cursor_sdk_catalog(cwd);

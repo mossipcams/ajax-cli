@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
+use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
 use super::agent_event::{AgentEvent, NativeEvent};
@@ -282,8 +283,9 @@ fn other_agents_do_not_take_the_claude_path() {
     with_fake(|| {
         // With the module override installed, only AgentClient::Claude routes to
         // the SDK spawn; the others keep their existing dispatch.
-        assert!(!super::claude_sdk_spawn::uses_claude_sdk(
-            AgentClient::Cursor
-        ));
+        assert!(
+            super::session_client::transport_for(AgentClient::Cursor)
+                != HarnessTransport::ClaudeSdk
+        );
     });
 }

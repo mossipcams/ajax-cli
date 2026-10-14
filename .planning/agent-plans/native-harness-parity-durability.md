@@ -222,7 +222,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] Approval of this plan and answers to Q1–Q4 (2026-10-14).
 - [x] W0 spike recorded (2026-10-14, see W0 results). `/cmd` expansion not exercised.
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
-- [ ] W2a, W2b.
+- [ ] W2a done (branch refactor/web/transport-selection), W2b.
 - [ ] W4a (repro → fix or close), W4b, W4d.
 - [ ] W3g, W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
 - [ ] W4c (after W4d).
@@ -232,6 +232,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - 2026-10-14: permission gap withdrawn (see Correction).
 - 2026-10-14: W3d and W4e dropped, W4c approved (Decisions).
 - 2026-10-14: worktree branch ajax/new-adapters was stale (base #1291, 5 behind main, 2 commits duplicating #1295); work continues on stacked branches cut from origin/main starting at chore/web/native-harness-closeout.
+- 2026-10-14: W2a deleted the uses_* selectors, so the 5 gating tests that called them were mechanically rewired from uses_x(a) to transport_for(a) == X (same assertion count and strength); the 'tests unmodified' acceptance could not hold literally.
 
 ## Validation
 

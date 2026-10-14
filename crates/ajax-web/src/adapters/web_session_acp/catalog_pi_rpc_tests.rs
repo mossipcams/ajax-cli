@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use super::catalog::read_agent_model_catalog;
-use super::session_client::{uses_pi_rpc, with_test_pi_program};
+use super::session_client::{transport_for, with_test_pi_program};
+use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
 fn fixture_path() -> PathBuf {
@@ -53,10 +54,10 @@ fn pi_rpc_catalog_missing_program_is_empty() {
 #[test]
 fn non_pi_agents_stay_on_the_acp_path() {
     with_test_pi_program(&fixture_path(), &[], || {
-        assert!(uses_pi_rpc(AgentClient::Pi));
-        assert!(!uses_pi_rpc(AgentClient::Cursor));
-        assert!(!uses_pi_rpc(AgentClient::Codex));
-        assert!(!uses_pi_rpc(AgentClient::Claude));
+        assert!(transport_for(AgentClient::Pi) == HarnessTransport::PiRpc);
+        assert!(transport_for(AgentClient::Cursor) != HarnessTransport::PiRpc);
+        assert!(transport_for(AgentClient::Codex) != HarnessTransport::PiRpc);
+        assert!(transport_for(AgentClient::Claude) != HarnessTransport::PiRpc);
     });
 }
 
