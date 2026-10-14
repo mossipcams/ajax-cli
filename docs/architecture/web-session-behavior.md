@@ -651,6 +651,13 @@ all-zero usage is skipped so cancelling does not reset the meter.
 - The web slice maps both to its own wire events: `acp_map` for ACP updates and
   `native_map::map_native_event` for native events; the wire output is identical.
 - Native events carry no session id.
+- Claude failed results display the provider's nonblank `result` text, including
+  the session-limit reset time, in one error event after any usage update
+  ([#1287](https://github.com/mossipcams/ajax-cli/issues/1287)). An error can have
+  subtype `success`; `is_error` determines whether it failed. Missing or blank
+  result text falls back to the subtype. The synthetic assistant error is not
+  displayed separately, and result completion and cancellation behavior stay
+  unchanged.
 - Claude and Pi describe their model and effort / thinking options with the
   harness-neutral `NeutralConfigOption`; `SessionClient` hands the slice neutral
   options and takes the wire `SessionConfigValue`, ACP harnesses convert at
