@@ -28,12 +28,12 @@
 - Prior message-only mapper experiment: mapper tests and clippy passed, but it was restored because it did not prove delivery of the recorded usage text.
 - Focused regression `cargo test -p ajax-web --lib rate_limited_turn_displays_claude_session_limit_text`: failed against the original mapper (exit 101), then passed within `cargo test -p ajax-web --lib claude_sdk_map_tests` (exit 0).
 - `cargo test -p ajax-web --lib claude_sdk`, `cargo fmt --check`, `cargo clippy -p ajax-web --lib --all-targets`, and `git diff --check`: passed (exit 0). The first format check failed (exit 1) before the delegate formatted the test; the rerun passed.
-- PR creation gate and script: authorized and pending. The `scripts/gh-pr-create` commit will run Husky checks.
+- PR creation gate and `scripts/gh-pr-create`: passed. Husky hooks ran on the PR commits; PR #1296 is open.
 - The first implementation delegate added a mapper change and regression test but timed out after 900 seconds before reporting verification or creating a PR. The two-file delta is retained for review by the router-selected fallback.
 - The fallback stopped before verification because the current branch is `ajax/defects`, while `scripts/gh-pr-create` requires `type/scope/description`. The user has since authorized opening the PR after that blocker was explained; the PR delegate may create and switch to `fix/web/claude-usage-error`.
 - The code-only delegate completed the mapper, test, and documentation edits but its model quota expired before a structured report. Its raw tool log records the red regression and passing focused checks listed above; the parent reviewed the resulting delta.
 - 2026-10-14 (PR step): created and switched to `fix/web/claude-usage-error` from `ajax/defects` at `e872f534` (an ancestor of `origin/main`, so the PR delta is only the reviewed files). Installed Husky with `npm ci` plus `npx husky`; hooksPath is `.husky/_`. `cargo fmt --check`: passed (exit 0). No implementation changes since the recorded passing focused runs, so no test rerun was needed. The pre-commit hook rebuilds/stages web dist when web sources are staged; the diff touches only Rust and markdown, so no dist rebuild is expected.
-- `scripts/gh-pr-create`: passed; created [PR #1296](https://github.com/mossipcams/ajax-cli/pull/1296) as `fix(web): claude usage error` at commit `506d29e0`, containing only the four scoped files. The PR body includes `Fixes #1287`. Parent review found an imprecise sentence in the body; the follow-up corrects it and pushes this final plan update.
+- `scripts/gh-pr-create`: passed; created [PR #1296](https://github.com/mossipcams/ajax-cli/pull/1296) as `fix(web): claude usage error` at commit `506d29e0`, containing only the four scoped files. The PR body includes `Fixes #1287`. Parent review found an imprecise sentence in the body; the follow-up corrected it and pushed the completed checklist at `46341af5`.
 
 ## Deviations and risks
 
