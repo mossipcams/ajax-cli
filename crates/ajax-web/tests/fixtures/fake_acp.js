@@ -13,6 +13,10 @@ const loadDelayMs = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 })();
 const holdPromptMode = process.argv.includes('--hold-prompt');
+// Host-crash tests kill the host mid-turn: stdin then reaches EOF while the
+// harness is a live orphan. With this flag the fixture survives that EOF so
+// the restart sweep has an orphan to reap; default behavior is unchanged.
+const surviveStdinEof = process.argv.includes('--survive-stdin-eof');
 const malformedMode = process.argv.includes('--malformed');
 const badInitialize = process.argv.includes('--bad-initialize');
 const permissionMode = process.argv.includes('--permission');
@@ -33,7 +37,6 @@ const cursorModels = process.argv.includes('--cursor-models');
 const cursorLiveModels = process.argv.includes('--cursor-live-models');
 const cursorParameterizedModels = process.argv.includes('--cursor-parameterized-models');
 const cursorMode = process.argv.includes('--cursor-mode');
-const acceptUnadvertisedGrokHigh = process.argv.includes('--accept-unadvertised-grok-high');
 const ignoreSpawnModelOnce = process.argv.includes('--ignore-spawn-model-once');
 const refuseInBandOnce = process.argv.includes('--refuse-in-band-once');
 const exclusiveSessionNew = process.argv.includes('--exclusive-session-new');
@@ -753,7 +756,11 @@ rl.on('line', (line) => {
     handleRequest(msg);
   }
 });
+// With --survive-stdin-eof there are no other live handles after stdin EOF,
+// so keep the event loop alive for the orphan premise.
+if (surviveStdinEof) setInterval(() => {}, 60_000);
 process.stdin.on('end', () => {
+  if (surviveStdinEof) return;
   releaseExclusiveLock();
   process.exit(0);
 });
