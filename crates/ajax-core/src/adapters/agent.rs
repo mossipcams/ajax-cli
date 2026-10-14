@@ -265,6 +265,7 @@ pub enum HarnessTransport {
     Acp,
     PiRpc,
     ClaudeSdk,
+    CursorSdk,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

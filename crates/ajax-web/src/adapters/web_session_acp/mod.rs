@@ -11,6 +11,7 @@ mod config_option_descriptors;
 mod config_options;
 mod cursor_sdk_client;
 mod cursor_sdk_map;
+mod cursor_sdk_spawn;
 mod jsonl_process;
 mod pi_rpc_client;
 mod pi_rpc_handshake;
@@ -65,6 +66,8 @@ mod claude_sdk_map_tests;
 mod cursor_sdk_client_tests;
 #[cfg(test)]
 mod cursor_sdk_map_tests;
+#[cfg(test)]
+mod cursor_sdk_spawn_tests;
 
 #[cfg(test)]
 mod client_restore_tests;
@@ -118,6 +121,8 @@ mod rpc_session_request_tests;
 #[cfg(test)]
 mod session_client_claude_tests;
 #[cfg(test)]
+mod session_client_cursor_tests;
+#[cfg(test)]
 mod session_client_pid_tests;
 #[cfg(test)]
 mod session_client_pin_tests;
@@ -133,10 +138,11 @@ pub use apply_model::{
     apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,
     read_applied_model, ApplyModelOutcome,
 };
-pub use catalog::{read_agent_model_catalog, read_cursor_acp_model_labels, AgentModelCatalog};
+pub use catalog::{read_agent_model_catalog, read_cursor_catalog_if_sdk, AgentModelCatalog};
 pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
+pub use cursor_sdk_client::CursorCatalogModel;
 pub(crate) use sdk_connection::CancelOutcome;
 pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
 

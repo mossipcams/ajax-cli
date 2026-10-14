@@ -1,8 +1,7 @@
 use super::client::AcpStdioClient;
-use ajax_core::adapters::parse_cursor_model_intent;
 use ajax_core::models::AgentClient;
 use serde_json::Value;
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AgentOptionGroup {
@@ -76,6 +75,9 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
 }
 
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
+    if super::cursor_sdk_spawn::uses_cursor_sdk(agent) {
+        return AgentModelCatalog::empty();
+    }
     if super::claude_sdk_spawn::uses_claude_sdk(agent) {
         return read_claude_sdk_catalog(cwd);
     }
@@ -88,6 +90,39 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
     let catalog = parse_session_new_catalog(client.session_new_result());
     drop(client);
     catalog
+}
+
+/// Read the Cursor model catalog from a Cursor SDK sidecar handshake.
+/// Empty when the sidecar cannot be launched or fails to start.
+pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::CursorCatalogModel> {
+    let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch() else {
+        return Vec::new();
+    };
+    let Ok(client) = super::cursor_sdk_client::CursorSdkClient::spawn(
+        &program,
+        &extra_args,
+        cwd,
+        None,
+        None,
+        super::client::HANDSHAKE_TIMEOUT,
+    ) else {
+        return Vec::new();
+    };
+    let models = client.model_catalog();
+    client.shutdown();
+    models
+}
+
+/// `Some(models)` when Cursor runs on the SDK transport and its catalog
+/// could be read; `None` otherwise (the caller falls back).
+pub fn read_cursor_catalog_if_sdk(
+    cwd: &Path,
+) -> Option<Vec<super::cursor_sdk_client::CursorCatalogModel>> {
+    if !super::cursor_sdk_spawn::uses_cursor_sdk(AgentClient::Cursor) {
+        return None;
+    }
+    let models = read_cursor_sdk_catalog(cwd);
+    (!models.is_empty()).then_some(models)
 }
 
 /// Build the model catalog for a Pi RPC agent from its handshake config
@@ -244,44 +279,6 @@ pub fn parse_session_new_catalog(result: &Value) -> AgentModelCatalog {
     }
 }
 
-#[cfg(not(test))]
-pub fn read_cursor_acp_model_labels(cwd: &Path) -> HashMap<String, String> {
-    let Ok((client, _report)) = AcpStdioClient::spawn(AgentClient::Cursor, cwd, None, None) else {
-        return HashMap::new();
-    };
-    let labels = cursor_model_labels_from_session_new(client.session_new_result());
-    drop(client);
-    labels
-}
-
-#[cfg(test)]
-pub fn read_cursor_acp_model_labels(_cwd: &Path) -> HashMap<String, String> {
-    HashMap::new()
-}
-
-pub fn cursor_model_labels_from_session_new(result: &Value) -> HashMap<String, String> {
-    let Some(group) = config_option_in(result, "model").and_then(option_group) else {
-        return HashMap::new();
-    };
-    let mut labels = HashMap::new();
-    for (value, name) in group.options {
-        let Some(intent) = parse_cursor_model_intent(&value) else {
-            continue;
-        };
-        let clean = intent.effort.is_none() && !intent.fast.unwrap_or(false);
-        match labels.get(&intent.base) {
-            None => {
-                labels.insert(intent.base, name);
-            }
-            Some(_) if clean => {
-                labels.insert(intent.base, name);
-            }
-            _ => {}
-        }
-    }
-    labels
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,46 +392,5 @@ mod tests {
         let catalog = parse_session_new_catalog(&json!({ "sessionId": "s1" }));
         assert!(catalog.models.is_empty());
         assert!(catalog.default_model.is_none());
-    }
-
-    #[test]
-    fn cursor_model_labels_prefer_clean_base_names_over_bracket_variants() {
-        let labels = cursor_model_labels_from_session_new(&json!({
-            "sessionId": "s1",
-            "configOptions": [
-                {
-                    "id": "model",
-                    "category": "model",
-                    "currentValue": "grok-4.6",
-                    "options": [
-                        { "value": "composer-2.5", "name": "Composer 2.5" },
-                        { "value": "grok-4.6", "name": "Grok 4.6" },
-                        { "value": "gpt-5.6-sol", "name": "GPT-5.6-Sol" },
-                        {
-                            "value": "gpt-5.6-sol[effort=high,fast=false]",
-                            "name": "GPT-5.6-Sol High"
-                        },
-                        {
-                            "value": "claude-opus-5-thinking-high",
-                            "name": "Claude Opus 5 Thinking"
-                        }
-                    ]
-                }
-            ]
-        }));
-
-        assert_eq!(
-            labels.get("composer-2.5").map(String::as_str),
-            Some("Composer 2.5")
-        );
-        assert_eq!(labels.get("grok-4.6").map(String::as_str), Some("Grok 4.6"));
-        assert_eq!(
-            labels.get("gpt-5.6-sol").map(String::as_str),
-            Some("GPT-5.6-Sol")
-        );
-        assert_eq!(
-            labels.get("claude-opus-5-thinking").map(String::as_str),
-            Some("Claude Opus 5 Thinking")
-        );
     }
 }
