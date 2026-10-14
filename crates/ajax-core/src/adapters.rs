@@ -588,6 +588,7 @@ mod tests {
         assert!(!pi.model_pins_at_spawn());
 
         assert!(acp_launch_for_agent(AgentClient::Other).is_none());
+        assert!(acp_launch_for_agent(AgentClient::Other).is_none());
     }
 
     #[test]
