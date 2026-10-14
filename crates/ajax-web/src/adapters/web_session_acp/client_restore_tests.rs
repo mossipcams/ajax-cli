@@ -215,9 +215,9 @@ fn restore_can_outlive_initial_handshake_budget_without_session_new() {
         let resume_id = client.session_id().to_string();
         drop(client);
 
-        with_test_handshake_timeout(50, || {
-            super::client::with_test_restore_timeout(150, || {
-                with_test_acp_extra_args(&["--load-delay=100"], || {
+        with_test_handshake_timeout(1000, || {
+            super::client::with_test_restore_timeout(3000, || {
+                with_test_acp_extra_args(&["--load-delay=2000"], || {
                     let (_client, report) =
                         AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, Some(&resume_id))
                             .expect("restore may exceed the initial handshake budget");

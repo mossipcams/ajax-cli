@@ -138,10 +138,7 @@ pub use apply_model::{
     apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,
     read_applied_model, ApplyModelOutcome,
 };
-pub use catalog::{
-    read_agent_model_catalog, read_cursor_acp_model_labels, read_cursor_catalog_if_sdk,
-    AgentModelCatalog,
-};
+pub use catalog::{read_agent_model_catalog, read_cursor_catalog_if_sdk, AgentModelCatalog};
 pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
@@ -154,6 +151,8 @@ pub(crate) use client::{
     set_test_acp_command, with_test_acp_extra_args, with_test_acp_program,
     with_test_handshake_timeout,
 };
+#[cfg(test)]
+pub(crate) use cursor_sdk_spawn::with_test_cursor_sdk_module;
 
 #[cfg(test)]
 pub(crate) use session_client::with_test_pi_program;
