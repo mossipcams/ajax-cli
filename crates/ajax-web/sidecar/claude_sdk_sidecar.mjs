@@ -17,8 +17,9 @@
 // Commands: init {cwd, model?, resume?, sessionId?, settingSources?} (must be
 // first), prompt {message}, abort, set_model {model}, set_effort {level},
 // get_context_usage, shutdown. stdin EOF behaves like shutdown (no response).
-// Permissions auto-approve locally (canUseTool always allows; no
-// bypassPermissions flag) and MCP elicitation is declined.
+// Permissions run in dangerous mode (permissionMode "bypassPermissions" +
+// allowDangerouslySkipPermissions; canUseTool stays as an always-allow
+// fallback) and MCP elicitation is declined.
 
 import { randomUUID } from "node:crypto";
 import { argv, exit, stderr, stdin, stdout } from "node:process";
@@ -213,7 +214,14 @@ async function handleInit(cmd) {
     if (notFound) return fail("init", cmd.id, `session not found: ${cmd.resume}`);
   }
   const sessionId = cmd.resume || cmd.sessionId || randomUUID();
-  const options = { cwd: cmd.cwd, includePartialMessages: true, canUseTool, onElicitation };
+  const options = {
+    cwd: cmd.cwd,
+    includePartialMessages: true,
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+    canUseTool,
+    onElicitation,
+  };
   if (cmd.model) options.model = cmd.model;
   if (cmd.resume) options.resume = cmd.resume;
   else options.sessionId = sessionId;
