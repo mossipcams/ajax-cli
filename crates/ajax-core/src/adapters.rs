@@ -563,9 +563,11 @@ mod tests {
         use crate::adapters::HarnessTransport;
         use crate::models::AgentClient;
 
-        let cursor = acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp");
-        assert_eq!(cursor.candidates[0], ("agent", &["acp"][..]));
-        assert!(cursor.model_pins_at_spawn());
+        let cursor = acp_launch_for_agent(AgentClient::Cursor).expect("cursor sdk");
+        assert_eq!(cursor.candidates[0].0, "node");
+        assert!(cursor.candidates[0].1.is_empty());
+        assert_eq!(cursor.transport, HarnessTransport::CursorSdk);
+        assert!(cursor.install_hint.contains("@cursor/sdk"));
 
         let codex = acp_launch_for_agent(AgentClient::Codex).expect("bridge acp");
         assert_eq!(codex.candidates[0].0, "codex-acp");
@@ -586,32 +588,30 @@ mod tests {
         assert!(!pi.model_pins_at_spawn());
 
         assert!(acp_launch_for_agent(AgentClient::Other).is_none());
-
-        assert!(acp_launch_for_agent(AgentClient::Other).is_none());
     }
 
     #[test]
-    fn acp_spawn_model_for_argv_pins_cursor_default_when_unspecified() {
-        use crate::adapters::agent::{acp_launch_for_agent, acp_spawn_model_for_argv};
+    fn sdk_harness_programs_lists_claude_and_cursor() {
         use crate::models::AgentClient;
 
-        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
-        assert_eq!(
-            acp_spawn_model_for_argv(launch, None),
-            Some(crate::adapters::agent::CURSOR_DEFAULT_SPAWN_MODEL.to_string())
-        );
-        assert_eq!(
-            acp_spawn_model_for_argv(launch, Some("auto")),
-            Some(crate::adapters::agent::CURSOR_DEFAULT_SPAWN_MODEL.to_string())
-        );
-        assert_eq!(
-            acp_spawn_model_for_argv(launch, Some("composer-2.5")),
-            Some("composer-2.5".to_string())
-        );
+        let programs = crate::adapters::agent::sdk_harness_programs();
+        assert!(programs
+            .iter()
+            .any(|(client, program, _)| { *client == AgentClient::Claude && *program == "node" }));
+        assert!(programs
+            .iter()
+            .any(|(client, program, _)| { *client == AgentClient::Cursor && *program == "node" }));
+    }
 
-        let codex = acp_launch_for_agent(AgentClient::Codex).expect("codex");
-        assert_eq!(acp_spawn_model_for_argv(codex, None), None);
-        assert_eq!(acp_spawn_model_for_argv(codex, Some("auto")), None);
+    #[test]
+    fn rpc_harness_programs_still_lists_only_pi() {
+        use crate::models::AgentClient;
+
+        let clients: Vec<AgentClient> = crate::adapters::agent::rpc_harness_programs()
+            .iter()
+            .map(|(client, _, _)| *client)
+            .collect();
+        assert_eq!(clients, vec![AgentClient::Pi]);
     }
 
     #[test]
@@ -643,49 +643,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_catalog_spawn_passes_through_explicit_catalog_ids_issue_989() {
-        use crate::adapters::agent::{
-            acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
-            cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
-        };
-        use crate::models::AgentClient;
-
-        for catalog_id in [
-            "claude-opus-5-medium",
-            "claude-opus-5-thinking-high",
-            "gpt-5.6-sol-high",
-            "gpt-5.6-sol-high-fast",
-            "composer-2.5",
-            "cursor-grok-4.6-high",
-        ] {
-            assert_eq!(
-                cursor_catalog_to_acp_spawn_token(catalog_id),
-                catalog_id,
-                "spawn argv must keep catalog id {catalog_id} unchanged"
-            );
-            assert_ne!(
-                cursor_catalog_to_acp_in_band_token(catalog_id),
-                catalog_id,
-                "in-band token must still map {catalog_id}"
-            );
-        }
-
-        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
-        assert_eq!(
-            acp_spawn_model_for_argv(launch, Some("claude-opus-5-medium")),
-            Some("claude-opus-5-medium".to_string())
-        );
-        assert_eq!(
-            acp_args_for_candidate(launch, &["acp"], Some("claude-opus-5-medium")),
-            vec![
-                "--model".to_string(),
-                "claude-opus-5-medium".to_string(),
-                "acp".to_string(),
-            ]
-        );
-    }
-
-    #[test]
     fn parse_cursor_model_intent_accepts_pipe_form_issue_991() {
         use crate::adapters::agent::parse_cursor_model_intent;
 
@@ -696,66 +653,6 @@ mod tests {
 
         let fast = parse_cursor_model_intent("grok-4.6|effort=high|fast=true").unwrap();
         assert_eq!(fast.fast, Some(true));
-    }
-
-    #[test]
-    fn cursor_catalog_pipe_form_reconstructs_spawn_catalog_ids_issue_991() {
-        use crate::adapters::agent::{
-            acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,
-            cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
-        };
-        use crate::models::AgentClient;
-
-        let cases = [
-            ("grok-4.6|effort=high|fast=false", "cursor-grok-4.6-high"),
-            (
-                "grok-4.6|effort=high|fast=true",
-                "cursor-grok-4.6-high-fast",
-            ),
-            (
-                "claude-opus-5|effort=medium|fast=false",
-                "claude-opus-5-medium",
-            ),
-            ("claude-opus-5|effort=high|fast=false", "claude-opus-5-high"),
-            ("composer-2.5|fast=true", "composer-2.5-fast"),
-            ("composer-2.5|fast=false", "composer-2.5"),
-            ("gpt-5.6-sol|effort=high|fast=false", "gpt-5.6-sol-high"),
-            ("gpt-5.6-sol|effort=high|fast=true", "gpt-5.6-sol-high-fast"),
-        ];
-        for (pipe_form, catalog_id) in cases {
-            let spawn = cursor_catalog_to_acp_spawn_token(pipe_form);
-            assert_eq!(
-                spawn, catalog_id,
-                "pipe form {pipe_form} must reconstruct {catalog_id}"
-            );
-            assert!(
-                !spawn.contains('['),
-                "spawn argv must not synthesize bracket tokens for {pipe_form}"
-            );
-            assert!(
-                !spawn.contains("-thinking-"),
-                "spawn argv must not infer thinking variants for {pipe_form}"
-            );
-        }
-
-        assert_eq!(
-            cursor_catalog_to_acp_in_band_token("grok-4.6|effort=high|fast=false"),
-            "grok-4.6[effort=high,fast=false]"
-        );
-
-        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
-        assert_eq!(
-            acp_spawn_model_for_argv(launch, Some("composer-2.5|fast=true")),
-            Some("composer-2.5-fast".to_string())
-        );
-        assert_eq!(
-            acp_args_for_candidate(launch, &["acp"], Some("gpt-5.6-sol|effort=high|fast=false")),
-            vec![
-                "--model".to_string(),
-                "gpt-5.6-sol-high".to_string(),
-                "acp".to_string(),
-            ]
-        );
     }
 
     #[test]
@@ -835,22 +732,6 @@ mod tests {
         assert!(cursor_model_intents_match(&desired, &non_fast));
         assert!(!cursor_model_intents_match(&desired, &fast));
         assert!(!cursor_model_intents_match(&desired, &composer_fast));
-    }
-
-    #[test]
-    fn acp_args_for_candidate_pins_cursor_default_on_unspecified() {
-        use crate::adapters::agent::{acp_args_for_candidate, acp_launch_for_agent};
-        use crate::models::AgentClient;
-
-        let launch = acp_launch_for_agent(AgentClient::Cursor).expect("cursor");
-        assert_eq!(
-            acp_args_for_candidate(launch, &["acp"], None),
-            vec![
-                "--model".to_string(),
-                crate::adapters::agent::CURSOR_DEFAULT_SPAWN_MODEL.to_string(),
-                "acp".to_string()
-            ]
-        );
     }
 
     #[test]

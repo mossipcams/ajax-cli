@@ -288,13 +288,14 @@ impl AcpLaunch {
 pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
     match client {
         AgentClient::Cursor => Some(AcpLaunch {
-            candidates: &[("agent", &["acp"]), ("cursor", &["agent", "acp"])],
+            candidates: &[("node", &[])],
             native_program: None,
-            model_selection: AcpModelSelection::SpawnArg,
+            model_selection: AcpModelSelection::ConfigOption,
             default_model: Some(CURSOR_DEFAULT_MODEL),
             acp_package: None,
-            install_hint: "install the Cursor CLI (`agent`)",
-            transport: HarnessTransport::Acp,
+            install_hint:
+                "install Node.js 22.13 or newer, then run: npm install -g @cursor/sdk",
+            transport: HarnessTransport::CursorSdk,
         }),
         AgentClient::Codex => Some(AcpLaunch {
             candidates: &[("codex-acp", &[])],
@@ -370,7 +371,9 @@ pub fn rpc_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> 
 }
 
 pub fn sdk_harness_programs() -> Vec<(AgentClient, &'static str, &'static str)> {
-    programs_for_transport(HarnessTransport::ClaudeSdk)
+    let mut programs = programs_for_transport(HarnessTransport::ClaudeSdk);
+    programs.extend(programs_for_transport(HarnessTransport::CursorSdk));
+    programs
 }
 
 pub fn is_unspecified_acp_model(raw: Option<&str>) -> bool {

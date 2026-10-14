@@ -1,10 +1,6 @@
 use super::client::{acp_args_for_program, AcpClientEvent, AcpStdioClient};
-use super::operator_pin_satisfied;
 use super::{with_test_acp_extra_args, with_test_acp_program};
-use ajax_core::adapters::{
-    cursor_catalog_to_acp_in_band_token, cursor_catalog_to_acp_spawn_token,
-    cursor_unspecified_spawn_satisfied, CURSOR_DEFAULT_SPAWN_MODEL,
-};
+use ajax_core::adapters::cursor_catalog_to_acp_spawn_token;
 use ajax_core::models::AgentClient;
 use std::{
     fs,
@@ -35,40 +31,6 @@ fn scratch_dir(label: &str) -> PathBuf {
     fs::create_dir_all(&dir).unwrap();
     dir
 }
-fn cursor_launch() -> ajax_core::adapters::AcpLaunch {
-    ajax_core::adapters::acp_launch_for_agent(AgentClient::Cursor).expect("cursor acp launch")
-}
-
-#[test]
-fn cursor_acp_command_prefers_agent_binary() {
-    let candidates = cursor_launch().candidates;
-    assert_eq!(candidates[0].0, "agent");
-    assert_eq!(candidates[0].1, &["acp"][..]);
-    assert_eq!(candidates[1].0, "cursor");
-    assert_eq!(candidates[1].1, &["agent", "acp"][..]);
-}
-
-#[test]
-fn cursor_acp_args_insert_model_before_acp() {
-    let launch = cursor_launch();
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], Some("composer-2.5")),
-        vec!["--model", "composer-2.5", "acp"]
-    );
-    assert_eq!(
-        acp_args_for_program(launch, &["agent", "acp"], Some("gpt-5.6-sol-medium")),
-        vec!["agent", "--model", "gpt-5.6-sol-medium", "acp"]
-    );
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], Some("auto")),
-        vec!["--model", CURSOR_DEFAULT_SPAWN_MODEL, "acp"]
-    );
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], None),
-        vec!["--model", CURSOR_DEFAULT_SPAWN_MODEL, "acp"]
-    );
-}
-
 #[test]
 fn bridge_acp_args_never_carry_a_model_flag() {
     for agent in [AgentClient::Codex, AgentClient::Claude, AgentClient::Pi] {
@@ -346,118 +308,6 @@ fn cursor_spawn_recovers_after_cli_default_and_refused_in_band_issue_979() {
 }
 
 #[test]
-fn cursor_unspecified_spawn_recovers_onto_mapped_default_issue_979() {
-    let dir = scratch_dir("model-cursor-recover-default-979");
-    let script = fake_acp_fixture();
-    let mapped = CURSOR_DEFAULT_SPAWN_MODEL;
-
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(
-            &[
-                "--cli-default-model",
-                "--cursor-models",
-                "--ignore-spawn-model-once",
-                "--refuse-in-band-once",
-            ],
-            || {
-                let (_client, report) = AcpStdioClient::spawn_with_operator_pin(
-                    AgentClient::Cursor,
-                    &dir,
-                    "auto",
-                    None,
-                )
-                .expect("spawn");
-                assert!(
-                    report.model_apply_error.is_none(),
-                    "recovery must run {mapped:?}, not Composer Fast: {:?}",
-                    report.model_apply_error
-                );
-                assert!(
-                    cursor_unspecified_spawn_satisfied(&report.applied_model),
-                    "recovery must run {mapped:?}, applied {:?}",
-                    report.applied_model
-                );
-                assert_ne!(report.applied_model, "composer-2.5");
-            },
-        );
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn cursor_unspecified_spawn_runs_mapped_default_not_composer_fast_issue_979() {
-    let dir = scratch_dir("model-cursor-unspecified-979");
-    let script = fake_acp_fixture();
-    let mapped = CURSOR_DEFAULT_SPAWN_MODEL;
-
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
-            let (_client, report) =
-                AcpStdioClient::spawn(AgentClient::Cursor, &dir, None, None).expect("spawn");
-            assert!(
-                report.model_apply_error.is_none(),
-                "unspecified spawn must run {mapped:?}, not Composer Fast: {:?}",
-                report.model_apply_error
-            );
-            assert!(
-                cursor_unspecified_spawn_satisfied(&report.applied_model),
-                "applied {:?} must satisfy unspecified spawn default",
-                report.applied_model
-            );
-            assert_ne!(report.applied_model, "composer-2.5");
-        });
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn cursor_spawn_catalog_pin_runs_sol_high_mapped_acp_model_issue_984() {
-    let dir = scratch_dir("model-cursor-sol-high-984");
-    let script = fake_acp_fixture();
-    let catalog_id = "gpt-5.6-sol-high";
-    let spawn_token = cursor_catalog_to_acp_spawn_token(catalog_id);
-    let in_band = cursor_catalog_to_acp_in_band_token(catalog_id);
-    let launch = cursor_launch();
-
-    assert_eq!(
-        spawn_token, catalog_id,
-        "spawn argv must keep catalog id unchanged"
-    );
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], Some(catalog_id)),
-        vec!["--model", catalog_id, "acp"]
-    );
-    assert_eq!(in_band, "gpt-5.6-sol[effort=high,fast=false]");
-
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(&["--cli-default-model", "--cursor-models"], || {
-            let (_client, report) =
-                AcpStdioClient::spawn(AgentClient::Cursor, &dir, Some(catalog_id), None)
-                    .expect("spawn");
-            assert!(
-                report.model_apply_error.is_none(),
-                "Sol High pin must apply cleanly, not Composer Fast: {:?}",
-                report.model_apply_error
-            );
-            assert!(
-                operator_pin_satisfied(catalog_id, &report.applied_model, true),
-                "applied {:?} must satisfy Sol High pin {catalog_id}",
-                report.applied_model
-            );
-            assert_ne!(report.applied_model, "composer-2.5[fast=true]");
-            assert_ne!(
-                report.applied_model, "gpt-5.6-sol[effort=high,fast=true]",
-                "Sol High pin must not accept Fast variant"
-            );
-        });
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
 fn cursor_grok_high_errors_when_live_handshake_omits_non_fast_bracket_issue_997() {
     let dir = scratch_dir("model-cursor-unadvertised-grok-997");
     let script = fake_acp_fixture();
@@ -530,55 +380,6 @@ fn cursor_grok_high_recovers_on_live_handshake_after_composer_fast_issue_979() {
                 );
                 assert_eq!(report.applied_model, "grok-4.6[effort=high,fast=false]");
                 assert_ne!(report.applied_model, "composer-2.5");
-            },
-        );
-    });
-
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn cursor_spawn_rejects_pipe_and_bracket_on_argv_issue_1079() {
-    let dir = scratch_dir("model-cursor-spawn-no-pipe-bracket-1079");
-    let script = fake_acp_fixture();
-    let handshake_base = "claude-opus-5";
-    let bracket = "claude-opus-5[thinking=true,context=300k,effort=high,fast=false]";
-    let catalog_id = "claude-opus-5-thinking-high";
-    let launch = cursor_launch();
-
-    assert_eq!(
-        cursor_catalog_to_acp_spawn_token(handshake_base),
-        handshake_base,
-        "bare handshake base passes through on spawn argv"
-    );
-    assert_eq!(cursor_catalog_to_acp_spawn_token(bracket), catalog_id);
-    for raw in [handshake_base, bracket] {
-        let spawn = cursor_catalog_to_acp_spawn_token(raw);
-        assert!(
-            !spawn.contains('|') && !spawn.contains('['),
-            "spawn token must not contain pipe or bracket for {raw:?}: {spawn}"
-        );
-    }
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], Some(handshake_base)),
-        vec!["--model", handshake_base, "acp"]
-    );
-    assert_eq!(
-        acp_args_for_program(launch, &["acp"], Some(bracket)),
-        vec!["--model", catalog_id, "acp"]
-    );
-
-    with_test_acp_program(&script, || {
-        with_test_acp_extra_args(
-            &["--cursor-parameterized-models", "--cli-default-model"],
-            || {
-                AcpStdioClient::spawn_with_operator_pin(
-                    AgentClient::Cursor,
-                    &dir,
-                    handshake_base,
-                    None,
-                )
-                .expect("spawn must succeed when bare handshake base passes through on argv");
             },
         );
     });
