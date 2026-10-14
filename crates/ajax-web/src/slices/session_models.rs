@@ -125,6 +125,18 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
     if client == AgentClient::Cursor {
+        if let Some(sdk_models) =
+            crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&std::env::temp_dir())
+        {
+            return SessionModelsResponse {
+                models: cursor_options_from_sdk(sdk_models),
+                default: CURSOR_DEFAULT_MODEL.to_string(),
+                agent: agent.to_string(),
+                reasoning: None,
+                error: None,
+                harness_version: String::new(),
+            };
+        }
         let raw = fetch_models_from_agent().unwrap_or_else(|| {
             vec![SessionModelOption {
                 id: "auto".to_string(),
@@ -363,6 +375,19 @@ pub(crate) fn apply_cursor_label_overlay(
         }
     }
 }
+fn cursor_options_from_sdk(
+    models: Vec<crate::adapters::web_session_acp::CursorCatalogModel>,
+) -> Vec<SessionModelOption> {
+    models
+        .into_iter()
+        .map(|model| SessionModelOption {
+            id: model.id,
+            label: model.label,
+            efforts: (!model.efforts.is_empty()).then_some(model.efforts),
+            has_fast: model.has_fast.then_some(true),
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -593,6 +618,34 @@ mod tests {
         let models = parse_agent_models_output("composer-2.5 - Composer 2.5\n");
         assert_eq!(models[0].id, "auto");
         assert_eq!(models[1].id, "composer-2.5");
+    }
+
+    #[test]
+    fn cursor_options_from_sdk_keeps_axes_only_when_present() {
+        use crate::adapters::web_session_acp::CursorCatalogModel;
+        let options = cursor_options_from_sdk(vec![
+            CursorCatalogModel {
+                id: "auto".to_string(),
+                label: "Auto".to_string(),
+                efforts: Vec::new(),
+                has_fast: false,
+            },
+            CursorCatalogModel {
+                id: "grok-4.6".to_string(),
+                label: "Grok 4.6".to_string(),
+                efforts: vec!["low".to_string(), "high".to_string()],
+                has_fast: true,
+            },
+        ]);
+        assert_eq!(options[0].id, "auto");
+        assert_eq!(options[0].efforts, None);
+        assert_eq!(options[0].has_fast, None);
+        assert_eq!(options[1].id, "grok-4.6");
+        assert_eq!(
+            options[1].efforts,
+            Some(vec!["low".to_string(), "high".to_string()])
+        );
+        assert_eq!(options[1].has_fast, Some(true));
     }
 
     #[test]

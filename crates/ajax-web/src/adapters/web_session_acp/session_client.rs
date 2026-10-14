@@ -1,6 +1,7 @@
 //! Unified session client for the web session slice.
 //!
-//! Wraps an ACP stdio client, a Pi RPC client, or a Claude Agent SDK
+//! Wraps an ACP stdio client, a Pi RPC client, a Claude Agent SDK,
+//! or a Cursor SDK
 //! client behind exactly the
 //! method set the web session slice already uses on `AcpStdioClient`.
 //! Spawning routes through [`SessionClient::spawn_with_operator_pin`].
@@ -14,13 +15,16 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
 
-use super::agent_event::{AgentEvent, NativeCommand};
+use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::available_command_descriptors::AvailableCommandDescriptor;
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
+
 use super::client::{
     AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
 };
+use super::cursor_sdk_client::CursorSdkClient;
+use super::cursor_sdk_spawn::{apply_pin_to_cursor, spawn_cursor_sdk, uses_cursor_sdk};
 use super::pi_rpc_client::PiRpcClient;
 use super::{
     ApplyModelOutcome, CancelOutcome, NeutralConfigOption, PromptCapabilityDescriptor,
@@ -36,11 +40,13 @@ pub type SessionSpawnReport = SpawnReport<NeutralConfigOption>;
 /// The apply-config outcome shape the web session slice receives.
 pub type SessionConfigOutcome = ApplyModelOutcome<NeutralConfigOption>;
 
-/// One live session transport: ACP stdio, Pi RPC, or Claude Agent SDK.
+/// One live session transport: ACP stdio, Pi RPC, Claude Agent SDK, or
+/// Cursor Agent SDK.
 pub enum SessionClient {
     Acp(AcpStdioClient),
     Pi(PiSession),
     Claude(ClaudeSession),
+    Cursor(CursorSession),
 }
 
 /// State for the Pi RPC variant of [`SessionClient`].
@@ -53,6 +59,13 @@ pub struct PiSession {
 /// State for the Claude Agent SDK variant of [`SessionClient`].
 pub struct ClaudeSession {
     client: ClaudeSdkClient,
+    session_id: String,
+    session_new_result: serde_json::Value,
+}
+
+/// State for the Cursor SDK variant of [`SessionClient`].
+pub struct CursorSession {
+    client: CursorSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
 }
@@ -111,6 +124,10 @@ impl AcpEventSource for SessionClient {
             SessionClient::Claude(session) => {
                 native_command_descriptors(&session.client.take_available_commands())
             }
+
+            SessionClient::Cursor(session) => {
+                native_command_descriptors(&session.client.take_available_commands())
+            }
         }
     }
 }
@@ -139,6 +156,16 @@ impl SessionClient {
         })
     }
 
+    pub fn from_cursor(client: CursorSdkClient) -> Self {
+        let session_id = client.session_id();
+        let session_new_result = serde_json::json!({ "sessionId": session_id });
+        SessionClient::Cursor(CursorSession {
+            client,
+            session_id,
+            session_new_result,
+        })
+    }
+
     /// Spawn the live session for `agent` at `worktree_path`, resuming
     /// `resume_session_id` when given. Agents selected for the Claude Agent
     /// SDK take the SDK path (unreachable in production until the core launch
@@ -151,7 +178,10 @@ impl SessionClient {
         operator_pin: &str,
         resume_session_id: Option<&str>,
     ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
-        if uses_claude_sdk(agent) {
+        if uses_cursor_sdk(agent) {
+            spawn_cursor_sdk(worktree_path, operator_pin, resume_session_id)
+                .map(|(client, report)| (SessionClient::from_cursor(client), report))
+        } else if uses_claude_sdk(agent) {
             spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
                 .map(|(client, report)| (SessionClient::from_claude(client), report))
         } else if uses_pi_rpc(agent) {
@@ -221,6 +251,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.session_id(),
             SessionClient::Pi(session) => &session.session_id,
             SessionClient::Claude(session) => &session.session_id,
+            SessionClient::Cursor(session) => &session.session_id,
         }
     }
 
@@ -234,6 +265,10 @@ impl SessionClient {
             SessionClient::Claude(session) => {
                 session.client.shutdown();
             }
+
+            SessionClient::Cursor(session) => {
+                session.client.shutdown();
+            }
         }
         None
     }
@@ -242,7 +277,9 @@ impl SessionClient {
         match self {
             SessionClient::Acp(client) => client.detach(),
             // RPC transports have no detached-host semantics.
-            SessionClient::Pi(_) | SessionClient::Claude(_) => self.shutdown(),
+            SessionClient::Pi(_) | SessionClient::Claude(_) | SessionClient::Cursor(_) => {
+                self.shutdown()
+            }
         }
     }
 
@@ -251,6 +288,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.host_exited(),
             SessionClient::Pi(session) => session.client.host_exited(),
             SessionClient::Claude(session) => session.client.host_exited(),
+            SessionClient::Cursor(session) => session.client.host_exited(),
         }
     }
 
@@ -266,17 +304,24 @@ impl SessionClient {
             SessionClient::Claude(session) => {
                 session.client.shutdown();
             }
+
+            // Cursor SDK mirrors the Pi arm: no kill hook, use shutdown.
+            SessionClient::Cursor(session) => {
+                session.client.shutdown();
+            }
         }
     }
 
     /// OS process id of the live agent child while the transport is alive. The
-    /// ACP and Pi variants always report a pid; the Claude variant reports
+    /// ACP and Pi variants always report a pid; the Claude and Cursor SDK
+    /// variants report `None` once their host has been shut down.
     /// `None` once its host has been shut down.
     pub fn child_pid(&self) -> Option<u32> {
         match self {
             SessionClient::Acp(client) => Some(client.child_id()),
             SessionClient::Pi(session) => session.client.child_pid(),
             SessionClient::Claude(session) => session.client.child_pid(),
+            SessionClient::Cursor(session) => session.client.child_pid(),
         }
     }
 
@@ -290,6 +335,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.poll_event().map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.poll_event(),
             SessionClient::Claude(session) => session.client.poll_event(),
+            SessionClient::Cursor(session) => session.client.poll_event(),
         }
     }
 
@@ -298,6 +344,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
             SessionClient::Pi(session) => session.client.wait_event(timeout),
             SessionClient::Claude(session) => session.client.wait_event(timeout),
+            SessionClient::Cursor(session) => session.client.wait_event(timeout),
         }
     }
 
@@ -306,6 +353,10 @@ impl SessionClient {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
             SessionClient::Pi(session) => session.client.begin_prompt(&prompt_text(blocks)),
             SessionClient::Claude(session) => session.client.begin_prompt(&prompt_text(blocks)),
+            SessionClient::Cursor(session) => {
+                let (text, images) = prompt_parts(blocks);
+                session.client.begin_prompt_with_images(&text, &images)
+            }
         }
     }
 
@@ -318,6 +369,12 @@ impl SessionClient {
                 }
             }
             SessionClient::Claude(session) => {
+                if session.client.prompt_in_flight() || session.client.host_exited() {
+                    session.client.cancel()?;
+                }
+            }
+
+            SessionClient::Cursor(session) => {
                 if session.client.prompt_in_flight() || session.client.host_exited() {
                     session.client.cancel()?;
                 }
@@ -335,6 +392,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.prompt_in_flight(),
             SessionClient::Pi(session) => session.client.prompt_in_flight(),
             SessionClient::Claude(session) => session.client.prompt_in_flight(),
+            SessionClient::Cursor(session) => session.client.prompt_in_flight(),
         }
     }
 
@@ -352,6 +410,9 @@ impl SessionClient {
             SessionClient::Claude(_) => Err(
                 "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
             ),
+            SessionClient::Cursor(_) => {
+                Err("Cursor SDK mode has no permission or elicitation requests".to_string())
+            }
         }
     }
 
@@ -371,6 +432,9 @@ impl SessionClient {
             SessionClient::Claude(_) => Err(
                 "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
             ),
+            SessionClient::Cursor(_) => {
+                Err("Cursor SDK mode has no permission or elicitation requests".to_string())
+            }
         }
     }
 
@@ -379,6 +443,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client.session_new_result(),
             SessionClient::Pi(session) => &session.session_new_result,
             SessionClient::Claude(session) => &session.session_new_result,
+            SessionClient::Cursor(session) => &session.session_new_result,
         }
     }
 
@@ -389,6 +454,15 @@ impl SessionClient {
                 .map(ApplyModelOutcome::into_neutral),
             SessionClient::Claude(session) => {
                 let error = apply_pin_to_claude(&session.client, desired_model);
+                Ok(SessionConfigOutcome {
+                    applied_model: session.client.applied_model(),
+                    config_options: Some(session.client.config_options()),
+                    error,
+                })
+            }
+
+            SessionClient::Cursor(session) => {
+                let error = apply_pin_to_cursor(&session.client, desired_model);
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
                     config_options: Some(session.client.config_options()),
@@ -424,6 +498,27 @@ impl SessionClient {
                         session.client.set_effort(&value).err()
                     }
                     _ => Some(format!("unsupported Claude option {config_id}")),
+                };
+                Ok(SessionConfigOutcome {
+                    applied_model: session.client.applied_model(),
+                    config_options: Some(session.client.config_options()),
+                    error,
+                })
+            }
+
+            SessionClient::Cursor(session) => {
+                let error = match (config_id, value) {
+                    ("model", SessionConfigValue::Select(value)) => {
+                        session.client.set_model(&value).err()
+                    }
+                    ("mode", SessionConfigValue::Select(value)) => {
+                        session.client.set_mode(&value).err()
+                    }
+                    // Every other select is a parameter of the current model (effort, fast, ...).
+                    (id, SessionConfigValue::Select(value)) => {
+                        session.client.set_option(id, &value).err()
+                    }
+                    _ => Some(format!("unsupported Cursor option {config_id}")),
                 };
                 Ok(SessionConfigOutcome {
                     applied_model: session.client.applied_model(),
@@ -527,6 +622,26 @@ where
     let result = f();
     TEST_PI_PROGRAM.with(|slot| *slot.borrow_mut() = None);
     result
+}
+
+/// Split ACP content blocks into the plain-text prompt and its images, for
+/// transports that accept images natively.
+pub(super) fn prompt_parts(blocks: &[ContentBlock]) -> (String, Vec<NativeImage>) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut images = Vec::new();
+    for block in blocks {
+        match block {
+            ContentBlock::Text(tc) => parts.push(tc.text.clone()),
+            ContentBlock::ResourceLink(rl) => parts.push(rl.uri.clone()),
+            ContentBlock::Image(image) => images.push(NativeImage {
+                data: image.data.clone(),
+                mime_type: image.mime_type.clone(),
+            }),
+            // ponytail: audio and embedded resources are not forwarded yet.
+            _ => parts.push("[attachment omitted]".to_string()),
+        }
+    }
+    (parts.join("\n\n"), images)
 }
 
 /// Flatten ACP content blocks into a single plain-text prompt.

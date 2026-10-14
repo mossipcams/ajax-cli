@@ -96,7 +96,7 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
 /// The user's global npm root, resolved by running `npm root -g` from the home
 /// directory so that no repository-controlled `.npmrc` (task worktree or
 /// process cwd) is ever read. Returns None on any failure or a non-absolute result.
-fn global_npm_root() -> Option<PathBuf> {
+pub(super) fn global_npm_root() -> Option<PathBuf> {
     let npm = crate::adapters::program::resolve_program("npm")?;
     let home = std::env::var_os("HOME")?;
     let home_path = Path::new(&home);
