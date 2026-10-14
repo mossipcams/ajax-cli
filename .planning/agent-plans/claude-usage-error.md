@@ -13,7 +13,7 @@
 - [x] Inspect the Claude sidecar, event mapper, and adjacent tests; choose the smallest error-propagation fix.
 - [x] Add a focused regression test that fails before the fix and passes afterward.
 - [x] Run focused checks and the repository's PR verification gate; record results.
-- [ ] Create or reuse the PR with `scripts/gh-pr-create`, include `Fixes #1287`, and review its final delta.
+- [x] Create or reuse the PR with `scripts/gh-pr-create`, include `Fixes #1287`, and review its final delta.
 
 ## Approval and evidence
 
@@ -33,6 +33,7 @@
 - The fallback stopped before verification because the current branch is `ajax/defects`, while `scripts/gh-pr-create` requires `type/scope/description`. The user has since authorized opening the PR after that blocker was explained; the PR delegate may create and switch to `fix/web/claude-usage-error`.
 - The code-only delegate completed the mapper, test, and documentation edits but its model quota expired before a structured report. Its raw tool log records the red regression and passing focused checks listed above; the parent reviewed the resulting delta.
 - 2026-10-14 (PR step): created and switched to `fix/web/claude-usage-error` from `ajax/defects` at `e872f534` (an ancestor of `origin/main`, so the PR delta is only the reviewed files). Installed Husky with `npm ci` plus `npx husky`; hooksPath is `.husky/_`. `cargo fmt --check`: passed (exit 0). No implementation changes since the recorded passing focused runs, so no test rerun was needed. The pre-commit hook rebuilds/stages web dist when web sources are staged; the diff touches only Rust and markdown, so no dist rebuild is expected.
+- `scripts/gh-pr-create`: passed; created [PR #1296](https://github.com/mossipcams/ajax-cli/pull/1296) as `fix(web): claude usage error` at commit `506d29e0`, containing only the four scoped files. The PR body includes `Fixes #1287`. Parent review found an imprecise sentence in the body; the follow-up corrects it and pushes this final plan update.
 
 ## Deviations and risks
 
