@@ -49,4 +49,11 @@ impl AcpSlot {
                 .as_mut()
                 .is_some_and(|client| client.host_exited())
     }
+
+    /// Forget the previous client's advertised commands (a replaced client advertises its own list at its next drain); republish an empty list so attached browsers drop them too.
+    pub(super) fn clear_available_commands(&mut self) {
+        if self.session_available_commands.take().is_some() {
+            self.pending_commands_snapshot = Some(Vec::new());
+        }
+    }
 }

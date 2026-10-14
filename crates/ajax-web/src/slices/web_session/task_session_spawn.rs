@@ -19,6 +19,7 @@ use ajax_core::models::AgentClient;
 use std::path::Path;
 
 fn apply_spawn_capabilities(state: &mut TaskSessionState, report: &SessionSpawnReport) {
+    state.acp.clear_available_commands();
     state.acp.restore_advertised = report.restore_advertised;
     if let Some(options) = report.config_options.as_deref() {
         state.acp.session_config_options = Some(descriptors_from_neutral(options));

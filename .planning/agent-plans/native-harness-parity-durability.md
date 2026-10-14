@@ -224,7 +224,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
 - [ ] W2a done (branch refactor/web/transport-selection), W2b done (branch refactor/web/shared-native-arms).
 - [ ] W4a done (#1298, branch fix/web/harness-process-groups), W4b done (branch fix/web/startup-prompt-recovery), W4d done (branch test/web/host-crash-suite).
-- [ ] W3g, W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
+- [ ] W3g done (#1299, branch fix/web/harness-swap-stale-commands), W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
 - [ ] W4c (after W4d).
 
 ## Deviations
