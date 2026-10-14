@@ -212,7 +212,11 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   with empty context.
 - Ajax orchestration sessions are trusted local automation, and the Settings
   toggle discloses that supported agents run with full tool access and without
-  approval prompts. After session creation or restore, the host reads only ACP
+  approval prompts. The Claude Agent SDK sidecar runs dangerous permissions
+  directly: its `query()` options set `permissionMode: "bypassPermissions"`
+  and `allowDangerouslySkipPermissions: true`, leaving the always-allowing
+  `canUseTool` only as a fallback. ACP harnesses apply the mode in-band: after
+  session creation or restore, the host reads only ACP
   `configOptions`, finds the advertised `mode` option (`category: mode`, else id
   `mode`), and sends `session/set_config_option` with the first advertised select
   value from the documented full-access list (`agent-full-access`,
