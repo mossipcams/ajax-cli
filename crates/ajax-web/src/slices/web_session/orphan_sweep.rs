@@ -42,7 +42,9 @@ pub(crate) fn sweep_once(store: &SqliteRegistryStore, boot_id: &str) {
 ///
 /// - A run whose `owner_boot_id` equals `current_boot_id` is never touched —
 ///   it belongs to a live child in this host.
-/// - A child is signalled (`kill -TERM <pid>`) ONLY when the process is alive
+/// - A child is signalled (its process group via `kill -TERM -- -<pid>` first,
+///   since the child is a group leader, falling back to `kill -TERM <pid>`) ONLY
+///   when the process is alive
 ///   and its start-time token equals the stored `child_started`. A missing,
 ///   mismatched (pid reuse), or unreadable token means: do not signal.
 /// - After a matching child is signalled, or when the pid no longer exists,
@@ -78,8 +80,7 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
             start_token(pid).as_deref(),
         ) {
             Verdict::Same => {
-                // ponytail: only the recorded pid is signalled, not its descendants; upgrade path is to spawn children in their own process group (setpgid) and signal the group.
-                if signal_term(pid) && clear_child_identity(store, &run.run_id, pid) {
+                if signal_term_group_or_pid(pid) && clear_child_identity(store, &run.run_id, pid) {
                     handled += 1;
                 }
             }
@@ -139,4 +140,27 @@ fn signal_term(pid: i64) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+/// Best-effort `kill -TERM -- -<pid>` on the child's process group (the
+/// current host spawns children as their own group leaders, so the recorded
+/// pid is also the pgid), falling back to a plain `kill -TERM <pid>` for
+/// children recorded by older hosts that were not group leaders. The
+/// self-pid and invalid-pid guards apply before either signal.
+fn signal_term_group_or_pid(pid: i64) -> bool {
+    if pid <= 0 || pid == std::process::id() as i64 {
+        return false; // Never signal ourselves (or invalid pids).
+    }
+    let group_signalled = Command::new("kill")
+        .args(["-TERM", "--", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if group_signalled {
+        true
+    } else {
+        signal_term(pid)
+    }
 }

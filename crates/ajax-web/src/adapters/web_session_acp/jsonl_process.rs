@@ -57,13 +57,16 @@ impl JsonlProcess {
     /// `cwd`, piped on all three std streams and without any shell. Stdout
     /// starts feeding [`JsonlRecord`]s as soon as the child writes lines.
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        // Run as our own process-group leader so drop can kill the whole tree.
+        super::process_group::own_group(&mut command);
+        let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().expect("stdin was piped");
         let stdout = child.stdout.take().expect("stdout was piped");
@@ -172,14 +175,21 @@ impl JsonlProcess {
 impl Drop for JsonlProcess {
     fn drop(&mut self) {
         // Close stdin (idempotent), give a child that is already exiting a
-        // brief grace period, then kill. `Child::wait` reaps the process in
-        // every path, so no zombie survives this struct's lifetime.
+        // brief grace period, then kill the whole process group. `Child::wait`
+        // reaps the leader in every path, so no zombie survives this struct's
+        // lifetime; killing the group also takes down any grandchildren the
+        // leader spawned (issue #1298).
+        let pid = self.child.id();
         self.stdin.take();
 
         let deadline = Instant::now() + DROP_GRACE;
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => return, // already reaped here
+                Ok(Some(_)) => {
+                    // Gracefully exited, but it may have left grandchildren behind.
+                    super::process_group::kill_group(pid);
+                    return;
+                }
                 Ok(None) => {}
                 Err(_) => break, // status no longer available; kill and fall through
             }
@@ -189,7 +199,8 @@ impl Drop for JsonlProcess {
             std::thread::sleep(Duration::from_millis(20));
         }
 
-        let _ = self.child.kill();
+        super::process_group::kill_group(pid);
+        let _ = self.child.kill(); // fallback: group kill is best-effort via kill(1)
         let _ = self.child.wait(); // reaps; errors (e.g. double wait) are fine here
     }
 }
