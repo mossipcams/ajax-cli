@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::agent_event::AgentEvent;
+use super::agent_event::{AgentEvent, NativeImage};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_handshake::RpcHandshake;
 
@@ -114,10 +114,27 @@ impl RpcSession {
     /// Send a `prompt` command and mark the run active. Fails when a run is
     /// already active or the child's stdin is closed.
     pub fn begin_prompt(&mut self, text: &str) -> Result<(), String> {
+        self.begin_prompt_with_images(text, &[])
+    }
+
+    /// Like [`Self::begin_prompt`], attaching images as `images:
+    /// [{data, mimeType}]` when any are given.
+    pub fn begin_prompt_with_images(
+        &mut self,
+        text: &str,
+        images: &[NativeImage],
+    ) -> Result<(), String> {
         if self.run_active {
             return Err("a prompt run is already active".to_owned());
         }
-        let id = self.process.send("prompt", json!({ "message": text }))?;
+        let mut fields = json!({ "message": text });
+        if !images.is_empty() {
+            fields["images"] = images
+                .iter()
+                .map(|image| json!({ "data": image.data, "mimeType": image.mime_type }))
+                .collect();
+        }
+        let id = self.process.send("prompt", fields)?;
         self.prompt_id = Some(id);
         self.run_active = true;
         self.ended_aborted = false;

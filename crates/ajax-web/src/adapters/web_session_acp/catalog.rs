@@ -76,6 +76,9 @@ fn config_option_in<'a>(result: &'a Value, category: &str) -> Option<&'a Value> 
 }
 
 pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCatalog {
+    if super::cursor_sdk_spawn::uses_cursor_sdk(agent) {
+        return AgentModelCatalog::empty();
+    }
     if super::claude_sdk_spawn::uses_claude_sdk(agent) {
         return read_claude_sdk_catalog(cwd);
     }
@@ -88,6 +91,39 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
     let catalog = parse_session_new_catalog(client.session_new_result());
     drop(client);
     catalog
+}
+
+/// Read the Cursor model catalog from a Cursor SDK sidecar handshake.
+/// Empty when the sidecar cannot be launched or fails to start.
+pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::CursorCatalogModel> {
+    let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch() else {
+        return Vec::new();
+    };
+    let Ok(client) = super::cursor_sdk_client::CursorSdkClient::spawn(
+        &program,
+        &extra_args,
+        cwd,
+        None,
+        None,
+        super::client::HANDSHAKE_TIMEOUT,
+    ) else {
+        return Vec::new();
+    };
+    let models = client.model_catalog();
+    client.shutdown();
+    models
+}
+
+/// `Some(models)` when Cursor runs on the SDK transport and its catalog
+/// could be read; `None` otherwise (the caller falls back).
+pub fn read_cursor_catalog_if_sdk(
+    cwd: &Path,
+) -> Option<Vec<super::cursor_sdk_client::CursorCatalogModel>> {
+    if !super::cursor_sdk_spawn::uses_cursor_sdk(AgentClient::Cursor) {
+        return None;
+    }
+    let models = read_cursor_sdk_catalog(cwd);
+    (!models.is_empty()).then_some(models)
 }
 
 /// Build the model catalog for a Pi RPC agent from its handshake config
@@ -281,7 +317,6 @@ pub fn cursor_model_labels_from_session_new(result: &Value) -> HashMap<String, S
     }
     labels
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

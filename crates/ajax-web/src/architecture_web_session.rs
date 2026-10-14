@@ -184,7 +184,9 @@ mod tests {
         let files = [
             "claude_sdk_client.rs",
             "claude_sdk_map.rs",
+            "cursor_sdk_client.rs",
             "cursor_sdk_map.rs",
+            "cursor_sdk_spawn.rs",
             "claude_sdk_spawn.rs",
             "pi_rpc_client.rs",
             "pi_rpc_map.rs",
