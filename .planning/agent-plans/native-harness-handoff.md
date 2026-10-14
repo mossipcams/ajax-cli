@@ -293,8 +293,8 @@ for P2's invariants; durability plan stage 3 closed as "satisfied by
 - [x] #1294: draft; main merged in (`f31f88b0`); Cursor SDK test override made static (T1) and effort-persistence test ported (`8d45b408`, pin `grok-4.6|effort=low`, no respawn). Stays draft until P4 gates are met.
 - [x] Replace main's stale `native-harness-handoff.md` — committed with P1 on `ajax/new-adapters`.
 - [x] P1 (ACP, Pi, Claude rows): `c5c59344` + `215dac22` on `ajax/new-adapters`, not yet a PR. Cursor row after #1293 merges.
-- [ ] P1 PR (Matt approved 2026-10-14).
-- [ ] #1294: Cursor `fast` toggle half of the ported test (Matt approved the `fake_cursor_sdk.mjs` fixture edit 2026-10-14) + login-only `LOGIN_HINT`. (`web-cockpit.md` still documents Cursor as ACP throughout; its Cursor auth line lands with P4's doc rewrite.)
+- [x] P1 PR: #1295.
+- [x] #1294 (`016ed1c2`): Cursor `fast` toggle half of the ported test (Matt approved fixture edits 2026-10-14; done as a separate `fake_cursor_sdk_fast.mjs` variant because changing the shared fixture breaks 5 existing tests) + login-only `LOGIN_HINT`. (`web-cockpit.md` still documents Cursor as ACP throughout; its Cursor auth line lands with P4's doc rewrite.)
 - [ ] P2 → (P3 if reproduced) → spike → P4.
 
 Delegation: model-router, Qwen in small packets (one module per packet,
