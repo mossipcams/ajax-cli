@@ -138,7 +138,10 @@ pub use apply_model::{
     apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,
     read_applied_model, ApplyModelOutcome,
 };
-pub use catalog::{read_agent_model_catalog, read_cursor_catalog_if_sdk, AgentModelCatalog};
+pub use catalog::{
+    read_agent_model_catalog, read_cursor_acp_model_labels, read_cursor_catalog_if_sdk,
+    AgentModelCatalog,
+};
 pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
