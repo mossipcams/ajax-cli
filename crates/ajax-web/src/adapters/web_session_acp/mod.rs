@@ -151,6 +151,5 @@ pub(crate) use client::{
     set_test_acp_command, with_test_acp_extra_args, with_test_acp_program,
     with_test_handshake_timeout,
 };
-#[allow(unused_imports)]
 #[cfg(test)]
 pub(crate) use cursor_sdk_spawn::with_test_cursor_sdk_module;

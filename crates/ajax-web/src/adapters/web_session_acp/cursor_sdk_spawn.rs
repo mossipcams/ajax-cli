@@ -202,13 +202,11 @@ pub(super) fn apply_pin_to_cursor(client: &CursorSdkClient, pin: &str) -> Option
 }
 
 #[cfg(test)]
-thread_local! {
-    static TEST_CURSOR_SDK_MODULE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-}
+static TEST_CURSOR_SDK_MODULE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 #[cfg(test)]
 fn cursor_sdk_module_override() -> Option<PathBuf> {
-    TEST_CURSOR_SDK_MODULE.with(|slot| slot.borrow().clone())
+    TEST_CURSOR_SDK_MODULE.lock().unwrap().clone()
 }
 
 #[cfg(test)]
@@ -216,8 +214,8 @@ pub(crate) fn with_test_cursor_sdk_module<F, R>(sdk_module: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    TEST_CURSOR_SDK_MODULE.with(|slot| *slot.borrow_mut() = Some(sdk_module.to_path_buf()));
+    *TEST_CURSOR_SDK_MODULE.lock().unwrap() = Some(sdk_module.to_path_buf());
     let result = f();
-    TEST_CURSOR_SDK_MODULE.with(|slot| *slot.borrow_mut() = None);
+    *TEST_CURSOR_SDK_MODULE.lock().unwrap() = None;
     result
 }

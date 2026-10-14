@@ -163,6 +163,52 @@ fn apply_client_message_set_config_option_persists_after_in_band_apply() {
 }
 
 #[test]
+fn apply_client_message_set_config_option_persists_cursor_sdk_effort_without_respawn() {
+    let dir = scratch_dir("set-cursor-sdk-effort");
+    let handle = "web/set-cursor-sdk-effort";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let persisted = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let persisted_for_closure = std::sync::Arc::clone(&persisted);
+
+    crate::adapters::web_session_acp::with_test_cursor_sdk_module(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/fake_cursor_sdk.mjs"),
+        || {
+            directory
+                .acquire(handle, &dir, "grok-4.6", AgentClient::Cursor)
+                .expect("acquire");
+            let before = directory.child_id(handle).expect("child");
+            let mut generation = directory.generation(handle);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let persist: super::PersistSessionModel = std::sync::Arc::new(move |model: &str| {
+                *persisted_for_closure.lock().unwrap() = Some(model.to_string());
+                Ok(())
+            });
+            rt.block_on(apply_client_message(
+                directory.inner(),
+                handle,
+                &dir,
+                SessionClientMessage::SetConfigOption {
+                    config_id: "effort".to_string(),
+                    value: SessionConfigValue::Select("low".to_string()),
+                },
+                &mut generation,
+                Some(persist),
+            ))
+            .expect("set effort config option");
+
+            assert_eq!(
+                persisted.lock().unwrap().as_deref(),
+                Some("grok-4.6|effort=low")
+            );
+            assert_eq!(directory.child_id(handle), Some(before));
+        },
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn apply_client_message_set_config_option_leaves_child_unchanged_when_persist_fails() {
     let dir = scratch_dir("set-model-persist-fail");
     let handle = "web/set-model-fail";
