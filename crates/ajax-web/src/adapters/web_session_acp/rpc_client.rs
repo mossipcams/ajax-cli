@@ -1,6 +1,6 @@
 //! The transport-neutral client core shared by every RPC-style harness transport: it owns the session, the event queue and the prompt request ids.
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
 use super::rpc_session::{RpcSession, RpcStep};
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -53,7 +53,17 @@ impl RpcClientCore {
     ///
     /// Returns the request id for tracking.
     pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
-        if message.is_empty() {
+        self.begin_prompt_with_images(message, &[])
+    }
+
+    /// Like [`Self::begin_prompt`], attaching images as `images:
+    /// [{data, mimeType}]` when any are given.
+    pub fn begin_prompt_with_images(
+        &self,
+        message: &str,
+        images: &[NativeImage],
+    ) -> Result<u64, String> {
+        if message.is_empty() && images.is_empty() {
             return Err("empty prompt content: no blocks supplied".to_string());
         }
 
@@ -63,7 +73,7 @@ impl RpcClientCore {
             .as_mut()
             .ok_or_else(|| "session not available (shut down)".to_string())?;
         session
-            .begin_prompt(message)
+            .begin_prompt_with_images(message, images)
             .map_err(|e| format!("begin_prompt failed: {e}"))?;
 
         let id = g.next_request_id;

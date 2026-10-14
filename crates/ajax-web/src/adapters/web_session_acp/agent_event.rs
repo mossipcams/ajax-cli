@@ -75,6 +75,14 @@ impl NativeCommand {
     }
 }
 
+/// One image attached to a native prompt. ACP-free: a base64 payload and
+/// its MIME type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeImage {
+    pub data: String,
+    pub mime_type: String,
+}
+
 /// Every event a session client can emit: an ACP-protocol event for harnesses
 /// that speak ACP, or a native event from the Claude Agent SDK / Pi RPC
 /// adapters. The web session slice maps both to its own wire events.
