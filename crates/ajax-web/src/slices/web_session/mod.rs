@@ -457,6 +457,9 @@ mod acp_drain_tests;
 mod acp_usage_tests;
 
 #[cfg(test)]
+mod harness_contract_tests;
+
+#[cfg(test)]
 mod ws_bridge_tests;
 
 #[cfg(test)]

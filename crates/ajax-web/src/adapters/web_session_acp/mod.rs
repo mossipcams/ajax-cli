@@ -153,3 +153,9 @@ pub(crate) use client::{
 };
 #[cfg(test)]
 pub(crate) use cursor_sdk_spawn::with_test_cursor_sdk_module;
+
+#[cfg(test)]
+pub(crate) use session_client::with_test_pi_program;
+
+#[cfg(test)]
+pub(crate) use claude_sdk_spawn::with_test_claude_sdk_module;
