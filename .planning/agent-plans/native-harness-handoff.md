@@ -30,6 +30,29 @@ rather than deleting it, forced a test edit, and discarded reviewed work in
 #1293. Rev 2 below reaches the same branching reduction with no new trait, no
 new file, and no test edits.
 
+### DECIDED 2026-10-14: Cursor SDK auth = the Cursor SDK login, no API key
+
+Matt: "we use the cursor login not api key". Verified in `@cursor/sdk` 1.0.37
+(`dist/esm/index.js`, `auth/credential-store.d.ts`, `auth/login.d.ts`):
+credentials resolve as explicit `apiKey` option → `CURSOR_API_KEY` →
+`~/.cursor/sdk/auth.json`, written by `Cursor.auth.login()` (browser login;
+in SSH sessions the URL is printed to stderr), owner-only 0600, holding a
+minted 90-day user key that the SDK re-reads every 5 s and ignores once
+expired. This is **not** the `agent` CLI keychain login ACP used.
+
+- Ajax sets no `CURSOR_API_KEY` (launchd plist, docker compose, zshrc) and
+  passes no `apiKey`; the sidecar already omits it (`cursor_sdk_sidecar.mjs`
+  header). Ajax never reads `auth.json`.
+- The ajax-web host user is already logged in (checked 2026-10-14: file
+  present, 0600, ~89 days left; key not read).
+- `LOGIN_HINT` in `cursor_sdk_spawn.rs` drops the `CURSOR_API_KEY` option and
+  names the login + renewal; `web-cockpit.md` gets a Cursor auth line next to
+  the Claude one in P4 (its Cursor sections are all ACP today).
+- Risks: the minted key expires every 90 days (Cursor chat then fails with an
+  auth error carrying the hint); a docker-compose host needs
+  `~/.cursor/sdk/auth.json` mounted read-only or its own login.
+- P4's remaining gate is the live spike, now unblocked by the login.
+
 ### Verdict
 
 **Keep `SessionClient` as an enum with one variant per harness. Do not add a
@@ -95,6 +118,7 @@ and launch row. That is roughly 25 lines in `session_client.rs`, down from
 | L1 | `session_models` special-cases Cursor (`read_cursor_catalog_if_sdk`, `agent models` CLI fallback) | `slices/session_models.rs` | Disappears with the Cursor flip (P4); no separate PR |
 | L2 | `acp_drain` reads `/_meta/piAcp/startupInfo` | `acp_drain.rs:103` | Known, not scheduled |
 | L3 | Blanket `#![allow(dead_code)]` on now-live files | adapters | Remove where it compiles clean, in P2 |
+| T1 | **Native transports cannot be driven through the slice in tests.** `TEST_PI_PROGRAM`, `TEST_CLAUDE_SDK_MODULE`, `TEST_CURSOR_SDK_MODULE` are `thread_local!`, but `TaskSessionDirectory` runs acquire on a tokio worker thread, so `uses_*` sees no override and falls back to ACP (`initialize timed out after 45s`). ACP works because `with_test_acp_program` also sets the process-wide `static TEST_ACP_COMMAND`. Found 2026-10-14 porting the #1294 effort test | `session_client.rs`, `claude_sdk_spawn.rs`, `cursor_sdk_spawn.rs` | Cursor fixed in #1294 (`8d45b408`); Pi and Claude in P2 as part of the single `transport_for` gating (one static override map keyed by `HarnessTransport`) |
 
 Corrections to rev 1: the "5 agent-name tables" were not 5 copies. Two are
 identical (`operate/mod.rs`, `model_change.rs`), `session_models` differs
@@ -226,28 +250,25 @@ with main because its parents were squash-merged; repaired by merging
 `origin/main` into the branch (no force push). #1293 repaired the same way,
 plus the Cursor ACP label overlay and its 3 tests restored.
 
-**#1294 (`feat/web/cursor-native-sdk`, the flip): do not merge. Convert to
-draft; it becomes P4.** Reviewed against its diff:
+**#1294 (`feat/web/cursor-native-sdk`, the flip): do not merge. Draft since
+2026-10-14; it becomes P4.** `origin/main` merged in (`f31f88b0`). Reviewed against its diff:
 
 - It carries the whole stack again (#1289–#1293 commits) plus one flip commit
   `a9fe11c0`; after #1292/#1293 merge, rebuild it as only the flip.
-- Flip gates are unmet: no live spike with a real `CURSOR_API_KEY`, and the
-  "how does the key reach the ajax-web host" decision is open (this file's
-  own condition, "DECIDED 2026-10-13").
-- Test deletions overreach the approval (approval covers tests that pin only
-  the removed Cursor-ACP mechanism):
-  - `assert!(acp_launch_for_agent(AgentClient::Other).is_none())` removed —
-    unrelated to Cursor; restore it.
-  - `ws_bridge_tests::apply_client_message_set_config_option_persists_effort_and_fast_toggles`
-    removed — it pins slice behaviour (effort/fast toggles persist into the
-    pin without respawn) that Cursor SDK still has (`effort`/`fast` params).
-    Port it to the Cursor SDK fixture instead of deleting it.
-  - The rest (`issue_979/984/989/991/1079` spawn-arg tests, live `agent acp`
-    tests) pin `agent acp --model` argv and are covered by the approval.
-- CodeQL "cleartext logging of sensitive information" at
-  `cursor_sdk_client_tests.rs:173` (`"error text: {err}"` with a fixture agent
-  id) is a test-only false positive; dismiss it in the alert UI. `main` is not
-  branch-protected, so it does not block.
+- Flip gate left: the live spike (auth decided 2026-10-14: Cursor SDK login, see top).
+- Test deletions, re-checked: the `assert!(acp_launch_for_agent(AgentClient::Other).is_none())`
+  "removal" was a **redundant duplicate** (the line appeared twice in that test
+  before `a9fe11c0`); keeping one copy is correct. An earlier fix commit
+  (`cd63ad99`) re-added it by mistake and is undone by the next commit.
+  `ws_bridge_tests::apply_client_message_set_config_option_persists_effort_and_fast_toggles`
+  pinned slice behaviour Cursor SDK still has, so it is **ported** to the
+  Cursor SDK fixture (effort first; the `fast` half follows with a fixture edit Matt approved
+  2026-10-14). The remaining deletions
+  (`issue_979/984/989/991/1079` spawn-arg tests, live `agent acp` tests) pin
+  `agent acp --model` argv and are covered by the approval.
+- CodeQL alert #29 ("cleartext logging", `cursor_sdk_client_tests.rs:173`,
+  fixture agent id in a test panic message): **dismissed** 2026-10-14 as
+  "used in tests".
 
 The uncommitted flip WIP in `ajax-native-harness-durability` duplicates
 `a9fe11c0`; discard it in favour of #1294 when P4 starts.
@@ -255,9 +276,9 @@ The uncommitted flip WIP in `ajax-native-harness-durability` duplicates
 | PR | Scope | Files | Acceptance | Deps |
 | --- | --- | --- | --- | --- |
 | **P1** Contract suite (tests only) + this plan | Table-driven rows Acp, Pi, Claude now; Cursor row added once #1293 merges (one table entry). Each row drives `SessionClient::spawn_with_operator_pin` on the existing fixtures and asserts on drained events (what the slice sees). The PR also replaces main's stale copy of this plan | new `slices/web_session/harness_contract_tests.rs` + `mod` line | Every row: spawn reports id + pid; text prompt → ≥1 text event then exactly one turn end; cancel in flight → `cancelled`; idle cancel → empty outcome (#1272); shutdown and detach idempotent, no error (#1273); unknown resume id → `Restore` error, never fresh; matching resume id → `resumed`, same id; bad pin → `model_apply_error` but spawn OK. Capability rows assert what each fixture emits: images accepted only where advertised; `respond_client_request` Ok only for ACP; usage present for Pi/Claude/Cursor fixtures as emitted. **No fixture edits** (they live in `tests/`): a contract point a fixture cannot drive (e.g. Claude thinking) stays covered by its mapper unit test and is listed in the PR body | none (Cursor row after #1293) |
-| **P2** Dedupe (no behaviour change) | `transport()` accessor + 2-arm shared methods; single `transport_for` with the cfg(test) gating once; spawn and catalog `match` on it; `global_npm_root` → `adapters/program.rs`; launch args + init parse helpers → `rpc_handshake.rs`; commands one-shot → `RpcClientCore`; drop blanket `allow(dead_code)` that compiles clean | `session_client.rs`, `catalog.rs`, `program.rs`, `rpc_client.rs`, `rpc_handshake.rs`, 3 clients, 2 spawn modules | P1 + all existing tests green **unmodified**; zero `uses_*`; `cursor_sdk_spawn` imports nothing from `claude_*`; net line count negative; may split in two (clients / `session_client`) to fit the size gate | P1 |
+| **P2** Dedupe (no behaviour change) | `transport()` accessor + 2-arm shared methods; single `transport_for` with the cfg(test) gating once; spawn and catalog `match` on it; test overrides become process-wide statics (T1) so slice-level tests can drive native transports; `global_npm_root` → `adapters/program.rs`; launch args + init parse helpers → `rpc_handshake.rs`; commands one-shot → `RpcClientCore`; drop blanket `allow(dead_code)` that compiles clean | `session_client.rs`, `catalog.rs`, `program.rs`, `rpc_client.rs`, `rpc_handshake.rs`, 3 clients, 2 spawn modules | P1 + all existing tests green **unmodified**; zero `uses_*`; `cursor_sdk_spawn` imports nothing from `claude_*`; net line count negative; may split in two (clients / `session_client`) to fit the size gate | P1 |
 | **P3** Process groups (only if reproduced) | First a regression test: a fixture child that spawns a grandchild, then `shutdown()` and a foreign-boot sweep. **If the grandchild survives:** open the GitHub issue, then `process_group(0)` on both spawners, group kill on drop (`nix` is already a workspace dep; add it to `ajax-web`), sweep signals the group when the leader's token matches. **If it does not survive:** close as not-a-defect and drop the `ponytail:` note's upgrade path | `jsonl_process.rs`, `client.rs`, `orphan_sweep.rs`, `Cargo.toml`, new fixture (needs your OK: `tests/` dir) | Test fails before, passes after; token-mismatch tests unchanged; Codex and Cursor ACP still exit on stdin EOF | #1289 |
-| **P4** Cursor flip | `acp_launch_for_agent(Cursor)` → `CursorSdk`; delete Cursor-ACP-only code + the tests that pin only it (already approved), including the ACP label overlay restored in #1293; L1 goes with it | core `agent.rs`/`adapters.rs`, `config_options.rs`, `catalog.rs`, `session_models.rs`, docs | Live spike done with a real `CURSOR_API_KEY`; you confirm how the key reaches the host; full gate + `web:smoke` | P2, spike |
+| **P4** Cursor flip | `acp_launch_for_agent(Cursor)` → `CursorSdk`; delete Cursor-ACP-only code + the tests that pin only it (already approved), including the ACP label overlay restored in #1293; L1 goes with it | core `agent.rs`/`adapters.rs`, `config_options.rs`, `catalog.rs`, `session_models.rs`, docs | Live spike done on the SDK login (no API key); full gate + `web:smoke` | P2, spike |
 
 Each PR updates its owning doc (`web-session-behavior.md`; `architecture.md`
 for P2's invariants; durability plan stage 3 closed as "satisfied by
@@ -265,13 +286,16 @@ for P2's invariants; durability plan stage 3 closed as "satisfied by
 
 ### Checklist
 
-- [ ] Approval of rev 2.
+- [x] Approval of rev 2 (Matt: "continue the architecture plan", 2026-10-14).
 - [x] #1289, #1290, #1291 merged.
-- [ ] #1292: merge `origin/main` in (conflict repair), then merge.
-- [ ] #1293: merge updated #1292 in, restore the Cursor ACP label overlay + its 3 tests, then merge (no flip).
-- [ ] #1294: convert to draft; rebuild as P4 after the spike (restore the `Other` assertion, port the effort/fast persistence test).
-- [ ] Replace main's stale `native-harness-handoff.md` (from #1290) with this revision — lands with P1.
-- [ ] P1 → P2 → (P3 if reproduced) → spike → P4.
+- [x] #1292: `origin/main` merged in (`ad16de0d`); CI green — ready to merge.
+- [x] #1293: #1292 merged in (`93225361`), Cursor ACP label overlay + 3 tests restored (`7c19518f`) — merge after #1292.
+- [x] #1294: draft; main merged in (`f31f88b0`); Cursor SDK test override made static (T1) and effort-persistence test ported (`8d45b408`, pin `grok-4.6|effort=low`, no respawn). Stays draft until P4 gates are met.
+- [x] Replace main's stale `native-harness-handoff.md` — committed with P1 on `ajax/new-adapters`.
+- [x] P1 (ACP, Pi, Claude rows): `c5c59344` + `215dac22` on `ajax/new-adapters`, not yet a PR. Cursor row after #1293 merges.
+- [ ] P1 PR (Matt approved 2026-10-14).
+- [ ] #1294: Cursor `fast` toggle half of the ported test (Matt approved the `fake_cursor_sdk.mjs` fixture edit 2026-10-14) + login-only `LOGIN_HINT`. (`web-cockpit.md` still documents Cursor as ACP throughout; its Cursor auth line lands with P4's doc rewrite.)
+- [ ] P2 → (P3 if reproduced) → spike → P4.
 
 Delegation: model-router, Qwen in small packets (one module per packet,
 inline signatures, "do not explore", ban `git stash/checkout/reset`). P1 and
@@ -380,7 +404,7 @@ Mirror the Claude Agent SDK transport; prefer generalizing its plumbing over
 copying it (`claude_sdk_client.rs`, `claude_sdk_spawn.rs`,
 `sidecar/claude_sdk_sidecar.mjs`, fixture `tests/fixtures/fake_claude_sdk.mjs`).
 
-- [ ] 0. Spike with a real `CURSOR_API_KEY`: event shapes, `agent_id` stable
+- [ ] 0. Spike on the Cursor SDK login (no API key; superseded wording 'real `CURSOR_API_KEY`'): event shapes, `agent_id` stable
       across turns, `Agent.resume` round trip, `run.cancel()`, model list
       shape incl. `params`, and whether `send("/cmd")` expands a
       `.cursor/commands/*.md` command. Gates tasks 2–4.
