@@ -62,12 +62,24 @@ impl TaskSessionDirectory {
     /// Renews the chat execution owner lease; called from the runtime heartbeat task.
     pub(crate) fn heartbeat_execution_ownership(&self) {
         self.ownership.heartbeat();
+        self.report_recovered_turns();
     }
 
     /// Test accessor for the owning host's boot id.
     #[cfg(test)]
     pub(crate) fn ownership_boot_id(&self) -> String {
         self.ownership.boot_id().to_owned()
+    }
+
+    /// Report the turns that startup recovery interrupted as failed, so a restart never leaves a task on "Agent working" (#1176).
+    /// Handles stay pending until an activity reporter is wired.
+    fn report_recovered_turns(&self) {
+        let Some(report) = self.report_activity_for_spawn() else {
+            return;
+        };
+        for handle in self.ownership.take_recovered_handles() {
+            let _ = report(&handle, super::SessionActivity::TurnFailed);
+        }
     }
 
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {
@@ -109,6 +121,7 @@ impl TaskSessionDirectory {
         handle: &str,
     ) -> Result<TaskSessionSender, String> {
         self.ownership.ensure_owner()?;
+        self.report_recovered_turns();
         {
             let mut sessions = self.sessions.lock().unwrap();
             if let Some(entry) = sessions.get_mut(handle) {

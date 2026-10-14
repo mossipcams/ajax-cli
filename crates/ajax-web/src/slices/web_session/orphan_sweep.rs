@@ -6,7 +6,9 @@
 //! spawned ACP children keep running forever. This sweep terminates those
 //! children when a *new* host takes over the registry: it runs exactly once per
 //! host process, and only after that host has acquired the execution owner
-//! lease (`ExecutionOwnership::try_claim`). Runs owned by this host — same boot
+//! lease (`ExecutionOwnership::try_claim`). The same once-per-process claim hook
+//! also interrupts prompts left `Dispatching` by dead hosts (see
+//! `super::startup_recovery`). Runs owned by this host — same boot
 //! id — are never touched, so attach/respawn within one process cannot kill a
 //! live child. A pid is signalled only when its live start-time token matches
 //! the stored one (pid-reuse protection); anything else leaves the row as is.
@@ -22,18 +24,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// production each run their own process, so the flag cannot leak between tests.
 static SWEPT_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Runs [`sweep`] at most once per host process. Called from
+/// Runs [`sweep`] — then `super::startup_recovery::recover_interrupted_prompts`
+/// — at most once per host process. Called from
 /// `ExecutionOwnership::try_claim` immediately after this host holds the
-/// execution owner lease, and never while a live foreign host holds it.
-pub(crate) fn sweep_once(store: &SqliteRegistryStore, boot_id: &str) {
+/// execution owner lease, and never while a live foreign host holds it. The
+/// sweep runs first so it clears dead hosts' child identities before recovery
+/// rewrites prompt state. Returns the handles (task ids) of runs whose prompts
+/// were interrupted by the call that actually ran the sweep, in scan order;
+/// every later call in this process returns an empty `Vec`.
+pub(crate) fn sweep_once(
+    store: &SqliteRegistryStore,
+    state_dir: &std::path::Path,
+    boot_id: &str,
+) -> Vec<String> {
     if SWEPT_ONCE
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        return;
+        return Vec::new();
     }
     // `sweep` logs its own errors and returns only a count.
     let _ = sweep(store, boot_id);
+    super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id)
 }
 
 /// Terminates harness children left behind by previous hosts and clears their

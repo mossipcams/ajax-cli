@@ -6,6 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use super::orphan_sweep::sweep;
+use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
 use ajax_core::registry::{RunRecord, SqliteRegistryStore};
 
 /// Spawn a real `sleep 60`; the reaper thread keeps it collectable so a killed
@@ -269,4 +270,29 @@ fn row_id_for(store: &SqliteRegistryStore, handle: &str) -> String {
         .expect("load run")
         .expect("run must exist")
         .run_id
+}
+
+#[test]
+fn sweep_once_interrupts_dispatching_prompts_of_dead_hosts() {
+    let (dir, store) = scratch_store("recovery");
+
+    record_row(&store, &dir, "handle", None, "foreign-boot");
+
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_string(),
+        "transcript text".to_string(),
+        "prompt text".to_string(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("p1"));
+    prompt_ledger::try_persist(&store, &dir, "handle", &ledger).expect("persist ledger");
+
+    let recovered_handles = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    assert_eq!(recovered_handles, vec!["handle".to_string()]);
+
+    let recovered = prompt_ledger::try_load(&store, &dir, "handle").expect("load ledger");
+    let entry = recovered.entry("p1").expect("p1 must exist in the ledger");
+    assert_eq!(entry.phase, PromptPhase::Interrupted);
+    cleanup(&dir);
 }
