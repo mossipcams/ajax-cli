@@ -96,3 +96,63 @@ pub fn await_init_response(
     }
     Ok((response["data"].clone(), pending))
 }
+
+/// Node argv for a sidecar run from an embedded script, optionally pinning the SDK module.
+pub fn sidecar_launch_args(source: &str, sdk_module: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "--input-type=module".to_string(),
+        "-e".to_string(),
+        source.to_string(),
+    ];
+    if let Some(module) = sdk_module {
+        args.extend([
+            "--".to_string(),
+            "--sdk-module".to_string(),
+            module.to_string(),
+        ]);
+    }
+    args
+}
+
+/// `data.sessionId` of an init response; `label` is e.g. "claude sdk".
+pub fn init_session_id(data: &Value, label: &str) -> Result<String, String> {
+    Ok(data
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{label} init failed: missing sessionId"))?
+        .to_string())
+}
+
+/// Fail when a resume request came back with a different session id.
+pub fn check_resumed_session(
+    label: &str,
+    resume: Option<&str>,
+    session_id: &str,
+) -> Result<(), String> {
+    if let Some(id) = resume {
+        if session_id != id {
+            return Err(format!(
+                "{label} resumed a different session: asked {id}, got {session_id}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `data.commands` entries (`name`, optional `description`) as RpcCommand values.
+pub fn init_commands(data: &Value) -> Vec<RpcCommand> {
+    data.get("commands")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            Some(RpcCommand {
+                name: entry.get("name")?.as_str()?.to_string(),
+                description: entry
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            })
+        })
+        .collect()
+}

@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
 };
@@ -35,6 +35,31 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
+}
+
+/// The user's global npm root, resolved by running `npm root -g` from the home
+/// directory so that no repository-controlled `.npmrc` (task worktree or
+/// process cwd) is ever read. Returns None on any failure or a non-absolute result.
+pub(crate) fn global_npm_root() -> Option<PathBuf> {
+    let npm = resolve_program("npm")?;
+    let home = std::env::var_os("HOME")?;
+    let home_path = Path::new(&home);
+    if !home_path.is_dir() {
+        return None;
+    }
+    let output = Command::new(npm)
+        .args(["root", "-g"])
+        .current_dir(home_path)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    let path = PathBuf::from(root);
+    path.is_absolute().then_some(path)
 }
 
 fn resolve_via_shell(program: &str, flags: &[&str]) -> Option<PathBuf> {

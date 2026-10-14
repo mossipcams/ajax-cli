@@ -222,7 +222,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] Approval of this plan and answers to Q1–Q4 (2026-10-14).
 - [x] W0 spike recorded (2026-10-14, see W0 results). `/cmd` expansion not exercised.
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
-- [ ] W2a done (branch refactor/web/transport-selection), W2b.
+- [ ] W2a done (branch refactor/web/transport-selection), W2b done (branch refactor/web/shared-native-arms).
 - [ ] W4a (repro → fix or close), W4b, W4d.
 - [ ] W3g, W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
 - [ ] W4c (after W4d).

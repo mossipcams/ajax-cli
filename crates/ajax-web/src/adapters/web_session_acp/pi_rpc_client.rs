@@ -22,9 +22,6 @@ pub struct PiRpcClient {
     core: RpcClientCore,
     /// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).
     catalog: Box<Mutex<Catalog>>,
-    /// Slash commands advertised at handshake; handed to the first drain that
-    /// asks for them, one-shot like an event.
-    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 /// Model and thinking-level state snapshotted from the Pi handshake and kept
@@ -143,8 +140,11 @@ impl PiRpcClient {
 
         let session = RpcSession::new(process, hs, map_record);
 
+        let core = RpcClientCore::new(session, Some(pi_usage_hook));
+        core.set_available_commands(commands);
+
         Ok(PiRpcClient {
-            core: RpcClientCore::new(session, Some(pi_usage_hook)),
+            core,
             catalog: Box::new(Mutex::new(Catalog {
                 models,
                 thinking_levels,
@@ -152,8 +152,12 @@ impl PiRpcClient {
                 current_model_provider,
                 current_thinking_level,
             })),
-            commands: Mutex::new(Some(commands)),
         })
+    }
+
+    /// The shared transport core, used by the session client's two-arm dispatch.
+    pub(super) fn core(&self) -> &RpcClientCore {
+        &self.core
     }
 
     /// The Pi session id assigned during handshake. Returns an empty string if the
@@ -167,11 +171,7 @@ impl PiRpcClient {
     /// yields an empty list; ACP `AvailableCommandsUpdated` updates replace
     /// the list within the same drain.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.commands
-            .lock()
-            .expect("pi_rpc_client mutex poisoned")
-            .take()
-            .unwrap_or_default()
+        self.core.take_available_commands()
     }
 
     /// OS process id of the live child while a session exists; `None` after shutdown.

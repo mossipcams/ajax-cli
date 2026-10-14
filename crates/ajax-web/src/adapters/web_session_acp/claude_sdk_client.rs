@@ -12,7 +12,10 @@ use super::agent_event::{AgentEvent, NativeCommand};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::JsonlProcess;
 use super::rpc_client::RpcClientCore;
-use super::rpc_handshake::{await_init_response, RpcCommand, RpcHandshake, RpcModel};
+use super::rpc_handshake::{
+    await_init_response, check_resumed_session, init_commands, init_session_id, RpcHandshake,
+    RpcModel,
+};
 use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.mjs");
@@ -21,28 +24,13 @@ const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.m
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "--input-type=module".to_string(),
-        "-e".to_string(),
-        SIDECAR_SOURCE.to_string(),
-    ];
-    if let Some(module) = sdk_module {
-        args.extend([
-            "--".to_string(),
-            "--sdk-module".to_string(),
-            module.to_string(),
-        ]);
-    }
-    args
+    super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
 
 pub struct ClaudeSdkClient {
     core: RpcClientCore,
     // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
     state: Box<Mutex<ClaudeState>>,
-    // Slash commands advertised at handshake; handed to the first drain that
-    // asks for them, one-shot like an event.
-    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 struct ClaudeState {
@@ -76,11 +64,7 @@ impl ClaudeSdkClient {
         let init_id = process.send("init", fields)?;
         let (data, pending) =
             await_init_response(&mut process, &init_id, init_timeout, "claude sdk")?;
-        let session_id = data
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "claude sdk init failed: missing sessionId".to_string())?
-            .to_string();
+        let session_id = init_session_id(&data, "claude sdk")?;
         let handshake = RpcHandshake {
             session_id,
             session_file: None,
@@ -109,32 +93,11 @@ impl ClaudeSdkClient {
                 .iter()
                 .map(|level| level.to_string())
                 .collect(),
-            commands: data
-                .get("commands")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| {
-                    Some(RpcCommand {
-                        name: entry.get("name")?.as_str()?.to_string(),
-                        description: entry
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                    })
-                })
-                .collect(),
+            commands: init_commands(&data),
             context_window: None,
             pending,
         };
-        if let Some(id) = resume {
-            if handshake.session_id != id {
-                let got = &handshake.session_id;
-                return Err(format!(
-                    "claude sdk resumed a different session: asked {id}, got {got}"
-                ));
-            }
-        }
+        check_resumed_session("claude sdk", resume, &handshake.session_id)?;
         let state = ClaudeState {
             models: handshake
                 .models
@@ -155,12 +118,19 @@ impl ClaudeSdkClient {
             .collect();
 
         let session = RpcSession::new(process, handshake, map_sdk_message);
+        let core = RpcClientCore::new(session, None);
+        // The mapper emits usage from Claude's result message.
+        core.set_available_commands(commands);
+
         Ok(ClaudeSdkClient {
-            // The mapper emits usage from Claude's result message.
-            core: RpcClientCore::new(session, None),
+            core,
             state: Box::new(Mutex::new(state)),
-            commands: Mutex::new(Some(commands)),
         })
+    }
+
+    /// The shared transport core, used by the session client's two-arm dispatch.
+    pub(super) fn core(&self) -> &RpcClientCore {
+        &self.core
     }
 
     pub fn session_id(&self) -> String {
@@ -172,11 +142,7 @@ impl ClaudeSdkClient {
     /// list; ACP `AvailableCommandsUpdated` updates replace the list within
     /// the same drain.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.commands
-            .lock()
-            .expect("claude_sdk_client mutex poisoned")
-            .take()
-            .unwrap_or_default()
+        self.core.take_available_commands()
     }
 
     pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
