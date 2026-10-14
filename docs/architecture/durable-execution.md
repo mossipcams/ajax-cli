@@ -20,9 +20,10 @@ The following are explicitly **not** part of this change:
   semantics here. Terminal state is out of scope.
 - tmux provisioning: session creation, pane management, and tmux lifecycle
   are unchanged and not checkpointed by this mechanism.
-- The Claude Agent SDK adapter and the Pi RPC adapter as execution substrates:
-  their internals are not instrumented with checkpoints. Ajax observes them at
-  the boundaries it already has (dispatch, events it receives), nothing more.
+- The Claude Agent SDK adapter, the Pi RPC adapter, and the Cursor SDK sidecar
+  adapter as execution substrates: their internals are not instrumented with
+  checkpoints. Ajax observes them at the boundaries it already has (dispatch,
+  events it receives), nothing more.
 
 ## 2. Storage
 

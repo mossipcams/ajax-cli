@@ -28,7 +28,7 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 | Surface | Role |
 | --- | --- |
 | **Task Workspace composition** | Mode selection, per-task view preference, capability fallback, Back and Diff routing, one shared task header, one shared task-details sheet, and composition of task actions, metadata, and harness switching |
-| **Ajax Chat** | Multi-harness orchestration chat (Cursor native ACP; Codex via its ACP adapter, Pi over its RPC mode, Claude over the Claude Agent SDK sidecar). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
+| **Ajax Chat** | Multi-harness orchestration chat (Cursor via the `@cursor/sdk` Node sidecar; Codex via its ACP adapter, Pi over its RPC mode, Claude over the Claude Agent SDK sidecar). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
 | **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
 
 **Training modal.** The bottom-nav **Train** button replaced the former
@@ -107,7 +107,7 @@ the dashboard; Chat keeps transcript-selection ignore only
 inner scrollers and never arm the workspace page swipe; markdown blocks retain
 native horizontal scrolling.
 
-An optional flag-gated **Cursor ACP orchestration chat** session mode is
+An optional flag-gated **Cursor SDK orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
 preference defaults **on** (`ajax.web.session.orchestrationChat` in
 localStorage; only an explicit `false` disables it). When off, dashboard and
@@ -178,7 +178,7 @@ accepts a model:
 
 | Harness | ACP entry point | Model selection |
 | --- | --- | --- |
-| Cursor | `agent acp` (native) | `--model` launch hint; live switch via advertised `configOptions` |
+| Cursor | `node` sidecar over `@cursor/sdk` (not ACP; JSONL over stdio, same shape as the Claude SDK sidecar and Pi RPC) | model catalog from `Cursor.models.list()` through the SDK; live switch via the sidecar's `set_model` command |
 | Codex | `codex-acp` | `session/set_config_option` |
 | Claude | `node` sidecar over `@anthropic-ai/claude-agent-sdk` (not ACP; JSONL over stdio) | RPC commands `set_model` / `set_effort` through the sidecar |
 | Pi | `pi --mode rpc` (not ACP; JSONL RPC over stdio) | RPC commands `set_model` / `set_thinking_level` |
@@ -191,8 +191,10 @@ name the level. A selection is therefore stored as `model|configId=value`, e.g.
 `opus|effort=low`, parsed by `parse_model_selection` in core and applied one
 config option at a time.
 
-Cursor is the only harness that speaks ACP itself; Codex is reached through its
-Agent Client Protocol adapter, a separate install:
+Cursor chat authenticates as the ajax-web host user through the Cursor SDK login: the `CURSOR_API_KEY` environment variable or the SDK credential store written by `Cursor.auth.login()` (`~/.cursor/sdk/auth.json`, renewed every 90 days). The sidecar passes no API key and Ajax never reads, logs, or stores one; an authentication failure surfaces a spawn error naming that login.
+
+Codex is reached through its Agent Client
+Protocol adapter, a separate install:
 `@agentclientprotocol/codex-acp`. `ajax doctor` reports it as `acp:codex` and
 names the package when it is missing, and the host falls back to
 `npx -y <package>` so a host without the global install still gets a session.
@@ -202,8 +204,9 @@ names the package when it is missing, and the host falls back to
 Pi is not reached through ACP. Ajax launches `pi --mode rpc -na [--session-id <id>]`
 as a child process and speaks Pi's JSONL RPC mode over its stdio (one JSON object
 per LF-terminated line; framing splits on LF only). The core launch table selects
-the transport: `AcpLaunch.transport` is `HarnessTransport::PiRpc` for Pi and
-`HarnessTransport::Acp` for Cursor and Codex. Pi stays a chat-capable
+the transport: `AcpLaunch.transport` is `HarnessTransport::PiRpc` for Pi,
+`HarnessTransport::Acp` for Codex, and the `@cursor/sdk` sidecar transport for
+Cursor. Pi stays a chat-capable
 harness: `acp_launch_for_agent(Pi)` still returns `Some`, which is the "supports
 Ajax Chat" test across the code base.
 
@@ -290,10 +293,9 @@ attempted, because an unknown argument is a prompt to some CLIs. A harness with
 no mapping keeps the tmux send-keys launch, and when no candidate program can be
 spawned the host reports an install hint rather than a spawn error.
 
-A session with no operator-chosen model runs the harness default: Cursor ACP spawn
-uses [`CURSOR_DEFAULT_SPAWN_MODEL`] (`agent --model grok-4.6 acp`); the Ajax catalog
-default [`CURSOR_DEFAULT_MODEL`] remains the attach-plan and UI default for Cursor.
-Bridge harnesses are left to pick for themselves.
+A session with no operator-chosen model runs the harness default: Cursor spawns
+its `@cursor/sdk` sidecar on the catalog's default model. Bridge harnesses are
+left to pick for themselves.
 
 A provisioned start (`orchestration_chat: true`, no send-keys) is therefore
 offered for every mapped harness, and session attach admits any task whose agent
@@ -312,7 +314,7 @@ Bridge harnesses show a reasoning level beside the model list when the handshake
 advertises one. Cursor collapses effort and Fast out of its catalog ids:
 `GET /api/session/models?agent=cursor` serves unique model bases
 (`composer-2.5`, `grok-4.6`, …) with optional `efforts[]` and `hasFast` derived
-from exploded `agent models` siblings; thinking ids such as `claude-opus-5-thinking`
+from exploded `Cursor.models.list()` catalog entries; thinking ids such as `claude-opus-5-thinking`
 stay separate from their non-thinking base. The picker shows one row per base, an
 **Effort** row when multiple levels exist (live `thought_level` unioned with
 catalog `efforts[]` when connected so sparse live choices cannot hide advertised
@@ -327,9 +329,8 @@ Cursor intent (`claude-opus-5-thinking-high` for
 `claude-opus-5-thinking|effort=high|fast=false`). Reject before ACP when neither
 is an exact full match. After a successful apply, `snapshot.model` stays the
 harness `currentValue`; task `session_model` storage keeps Ajax collapsed
-pipe-form. The catalog endpoint serves the complete list —
-Cursor from collapsed `agent models`, the bridges from their own `session/new`
-handshake.
+pipe-form. The catalog endpoint serves the complete list — Cursor from its collapsed SDK
+model catalog, the bridges from their own `session/new` handshake.
 
 That handshake costs a short-lived bridge process, so the catalog is cached
 against the **harness CLI version** rather than a clock: each request reads
@@ -370,9 +371,9 @@ not a license for `session/new`.
 When in-band apply fails because a requested value is not advertised, the host
 emits a typed error, keeps the child running, and leaves `session_model` as the
 operator pin ([#997](https://github.com/mossipcams/ajax-cli/issues/997)).
-Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` and Cursor
-`_meta.parameterizedModelPicker: true` on ACP `initialize` (filesystem and terminal
-capabilities remain false). Protocol v2 snapshots carry `sessionConfigOptions` as
+Ajax advertises `clientCapabilities.session.configOptions.boolean: {}` on ACP
+`initialize` (filesystem and terminal capabilities remain false); the Cursor SDK
+sidecar has no ACP `initialize`. Protocol v2 snapshots carry `sessionConfigOptions` as
 the live connected-control contract and optional `availableCommands` as the live
 slash-command contract (pass-through on `session/prompt`; not transcript) and optional
 `promptCapabilities` as the live rich-prompt attach contract (from ACP initialize; not

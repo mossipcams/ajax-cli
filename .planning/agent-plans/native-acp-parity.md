@@ -1,5 +1,7 @@
 # Native transports: feature parity with ACP on Ajax web
 
+> **SUPERSEDED 2026-10-14** by `native-harness-parity-durability.md` (open checklist items moved there; keep this file as history only).
+
 ## Status
 
 APPROVED 2026-10-13 — Matt: "Implement until finished." Implementing via
