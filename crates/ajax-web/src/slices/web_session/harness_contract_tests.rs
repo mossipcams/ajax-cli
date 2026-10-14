@@ -89,9 +89,10 @@ fn drain_until_terminal(
 }
 
 fn run_contract(name: &str, agent: AgentClient) {
+    let work_dir = test_support::scratch_dir(&format!("harness-contract-{name}"));
     // (1) Spawn: the contract requires a live session identity.
     let (mut client, _report) =
-        match SessionClient::spawn_with_operator_pin(agent, manifest_dir(), "default", None) {
+        match SessionClient::spawn_with_operator_pin(agent, &work_dir, "default", None) {
             Ok(pair) => pair,
             Err(err) => panic!("{name}: spawn_with_operator_pin must succeed: {err}"),
         };
@@ -162,6 +163,8 @@ fn run_contract(name: &str, agent: AgentClient) {
         client.detach().is_none(),
         "{name}: detach after shutdown must return None"
     );
+
+    let _ = std::fs::remove_dir_all(&work_dir);
 }
 
 #[test]
