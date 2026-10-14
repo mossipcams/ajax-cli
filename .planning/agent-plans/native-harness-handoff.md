@@ -16,6 +16,297 @@ transport, all of them plug into ONE shared native layer
 (`AgentEvent::Native(NativeEvent)` + `SessionClient`), Codex keeps ACP, and a
 chat session survives an `ajax-web` restart/crash mid-session.
 
+## ARCHITECTURE REVISION 2026-10-14, rev 2 (planning only; APPROVAL PENDING)
+
+Evidence base: `origin/main` 964f945f plus PR #1293 head `45cb0291` (stack
+#1289 → #1290 → #1291 → #1292 → #1293, none merged). Supersedes "Remaining
+work" tasks 3 and 7 below and durability stage 3 (`HarnessRuntime` trait +
+`Capabilities`). Nothing is implemented.
+
+Rev 1 of this section (same day) proposed collapsing the enum to `Acp`/`Native`
+behind a new `NativeAdapter` trait, a new `harness_factory.rs`, holding #1293,
+and 8 PRs. **Withdrawn**: it relocated code into a trait and two new files
+rather than deleting it, forced a test edit, and discarded reviewed work in
+#1293. Rev 2 below reaches the same branching reduction with no new trait, no
+new file, and no test edits.
+
+### DECIDED 2026-10-14: Cursor SDK auth = the Cursor SDK login, no API key
+
+Matt: "we use the cursor login not api key". Verified in `@cursor/sdk` 1.0.37
+(`dist/esm/index.js`, `auth/credential-store.d.ts`, `auth/login.d.ts`):
+credentials resolve as explicit `apiKey` option → `CURSOR_API_KEY` →
+`~/.cursor/sdk/auth.json`, written by `Cursor.auth.login()` (browser login;
+in SSH sessions the URL is printed to stderr), owner-only 0600, holding a
+minted 90-day user key that the SDK re-reads every 5 s and ignores once
+expired. This is **not** the `agent` CLI keychain login ACP used.
+
+- Ajax sets no `CURSOR_API_KEY` (launchd plist, docker compose, zshrc) and
+  passes no `apiKey`; the sidecar already omits it (`cursor_sdk_sidecar.mjs`
+  header). Ajax never reads `auth.json`.
+- The ajax-web host user is already logged in (checked 2026-10-14: file
+  present, 0600, ~89 days left; key not read).
+- `LOGIN_HINT` in `cursor_sdk_spawn.rs` drops the `CURSOR_API_KEY` option and
+  names the login + renewal; `web-cockpit.md` gets a Cursor auth line next to
+  the Claude one in P4 (its Cursor sections are all ACP today).
+- Risks: the minted key expires every 90 days (Cursor chat then fails with an
+  auth error carrying the hint); a docker-compose host needs
+  `~/.cursor/sdk/auth.json` mounted read-only or its own login.
+- P4's remaining gate is the live spike, now unblocked by the login.
+
+### Verdict
+
+**Keep `SessionClient` as an enum with one variant per harness. Do not add a
+`HarnessSession` trait, a `NativeAdapter` trait, `Box<dyn …>`, a factory
+module, or a registry.** Remove the duplicated arms with one private accessor
+that routes the shared methods to the `RpcClientCore` all three native clients
+already wrap.
+
+| Question | Evidence | Answer |
+| --- | --- | --- |
+| Is the boundary sealed? | `SessionClient::<Variant>` appears nowhere outside `session_client.rs` | Yes. A trait adds nothing |
+| Where is the cost? | 17 `match self` blocks; 50 arms with 3 variants, 66 with 4. Only 3 methods really differ per native harness (`begin_prompt`, `apply_model_pin`, `apply_config_option`), plus per-harness error strings in `respond_*` (asserted by tests) | In ~12 byte-identical native arms per method, not in the enum |
+| Trait object instead? | 4 impls × ~15 methods ≈ 60 bodies vs 66 arms; ACP-only methods become stubs on 3 impls | Same size, more concepts, hides real differences |
+| Will harness #5 arrive? | No plan names one. The set (Codex ACP, Pi, Claude, Cursor) is the stated goal | Optimize for four, keep a fifth cheap, no extension machinery |
+
+The accessor (shape, final names at implementation):
+
+```rust
+// private, in session_client.rs
+enum Transport<'a> { Acp(&'a mut AcpStdioClient), Native(&'a RpcClientCore) }
+
+impl SessionClient {
+    fn transport(&mut self) -> Transport<'_> {
+        match self {
+            SessionClient::Acp(c) => Transport::Acp(c),
+            SessionClient::Pi(s) => Transport::Native(s.client.core()),
+            SessionClient::Claude(s) => Transport::Native(s.client.core()),
+            SessionClient::Cursor(s) => Transport::Native(s.client.core()),
+        }
+    }
+    pub fn host_exited(&mut self) -> bool {
+        match self.transport() {
+            Transport::Acp(c) => c.host_exited(),
+            Transport::Native(core) => core.host_exited(),
+        }
+    }
+    // same 2-arm shape for: shutdown, detach, child_pid, poll_event, wait_event,
+    // prompt_in_flight, cancel, session_id, take_available_commands
+}
+```
+
+`RpcClientCore` methods all take `&self` (internal `Mutex`), so one accessor
+serves `&self` and `&mut self` callers (a `&self` twin if the borrow checker
+asks). Per-harness logic stays where it is: the three divergent methods keep
+one arm per harness, and those arms call code already in the harness files.
+
+Cost of a fifth native harness after this: its client/spawn/map files, one
+variant, one `from_x`, one arm in `transport()`, one arm each in the three
+divergent methods and the `respond_*` reason, one `HarnessTransport` variant
+and launch row. That is roughly 25 lines in `session_client.rs`, down from
+~115, with no change to slices or persistence.
+
+### What the audit found (verified in source)
+
+| # | Finding | Where | Action |
+| --- | --- | --- | --- |
+| D1 | Transport selection done twice with the same cfg(test) override gating copied 3× (`uses_pi_rpc`, `uses_claude_sdk`, `uses_cursor_sdk`), as if-chains in spawn and catalog | `session_client.rs`, `claude_sdk_spawn.rs`, `cursor_sdk_spawn.rs`, `catalog.rs` | One `transport_for(agent) -> HarnessTransport` in `session_client.rs`; spawn and catalog `match` on it (exhaustive) |
+| D2 | `sidecar_launch_args` byte-identical in Claude and Cursor clients; `init` models/commands parsing duplicated; Cursor imports `claude_sdk_spawn::global_npm_root` | clients, `cursor_sdk_spawn.rs` | `global_npm_root` moves to the existing `adapters/program.rs` (already owns `resolve_program`, `harness_command`); launch args + parse helpers into existing `rpc_handshake.rs` |
+| D3 | One-shot commands `Mutex<Option<Vec<NativeCommand>>>` + `take_available_commands` ×3 | 3 clients | Into `RpcClientCore` |
+| D4 | Fail-closed resume-id equality check in 3 places | Pi in `session_client.rs`, Claude/Cursor in client `spawn` | Leave. Each is 5 lines, behaviour-identical, tested. Moving it is relocation |
+| D5/D6 | `SpawnReport` built ×3, pin application ×3 | spawn modules | Leave. The constants differ (images) and the pin parsers differ (Cursor accepts legacy encodings). Merging needs parameters that restate the differences |
+| D7 | **Suspected:** neither spawner uses a process group; the orphan sweep signals only the leader (`orphan_sweep.rs:81` says so) | `jsonl_process.rs`, `client.rs:837-905` | Reproduce first (see P3). Not yet a confirmed defect: sidecars exit on stdin EOF and grandchildren may exit on their own pipe EOF |
+| L1 | `session_models` special-cases Cursor (`read_cursor_catalog_if_sdk`, `agent models` CLI fallback) | `slices/session_models.rs` | Disappears with the Cursor flip (P4); no separate PR |
+| L2 | `acp_drain` reads `/_meta/piAcp/startupInfo` | `acp_drain.rs:103` | Known, not scheduled |
+| L3 | Blanket `#![allow(dead_code)]` on now-live files | adapters | Remove where it compiles clean, in P2 |
+| T1 | **Native transports cannot be driven through the slice in tests.** `TEST_PI_PROGRAM`, `TEST_CLAUDE_SDK_MODULE`, `TEST_CURSOR_SDK_MODULE` are `thread_local!`, but `TaskSessionDirectory` runs acquire on a tokio worker thread, so `uses_*` sees no override and falls back to ACP (`initialize timed out after 45s`). ACP works because `with_test_acp_program` also sets the process-wide `static TEST_ACP_COMMAND`. Found 2026-10-14 porting the #1294 effort test | `session_client.rs`, `claude_sdk_spawn.rs`, `cursor_sdk_spawn.rs` | Cursor fixed in #1294 (`8d45b408`); Pi and Claude in P2 as part of the single `transport_for` gating (one static override map keyed by `HarnessTransport`) |
+
+Corrections to rev 1: the "5 agent-name tables" were not 5 copies. Two are
+identical (`operate/mod.rs`, `model_change.rs`), `session_models` differs
+(`""` → Cursor), and `task_pane_agent` maps process names. They are not harness
+selection; out of scope.
+
+**Kept as is, after challenge:**
+
+- **Event normalization.** Two vocabularies (`AcpClientEvent` → `acp_map`;
+  `NativeEvent` → `native_map`) meet in one `match` in `acp_drain`.
+  Unifying means widening `NativeEvent` with ~6 ACP-only variants and moving
+  568 lines for no reduction in branching.
+- **Execution kernel / SQLite.** Harness-independent already; guarded.
+- **No `Capabilities` struct.** The slice consumes exactly `restore_advertised`,
+  `prompt_capabilities`, `config_options`, commands, all already in
+  `SpawnReport`. `agent_runs.capabilities_json` is not written by the web host;
+  leave it.
+- **No reconcile hook.** No adapter can reconcile a dispatched prompt, so
+  dispatched prompts become `interrupted` on recovery (`durable-execution.md`
+  §5). Add a method when one adapter can (likely Pi `get_state`).
+- **Sidecar JS duplication** (~150 lines of stdio framing in two `.mjs`):
+  they ship as single-file `include_str!` sources; merging needs a bundler.
+- **Directory rename** `web_session_acp/`: churn without behaviour.
+
+### Ownership (one owner each)
+
+| Responsibility | Owner | Not allowed |
+| --- | --- | --- |
+| Harness selection + construction | `session_client.rs` (`transport_for` + spawn `match`), keyed on core `HarnessTransport` | Slice choosing a transport or naming an adapter type |
+| Process / SDK lifecycle | `JsonlProcess` (native), ACP client (ACP); `RpcClientCore` is the native `host_exited` truth | Slice signalling pids directly |
+| Init + restore mechanics | Adapter spawn: pass id, verify echo, typed `RestoreFailure` | Silent fresh session |
+| Restore policy | Slice `task_session_spawn` (when to resume, clear stored id, Retry/Start fresh) | Adapter deciding policy |
+| Prompt admission, queue, idempotency | Slice + kernel | Adapter persisting |
+| Wire send, `prompt_in_flight`, cancel | Adapter | |
+| Event normalization + usage | Adapter emits `AgentEvent`; slice maps once per vocabulary and dedupes usage | |
+| Capabilities + model config | Adapter via `SpawnReport` / `config_options()`; slice caches in `AcpSlot` and persists the model | `match harness` in the slice |
+| Durable state + recovery | Kernel, written only by the slice | Adapter touching the registry |
+| Abandoned processes | Normal: adapter drop. Crash: `orphan_sweep` (consumes identity the slice recorded), gated by the owner lease | |
+
+**Durable vs provider-managed.** Durable (Ajax, SQLite): run row (harness,
+model, `native_session_id`, child pid / start token / boot id), prompt queue,
+events, owner lease. Provider-managed (Ajax never reads it): Claude session
+transcript, Pi session file, Cursor agent store, ACP agent session. The only
+bridge is the opaque `native_session_id`; restore passes it back and a
+mismatch or not-found fails closed.
+
+### Components
+
+```text
+ browser WS
+    ▼
+ slices::web_session   TaskSession actor · AcpSlot · acp_drain · acp_map / native_map
+    │                  queue, transcript, restore policy, child identity, orphan_sweep
+    │  calls only SessionClient's methods
+    ▼
+ adapters::web_session_acp::SessionClient   enum { Acp, Pi, Claude, Cursor }
+    │  transport_for(agent) ─ spawn/catalog `match`   transport() ─ shared methods (2 arms)
+    ├─ Acp ──► AcpStdioClient     permissions · elicitation · session/close · typed restore
+    └─ Pi | Claude | Cursor ──► *Client (config + pin + launch, per harness)
+                                   └─ RpcClientCore ► RpcSession ► JsonlProcess  (shared)
+ ─────────────────────────────────────────────────────────────────────────────
+ ajax-core: HarnessTransport + launch table · execution kernel (SQLite)
+            knows no adapter types; adapters never import slice or registry
+```
+
+### Capabilities: explicit, never faked
+
+| | ACP (Codex; Cursor today) | Claude SDK | Pi RPC | Cursor SDK |
+| --- | --- | --- | --- | --- |
+| Restore | load/resume, typed `Unsupported`/`Rejected`, `session/close` if advertised | `resume`; mismatch → Rejected | `--session-id`; mismatch → Rejected | `Agent.resume`; not-found/mismatch → Rejected |
+| Detach | skips `session/close` | = shutdown | = shutdown | = shutdown |
+| Permissions | interactive; cancel returns pending ids | auto-approved in sidecar | none | none |
+| Elicitation | yes | declined in sidecar | none | none |
+| Images | per agent | no (`[image omitted]`) | no | yes |
+| Thinking | `agent_thought_chunk` | `AgentThought` | `thinking_delta` | `AgentThought` |
+| Usage | `usage_update` | from `result` | `get_session_stats` at run end | none (SDK gives no context size; do not invent `size`) |
+| Config | open-ended, pushed | model, effort | model, thought_level | model, per-model params, mode |
+| Commands | pushed | `supportedCommands`, one-shot | `get_commands`, one-shot | scanned `.cursor/commands`, one-shot |
+
+Native gaps vs ACP (permissions, elicitation, title) are recorded, not closed
+here. `native-acp-parity.md` gap 2 changes a security assumption and stays a
+separate decision; its task 5 "parity guard" is replaced by P1 + this table.
+
+### Invariants (guard test or contract assertion)
+
+1. Slices never name `AcpStdioClient`, `PiRpcClient`, `ClaudeSdkClient`,
+   `CursorSdkClient` or `SessionClient::<Variant>` (extend the existing
+   `architecture_web_session.rs` guards).
+2. Transport selection is one exhaustive `match` on `HarnessTransport`; no
+   `uses_*` helpers and no `AgentClient::X` comparisons in chat code paths
+   after P4.
+3. Shared methods on `SessionClient` have exactly two arms (`Acp`, `Native`)
+   via `transport()`; per-harness arms only in `begin_prompt`,
+   `apply_model_pin`, `apply_config_option`, `respond_*`.
+4. Native files never name ACP types (existing guard; list already updated
+   by #1291–#1293).
+5. Adapters never import slice or registry; the kernel knows no adapter type.
+6. Child identity is written only by the slice; `orphan_sweep` is its only
+   reader.
+7. Capability differences travel as `SpawnReport` data or absent events.
+
+### Complexity
+
+| Metric | Today | #1293 as is | Rev 2 |
+| --- | --- | --- | --- |
+| Variants | 3 | 4 | 4 |
+| `match` arms in `session_client.rs` | 50 | 66 | ~40 (est.: 10 shared × 2 + 4 divergent × 4 + `transport()` 4) |
+| `session_client.rs` lines | 552 | 667 | ~520 (est.) |
+| New traits / files / `dyn` | — | — | 0 / 0 / 0 |
+| Lines in `session_client.rs` per extra native harness | — | ~115 | ~25 (est.) |
+| Copies: transport selector gating / sidecar launch args / commands one-shot | 2 / 1 / 2 | 3 / 2 / 3 | 1 / 1 / 1 |
+| Test edits required | — | — | 0 |
+
+### PR plan (≤600 lines/file, ≤1500/PR)
+
+**Existing stack: merge #1289–#1292; fix #1293 before merging.**
+Reviewed 2026-10-14 against the diffs:
+
+| PR | Decision | Why |
+| --- | --- | --- |
+| #1289 orphan sweep | Merge | Independent, CI green, behind the owner lease. Group-kill gap is P3 |
+| #1290 sidecar + plans | Merge after replacing its `native-harness-handoff.md` with this rev 2 and marking `native-acp-parity.md` task 5 superseded by P1 | JS + fixtures are fine; its plan copy is the stale rev 0 |
+| #1291 mapper | Merge | Additive; the Claude client change is the `await_init_response` extraction, test-covered |
+| #1292 client | Merge | Dead code behind `allow(dead_code)`; P2 removes its duplication |
+| #1293 wiring | **Fix first** | Not behaviour-neutral: it deletes `read_cursor_acp_model_labels` / `overlay_cursor_acp_labels` while production Cursor still runs on ACP (launch table not flipped). Cursor picker labels regress from ACP names ("Grok 4.6") to `agent models` names ("Cursor Grok 4.6"), and 3 tests pinning a still-live mechanism are deleted (`cursor_model_labels_prefer_clean_base_names_over_bracket_variants`, `apply_cursor_label_overlay_replaces_cli_names_with_acp_names`, `…_fails_open_when_overlay_is_empty`). The approved test deletions cover a *removed* mechanism; this one is still live. Fix: restore the overlay and its tests in #1293 (keep the SDK branch ahead of it); move their deletion into P4 |
+
+Status 2026-10-14: #1289, #1290, #1291 **merged** (squash). #1292 conflicted
+with main because its parents were squash-merged; repaired by merging
+`origin/main` into the branch (no force push). #1293 repaired the same way,
+plus the Cursor ACP label overlay and its 3 tests restored.
+
+**#1294 (`feat/web/cursor-native-sdk`, the flip): do not merge. Draft since
+2026-10-14; it becomes P4.** `origin/main` merged in (`f31f88b0`). Reviewed against its diff:
+
+- It carries the whole stack again (#1289–#1293 commits) plus one flip commit
+  `a9fe11c0`; after #1292/#1293 merge, rebuild it as only the flip.
+- Flip gate left: the live spike (auth decided 2026-10-14: Cursor SDK login, see top).
+- Test deletions, re-checked: the `assert!(acp_launch_for_agent(AgentClient::Other).is_none())`
+  "removal" was a **redundant duplicate** (the line appeared twice in that test
+  before `a9fe11c0`); keeping one copy is correct. An earlier fix commit
+  (`cd63ad99`) re-added it by mistake and is undone by the next commit.
+  `ws_bridge_tests::apply_client_message_set_config_option_persists_effort_and_fast_toggles`
+  pinned slice behaviour Cursor SDK still has, so it is **ported** to the
+  Cursor SDK fixture (effort first; the `fast` half follows with a fixture edit Matt approved
+  2026-10-14). The remaining deletions
+  (`issue_979/984/989/991/1079` spawn-arg tests, live `agent acp` tests) pin
+  `agent acp --model` argv and are covered by the approval.
+- CodeQL alert #29 ("cleartext logging", `cursor_sdk_client_tests.rs:173`,
+  fixture agent id in a test panic message): **dismissed** 2026-10-14 as
+  "used in tests".
+
+The uncommitted flip WIP in `ajax-native-harness-durability` duplicates
+`a9fe11c0`; discard it in favour of #1294 when P4 starts.
+
+| PR | Scope | Files | Acceptance | Deps |
+| --- | --- | --- | --- | --- |
+| **P1** Contract suite (tests only) + this plan | Table-driven rows Acp, Pi, Claude now; Cursor row added once #1293 merges (one table entry). Each row drives `SessionClient::spawn_with_operator_pin` on the existing fixtures and asserts on drained events (what the slice sees). The PR also replaces main's stale copy of this plan | new `slices/web_session/harness_contract_tests.rs` + `mod` line | Every row: spawn reports id + pid; text prompt → ≥1 text event then exactly one turn end; cancel in flight → `cancelled`; idle cancel → empty outcome (#1272); shutdown and detach idempotent, no error (#1273); unknown resume id → `Restore` error, never fresh; matching resume id → `resumed`, same id; bad pin → `model_apply_error` but spawn OK. Capability rows assert what each fixture emits: images accepted only where advertised; `respond_client_request` Ok only for ACP; usage present for Pi/Claude/Cursor fixtures as emitted. **No fixture edits** (they live in `tests/`): a contract point a fixture cannot drive (e.g. Claude thinking) stays covered by its mapper unit test and is listed in the PR body | none (Cursor row after #1293) |
+| **P2** Dedupe (no behaviour change) | `transport()` accessor + 2-arm shared methods; single `transport_for` with the cfg(test) gating once; spawn and catalog `match` on it; test overrides become process-wide statics (T1) so slice-level tests can drive native transports; `global_npm_root` → `adapters/program.rs`; launch args + init parse helpers → `rpc_handshake.rs`; commands one-shot → `RpcClientCore`; drop blanket `allow(dead_code)` that compiles clean | `session_client.rs`, `catalog.rs`, `program.rs`, `rpc_client.rs`, `rpc_handshake.rs`, 3 clients, 2 spawn modules | P1 + all existing tests green **unmodified**; zero `uses_*`; `cursor_sdk_spawn` imports nothing from `claude_*`; net line count negative; may split in two (clients / `session_client`) to fit the size gate | P1 |
+| **P3** Process groups (only if reproduced) | First a regression test: a fixture child that spawns a grandchild, then `shutdown()` and a foreign-boot sweep. **If the grandchild survives:** open the GitHub issue, then `process_group(0)` on both spawners, group kill on drop (`nix` is already a workspace dep; add it to `ajax-web`), sweep signals the group when the leader's token matches. **If it does not survive:** close as not-a-defect and drop the `ponytail:` note's upgrade path | `jsonl_process.rs`, `client.rs`, `orphan_sweep.rs`, `Cargo.toml`, new fixture (needs your OK: `tests/` dir) | Test fails before, passes after; token-mismatch tests unchanged; Codex and Cursor ACP still exit on stdin EOF | #1289 |
+| **P4** Cursor flip | `acp_launch_for_agent(Cursor)` → `CursorSdk`; delete Cursor-ACP-only code + the tests that pin only it (already approved), including the ACP label overlay restored in #1293; L1 goes with it | core `agent.rs`/`adapters.rs`, `config_options.rs`, `catalog.rs`, `session_models.rs`, docs | Live spike done on the SDK login (no API key); full gate + `web:smoke` | P2, spike |
+
+Each PR updates its owning doc (`web-session-behavior.md`; `architecture.md`
+for P2's invariants; durability plan stage 3 closed as "satisfied by
+`SessionClient` + `SpawnReport`" and the stale stage 6/7 boxes ticked in P2).
+
+### Checklist
+
+- [x] Approval of rev 2 (Matt: "continue the architecture plan", 2026-10-14).
+- [x] #1289, #1290, #1291 merged.
+- [x] #1292: `origin/main` merged in (`ad16de0d`); CI green — ready to merge.
+- [x] #1293: #1292 merged in (`93225361`), Cursor ACP label overlay + 3 tests restored (`7c19518f`) — merge after #1292.
+- [x] #1294: draft; main merged in (`f31f88b0`); Cursor SDK test override made static (T1) and effort-persistence test ported (`8d45b408`, pin `grok-4.6|effort=low`, no respawn). Stays draft until P4 gates are met.
+- [x] Replace main's stale `native-harness-handoff.md` — committed with P1 on `ajax/new-adapters`.
+- [x] P1 (ACP, Pi, Claude rows): `c5c59344` + `215dac22` on `ajax/new-adapters`, not yet a PR. Cursor row after #1293 merges.
+- [x] P1 PR: #1295.
+- [x] #1294 (`016ed1c2`): Cursor `fast` toggle half of the ported test (Matt approved fixture edits 2026-10-14; done as a separate `fake_cursor_sdk_fast.mjs` variant because changing the shared fixture breaks 5 existing tests) + login-only `LOGIN_HINT`. (`web-cockpit.md` still documents Cursor as ACP throughout; its Cursor auth line lands with P4's doc rewrite.)
+- [ ] P2 → (P3 if reproduced) → spike → P4.
+
+Delegation: model-router, Qwen in small packets (one module per packet,
+inline signatures, "do not explore", ban `git stash/checkout/reset`). P1 and
+P2 are mechanical; P3's repro and P2's `session_client.rs` hunks get parent
+review.
+
+Risks: P2 touches the hottest adapter file (mitigated by P1 landing first);
+the `transport()` borrow shape may need a `&self` twin; P1 cannot assert
+contract points the current fixtures do not emit without a `tests/` edit you
+have to approve.
+
 ## Read first
 
 1. `AGENTS.md` (delegation through model-router is mandatory; parent does not
@@ -113,7 +404,7 @@ Mirror the Claude Agent SDK transport; prefer generalizing its plumbing over
 copying it (`claude_sdk_client.rs`, `claude_sdk_spawn.rs`,
 `sidecar/claude_sdk_sidecar.mjs`, fixture `tests/fixtures/fake_claude_sdk.mjs`).
 
-- [ ] 0. Spike with a real `CURSOR_API_KEY`: event shapes, `agent_id` stable
+- [ ] 0. Spike on the Cursor SDK login (no API key; superseded wording 'real `CURSOR_API_KEY`'): event shapes, `agent_id` stable
       across turns, `Agent.resume` round trip, `run.cancel()`, model list
       shape incl. `params`, and whether `send("/cmd")` expands a
       `.cursor/commands/*.md` command. Gates tasks 2–4.
@@ -122,7 +413,7 @@ copying it (`claude_sdk_client.rs`, `claude_sdk_spawn.rs`,
       (`jsonl_process.rs`, `rpc_session.rs`, `rpc_client.rs`): `init`
       (session id, models, commands), `prompt`, `cancel`, `set_model`; map
       events to `NativeEvent`. Tests against a `fake_cursor_sdk.mjs`.
-- [ ] 3. `SessionClient::Cursor` + spawn (module resolution from the global
+- [ ] 3. Covered by #1293, unmerged (keep the `SessionClient::Cursor` variant per rev 2). Original text: `SessionClient::Cursor` + spawn (module resolution from the global
       npm root only, as Claude does; fail-closed restore via `Agent.resume`;
       Node ≥ 22.13 check without raising Claude's Node 20 floor).
 - [ ] 4. Commands: SDK has no list API, so the sidecar scans
@@ -136,7 +427,9 @@ copying it (`claude_sdk_client.rs`, `claude_sdk_spawn.rs`,
 - [ ] 6. Flip `acp_launch_for_agent(Cursor)` to a new transport; delete
       Cursor-ACP-only code + the tests that pin only that mechanism (Matt
       approved those deletions); update `web-session-behavior.md`.
-- [ ] 7. Durability: stages 3, 5, 8, 12 of the durability plan (9–11 parked).
+- [ ] 7. SUPERSEDED for stage 3 by the revision: no `HarnessRuntime` trait;
+      `SessionClient` + `SpawnReport` already are that layer. Stage 5's sweep
+      is #1289 (+ P3 if the group leak reproduces). Stages 8, 12 unchanged; P1 feeds 12. Original: Durability: stages 3, 5, 8, 12 of the durability plan (9–11 parked).
       Stage 3 (`HarnessRuntime` trait + `Capabilities`) is where "one shared
       layer" and durability meet — check whether `SessionClient` should
       become that trait rather than adding a second abstraction.
