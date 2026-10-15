@@ -105,6 +105,12 @@ export interface SessionSnapshot {
     message: string;
     schema: unknown;
   };
+  transcript?: SessionTranscriptEvent[];
+}
+
+export interface SessionTranscriptEvent {
+  cursor: number;
+  event: WebSessionServerEvent;
 }
 
 export type ParsedServerFrame =

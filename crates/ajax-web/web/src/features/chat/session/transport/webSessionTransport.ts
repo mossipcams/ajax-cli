@@ -31,10 +31,21 @@ export function connectWebSessionTransport(
   let disposed = false;
   let replayEndCursor: number | undefined;
   let replaySettledEvent: WebSessionServerEvent | undefined;
+  let inlineReplayCursors: Set<number> | undefined;
   const stored = readOutbox(handle);
   const pendingPrompts = stored.filter(frameFits);
   if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
   clearSessionCursor(handle);
+
+  const acknowledgePrompt = (event: WebSessionServerEvent) => {
+    if (event.type !== "prompt_accepted") return;
+    const index = pendingPrompts.findIndex(
+      (prompt) => prompt.clientMessageId === event.clientMessageId,
+    );
+    if (index < 0) return;
+    pendingPrompts.splice(index, 1);
+    writeOutbox(handle, pendingPrompts);
+  };
 
   const messageListener: SocketListener = (event) => {
     const messageEvent = event as MessageEvent;
@@ -43,40 +54,52 @@ export function connectWebSessionTransport(
     if (!frame) return;
 
     if (frame.kind === "snapshot") {
+      const inlineTranscript = frame.snapshot.transcript;
+      const consumesInlineTranscript =
+        inlineTranscript !== undefined && callbacks.onSnapshot !== undefined;
+      if (consumesInlineTranscript) {
+        inlineReplayCursors = new Set(inlineTranscript.map(({ cursor }) => cursor));
+        callbacks.onCursorAdvance?.(frame.snapshot.cursor);
+        for (const { event: transcriptEvent } of inlineTranscript) {
+          acknowledgePrompt(transcriptEvent);
+        }
+      }
       callbacks.onSnapshot?.(frame.snapshot);
       if (!ready) {
         ready = true;
-        replayEndCursor = frame.snapshot.cursor;
         const readyEvent: WebSessionServerEvent = {
           type: "ready",
           model: frame.snapshot.model,
           busy: frame.snapshot.turnState === "busy",
           reset: frame.snapshot.reset,
         };
-        replaySettledEvent = { ...readyEvent, reset: false };
-        callbacks.onEvent(readyEvent);
-        if (frame.snapshot.pendingPermission) {
-          const pending = frame.snapshot.pendingPermission;
-          callbacks.onEvent({
-            type: "permission_request",
-            requestId: pending.requestId,
-            ...(pending.title !== undefined ? { title: pending.title } : {}),
-            ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
-          });
-        }
-        if (frame.snapshot.pendingElicitation) {
-          const pending = frame.snapshot.pendingElicitation;
-          callbacks.onEvent({
-            type: "elicitation_request",
-            requestId: pending.requestId,
-            message: pending.message,
-            schema: pending.schema,
-          });
+        if (!consumesInlineTranscript) {
+          replayEndCursor = frame.snapshot.cursor;
+          replaySettledEvent = { ...readyEvent, reset: false };
+          callbacks.onEvent(readyEvent);
+          if (frame.snapshot.pendingPermission) {
+            const pending = frame.snapshot.pendingPermission;
+            callbacks.onEvent({
+              type: "permission_request",
+              requestId: pending.requestId,
+              ...(pending.title !== undefined ? { title: pending.title } : {}),
+              ...(pending.detail !== undefined ? { detail: pending.detail } : {}),
+            });
+          }
+          if (frame.snapshot.pendingElicitation) {
+            const pending = frame.snapshot.pendingElicitation;
+            callbacks.onEvent({
+              type: "elicitation_request",
+              requestId: pending.requestId,
+              message: pending.message,
+              schema: pending.schema,
+            });
+          }
         }
         callbacks.onReady(frame.snapshot.model.trim() || "auto");
         for (const prompt of pendingPrompts) sendPromptNow(prompt);
       } else {
-        if (frame.snapshot.reset) {
+        if (frame.snapshot.reset && !consumesInlineTranscript) {
           callbacks.onEvent({
             type: "ready",
             model: frame.snapshot.model,
@@ -90,21 +113,17 @@ export function connectWebSessionTransport(
     }
 
     const parsed = frame.event;
+    if (inlineReplayCursors?.delete(frame.cursor)) {
+      if (inlineReplayCursors.size === 0) inlineReplayCursors = undefined;
+      return;
+    }
     // Socket-local errors use cursor 0 but are not part of transcript replay.
     if (parsed.type === "error" && frame.cursor === 0) {
       callbacks.onEvent(parsed);
       return;
     }
     callbacks.onCursorAdvance?.(frame.cursor + 1);
-    if (parsed.type === "prompt_accepted") {
-      const index = pendingPrompts.findIndex(
-        (prompt) => prompt.clientMessageId === parsed.clientMessageId,
-      );
-      if (index >= 0) {
-        pendingPrompts.splice(index, 1);
-        writeOutbox(handle, pendingPrompts);
-      }
-    }
+    acknowledgePrompt(parsed);
     callbacks.onEvent(parsed);
     if (replayEndCursor !== undefined && frame.cursor + 1 === replayEndCursor) {
       const settled = replaySettledEvent;

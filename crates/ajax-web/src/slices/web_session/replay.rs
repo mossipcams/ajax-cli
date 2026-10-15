@@ -50,6 +50,11 @@ pub(crate) fn build_attach(
         pending_elicitation(log),
         chrome,
     );
+    let snapshot = if plan.reset {
+        snapshot.with_transcript(replayed.clone())
+    } else {
+        snapshot
+    };
     (snapshot, replayed)
 }
 

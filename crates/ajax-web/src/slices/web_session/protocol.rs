@@ -77,6 +77,12 @@ pub struct SessionSnapshot {
         rename = "transcriptError"
     )]
     pub transcript_error: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcript"
+    )]
+    pub transcript: Option<Vec<SessionEventEnvelope>>,
 }
 
 impl SessionSnapshot {
@@ -103,11 +109,17 @@ impl SessionSnapshot {
             pending_permission,
             pending_elicitation,
             transcript_error: None,
+            transcript: None,
         }
     }
 
     pub fn with_transcript_error(mut self, error: Option<String>) -> Self {
         self.transcript_error = error;
+        self
+    }
+
+    pub fn with_transcript(mut self, transcript: Vec<SessionEventEnvelope>) -> Self {
+        self.transcript = Some(transcript);
         self
     }
 }

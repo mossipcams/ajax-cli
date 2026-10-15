@@ -93,6 +93,7 @@ export function sessionSnapshotJson(
     turnState: "idle" | "busy";
     reset: boolean;
     promptCapabilities: { image?: boolean; embeddedContext?: boolean };
+    transcript: Record<string, unknown>[];
   }> = {},
 ): string {
   return JSON.stringify({

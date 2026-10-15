@@ -48,3 +48,34 @@
 - Minimal direct Playwright WebKit launch/new-page smoke: blocked by the same page-creation stall.
 - 2026-10-15 CI repair (PR #1300): Web Unit failures were exact CSS baseline drift in `styleSources.ts` (sourceStylesCssBytes 117_194→117_387, builtAppCssBytes 99_526→99_544, builtAppCssGzipBytes 16_594→16_604; selector counts unchanged). The five Web E2E failures were legacy positive scroll-coordinate assertions/setup in `e2e/session-chat-keyboard.test.ts` and `e2e/session-chat-regression.test.ts`; ported to reversed-container equivalents (live edge = scrollTop 0, negative toward history) while retaining the existing 48px thresholds and all behavioral intent.
 - Verification for the repair: focused style baseline tests (`src/styles.architecture.test.ts`, `src/shared/lib/styleSources.test.ts`) 18/18 passed; `npm run -s web:check` passed (exit 0); local mobile-webkit E2E re-blocked at page creation (exact result above) so live-edge and anchor-preservation behavior in WebKit is verified by CI after push only. Remaining risk: no local WebKit execution evidence.
+
+## Confirmed defect follow-up: initial transcript hydration
+
+- Tracking issue: [#1301](https://github.com/mossipcams/ajax-cli/issues/1301).
+- The reversed scroll geometry is correct: at `scrollTop = 0`, the settled newest message ends at the viewport bottom.
+- Existing sessions still appear to load from the top because the server sends retained history as individual chronological WebSocket envelopes. The browser paints each partial prefix while remaining correctly pinned to the end of that prefix.
+- Client-side buffering would remove the visible walk by leaving the transcript blank until replay settles. That conflicts with the approved requirement of no hidden loading phase.
+
+### Recommended architecture change
+
+- [x] Approved by the user on 2026-10-15: extend the Web Session snapshot contract so a reset snapshot may include the retained transcript atomically, and create a new fix branch.
+- [ ] Add an optional chronological `transcript` field to reset snapshots in `crates/ajax-web/src/slices/web_session/protocol.rs` and populate it in `replay.rs::build_snapshot_and_replay`.
+- [ ] Keep protocol version 2 and continue emitting replay envelopes so older clients remain compatible.
+- [ ] Parse the optional snapshot transcript in `web/src/features/chat/session/transport/parse.ts` and commit it with the synthetic `ready` event in one reducer transition.
+- [ ] Deduplicate following replay envelopes through the committed cursor; preserve the existing envelope path when the field is absent.
+- [ ] Omit the field for resumable reconnects (`reset: false`); use an empty array for an empty reset snapshot.
+- [ ] Preserve server ownership of transcript truth and chronological message order.
+
+### Follow-up verification
+
+- [ ] Add focused protocol/replay coverage for reset, resume, retention-floor, and empty-session snapshots.
+- [ ] Add focused parser/reducer coverage for atomic transcript commit, legacy absence, malformed payload rejection, and replay-envelope deduplication.
+- [ ] Add a browser regression proving the first visible transcript paint contains the actual retained tail at the live bottom, with no partial-prefix walk or post-paint scroll correction.
+- [ ] Run the focused Rust Web Session tests, focused frontend transport/reducer tests, Web typecheck, and the documented local verification gate.
+- [ ] Re-run the browser regression on iOS WebKit before commit; if local WebKit remains blocked, report the exact failure and require the GitHub WebKit job before merge.
+
+### Documentation and compatibility
+
+- [ ] Update `docs/architecture/web-session-behavior.md` with reset-snapshot transcript presence, cursor deduplication, and fallback semantics.
+- [ ] Update `docs/architecture/web-cockpit.md` with the atomic initial projection contract.
+- Old clients ignore the optional field and consume existing envelopes. New clients connected to old servers retain current incremental replay behavior. Resumable reconnects remain unchanged.
