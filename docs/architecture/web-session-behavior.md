@@ -84,14 +84,29 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   replay cannot be abandoned after 46 seconds. A successful `session/resume`
   or `session/load` never sends `session/new`.
 - Protocol v2 reset snapshots carry an optional `transcript` array of retained
-  event envelopes in chronological cursor order. The snapshot `cursor` remains
-  the next cursor after that retained projection. An empty reset transcript is
-  encoded as `[]`; absence means the peer does not support inline hydration.
+  event envelopes in chronological cursor order, limited to the newest tail of
+  the retained transcript: `TAIL_EVENT_LIMIT` = 300 events, extended back when a
+  permission or elicitation request is still open so it stays addressable, then
+  snapped back to the nearest preceding user message within one more limit. The
+  snapshot `cursor` remains the next cursor after that tail projection. An empty
+  reset transcript is encoded as `[]`; absence means the peer does not support
+  inline hydration. When a transcript is present, two optional fields describe
+  its bounds: `transcriptFrom`, the absolute cursor of the first included event,
+  and `transcriptFloor`, the retention floor — older retrievable history exists
+  only when `transcriptFrom` is greater than `transcriptFloor`. Both appear only
+  together with `transcript` and never on resumable `reset: false` snapshots.
   The browser applies a present transcript and the snapshot ready state in one
   reducer action, advances directly to the snapshot cursor, and discards the
-  matching replay envelopes that follow. The host continues to emit those
-  envelopes so older browsers remain compatible. Resumable `reset: false`
-  reconnects omit `transcript` and keep incremental replay semantics.
+  matching replay envelopes that follow. Resumable `reset: false` reconnects
+  omit `transcript` and keep incremental replay semantics.
+- A client opts into tail-only attach with `snapshotTail=1` on the session
+  WebSocket URL. When set and the snapshot carries a transcript, the host sends
+  no per-event compatibility envelopes — neither on a cold attach nor on a
+  mid-session generation-change reset; unflagged and older clients still
+  receive the full envelope replay. The opt-in client discards any envelope with
+  a cursor below `transcriptFrom` (still acknowledging its `prompt_accepted`
+  for the unacknowledged-prompt outbox), dedupes exact transcript cursors, and
+  never discards socket-local `error` events at cursor 0.
 - Restore fallback is limited to explicit RPC rejection: a rejected
   `session/resume` may try `session/load`, but a resume timeout or transport
   loss kills that ACP child and reports a typed
@@ -568,6 +583,19 @@ whole transcript inside `session/load` before responding.
   the latest full text per `itemId` during the turn instead of holding them until
   `turn_end`; boundary events still flush pending lanes first so ordering is
   preserved.
+- `GET /api/tasks/<handle>/session/transcript?before=<cursor>&limit=<n>` serves
+  one page of older retained transcript for the browser's "Load earlier" walk.
+  It is read-only and never touches a live session actor; pages come from the
+  persisted retained log. `before` is optional (default: newest) and `limit`
+  defaults to 300, clamped to 1..=1000; a non-numeric value is a 400. The
+  response is `{ protocolVersion: 2, events, from, floor }` with `events` as
+  event envelopes in ascending cursor order. A page start snaps back to the
+  nearest preceding user-message boundary so a walked page never opens mid-run.
+  An empty page reports `from` as the lowered lower bound, so walking back with
+  `before = from` always makes progress, and `from == floor` means no older
+  history remains. Unknown task handles are 404. Origin policy: same-origin
+  fetches send no `Origin` header and are allowed; a present `Origin` must match
+  the `Host` authority or the request is refused with 403.
 
 ## Reconnect model and ACP capabilities
 
@@ -897,7 +925,14 @@ dividers for cancellations, reconnects, harness switches and context resets.
   so on-screen rows do not fold behind `Load earlier`.
 - Scrolling near the top auto-reveals earlier already-held rows (overflow gate,
   200px preload band, 500ms cooldown, arm/disarm). Optional `Load earlier`
-  appears while hidden rows remain. Prepend growth preserves the operator's
+  appears while older history remains — held locally or on the server
+  (`serverHistory.from > floor`). `Load earlier` reveals locally held items
+  first; when none are hidden and server history remains it fetches one page
+  (single in-flight request, aborted on session change), prepends it by
+  projecting the page independently, and reveals at most one batch of the
+  prepended rows. A page is discarded if its bounds changed while in flight or
+  it makes no progress, and a failed fetch shows a retry label until the next
+  attempt; a reset ready clears the history bounds. Prepend growth preserves the operator's
   distance from the live edge by applying the `scrollHeight` delta in reversed
   coordinates (negative `scrollTop`) even when the pre-reveal window fit the
   viewport (pinned); stale no-op reveals drop the anchor so a later live append
