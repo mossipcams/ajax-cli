@@ -88,3 +88,51 @@
 - Desktop Chromium session regression: 9/9 passed; the #1301 test recorded `Earlier answer 11` as the first agent paint at `scrollTop = 0`.
 - Full Rust Web Session run exposed existing test isolation: parallel execution failed seven tests after a shared forced-write-failure leaked; serial execution passed 745 tests and failed one timing-sensitive reliability assertion, which passed alone.
 - Local mobile WebKit: blocked during Playwright `page` setup after 30 seconds, before assertions.
+
+## Follow-up: bottom load (tail-first transfer)
+
+Goal restated by the user on 2026-10-15: the transcript must *load* from the bottom (newest first), not merely paint at the bottom. PR #1302 delivers the paint only.
+
+### Evidence
+
+- `replay.rs::build_attach` puts the whole retained log (`from = 0` or the retention floor) into `snapshot.transcript`, so open cost grows with history and nothing renders until all of it arrives.
+- The server still emits every event again as a compatibility envelope; updated clients discard them by cursor. Open payload is ~2x.
+- "Load earlier" (`useHistoryWindow.ts`) is a client-only `items.slice(windowStart)` over already-loaded items (window 150 items, reveal batch 50). There is no server fetch path for older history.
+- The mid-session generation-change reset (`task_session_outbound.rs::snapshot`, `reset = true`) builds a snapshot with no `transcript`, so that path still replays top-first.
+
+### Scope
+
+- Reset snapshot carries only the newest tail of the retained log plus the cursor where the tail starts (`transcriptFrom`).
+- Older history is fetched on demand through a read-only endpoint (recommended: HTTP GET `.../session/transcript?before=<cursor>&limit=<n>`; the server stays the transcript authority).
+- Client "Load earlier" fetches the older range when the loaded tail is exhausted and prepends it by re-projecting from the earliest loaded event (the reducer is append-only today, so prepend must rebuild items, not splice).
+- Updated clients stop receiving duplicate compatibility envelopes (needs a client capability signal, e.g. a `snapshotTranscript=1` query flag); legacy clients keep them.
+- Generation-change reset snapshots carry the tail too.
+
+### Non-goals
+
+- No client-side buffering or hidden loading phase; no protocol version bump; no change to transcript retention or ownership; resumable reconnects (`reset: false`) unchanged.
+
+### Approval
+
+- [x] Approved by the user on 2026-10-15 (HTTP GET chosen for the older-history fetch).
+
+### Tasks
+
+- [x] Server: tail selection (`TAIL_EVENT_LIMIT` = 300, open permission/elicitation request kept inside, snapped to a user message) in `build_attach` via `attach_inline_tail`; `transcriptFrom` and `transcriptFloor` snapshot fields; generation-change reset snapshot parity.
+- [x] Server: read-only `GET /api/tasks/<handle>/session/transcript?before&limit` (`replay::read_before`, persisted log, no actor command); `snapshotTail=1` opt-in skips per-event compatibility envelopes on cold attach and generation-change resets.
+- [x] Client: parse `transcriptFrom`/`transcriptFloor`; discard envelopes below the floor (cursor-0 socket errors exempt, older `prompt_accepted` still acknowledged); `history_bounds` + `prepend` reducer events; `fetchEarlierTranscript`; `useEarlierHistory` wiring with single in-flight, abort, stale-bounds discard, retry label; send `snapshotTail=1` when an `onSnapshot` consumer exists.
+- [x] Docs: `web-session-behavior.md`, `web-cockpit.md`.
+- [x] Tests: replay/protocol/bridge/route (Rust), transport/parse/reducer/fetch/hook/scroller (vitest), `e2e/session-bottom-load.test.ts` (tail first paint, load-earlier anchor, retry, legacy server).
+
+### Results (2026-10-15)
+
+- Rust: `cargo fmt --check`, workspace `cargo clippy --all-targets --all-features -- -D warnings`, `cargo check --all-targets --all-features`, `RUSTDOCFLAGS="-D warnings" cargo doc`, `cargo test --doc` all exit 0; `cargo test -p ajax-web --lib -- --test-threads=1`: 1,125 passed. Parallel runs still show the pre-existing `set_config_option_*` isolation flake (reproduced with the new tests skipped: 6 of 8 runs).
+- Web: `web:test --run` 1,636 passed / 9 skipped; `web:check`, `web:lint`, `web:sg`, `verify:arch`, `web:build:check` exit 0; `dist/app.js` rebuilt.
+- Browser: desktop Chromium regression + keyboard + bottom-load suites 30 passed. The 4 bottom-load tests also pass with `scrolling/historyScroll.ts` at HEAD, so they do not depend on unrelated uncommitted scroll edits. Local `mobile-webkit` remains blocked at Playwright page setup; the GitHub WebKit job is the WebKit evidence.
+
+### Deviations and risks
+
+- Delivered by bounded delegate slices; Qwen timed out on several multi-file slices and the codex/claude/cursor routes became unavailable mid-run (quota, model rejected, not logged in), so later slices ran on the remaining routes. Every delta was reviewed and re-verified in the worktree; delegate reports were schema-invalid several times and were not relied on.
+- Defects caught in review and fixed before acceptance: cursor-0 socket errors were swallowed by the envelope floor; the older-range route rejected same-origin fetches with no `Origin` header; an empty older page made no forward progress; a stale page could be prepended after a reset re-based the tail; a Rust test file exceeded the 1,000-line limit.
+- Compatibility risk: the host now always carries the tail (not the whole log) in a reset snapshot. A browser tab still running the pre-change bundle (it parses `transcript` but only dedupes cursors inside it) can show older envelopes after the tail until reloaded. Bundle and host ship in one binary, so this is limited to tabs left open across an upgrade.
+- "Load earlier" scroll-anchor behavior for the prepend path is covered in Chromium only; WebKit is covered by CI.

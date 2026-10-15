@@ -1,5 +1,5 @@
-use super::protocol::SessionChrome;
-use super::replay::{build_attach, plan_replay};
+use super::protocol::{PendingPermission, SessionChrome, SessionSnapshot};
+use super::replay::{attach_inline_tail, build_attach, plan_replay, read_before, TAIL_EVENT_LIMIT};
 use super::transcript::TranscriptLog;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
 use crate::slices::web_session::SessionServerEvent;
@@ -10,6 +10,16 @@ fn note(text: &str) -> SessionServerEvent {
         text: text.to_string(),
         content_blocks: Vec::new(),
         item_id: format!("n-{text}"),
+        message_id: None,
+    }
+}
+
+fn user_note(text: &str) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "user".to_string(),
+        text: text.to_string(),
+        content_blocks: Vec::new(),
+        item_id: format!("u-{text}"),
         message_id: None,
     }
 }
@@ -174,14 +184,14 @@ fn empty_reset_snapshot_carries_empty_transcript() {
 }
 
 #[test]
-fn reset_transcript_preserves_retained_log_floor() {
+fn reset_snapshot_carries_only_tail_with_transcript_from() {
     let mut log = TranscriptLog::default();
     log.append(
         (0..MAX_LOG_EVENTS + 3)
             .map(|i| note(&i.to_string()))
             .collect(),
     );
-    let (snapshot, _) = build_attach(
+    let (snapshot, replayed) = build_attach(
         &log,
         "auto".to_string(),
         false,
@@ -192,6 +202,468 @@ fn reset_transcript_preserves_retained_log_floor() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    assert_eq!(transcript.len(), MAX_LOG_EVENTS);
-    assert_eq!(transcript.first().map(|e| e.cursor), Some(log.dropped));
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT);
+    let first_cursor = log.dropped + MAX_LOG_EVENTS - TAIL_EVENT_LIMIT;
+    assert_eq!(transcript.first().map(|e| e.cursor), Some(first_cursor));
+    assert_eq!(snapshot.transcript_from, Some(first_cursor));
+
+    // Compat replay is unchanged: the full retained range.
+    assert_eq!(replayed.len(), MAX_LOG_EVENTS);
+    assert_eq!(replayed.first().map(|e| e.cursor), Some(log.dropped));
+}
+
+#[test]
+fn reset_snapshot_small_log_transcript_from_is_retention_floor() {
+    let log = TranscriptLog::from_events(vec![note("one"), note("two")], 5);
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    // Whole retained log, starting at the retention floor.
+    assert_eq!(transcript, replayed);
+    assert_eq!(transcript.len(), 2);
+    assert_eq!(snapshot.transcript_from, Some(log.dropped));
+}
+
+#[test]
+fn reset_snapshot_empty_log_transcript_from_is_next_cursor() {
+    let log = TranscriptLog::default();
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    assert_eq!(snapshot.transcript, Some(Vec::new()));
+    // Empty tail: transcriptFrom is the snapshot next cursor (0 for a fresh log).
+    let next = log.dropped + log.events.len();
+    assert_eq!(snapshot.transcript_from, Some(next));
+    assert_eq!(snapshot.transcript_floor, Some(log.dropped));
+}
+
+#[test]
+fn resumable_snapshot_omits_transcript_from() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(1),
+        SessionChrome::default(),
+    );
+    assert!(!snapshot.reset);
+    assert!(snapshot.transcript.is_none());
+    assert!(snapshot.transcript_from.is_none());
+}
+
+#[test]
+fn open_permission_older_than_tail_limit_stays_inside_transcript() {
+    let mut events = vec![SessionServerEvent::PermissionRequest {
+        request_id: "p1".to_string(),
+        title: Some("Run?".to_string()),
+        detail: None,
+    }];
+    events.extend(
+        (0..TAIL_EVENT_LIMIT + 100)
+            .map(|i| note(&format!("tail-{i}")))
+            .collect::<Vec<_>>(),
+    );
+    let mut log = TranscriptLog::default();
+    log.append(events);
+    assert!(log.events.len() > TAIL_EVENT_LIMIT);
+
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        true,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    assert!(snapshot.pending_permission.is_some());
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    // Tail extended back to the open request event at cursor 0.
+    assert_eq!(transcript, replayed);
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 101);
+    assert_eq!(snapshot.transcript_from, Some(0));
+    assert!(matches!(
+        transcript[0].payload,
+        SessionServerEvent::PermissionRequest { ref request_id, .. }
+            if request_id == "p1"
+    ));
+}
+
+#[test]
+fn reset_tail_snaps_back_to_user_message_boundary() {
+    // One user message followed by enough agent events that the naive tail
+    // start lands mid-turn, with the user message within TAIL_EVENT_LIMIT.
+    let mut events = vec![user_note("go")];
+    events.extend(
+        (0..TAIL_EVENT_LIMIT + 9)
+            .map(|i| note(&format!("agent-{i}")))
+            .collect::<Vec<_>>(),
+    );
+    let mut log = TranscriptLog::default();
+    log.append(events);
+    assert!(log.events.len() > TAIL_EVENT_LIMIT);
+
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    // Snapped back to the user message at cursor 0.
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 10);
+    assert_eq!(transcript.first().map(|e| e.cursor), Some(0));
+    assert!(matches!(
+        transcript[0].payload,
+        SessionServerEvent::Message { ref role, .. } if role == "user"
+    ));
+    assert_eq!(snapshot.transcript_from, Some(0));
+}
+
+#[test]
+fn reset_tail_falls_back_to_naive_start_when_user_message_beyond_limit() {
+    // The only user message is further than TAIL_EVENT_LIMIT events before the
+    // naive tail start, so the tail keeps the naive start.
+    let mut events = vec![user_note("go")];
+    events.extend(
+        (0..TAIL_EVENT_LIMIT * 2)
+            .map(|i| note(&format!("agent-{i}")))
+            .collect::<Vec<_>>(),
+    );
+    let mut log = TranscriptLog::default();
+    log.append(events);
+
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT);
+    let first_cursor = log.events.len() - TAIL_EVENT_LIMIT;
+    assert_eq!(transcript.first().map(|e| e.cursor), Some(first_cursor));
+    assert_eq!(snapshot.transcript_from, Some(first_cursor));
+}
+
+#[test]
+fn reset_snapshot_transcript_floor_is_log_dropped() {
+    let mut log = TranscriptLog::default();
+    log.append(
+        (0..MAX_LOG_EVENTS + 3)
+            .map(|i| note(&i.to_string()))
+            .collect(),
+    );
+    assert!(log.dropped > 0);
+
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(0),
+        SessionChrome::default(),
+    );
+    assert!(snapshot.transcript.is_some());
+    assert_eq!(snapshot.transcript_floor, Some(log.dropped));
+}
+
+#[test]
+fn read_before_returns_preceding_events_ascending() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        note("a"),
+        note("b"),
+        note("c"),
+        note("d"),
+        note("e"),
+        note("f"),
+    ]);
+    let page = read_before(&log, 6, 3);
+    // No user message in the log: no snap, plain newest-3 page.
+    assert_eq!(page.events.len(), 3);
+    assert_eq!(
+        page.events.iter().map(|e| e.cursor).collect::<Vec<_>>(),
+        vec![3, 4, 5]
+    );
+    assert_eq!(page.from, 3);
+    assert_eq!(page.floor, 0);
+}
+
+#[test]
+fn read_before_snaps_back_to_user_message() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        user_note("go"),
+        note("a"),
+        note("b"),
+        note("c"),
+        note("d"),
+    ]);
+    let page = read_before(&log, 5, 4);
+    // Naive start is cursor 1; snapped back to the user message at cursor 0.
+    assert_eq!(page.from, 0);
+    assert!(matches!(
+        page.events[0].payload,
+        SessionServerEvent::Message { ref role, .. } if role == "user"
+    ));
+    assert_eq!(page.events.len(), 5);
+}
+
+#[test]
+fn read_before_stops_at_floor_when_events_dropped() {
+    let log = TranscriptLog::from_events(vec![note("one"), note("two"), note("three")], 7);
+    assert_eq!(log.dropped, 7);
+    let page = read_before(&log, 10, 5);
+    assert_eq!(page.floor, log.dropped);
+    assert!(page.from >= page.floor);
+    assert_eq!(
+        page.events.iter().map(|e| e.cursor).collect::<Vec<_>>(),
+        vec![7, 8, 9]
+    );
+}
+
+#[test]
+fn read_before_clamps_before_beyond_next_cursor() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let page = read_before(&log, 99, 3);
+    assert_eq!(
+        page.events.iter().map(|e| e.cursor).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(page.from, 0);
+}
+
+#[test]
+fn read_before_at_floor_returns_empty_page_with_from_at_floor() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let page = read_before(&log, 0, 3);
+    assert!(page.events.is_empty());
+    assert_eq!(page.from, 0);
+    assert_eq!(page.floor, 0);
+}
+
+#[test]
+fn read_before_zero_limit_returns_empty_page_with_from_at_end() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let page = read_before(&log, 2, 0);
+    assert!(page.events.is_empty());
+    assert_eq!(page.from, 2);
+}
+
+#[test]
+fn walking_back_with_from_reproduces_full_retained_log() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        user_note("go"),
+        note("a"),
+        user_note("again"),
+        note("b"),
+        note("c"),
+        user_note("third"),
+        note("d"),
+    ]);
+    let next = log.absolute_next_cursor();
+    let mut before = next;
+    let mut pages: Vec<Vec<usize>> = Vec::new();
+    while before > 0 {
+        let page = read_before(&log, before, 2);
+        assert!(!page.events.is_empty(), "walk must terminate at floor");
+        assert!(page.from <= before);
+        pages.push(page.events.iter().map(|e| e.cursor).collect());
+        if page.from == page.floor {
+            break;
+        }
+        before = page.from;
+    }
+    let mut collected: Vec<usize> = Vec::new();
+    for cursors in pages.into_iter().rev() {
+        collected.extend(cursors);
+    }
+    assert_eq!(collected, (0..next).collect::<Vec<_>>());
+}
+
+#[test]
+fn read_before_empty_page_past_filtered_permissions_still_walks_to_floor() {
+    // The only events in [before - limit, before) are permission requests
+    // that resolve later in the log, so the filtered read drops them and the
+    // page is empty. `from` must still be strictly less than `before` so a
+    // cursor walk makes progress.
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        user_note("go"),
+        note("a"),
+        note("b"),
+        SessionServerEvent::PermissionRequest {
+            request_id: "p1".to_string(),
+            title: Some("Run?".to_string()),
+            detail: None,
+        },
+        SessionServerEvent::PermissionRequest {
+            request_id: "p2".to_string(),
+            title: Some("Run again?".to_string()),
+            detail: None,
+        },
+        SessionServerEvent::PermissionResolved {
+            request_id: "p1".to_string(),
+            approved: true,
+        },
+        SessionServerEvent::PermissionResolved {
+            request_id: "p2".to_string(),
+            approved: false,
+        },
+    ]);
+    // before sits just past the two requests; their resolutions are newer.
+    let before = 5;
+    let page = read_before(&log, before, 2);
+    assert!(page.events.is_empty());
+    assert_eq!(page.floor, log.dropped);
+    assert!(
+        page.from < before,
+        "empty page must make progress; got from == end"
+    );
+
+    // Walking back with `from` reaches the floor in finite steps.
+    let mut cursor = page.from;
+    let mut steps = 0;
+    while cursor > log.dropped {
+        let next_page = read_before(&log, cursor, 2);
+        assert!(
+            next_page.from < cursor,
+            "every non-floor page must lower the cursor"
+        );
+        cursor = next_page.from;
+        steps += 1;
+        assert!(steps <= 8, "walk must terminate at the floor");
+    }
+    assert_eq!(cursor, log.dropped);
+}
+
+fn reset_snapshot(next: usize) -> SessionSnapshot {
+    SessionSnapshot::new(
+        next,
+        "auto".to_string(),
+        false,
+        true,
+        None,
+        None,
+        SessionChrome::default(),
+    )
+}
+
+#[test]
+fn attach_inline_tail_long_log_carries_only_tail_with_from_and_floor() {
+    let mut log = TranscriptLog::default();
+    log.append(
+        (0..MAX_LOG_EVENTS + 3)
+            .map(|i| note(&i.to_string()))
+            .collect(),
+    );
+    let (replayed, next) = log.read_from_enveloped(log.dropped);
+    let snapshot = attach_inline_tail(reset_snapshot(next), &replayed, next, log.dropped);
+
+    let transcript = snapshot
+        .transcript
+        .expect("attached snapshot carries transcript");
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT);
+    let first_cursor = log.dropped + MAX_LOG_EVENTS - TAIL_EVENT_LIMIT;
+    assert_eq!(transcript.first().map(|e| e.cursor), Some(first_cursor));
+    assert_eq!(snapshot.transcript_from, Some(first_cursor));
+    assert_eq!(snapshot.transcript_floor, Some(log.dropped));
+}
+
+#[test]
+fn attach_inline_tail_open_permission_older_than_limit_stays_inside() {
+    let mut events = vec![SessionServerEvent::PermissionRequest {
+        request_id: "p1".to_string(),
+        title: Some("Run?".to_string()),
+        detail: None,
+    }];
+    events.extend(
+        (0..TAIL_EVENT_LIMIT + 50)
+            .map(|i| note(&format!("tail-{i}")))
+            .collect::<Vec<_>>(),
+    );
+    let mut log = TranscriptLog::default();
+    log.append(events);
+
+    let (replayed, next) = log.read_from_enveloped(log.dropped);
+    let mut snapshot = reset_snapshot(next);
+    snapshot.pending_permission = Some(PendingPermission {
+        request_id: "p1".to_string(),
+        title: None,
+        detail: None,
+    });
+    let snapshot = attach_inline_tail(snapshot, &replayed, next, log.dropped);
+
+    let transcript = snapshot
+        .transcript
+        .expect("attached snapshot carries transcript");
+    // Tail extended back to the open request event at cursor 0.
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 51);
+    assert_eq!(snapshot.transcript_from, Some(0));
+}
+
+#[test]
+fn attach_inline_tail_uses_snapshot_pending_ids_not_log() {
+    // The replayed log has an open p1 request older than the tail limit, but
+    // the snapshot carries a different pending id (p2), so no extension.
+    let mut events = vec![SessionServerEvent::PermissionRequest {
+        request_id: "p1".to_string(),
+        title: Some("Run?".to_string()),
+        detail: None,
+    }];
+    events.extend(
+        (0..TAIL_EVENT_LIMIT + 50)
+            .map(|i| note(&format!("tail-{i}")))
+            .collect::<Vec<_>>(),
+    );
+    let mut log = TranscriptLog::default();
+    log.append(events);
+
+    let (replayed, next) = log.read_from_enveloped(log.dropped);
+    let mut snapshot = reset_snapshot(next);
+    snapshot.pending_permission = Some(PendingPermission {
+        request_id: "p2".to_string(),
+        title: None,
+        detail: None,
+    });
+    let snapshot = attach_inline_tail(snapshot, &replayed, next, log.dropped);
+
+    let transcript = snapshot
+        .transcript
+        .expect("attached snapshot carries transcript");
+    assert_eq!(transcript.len(), TAIL_EVENT_LIMIT);
+}
+
+#[test]
+fn attach_inline_tail_empty_events_gives_empty_transcript_and_next_cursor() {
+    let snapshot = attach_inline_tail(reset_snapshot(7), &[], 7, 2);
+    assert_eq!(snapshot.transcript, Some(Vec::new()));
+    assert_eq!(snapshot.transcript_from, Some(7));
+    assert_eq!(snapshot.transcript_floor, Some(2));
 }

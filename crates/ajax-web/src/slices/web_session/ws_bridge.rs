@@ -22,11 +22,36 @@ async fn release_slot(directory: &Arc<TaskSessionDirectory>, handle: &str) {
     directory.release(handle).await;
 }
 
+/// A reset attach inlines the newest transcript into its snapshot. When the
+/// client opts in with `snapshotTail=1`, skip re-sending that same retained
+/// history as per-event envelopes. Resumable reconnects (no inline
+/// transcript) and legacy clients keep the full replay.
+pub(crate) fn should_skip_replayed_envelopes(
+    tail_snapshot: bool,
+    snapshot: &SessionSnapshot,
+) -> bool {
+    tail_snapshot && snapshot.transcript.is_some()
+}
+/// Decide which frames a batch yields for one client. A reset snapshot with
+/// an inline transcript (and a `snapshotTail=1` client) already carries the
+/// same history, so re-sent envelopes are dropped; everything else flows.
+pub(crate) fn outbound_frames(
+    batch_snapshot: Option<SessionSnapshot>,
+    batch_events: Vec<SessionEventEnvelope>,
+    tail_snapshot: bool,
+) -> (Option<SessionSnapshot>, Vec<SessionEventEnvelope>) {
+    let events = match &batch_snapshot {
+        Some(snapshot) if should_skip_replayed_envelopes(tail_snapshot, snapshot) => Vec::new(),
+        _ => batch_events,
+    };
+    (batch_snapshot, events)
+}
 pub(crate) async fn bridge_task_session_socket(
     mut socket: WebSocket,
     directory: Arc<TaskSessionDirectory>,
     plan: SessionAttachPlan,
     client_cursor: Option<usize>,
+    tail_snapshot: bool,
     persist_session_model: Option<PersistSessionModel>,
 ) {
     let handle = plan.qualified_handle.clone();
@@ -100,10 +125,12 @@ pub(crate) async fn bridge_task_session_socket(
         release_slot(&directory, &handle).await;
         return;
     }
-    for envelope in attach.replayed {
-        if !send_envelope(&mut socket, &envelope).await {
-            release_slot(&directory, &handle).await;
-            return;
+    if !should_skip_replayed_envelopes(tail_snapshot, &attach.snapshot) {
+        for envelope in attach.replayed {
+            if !send_envelope(&mut socket, &envelope).await {
+                release_slot(&directory, &handle).await;
+                return;
+            }
         }
     }
 
@@ -138,6 +165,7 @@ pub(crate) async fn bridge_task_session_socket(
                                     &handle,
                                     &mut cursor,
                                     &mut generation,
+                                    tail_snapshot,
                                     &mut last_write,
                                 )
                                 .await
@@ -164,6 +192,7 @@ pub(crate) async fn bridge_task_session_socket(
                     &handle,
                     &mut cursor,
                     &mut generation,
+                    tail_snapshot,
                     &mut last_write,
                 )
                 .await
@@ -253,6 +282,7 @@ async fn flush_outbound(
     handle: &str,
     cursor: &mut usize,
     generation: &mut u64,
+    tail_snapshot: bool,
     last_write: &mut Instant,
 ) -> bool {
     let batch = directory
@@ -261,13 +291,14 @@ async fn flush_outbound(
     *generation = batch.generation;
     *cursor = batch.cursor;
 
-    let wrote = batch.snapshot.is_some() || !batch.events.is_empty();
-    if let Some(snapshot) = batch.snapshot {
+    let (snapshot, events) = outbound_frames(batch.snapshot, batch.events, tail_snapshot);
+    let wrote = snapshot.is_some() || !events.is_empty();
+    if let Some(snapshot) = snapshot {
         if !send_snapshot(socket, &snapshot).await {
             return false;
         }
     }
-    for envelope in batch.events {
+    for envelope in events {
         if !send_envelope(socket, &envelope).await {
             return false;
         }

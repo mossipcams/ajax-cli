@@ -94,6 +94,8 @@ export function sessionSnapshotJson(
     reset: boolean;
     promptCapabilities: { image?: boolean; embeddedContext?: boolean };
     transcript: Record<string, unknown>[];
+    transcriptFrom: number;
+    transcriptFloor: number;
   }> = {},
 ): string {
   return JSON.stringify({

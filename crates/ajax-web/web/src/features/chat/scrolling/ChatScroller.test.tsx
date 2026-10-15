@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { fireEvent, screen, act } from "@testing-library/react";
+import { fireEvent, screen, act, waitFor } from "@testing-library/react";
 import { mountChat, prepareChatSurface, send, transport, flushRaf, ChatWithSheet, chatH } from "../ChatSurface.testHarness";
 import { stylesSource } from "../ChatSurface.testHarness";
 import {
@@ -299,5 +299,70 @@ describe("task open positioning (#1065)", () => {
 
     expect(transcriptAtLiveEdge(thread)).toBe(true);
     expect(thread.scrollTop).toBe(liveEdgeScrollTop(thread.scrollHeight, thread.clientHeight));
+  });
+});
+
+
+describe("server history controls", () => {
+  beforeEach(() => prepareChatSurface());
+
+  function loadRecentSnapshot() {
+    act(() => chatH.snapshot?.({
+      type: "snapshot", protocolVersion: 2, cursor: 500, model: "auto",
+      turnState: "idle", reset: true, transcriptFrom: 500, transcriptFloor: 0,
+      transcript: [{ cursor: 500, event: {
+        type: "message", role: "user", text: "Recent message", itemId: "recent",
+      } }],
+    }));
+  }
+
+  it("shows the retry label after failure and uses the same button to load history", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        protocolVersion: 2, from: 0, floor: 0,
+        events: [{ type: "event", protocolVersion: 2, cursor: 0, payload: {
+          type: "message", role: "user", text: "Earlier message", itemId: "earlier",
+        } }],
+      })));
+    vi.stubGlobal("fetch", fetchImpl);
+    mountChat();
+    loadRecentSnapshot();
+    const button = screen.getByTestId("session-load-earlier");
+    expect(button).toHaveTextContent("Load earlier");
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toHaveTextContent("Couldn't load earlier messages — tap to retry"));
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByText("Earlier message")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-load-earlier")).toBe(button);
+    fireEvent.click(button);
+    expect(await screen.findByText("Earlier message")).toBeInTheDocument();
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-load-earlier")).not.toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("reveals one batch from a fetched page and reveals its remainder locally", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      protocolVersion: 2, from: 0, floor: 0,
+      events: Array.from({ length: 120 }, (_, index) => ({
+        type: "event", protocolVersion: 2, cursor: index,
+        payload: { type: "message", role: "user", text: `Earlier row ${index}`, itemId: `older-${index}` },
+      })),
+    })));
+    vi.stubGlobal("fetch", fetchImpl);
+    mountChat();
+    loadRecentSnapshot();
+    fireEvent.click(screen.getByTestId("session-load-earlier"));
+    await waitFor(() => expect(screen.getAllByText(/^Earlier row /)).toHaveLength(50));
+    expect(screen.queryByText("Earlier row 69")).not.toBeInTheDocument();
+    expect(screen.getByText("Earlier row 70")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-load-earlier"));
+    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(100);
+    fireEvent.click(screen.getByTestId("session-load-earlier"));
+    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(120);
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-load-earlier")).not.toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

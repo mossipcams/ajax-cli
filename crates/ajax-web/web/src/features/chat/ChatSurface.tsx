@@ -2,6 +2,7 @@ import { useEffect, useRef, type ComponentProps, type PointerEvent, type ReactNo
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { toolCount, useChatSession, type ConversationItem } from "./session/public";
 import { useHistoryWindow } from "./conversation/useHistoryWindow";
+import { useEarlierHistory } from "./conversation/useEarlierHistory";
 import { Conversation } from "./conversation/public";
 import ChatLiveHead from "./status/ChatLiveHead";
 import ChatModelPresentation from "./model/ChatModelPresentation";
@@ -211,15 +212,24 @@ function ChatSessionScroll({
   handle,
   detailStatus,
   view,
+  dispatch,
   composerRef,
   ...bodyProps
 }: Omit<ComponentProps<typeof ChatSessionBody>, "visibleItems"> & {
   handle: string;
   detailStatus: Props["detailStatus"];
+  dispatch: ReturnType<typeof useChatSession>["dispatch"];
   view: ReturnType<typeof useChatSession>["view"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const historyWindow = useHistoryWindow(view.conversation, `${handle}:${detailStatus}`);
+  const historyWindow = useHistoryWindow(view.conversation, `${handle}:${detailStatus}`, view.serverHistory?.from);
+  const earlierHistory = useEarlierHistory({
+    handle,
+    serverHistory: view.serverHistory,
+    hasEarlierLocally: historyWindow.hasEarlier,
+    revealEarlier: historyWindow.revealEarlier,
+    dispatch,
+  });
 
   return (
     <ChatScroller
@@ -228,10 +238,11 @@ function ChatSessionScroll({
       composerRef={composerRef}
       activityCount={toolCount(view.conversation)}
       historyScroll={{
-        hasEarlier: historyWindow.hasEarlier,
-        revealEarlier: historyWindow.revealEarlier,
+        hasEarlier: earlierHistory.hasEarlier,
+        revealEarlier: earlierHistory.loadEarlier,
         windowGeneration: historyWindow.windowGeneration,
       }}
+      earlierError={earlierHistory.error}
     >
       <ChatSessionBody {...bodyProps} handle={handle} view={view} composerRef={composerRef} visibleItems={historyWindow.visibleItems} />
     </ChatScroller>
@@ -266,6 +277,7 @@ export default function ChatSurface({
 
   const {
     view,
+    dispatch,
     connected,
     everOpened,
     activityAgeMs,
@@ -309,6 +321,7 @@ export default function ChatSurface({
         handle={handle}
         detailStatus={detailStatus}
         view={view}
+        dispatch={dispatch}
         detail={detail}
         workspaceHeader={workspaceHeader}
         headActions={headActions}

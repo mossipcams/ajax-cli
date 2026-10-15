@@ -12,6 +12,7 @@ import {
   type SessionTranscriptEvent,
   type WebSessionServerEvent,
 } from "./contracts";
+import type { TranscriptPage } from "./fetchEarlier";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
@@ -209,6 +210,34 @@ function parseEventFrame(payload: Record<string, unknown>): SessionTranscriptEve
   return event ? { cursor: payload.cursor, event } : null;
 }
 
+export function parseTranscriptPage(payload: unknown): TranscriptPage | null {
+  if (
+    !isRecord(payload) ||
+    Array.isArray(payload) ||
+    payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+    !Array.isArray(payload.events) ||
+    typeof payload.from !== "number" ||
+    !Number.isSafeInteger(payload.from) ||
+    payload.from < 0 ||
+    typeof payload.floor !== "number" ||
+    !Number.isSafeInteger(payload.floor) ||
+    payload.floor < 0 ||
+    payload.floor > payload.from
+  ) {
+    return null;
+  }
+  const events: SessionTranscriptEvent[] = [];
+  let previousCursor = -1;
+  for (const value of payload.events) {
+    if (!isRecord(value)) return null;
+    const parsed = parseEventFrame(value);
+    if (!parsed || parsed.cursor <= previousCursor || parsed.cursor < payload.from) return null;
+    previousCursor = parsed.cursor;
+    events.push(parsed);
+  }
+  return { events, from: payload.from, floor: payload.floor };
+}
+
 function parseSnapshotTranscript(
   payload: Record<string, unknown>,
   snapshotCursor: number,
@@ -281,6 +310,37 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
       const transcript = parseSnapshotTranscript(payload, payload.cursor);
       if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
+      let transcriptFrom: number | undefined;
+      const rawTranscriptFrom = payload.transcriptFrom;
+      if (rawTranscriptFrom !== undefined) {
+        if (
+          typeof rawTranscriptFrom !== "number" ||
+          !Number.isSafeInteger(rawTranscriptFrom) ||
+          rawTranscriptFrom < 0
+        ) {
+          return null;
+        }
+        if (transcript === undefined) return null;
+        const firstCursor = transcript.length > 0 ? transcript[0].cursor : payload.cursor;
+        if (rawTranscriptFrom > firstCursor || rawTranscriptFrom > payload.cursor) return null;
+        transcriptFrom = rawTranscriptFrom;
+      }
+      let transcriptFloor: number | undefined;
+      const rawTranscriptFloor = payload.transcriptFloor;
+      if (rawTranscriptFloor !== undefined) {
+        if (
+          typeof rawTranscriptFloor !== "number" ||
+          !Number.isSafeInteger(rawTranscriptFloor) ||
+          rawTranscriptFloor < 0
+        ) {
+          return null;
+        }
+        if (transcript === undefined) return null;
+        if (transcriptFrom !== undefined && rawTranscriptFloor > transcriptFrom) {
+          return null;
+        }
+        transcriptFloor = rawTranscriptFloor;
+      }
       return {
         kind: "snapshot",
         snapshot: {
@@ -297,6 +357,8 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
           ...(transcript !== undefined ? { transcript } : {}),
+          ...(transcriptFrom !== undefined ? { transcriptFrom } : {}),
+          ...(transcriptFloor !== undefined ? { transcriptFloor } : {}),
         },
       };
     }
