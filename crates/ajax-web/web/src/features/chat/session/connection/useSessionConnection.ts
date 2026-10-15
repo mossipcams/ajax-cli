@@ -106,12 +106,46 @@ export function useSessionConnection({
       }, delay);
     };
 
+    const normalizeEvent = (event: WebSessionServerEvent): WebSessionServerEvent => {
+      onActivity();
+      if (event.type === "error" && /ACP restore unavailable/i.test(event.message)) {
+        onRestoreFailure?.();
+      }
+      if (event.type === "error" && isSessionModelChangeFailure(event.message)) {
+        onSessionModelRejected?.();
+      }
+      if (event.type === "error" && isSessionConfigChangeFailure(event.message)) {
+        onConfigError?.(event.message);
+      }
+      if (event.type === "error" && event.message === OPEN_FAILURE) {
+        return { type: "error", message: explainOpenFailure(detailRef.current) };
+      }
+      return event;
+    };
+
     const applySnapshot = (snapshot: SessionSnapshot) => {
       onSessionModel?.(snapshot.model);
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
       onSessionAvailableCommands?.(snapshot.availableCommands);
       onSessionPromptCapabilities?.(snapshot.promptCapabilities);
       onSessionTitle?.(snapshot.sessionTitle);
+      if (snapshot.transcript === undefined) return;
+
+      const ready: WebSessionServerEvent = {
+        type: "ready",
+        model: snapshot.model,
+        busy: snapshot.turnState === "busy",
+        reset: snapshot.reset,
+      };
+      const projected = [
+        ready,
+        ...snapshot.transcript.map(({ event }) => event),
+        { ...ready, reset: false },
+      ].flatMap((event) => {
+        const next = projectWireEvent(normalizeEvent(event));
+        return next ? [next] : [];
+      });
+      dispatch({ type: "events", events: projected });
     };
 
     const open = () => {
@@ -141,24 +175,7 @@ export function useSessionConnection({
             setState("connected");
           },
           onEvent: (event) => {
-            onActivity();
-            if (event.type === "error" && /ACP restore unavailable/i.test(event.message)) {
-              onRestoreFailure?.();
-            }
-            if (event.type === "error" && isSessionModelChangeFailure(event.message)) {
-              onSessionModelRejected?.();
-            }
-            if (event.type === "error" && isSessionConfigChangeFailure(event.message)) {
-              onConfigError?.(event.message);
-            }
-            if (event.type === "error" && event.message === OPEN_FAILURE) {
-              buffer?.push({
-                type: "error",
-                message: explainOpenFailure(detailRef.current),
-              });
-              return;
-            }
-            buffer?.push(event);
+            buffer?.push(normalizeEvent(event));
           },
           onClosed: () => {
             if (disposed) return;

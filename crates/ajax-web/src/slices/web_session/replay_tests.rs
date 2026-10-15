@@ -119,3 +119,79 @@ fn filtered_permissions_keep_absolute_cursors() {
     assert_eq!(envelopes[1].cursor, 2);
     assert_eq!(envelopes[2].cursor, 3);
 }
+
+#[test]
+fn reset_snapshot_carries_retained_transcript_in_cursor_order() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    assert_eq!(transcript.len(), 2);
+    assert_eq!(transcript[0].cursor, 0);
+    assert_eq!(transcript[1].cursor, 1);
+    assert_eq!(transcript, replayed);
+}
+
+#[test]
+fn resumable_snapshot_omits_transcript_field() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![note("one"), note("two")]);
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(1),
+        SessionChrome::default(),
+    );
+    assert!(!snapshot.reset);
+    assert!(snapshot.transcript.is_none());
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].cursor, 1);
+}
+
+#[test]
+fn empty_reset_snapshot_carries_empty_transcript() {
+    let log = TranscriptLog::default();
+    let (snapshot, replayed) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    assert_eq!(snapshot.transcript, Some(Vec::new()));
+    assert!(replayed.is_empty());
+}
+
+#[test]
+fn reset_transcript_preserves_retained_log_floor() {
+    let mut log = TranscriptLog::default();
+    log.append(
+        (0..MAX_LOG_EVENTS + 3)
+            .map(|i| note(&i.to_string()))
+            .collect(),
+    );
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        Some(0),
+        SessionChrome::default(),
+    );
+    assert!(snapshot.reset);
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    assert_eq!(transcript.len(), MAX_LOG_EVENTS);
+    assert_eq!(transcript.first().map(|e| e.cursor), Some(log.dropped));
+}

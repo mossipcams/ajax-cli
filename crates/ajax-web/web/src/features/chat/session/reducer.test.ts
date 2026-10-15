@@ -63,6 +63,25 @@ const toolCall = (
 });
 
 describe("ready settles the turn state", () => {
+  it("applies an initial transcript batch as one reducer action", () => {
+    const state = reduceChatSession(initialChatSessionReducerState, {
+      type: "events",
+      events: [
+        { type: "session_ready", busy: false, reset: true },
+        { type: "user_message", text: "Question", itemId: "u1" },
+        { type: "agent_message", text: "Answer", itemId: "a1" },
+        { type: "turn_end", stopReason: "end_turn" },
+        { type: "session_ready", busy: false, reset: false },
+      ],
+    });
+
+    expect(state.view.conversation).toMatchObject([
+      { kind: "prose", role: "user", text: "Question" },
+      { kind: "prose", role: "agent", text: "Answer" },
+    ]);
+    expect(state.view.turn.busy).toBe(false);
+  });
+
   it("clears a busy thread that replayed history left set", () => {
     const busy = reduceWire(initialChatSessionReducerState, agentMsg("working"));
     expect(busy.view.turn.busy).toBe(true);

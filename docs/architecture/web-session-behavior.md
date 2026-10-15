@@ -83,6 +83,15 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   restore deadline; the WebSocket startup wait covers both budgets, so a slow
   replay cannot be abandoned after 46 seconds. A successful `session/resume`
   or `session/load` never sends `session/new`.
+- Protocol v2 reset snapshots carry an optional `transcript` array of retained
+  event envelopes in chronological cursor order. The snapshot `cursor` remains
+  the next cursor after that retained projection. An empty reset transcript is
+  encoded as `[]`; absence means the peer does not support inline hydration.
+  The browser applies a present transcript and the snapshot ready state in one
+  reducer action, advances directly to the snapshot cursor, and discards the
+  matching replay envelopes that follow. The host continues to emit those
+  envelopes so older browsers remain compatible. Resumable `reset: false`
+  reconnects omit `transcript` and keep incremental replay semantics.
 - Restore fallback is limited to explicit RPC rejection: a rejected
   `session/resume` may try `session/load`, but a resume timeout or transport
   loss kills that ACP child and reports a typed

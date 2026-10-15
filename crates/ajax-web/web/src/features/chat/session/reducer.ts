@@ -41,6 +41,8 @@ export function reduceChatSession(
       return applyElicitationAnswered(state);
     case "event":
       return applyChatSessionEvent(state, action.event);
+    case "events":
+      return action.events.reduce(applyChatSessionEvent, state);
   }
 }
 
