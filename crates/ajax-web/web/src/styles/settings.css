@@ -140,6 +140,14 @@
   padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 16px;
   padding-bottom: calc(48px + env(safe-area-inset-bottom));
   overflow-y: auto;
+  /* Shell lock for the training page: vertical scroll stays local to the
+     modal; horizontal press-and-drag must not pan/move the page.
+     overflow-x is hidden (not auto, which overflow-y:auto would imply) so the
+     modal can never become horizontally scrollable no matter where a touch
+     starts — child touch-action values stay `auto` and don't inherit. */
+  overflow-x: hidden;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   background: var(--paper);
 }
 
