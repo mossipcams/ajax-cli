@@ -108,6 +108,8 @@ export interface ChatModelState {
 
 export interface ChatSessionView {
   conversation: ConversationItem[];
+  /** Earliest loaded event cursor and the server retention floor; hasEarlierOnServer is `from > floor`. */
+  serverHistory?: { from: number; floor: number };
   turn: ChatTurnState;
   permission: ChatPermissionState;
   elicitation: ChatElicitationState;
@@ -154,7 +156,9 @@ export type ChatSessionEvent =
   | { type: "turn_end"; stopReason?: string }
   | { type: "session_error"; message: string }
   | { type: "session_ready"; busy?: boolean; reset?: boolean }
-  | { type: "prompt_accepted" };
+  | { type: "prompt_accepted" }
+  | { type: "history_bounds"; from: number; floor: number }
+  | { type: "prepend"; events: ChatSessionEvent[]; from: number };
 
 export type ChatSessionAction =
   | { type: "event"; event: ChatSessionEvent }

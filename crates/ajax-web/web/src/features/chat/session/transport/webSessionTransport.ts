@@ -32,6 +32,7 @@ export function connectWebSessionTransport(
   let replayEndCursor: number | undefined;
   let replaySettledEvent: WebSessionServerEvent | undefined;
   let inlineReplayCursors: Set<number> | undefined;
+  let inlineTranscriptFloor: number | undefined;
   const stored = readOutbox(handle);
   const pendingPrompts = stored.filter(frameFits);
   if (pendingPrompts.length !== stored.length) writeOutbox(handle, pendingPrompts);
@@ -58,7 +59,11 @@ export function connectWebSessionTransport(
       const consumesInlineTranscript =
         inlineTranscript !== undefined && callbacks.onSnapshot !== undefined;
       if (consumesInlineTranscript) {
+        // Tail snapshots only include the newest events: envelopes matching a
+        // transcript cursor are exact dedupes, and replay below the floor is
+        // stale. Socket-local errors (cursor 0) are exempt from the floor.
         inlineReplayCursors = new Set(inlineTranscript.map(({ cursor }) => cursor));
+        inlineTranscriptFloor = frame.snapshot.transcriptFrom;
         callbacks.onCursorAdvance?.(frame.snapshot.cursor);
         for (const { event: transcriptEvent } of inlineTranscript) {
           acknowledgePrompt(transcriptEvent);
@@ -122,6 +127,10 @@ export function connectWebSessionTransport(
       callbacks.onEvent(parsed);
       return;
     }
+    if (inlineTranscriptFloor !== undefined && frame.cursor < inlineTranscriptFloor) {
+      acknowledgePrompt(parsed);
+      return;
+    }
     callbacks.onCursorAdvance?.(frame.cursor + 1);
     acknowledgePrompt(parsed);
     callbacks.onEvent(parsed);
@@ -154,7 +163,9 @@ export function connectWebSessionTransport(
     });
   }
 
-  socket = platform.openSocket(sessionSocketUrl(handle, model, resumeCursor));
+  socket = platform.openSocket(
+    sessionSocketUrl(handle, model, resumeCursor, callbacks.onSnapshot !== undefined),
+  );
   socket.addEventListener("message", messageListener);
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
@@ -251,6 +262,7 @@ export function connectWebSessionTransport(
       try {
         socket?.close();
       } catch {
+        // A failing close() during disposal is non-fatal; the socket will GC.
       }
       socket = undefined;
     },

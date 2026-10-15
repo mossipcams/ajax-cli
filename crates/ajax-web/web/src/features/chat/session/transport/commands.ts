@@ -2,7 +2,12 @@ import type { WebSessionSocket, WebSessionTransportPlatform } from "./contracts"
 
 const OPEN_READY_STATE = 1;
 
-export function sessionSocketUrl(handle: string, model?: string, cursor?: number): string {
+export function sessionSocketUrl(
+  handle: string,
+  model?: string,
+  cursor?: number,
+  tailSnapshot?: boolean,
+): string {
   const protocol =
     typeof location !== "undefined" && location.protocol === "https:" ? "wss:" : "ws:";
   const host = typeof location !== "undefined" ? location.host : "localhost";
@@ -10,6 +15,7 @@ export function sessionSocketUrl(handle: string, model?: string, cursor?: number
   const params = new URLSearchParams();
   if (model) params.set("model", model);
   if (cursor !== undefined) params.set("cursor", String(cursor));
+  if (tailSnapshot === true) params.set("snapshotTail", "1");
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }
