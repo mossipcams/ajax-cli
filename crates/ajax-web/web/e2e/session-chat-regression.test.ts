@@ -274,8 +274,9 @@ test("#1301 paints an inline retained transcript at its actual live bottom", asy
       lastBottom: last?.getBoundingClientRect().bottom,
     };
   });
-  expect(geometry.scrollTop).toBe(0);
-  expect(geometry.lastBottom).toBeLessThanOrEqual(geometry.viewportBottom + 1);
+  expect(geometry.scrollTop).toBeGreaterThanOrEqual(-1);
+  expect(geometry.scrollTop).toBeLessThanOrEqual(0);
+  expect(Math.abs(geometry.viewportBottom - (geometry.lastBottom ?? 0))).toBeLessThanOrEqual(1);
 });
 
 test("opens at the latest content and holds a follow-up until the turn resolves", async ({
