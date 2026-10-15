@@ -9,6 +9,7 @@ import {
 import {
   SESSION_PROTOCOL_VERSION,
   type ParsedServerFrame,
+  type SessionTranscriptEvent,
   type WebSessionServerEvent,
 } from "./contracts";
 
@@ -193,6 +194,39 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
   }
 }
 
+function parseEventFrame(payload: Record<string, unknown>): SessionTranscriptEvent | null {
+  if (
+    payload.type !== "event" ||
+    payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+    typeof payload.cursor !== "number" ||
+    !Number.isSafeInteger(payload.cursor) ||
+    payload.cursor < 0 ||
+    !isRecord(payload.payload)
+  ) {
+    return null;
+  }
+  const event = parsePayload(payload.payload);
+  return event ? { cursor: payload.cursor, event } : null;
+}
+
+function parseSnapshotTranscript(
+  payload: Record<string, unknown>,
+  snapshotCursor: number,
+): SessionTranscriptEvent[] | null | undefined {
+  if (payload.transcript === undefined) return undefined;
+  if (!Array.isArray(payload.transcript)) return null;
+  const transcript: SessionTranscriptEvent[] = [];
+  let previousCursor = -1;
+  for (const value of payload.transcript) {
+    if (!isRecord(value)) return null;
+    const parsed = parseEventFrame(value);
+    if (!parsed || parsed.cursor <= previousCursor || parsed.cursor >= snapshotCursor) return null;
+    previousCursor = parsed.cursor;
+    transcript.push(parsed);
+  }
+  return transcript;
+}
+
 export function parseServerFrame(raw: string): ParsedServerFrame | null {
   try {
     const payload = JSON.parse(raw) as unknown;
@@ -202,6 +236,8 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       if (
         payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
         typeof payload.cursor !== "number" ||
+        !Number.isSafeInteger(payload.cursor) ||
+        payload.cursor < 0 ||
         typeof payload.model !== "string" ||
         typeof payload.reset !== "boolean" ||
         (payload.turnState !== "idle" && payload.turnState !== "busy")
@@ -243,6 +279,8 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
       const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
+      const transcript = parseSnapshotTranscript(payload, payload.cursor);
+      if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
       return {
         kind: "snapshot",
         snapshot: {
@@ -258,21 +296,14 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
+          ...(transcript !== undefined ? { transcript } : {}),
         },
       };
     }
 
     if (payload.type === "event") {
-      if (
-        payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
-        typeof payload.cursor !== "number" ||
-        !isRecord(payload.payload)
-      ) {
-        return null;
-      }
-      const event = parsePayload(payload.payload);
-      if (!event) return null;
-      return { kind: "event", cursor: payload.cursor, event };
+      const parsed = parseEventFrame(payload);
+      return parsed ? { kind: "event", ...parsed } : null;
     }
 
     const legacy = parsePayload(payload);

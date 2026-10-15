@@ -9,10 +9,7 @@ import {
 } from "react";
 import {
   SESSION_PIN_THRESHOLD_PX,
-  afterTranscriptLayoutSettles,
-  captureTranscriptGeometry,
   pinTranscriptToLiveEdge,
-  restoreTranscriptGeometry,
   transcriptAtLiveEdge,
 } from "@/shared/lib/sessionViewport";
 import {
@@ -35,10 +32,6 @@ interface Options {
   sessionKey: string;
   layoutTransitionRef?: RefObject<boolean>;
   historyScroll?: HistoryScrollControl;
-}
-
-function liveEdgeTarget(node: HTMLDivElement) {
-  return captureTranscriptGeometry(node);
 }
 
 export function useChatScroll({
@@ -74,24 +67,12 @@ export function useChatScroll({
     pinnedRef.current = true;
   }, []);
 
-  const scrollToLiveEdge = useCallback((node: HTMLDivElement, settle = false) => {
-    const target = liveEdgeTarget(node);
+  // Reversed coords: the live edge is scrollTop = 0, which column-reverse
+  // placement gives natively; pinning is the only correction needed.
+  const scrollToLiveEdge = useCallback((node: HTMLDivElement) => {
     ignoreScrollIntentRef.current = true;
     pinTranscriptToLiveEdge(node);
     ignoreScrollIntentRef.current = false;
-    if (!settle) {
-      return () => {};
-    }
-    return afterTranscriptLayoutSettles(
-      node,
-      { ...target, atBottom: true },
-      () => {
-        ignoreScrollIntentRef.current = true;
-        restoreTranscriptGeometry(node, { ...target, atBottom: true });
-        ignoreScrollIntentRef.current = false;
-      },
-      { ignoreProgrammaticScroll: ignoreScrollIntentRef, pinnedRef },
-    );
   }, []);
 
   const scrollToLatest = useCallback(() => {
@@ -158,7 +139,7 @@ export function useChatScroll({
     autoLoadRef.current = { armed: false, lastLoadAt: 0 };
     prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
     pendingTopRestoreRef.current = null;
-    return scrollToLiveEdge(node, true);
+    scrollToLiveEdge(node);
   }, [sessionKey, scrollToLiveEdge, threadRef]);
 
   useLayoutEffect(() => {

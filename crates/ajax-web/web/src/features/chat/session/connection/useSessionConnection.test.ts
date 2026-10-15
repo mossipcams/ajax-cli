@@ -169,6 +169,68 @@ describe("useSessionConnection", () => {
     unmount();
   });
 
+  it("commits an inline snapshot transcript with one reducer dispatch", () => {
+    const dispatched: ChatSessionAction[] = [];
+    const transport: webSessionTransport.WebSessionTransport = {
+      sendPrompt: vi.fn(() => "prompt-1"),
+      sendCancel: vi.fn(),
+      setModel: vi.fn(),
+      setConfigOption: vi.fn(),
+      respondPermission: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+      (_handle, nextCallbacks) => {
+        callbacks.push(nextCallbacks);
+        return transport;
+      },
+    );
+
+    const { unmount } = renderHook(() =>
+      useSessionConnection({
+        ...hookOptions(),
+        dispatch: (action) => dispatched.push(action),
+      }),
+    );
+
+    act(() => {
+      callbacks[0]?.onSnapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 3,
+        model: "auto",
+        turnState: "idle",
+        reset: true,
+        transcript: [
+          {
+            cursor: 0,
+            event: { type: "message", role: "user", text: "Question", itemId: "u1" },
+          },
+          {
+            cursor: 1,
+            event: { type: "message", role: "agent", text: "Answer", itemId: "a1" },
+          },
+          { cursor: 2, event: { type: "turn_end", stopReason: "end_turn" } },
+        ],
+      });
+    });
+
+    expect(dispatched).toEqual([
+      {
+        type: "events",
+        events: [
+          { type: "session_ready", busy: false, reset: true },
+          { type: "user_message", text: "Question", itemId: "u1", messageId: undefined },
+          { type: "agent_message", text: "Answer", itemId: "a1", messageId: undefined },
+          { type: "turn_end", stopReason: "end_turn" },
+          { type: "session_ready", busy: false, reset: false },
+        ],
+      },
+    ]);
+    unmount();
+  });
+
   it("does not reset reducer on reconnect when snapshot reset is false", () => {
     vi.useFakeTimers();
     const dispatched: ChatSessionAction[] = [];

@@ -148,7 +148,13 @@ upgrade is transport-only: runtime routes resolve the core-backed attach plan,
 acquire a `TaskSessionDirectory` handle, and delegate to
 `slices::web_session::ws_bridge`, which forwards typed browser commands and
 protocol v2 envelopes only. Optional `?cursor=` on reconnect requests incremental
-replay; cold load omits it for full replay.
+replay; cold load omits it for full replay. A reset snapshot may include the
+retained transcript as chronological event envelopes. The browser commits that
+inline projection atomically with ready state, advances to the snapshot cursor,
+and ignores the identical compatibility envelopes that follow, so its first
+transcript paint is already at the live bottom. Resumable snapshots omit the
+inline transcript. The host still owns the transcript and cursor; the browser
+keeps only the current projection.
 
 The adapter uses the official Rust `agent-client-protocol` runtime for JSON-RPC
 framing, request correlation, and typed ACP messages. It initializes with stable

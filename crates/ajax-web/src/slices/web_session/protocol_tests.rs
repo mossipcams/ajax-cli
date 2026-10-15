@@ -58,3 +58,44 @@ fn v1_message_records_without_item_id_deserialize() {
         SessionServerEvent::Message { text, item_id, .. } if text == "legacy" && item_id.is_empty()
     ));
 }
+
+#[test]
+fn snapshot_transcript_field_is_omitted_when_none_and_present_when_set() {
+    let base = SessionSnapshot::new(
+        7,
+        "composer-2.5".to_string(),
+        false,
+        true,
+        None,
+        None,
+        SessionChrome::default(),
+    );
+    let omitted = serde_json::to_value(&base).unwrap();
+    assert!(omitted.get("transcript").is_none());
+
+    let empty = base.clone().with_transcript(Vec::new());
+    let json = serde_json::to_value(&empty).unwrap();
+    assert_eq!(json["transcript"], serde_json::json!([]));
+
+    let legacy: SessionSnapshot = serde_json::from_value(serde_json::json!({
+        "type": "snapshot",
+        "protocolVersion": SESSION_PROTOCOL_VERSION,
+        "cursor": 1,
+        "model": "m",
+        "turnState": "idle",
+        "reset": true
+    }))
+    .unwrap();
+    assert!(legacy.transcript.is_none());
+
+    let envelope = SessionEventEnvelope::new(
+        3,
+        SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".to_string()),
+        },
+    );
+    let mut value = serde_json::to_value(&base).unwrap();
+    value["transcript"] = serde_json::json!([serde_json::to_value(&envelope).unwrap()]);
+    let parsed: SessionSnapshot = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.transcript, Some(vec![envelope]));
+}

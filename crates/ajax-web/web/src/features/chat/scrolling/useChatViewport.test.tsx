@@ -71,7 +71,8 @@ describe("useChatViewport", () => {
     const row = document.createElement("article");
     inner.appendChild(row);
     thread.appendChild(inner);
-    stubScrollMetrics(thread, 1200, 400, pinned ? 800 : 120);
+    // Reversed coords: pinned Bottom is scrollTop = 0; history reads are negative.
+    stubScrollMetrics(thread, 1200, 400, pinned ? 0 : -120);
 
     const composer = document.createElement("textarea");
     Object.defineProperty(composer, "offsetHeight", { configurable: true, value: 44 });
@@ -109,7 +110,7 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    stubScrollMetrics(thread, 1200, 400, 400);
+    stubScrollMetrics(thread, 1200, 400, -400);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = false;
@@ -130,7 +131,7 @@ describe("useChatViewport", () => {
 
     Object.defineProperty(thread, "clientHeight", { configurable: true, value: 250 });
     Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 1200 });
-    thread.scrollTop = 800;
+    thread.scrollTop = 0; // Reversed coords: the live edge is scrollTop = 0.
     syncTranscriptLayoutRects(thread);
 
     keyboardState.keyboardOpen = false;
@@ -160,7 +161,7 @@ describe("useChatViewport", () => {
 
   it("does not adjust scrollTop during settle when reading history", () => {
     const { view, thread } = mountHook(false);
-    stubScrollMetrics(thread, 1200, 400, 120);
+    stubScrollMetrics(thread, 1200, 400, -120);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -173,29 +174,30 @@ describe("useChatViewport", () => {
     view.rerender();
 
     Object.defineProperty(thread, "clientHeight", { configurable: true, value: 500 });
-    thread.scrollTop = 60;
+    thread.scrollTop = -60;
     syncTranscriptLayoutRects(thread);
 
     act(() => {
       const cb = rafQueue.shift();
       cb?.(0);
-      expect(thread.scrollTop).toBe(60);
+      expect(thread.scrollTop).toBe(-60);
     });
 
     flushLayoutSettle(4);
-    expect(thread.scrollTop).toBe(120);
+    // Restore target is the captured negative offset; no height delta applies.
+    expect(thread.scrollTop).toBe(-120);
   });
 
   it("preserves scrollTop when reading history across keyboard close", () => {
     const { view, thread } = mountHook(false);
-    stubScrollMetrics(thread, 1200, 400, 120);
+    stubScrollMetrics(thread, 1200, 400, -120);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
     keyboardState.keyboardHeight = 300;
     view.rerender();
 
-    thread.scrollTop = 60;
+    thread.scrollTop = -60;
     syncTranscriptLayoutRects(thread);
     thread.dispatchEvent(new Event("scroll"));
 
@@ -206,19 +208,22 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    expect(thread.scrollTop).toBe(120);
+    // Restored via beforeScrollTop - scrollHeightDelta (-120 - 0).
+    expect(thread.scrollTop).toBe(-120);
   });
 
   it("ignores Safari resize-generated scroll during keyboard transition", () => {
     const { view, thread } = mountHook(false);
-    stubScrollMetrics(thread, 1200, 400, 200);
+    stubScrollMetrics(thread, 1200, 400, -200);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
     keyboardState.keyboardHeight = 300;
     view.rerender();
 
-    thread.scrollTop = 999;
+    // Resize-generated scroll: distance from the live edge grows by the
+    // keyboard's 367px viewport shrink, so -200 settles to -567.
+    thread.scrollTop = -567;
     syncTranscriptLayoutRects(thread);
     thread.dispatchEvent(new Event("scroll"));
 
@@ -229,12 +234,13 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    expect(thread.scrollTop).toBe(200);
+    expect(thread.scrollTop).toBe(-200);
   });
 
   it("restores pre-keyboard scroll when pinnedRef drifts true during keyboard (#930)", () => {
     const { view, thread, pinnedRef } = mountHook(false);
-    stubScrollMetrics(thread, 13108, 400, 6685);
+    // 6585px away from the live edge in reversed coords.
+    stubScrollMetrics(thread, 13108, 400, -6585);
     thread.dispatchEvent(new Event("scroll"));
 
     keyboardState.keyboardOpen = true;
@@ -248,7 +254,8 @@ describe("useChatViewport", () => {
     view.rerender();
     flushLayoutSettle();
 
-    expect(thread.scrollTop).toBe(6685);
+    // beforeScrollTop - scrollHeightDelta (-6585 - 0): no content delta.
+    expect(thread.scrollTop).toBe(-6585);
   });
 
   it("applies surface paddingBottom on iOS Safari keyboard band", () => {
@@ -269,7 +276,7 @@ describe("useChatViewport", () => {
     inner.className = "session-thread-inner";
     inner.appendChild(document.createElement("article"));
     thread.appendChild(inner);
-    stubScrollMetrics(thread, 1200, 400, 800);
+    stubScrollMetrics(thread, 1200, 400, 0);
 
     const composer = document.createElement("textarea");
     Object.defineProperty(composer, "offsetHeight", { configurable: true, value: 44 });

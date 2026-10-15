@@ -187,6 +187,98 @@ async function mockHeldTurn(page: Page) {
   });
 }
 
+async function mockInlineTranscriptSession(page: Page) {
+  const transcript: TranscriptEntry[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    transcript.push({
+      cursor: transcript.length,
+      event: { type: "message", role: "user", text: `Earlier question ${i}`, itemId: `u${i}` },
+    });
+    transcript.push({
+      cursor: transcript.length,
+      event: {
+        type: "message",
+        role: "agent",
+        text: `Earlier answer ${i}. ${"Padding to overflow the transcript. ".repeat(4)}`,
+        itemId: `a${i}`,
+      },
+    });
+  }
+  transcript.push({
+    cursor: transcript.length,
+    event: { type: "turn_end", stopReason: "end_turn" },
+  });
+
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(
+      sessionSnapshotJson({
+        cursor: transcript.length,
+        model: "auto",
+        turnState: "idle",
+        reset: true,
+        transcript: transcript.map(({ cursor, event }) =>
+          JSON.parse(sessionEventJson(cursor, event)) as Record<string, unknown>,
+        ),
+      }),
+    );
+    transcript.forEach((entry, index) => {
+      setTimeout(() => socket.send(sessionEventJson(entry.cursor, entry.event)), 25 * (index + 1));
+    });
+  });
+}
+
+test("#1301 paints an inline retained transcript at its actual live bottom", async ({ page }) => {
+  await mockFetch(page, {
+    __detail__: { ...DETAIL_FIXTURE, agent: "Cursor", session_capable: true },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    const observer = new MutationObserver(() => {
+      const state = window as unknown as { __firstAgentText?: string };
+      if (state.__firstAgentText) return;
+      const messages = document.querySelectorAll('[data-testid="session-message-agent"]');
+      const last = messages.item(messages.length - 1);
+      if (last?.textContent) state.__firstAgentText = last.textContent;
+    });
+    const start = () => {
+      if (!document.documentElement) {
+        requestAnimationFrame(start);
+        return;
+      }
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    };
+    start();
+  });
+  await mockInlineTranscriptSession(page);
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-message-agent")).toHaveCount(12);
+  await expect(page.getByTestId("session-message-agent").last()).toContainText(
+    "Earlier answer 11",
+  );
+
+  const firstAgentText = await page.evaluate(
+    () => (window as unknown as { __firstAgentText?: string }).__firstAgentText,
+  );
+  expect(firstAgentText).toContain("Earlier answer 11");
+  const geometry = await page.getByTestId("session-thread").evaluate((thread) => {
+    const messages = thread.querySelectorAll('[data-testid="session-message-agent"]');
+    const last = messages.item(messages.length - 1);
+    return {
+      scrollTop: thread.scrollTop,
+      viewportBottom: thread.getBoundingClientRect().bottom,
+      lastBottom: last?.getBoundingClientRect().bottom,
+    };
+  });
+  expect(geometry.scrollTop).toBeGreaterThanOrEqual(-1);
+  expect(geometry.scrollTop).toBeLessThanOrEqual(0);
+  expect(Math.abs(geometry.viewportBottom - (geometry.lastBottom ?? 0))).toBeLessThanOrEqual(1);
+});
+
 test("opens at the latest content and holds a follow-up until the turn resolves", async ({
   page,
 }) => {
@@ -220,8 +312,9 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
       .__threadSamples;
     return {
       overflowed: samples.filter((sample) => sample.overflow > 48).length,
-      stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < sample.overflow - 48)
-        .length,
+      // Reversed container: live edge is scrollTop 0; straddled means scrolled
+      // more than the 48px threshold toward history (negative) while overflowed.
+      stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < -48).length,
     };
   });
   expect(strandedFrames.overflowed).toBeGreaterThan(0);

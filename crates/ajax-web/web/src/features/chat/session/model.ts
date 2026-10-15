@@ -158,6 +158,7 @@ export type ChatSessionEvent =
 
 export type ChatSessionAction =
   | { type: "event"; event: ChatSessionEvent }
+  | { type: "events"; events: ChatSessionEvent[] }
   | { type: "prompt"; text: string }
   | { type: "decided" }
   | { type: "elicitation_answered" }
