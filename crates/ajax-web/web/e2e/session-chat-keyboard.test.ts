@@ -253,8 +253,12 @@ test.describe("Session chat keyboard geometry (#877)", () => {
       ) as HTMLElement | undefined;
       if (!mid) throw new Error("expected mid-history Line 41 message");
 
-      const lineTop = mid.offsetTop;
-      thread.scrollTop = -(Math.max(0, lineTop - Math.floor(thread.clientHeight / 3)));
+      // Reversed column container: offsetTop is not directly mappable to the
+      // negative scrollTop range, so adjust from measured viewport positions.
+      const threadRect0 = thread.getBoundingClientRect();
+      const midRect0 = mid.getBoundingClientRect();
+      const desiredTop = threadRect0.top + Math.floor(thread.clientHeight / 3);
+      thread.scrollTop += midRect0.top - desiredTop;
       thread.dispatchEvent(new Event("scroll", { bubbles: false }));
 
       const threadRect = thread.getBoundingClientRect();
