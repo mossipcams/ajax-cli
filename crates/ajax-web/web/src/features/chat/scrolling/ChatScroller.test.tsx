@@ -93,7 +93,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1400, 400, 800);
+    stubScrollMetrics(thread, 1400, 400, -200);
 
     send({ type: "message", role: "agent", text: "Streaming chunk", itemId: "a2" });
     expectThreadAtLiveEdge(thread);
@@ -103,7 +103,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2000, 400, 120);
+    stubScrollMetrics(thread, 2000, 400, -1480);
     fireEvent.scroll(thread);
 
     const before = thread.scrollTop;
@@ -127,7 +127,7 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1400, 400, 800);
+    stubScrollMetrics(thread, 1400, 400, -200);
 
     act(() => {
       for (const callback of resizeCallbacks) {
@@ -153,7 +153,7 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1500, 400, 800);
+    stubScrollMetrics(thread, 1500, 400, -300);
 
     act(() => {
       mutationCallbacks.at(-1)?.([], {} as MutationObserver);
@@ -162,17 +162,20 @@ describe("ChatScroller integration", () => {
     expectThreadAtLiveEdge(thread);
   });
 
-  it("uses a chronological transcript column, not column-reverse", () => {
+  it("anchors the live edge via a column-reverse outer thread", () => {
     mountChat();
     const thread = screen.getByTestId("session-thread");
     const inner = screen.getByTestId("session-thread-inner");
     expect(thread).toContainElement(inner);
     const rule = stylesSource.match(/\.session-thread\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(rule).not.toMatch(/flex-direction:\s*column-reverse/);
-    expect(rule).toMatch(/flex-direction:\s*column/);
+    expect(rule).toMatch(/flex-direction:\s*column-reverse/);
     const innerRule =
       stylesSource.match(/\.session-thread-inner\s*\{([^}]*)\}/)?.[1] ?? "";
+    // The inner column stays chronological (oldest at top) and unpinned, so
+    // the reversed outer container is what makes scrollTop = 0 the live edge.
     expect(innerRule).not.toMatch(/column-reverse/);
+    expect(innerRule).toMatch(/flex-direction:\s*column/);
+    expect(innerRule).toMatch(/flex:\s*0 0 auto/);
   });
 });
 
@@ -190,7 +193,7 @@ describe("Jump to latest", () => {
 
   function scrollAway() {
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2000, 400, 120);
+    stubScrollMetrics(thread, 2000, 400, -1480);
     fireEvent.scroll(thread);
     return thread;
   }
@@ -263,13 +266,13 @@ describe("task open positioning (#1065)", () => {
   it("re-pins to the live edge when session identity changes on task open", () => {
     const { rerender } = mountChat({ detailStatus: "loading" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2400, 400, 80);
+    stubScrollMetrics(thread, 2400, 400, -1920);
     fireEvent.scroll(thread);
 
     for (let i = 0; i < 4; i += 1) {
       send({ type: "message", role: "agent", text: `Earlier ${i}`, itemId: `a${i}` });
     }
-    scrollThreadToHistory(thread, 80);
+    scrollThreadToHistory(thread, -1920);
     fireEvent.scroll(thread);
     expect(screen.getByTestId("session-jump")).toBeInTheDocument();
 

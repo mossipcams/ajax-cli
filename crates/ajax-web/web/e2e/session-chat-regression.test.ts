@@ -220,8 +220,9 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
       .__threadSamples;
     return {
       overflowed: samples.filter((sample) => sample.overflow > 48).length,
-      stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < sample.overflow - 48)
-        .length,
+      // Reversed container: live edge is scrollTop 0; straddled means scrolled
+      // more than the 48px threshold toward history (negative) while overflowed.
+      stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < -48).length,
     };
   });
   expect(strandedFrames.overflowed).toBeGreaterThan(0);
