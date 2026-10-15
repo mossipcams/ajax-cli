@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { ConversationItem } from "../session/public";
-import { DEFAULT_HISTORY_WINDOW } from "./historyWindow";
+import { DEFAULT_HISTORY_WINDOW, HISTORY_REVEAL_BATCH, snapRevealStart } from "./historyWindow";
 import { useHistoryWindow } from "./useHistoryWindow";
 
 const userProse = (id: string): ConversationItem => ({
@@ -125,5 +125,66 @@ describe("useHistoryWindow", () => {
     expect(result.current.visibleItems[0]?.id).toBe(
       items[items.length - result.current.visibleItems.length]?.id,
     );
+  });
+});
+
+
+describe("useHistoryWindow server prepends", () => {
+  it("bounds the first prepend render to one batch snapped to a user turn", () => {
+    const current = [userProse("current-user"), agentProse("current-agent")];
+    const older = [...buildLongTranscript(60), userProse("older-last")];
+    const renders: number[] = [];
+    const { result, rerender } = renderHook(({ rows, from }) => {
+      const window = useHistoryWindow(rows, "task", from);
+      renders.push(window.visibleItems.length);
+      return window;
+    }, { initialProps: { rows: current, from: 200 } });
+    renders.length = 0;
+    const rows = [...older, ...current];
+    rerender({ rows, from: 20 });
+    const expectedStart = snapRevealStart(rows, older.length, HISTORY_REVEAL_BATCH);
+    expect(result.current.windowStart).toBe(expectedStart);
+    expect(result.current.visibleItems[0]).toMatchObject({ kind: "prose", role: "user" });
+    expect(result.current.visibleItems.slice(-current.length)).toEqual(current);
+    expect(result.current.windowGeneration).toBe(1);
+    expect(renders.every((count) => count <= current.length + HISTORY_REVEAL_BATCH)).toBe(true);
+    expect(result.current.hasEarlier).toBe(true);
+    act(() => expect(result.current.revealEarlier()).toBeGreaterThan(0));
+    expect(result.current.windowStart).toBeLessThan(expectedStart);
+  });
+
+  it("bounds a server prepend into an empty loaded transcript", () => {
+    const { result, rerender } = renderHook(({ rows, from }) => useHistoryWindow(rows, "task", from), {
+      initialProps: { rows: [] as ConversationItem[], from: 200 },
+    });
+    const rows = buildLongTranscript(120);
+    rerender({ rows, from: 0 });
+    expect(result.current.visibleItems).toEqual(rows.slice(-HISTORY_REVEAL_BATCH));
+    expect(result.current.hasEarlier).toBe(true);
+  });
+
+  it("preserves live tail growth when a server page is prepended", () => {
+    const current = [userProse("current-user"), agentProse("current-agent")];
+    const { result, rerender } = renderHook(({ rows, from }) => useHistoryWindow(rows, "task", from), {
+      initialProps: { rows: current, from: 200 },
+    });
+    const live = [userProse("live-user"), agentProse("live-agent")];
+    rerender({ rows: [...current, ...live], from: 200 });
+    const older = buildLongTranscript(100);
+    rerender({ rows: [...older, ...current, ...live], from: 0 });
+    expect(result.current.visibleItems.length).toBe(HISTORY_REVEAL_BATCH + current.length + live.length);
+    expect(result.current.visibleItems.slice(-4)).toEqual([...current, ...live]);
+  });
+
+  it("resets normally when a different session has a lower history bound", () => {
+    const current = [userProse("current-user")];
+    const { result, rerender } = renderHook(({ rows, from, key }) => useHistoryWindow(rows, key, from), {
+      initialProps: { rows: current, from: 200, key: "task-a" },
+    });
+    const rows = [...buildLongTranscript(100), ...current];
+    rerender({ rows, from: 0, key: "task-b" });
+    expect(result.current.visibleItems.length).toBeGreaterThan(HISTORY_REVEAL_BATCH);
+    expect(result.current.visibleItems.length).toBeLessThanOrEqual(DEFAULT_HISTORY_WINDOW);
+    expect(result.current.windowGeneration).toBe(0);
   });
 });

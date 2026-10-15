@@ -12,7 +12,7 @@ import {
   type WebSessionTransport,
 } from "../transport/public";
 import { explainOpenFailure } from "../errors";
-import type { ChatSessionAction } from "../model";
+import type { ChatSessionAction, ChatSessionEvent } from "../model";
 import { projectWireEvent } from "../projectWireInput";
 import {
   MAX_HANDSHAKE_ATTEMPTS,
@@ -137,7 +137,7 @@ export function useSessionConnection({
         busy: snapshot.turnState === "busy",
         reset: snapshot.reset,
       };
-      const projected = [
+      const projected: ChatSessionEvent[] = [
         ready,
         ...snapshot.transcript.map(({ event }) => event),
         { ...ready, reset: false },
@@ -145,6 +145,16 @@ export function useSessionConnection({
         const next = projectWireEvent(normalizeEvent(event));
         return next ? [next] : [];
       });
+      if (
+        typeof snapshot.transcriptFrom === "number" &&
+        typeof snapshot.transcriptFloor === "number"
+      ) {
+        projected.push({
+          type: "history_bounds",
+          from: snapshot.transcriptFrom,
+          floor: snapshot.transcriptFloor,
+        });
+      }
       dispatch({ type: "events", events: projected });
     };
 

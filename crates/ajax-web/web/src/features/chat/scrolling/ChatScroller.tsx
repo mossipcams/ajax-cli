@@ -17,6 +17,7 @@ interface ChatScrollerContextValue {
   onThreadScroll: ReturnType<typeof useChatScroll>["onThreadScroll"];
   behind: boolean;
   hasEarlier: boolean;
+  earlierError: boolean;
   loadEarlier: () => number;
 }
 
@@ -36,6 +37,7 @@ interface Props {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   activityCount?: number;
   historyScroll?: HistoryScrollControl;
+  earlierError?: boolean;
   children: ReactNode;
 }
 
@@ -45,6 +47,7 @@ export default function ChatScroller({
   composerRef,
   activityCount = 0,
   historyScroll,
+  earlierError = false,
   children,
 }: Props) {
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -77,7 +80,7 @@ export default function ChatScroller({
 
   return (
     <ChatScrollerContext.Provider
-      value={{ surfaceStyle, scrollToLatest, threadRef, onThreadScroll, behind, hasEarlier, loadEarlier }}
+      value={{ surfaceStyle, scrollToLatest, threadRef, onThreadScroll, behind, hasEarlier, earlierError, loadEarlier }}
     >
       {children}
       <ChatScrollJump unseenSteps={unseenSteps} />
@@ -86,7 +89,7 @@ export default function ChatScroller({
 }
 
 export function ChatScrollThread({ children }: { children: ReactNode }) {
-  const { threadRef, onThreadScroll, hasEarlier, loadEarlier } = useChatScroller();
+  const { threadRef, onThreadScroll, hasEarlier, earlierError, loadEarlier } = useChatScroller();
   return (
     <div
       className="session-thread"
@@ -102,7 +105,7 @@ export function ChatScrollThread({ children }: { children: ReactNode }) {
             data-testid="session-load-earlier"
             onClick={() => loadEarlier()}
           >
-            Load earlier
+            {earlierError ? "Couldn't load earlier messages — tap to retry" : "Load earlier"}
           </button>
         ) : null}
         {children}

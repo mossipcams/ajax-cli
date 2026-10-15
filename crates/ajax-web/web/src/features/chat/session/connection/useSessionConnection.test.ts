@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as webSessionTransport from "../transport/public";
 import { writeSessionModel } from "@/features/task/public";
 import type { ChatSessionAction } from "../model";
+import { initialChatSessionReducerState } from "../model";
+import { reduceChatSession } from "../reducer";
 import { initialConnectionState } from "./connectionState";
 import { useSessionConnection } from "./useSessionConnection";
 
@@ -229,6 +231,89 @@ describe("useSessionConnection", () => {
       },
     ]);
     unmount();
+  });
+
+  describe("snapshot history bounds", () => {
+    function dispatchSnapshot(overrides: Partial<webSessionTransport.SessionSnapshot>) {
+      const dispatched: ChatSessionAction[] = [];
+      const transport: webSessionTransport.WebSessionTransport = {
+        sendPrompt: vi.fn(() => "prompt-1"),
+        sendCancel: vi.fn(),
+        setModel: vi.fn(),
+        setConfigOption: vi.fn(),
+        respondPermission: vi.fn(),
+        dispose: vi.fn(),
+      };
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, callbacks) => {
+          callbacks.onSnapshot?.({
+            type: "snapshot",
+            protocolVersion: 2,
+            cursor: 105,
+            model: "auto",
+            turnState: "idle",
+            reset: true,
+            transcript: [
+              {
+                cursor: 100,
+                event: { type: "message", role: "agent", text: "Tail", itemId: "a1" },
+              },
+            ],
+            ...overrides,
+          });
+          return transport;
+        },
+      );
+      const { unmount } = renderHook(() =>
+        useSessionConnection({
+          ...hookOptions(),
+          dispatch: (action) => dispatched.push(action),
+        }),
+      );
+      unmount();
+      return dispatched;
+    }
+
+    it("appends tail history bounds in one dispatch and retains them after reset ready", () => {
+      const dispatched = dispatchSnapshot({ transcriptFrom: 100, transcriptFloor: 40 });
+
+      expect(dispatched).toEqual([
+        {
+          type: "events",
+          events: [
+            { type: "session_ready", busy: false, reset: true },
+            { type: "agent_message", text: "Tail", itemId: "a1", messageId: undefined },
+            { type: "session_ready", busy: false, reset: false },
+            { type: "history_bounds", from: 100, floor: 40 },
+          ],
+        },
+      ]);
+      const state = dispatched.reduce(reduceChatSession, initialChatSessionReducerState);
+      expect(state.view.serverHistory).toEqual({ from: 100, floor: 40 });
+    });
+
+    it.each([
+      { name: "both bounds", bounds: {} },
+      { name: "transcriptFrom", bounds: { transcriptFloor: 40 } },
+      { name: "transcriptFloor", bounds: { transcriptFrom: 100 } },
+    ])("preserves the legacy event list when $name is absent", ({ bounds }) => {
+      expect(dispatchSnapshot(bounds)).toEqual([
+        {
+          type: "events",
+          events: [
+            { type: "session_ready", busy: false, reset: true },
+            { type: "agent_message", text: "Tail", itemId: "a1", messageId: undefined },
+            { type: "session_ready", busy: false, reset: false },
+          ],
+        },
+      ]);
+    });
+
+    it("dispatches nothing for bounds without an inline transcript", () => {
+      expect(
+        dispatchSnapshot({ transcript: undefined, transcriptFrom: 100, transcriptFloor: 40 }),
+      ).toEqual([]);
+    });
   });
 
   it("does not reset reducer on reconnect when snapshot reset is false", () => {
