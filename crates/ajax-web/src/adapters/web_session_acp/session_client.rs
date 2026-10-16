@@ -6,12 +6,12 @@
 //! method set the web session slice already uses on `AcpStdioClient`.
 //! Spawning routes through [`SessionClient::spawn_with_operator_pin`].
 
-#![allow(dead_code)] // not every method has a call site yet
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
+use agent_client_protocol::schema::v1::ContentBlock;
+#[cfg(test)]
+use agent_client_protocol::schema::v1::{ResourceLink, TextContent};
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::available_command_descriptors::AvailableCommandDescriptor;
@@ -24,6 +24,7 @@ use super::client::{
 use super::cursor_sdk_client::CursorSdkClient;
 use super::cursor_sdk_spawn::{apply_pin_to_cursor, spawn_cursor_sdk};
 use super::pi_rpc_client::PiRpcClient;
+use super::rpc_client::RpcClientCore;
 use super::{
     ApplyModelOutcome, CancelOutcome, NeutralConfigOption, PromptCapabilityDescriptor,
     SessionConfigValue,
@@ -114,22 +115,43 @@ impl AcpEventSource for SessionClient {
     }
 
     fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
-        match self {
-            SessionClient::Acp(_) => Vec::new(),
-            SessionClient::Pi(session) => {
-                native_command_descriptors(&session.client.take_available_commands())
-            }
-            SessionClient::Claude(session) => {
-                native_command_descriptors(&session.client.take_available_commands())
-            }
-
-            SessionClient::Cursor(session) => {
-                native_command_descriptors(&session.client.take_available_commands())
-            }
+        match self.transport() {
+            Transport::Acp(_) => Vec::new(),
+            Transport::Native(core) => native_command_descriptors(&core.take_available_commands()),
         }
     }
 }
+
+/// The two shapes a transport takes for the methods every harness implements identically.
+enum Transport<'a> {
+    Acp(&'a AcpStdioClient),
+    Native(&'a RpcClientCore),
+}
+
+enum TransportMut<'a> {
+    Acp(&'a mut AcpStdioClient),
+    Native(&'a RpcClientCore),
+}
+
 impl SessionClient {
+    fn transport(&self) -> Transport<'_> {
+        match self {
+            SessionClient::Acp(client) => Transport::Acp(client),
+            SessionClient::Pi(session) => Transport::Native(session.client.core()),
+            SessionClient::Claude(session) => Transport::Native(session.client.core()),
+            SessionClient::Cursor(session) => Transport::Native(session.client.core()),
+        }
+    }
+
+    fn transport_mut(&mut self) -> TransportMut<'_> {
+        match self {
+            SessionClient::Acp(client) => TransportMut::Acp(client),
+            SessionClient::Pi(session) => TransportMut::Native(session.client.core()),
+            SessionClient::Claude(session) => TransportMut::Native(session.client.core()),
+            SessionClient::Cursor(session) => TransportMut::Native(session.client.core()),
+        }
+    }
+
     pub fn from_acp(client: AcpStdioClient) -> Self {
         SessionClient::Acp(client)
     }
@@ -239,7 +261,7 @@ impl SessionClient {
             model_apply_error,
             config_options: Some(client.config_options()),
             prompt_capabilities: PromptCapabilityDescriptor {
-                image: false,
+                image: true,
                 embedded_context: false,
             },
         };
@@ -257,57 +279,37 @@ impl SessionClient {
 
     pub fn shutdown(&mut self) -> Option<String> {
         // RPC shutdown returns a session ID, not the optional error used by the slice.
-        match self {
-            SessionClient::Acp(client) => return client.shutdown(),
-            SessionClient::Pi(session) => {
-                session.client.shutdown();
-            }
-            SessionClient::Claude(session) => {
-                session.client.shutdown();
-            }
-
-            SessionClient::Cursor(session) => {
-                session.client.shutdown();
+        match self.transport_mut() {
+            TransportMut::Acp(client) => return client.shutdown(),
+            TransportMut::Native(core) => {
+                core.shutdown();
             }
         }
         None
     }
 
     pub fn detach(&mut self) -> Option<String> {
-        match self {
-            SessionClient::Acp(client) => client.detach(),
+        match self.transport_mut() {
+            TransportMut::Acp(client) => client.detach(),
             // RPC transports have no detached-host semantics.
-            SessionClient::Pi(_) | SessionClient::Claude(_) | SessionClient::Cursor(_) => {
-                self.shutdown()
-            }
+            TransportMut::Native(_) => self.shutdown(),
         }
     }
 
     pub fn host_exited(&mut self) -> bool {
-        match self {
-            SessionClient::Acp(client) => client.host_exited(),
-            SessionClient::Pi(session) => session.client.host_exited(),
-            SessionClient::Claude(session) => session.client.host_exited(),
-            SessionClient::Cursor(session) => session.client.host_exited(),
+        match self.transport_mut() {
+            TransportMut::Acp(client) => client.host_exited(),
+            TransportMut::Native(core) => core.host_exited(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn kill_host_for_test(&mut self) {
-        match self {
-            SessionClient::Acp(client) => client.kill_host_for_test(),
-            // ponytail: PiRpcClient has no kill hook yet; use shutdown.
-            SessionClient::Pi(session) => {
-                session.client.shutdown();
-            }
-            // Claude SDK mirrors the Pi arm: no kill hook, use shutdown.
-            SessionClient::Claude(session) => {
-                session.client.shutdown();
-            }
-
-            // Cursor SDK mirrors the Pi arm: no kill hook, use shutdown.
-            SessionClient::Cursor(session) => {
-                session.client.shutdown();
+        // Native transports have no kill hook, so they fall back to shutdown.
+        match self.transport_mut() {
+            TransportMut::Acp(client) => client.kill_host_for_test(),
+            TransportMut::Native(core) => {
+                core.shutdown();
             }
         }
     }
@@ -317,11 +319,9 @@ impl SessionClient {
     /// variants report `None` once their host has been shut down.
     /// `None` once its host has been shut down.
     pub fn child_pid(&self) -> Option<u32> {
-        match self {
-            SessionClient::Acp(client) => Some(client.child_id()),
-            SessionClient::Pi(session) => session.client.child_pid(),
-            SessionClient::Claude(session) => session.client.child_pid(),
-            SessionClient::Cursor(session) => session.client.child_pid(),
+        match self.transport() {
+            Transport::Acp(client) => Some(client.child_id()),
+            Transport::Native(core) => core.child_pid(),
         }
     }
 
@@ -331,28 +331,30 @@ impl SessionClient {
     }
 
     pub fn poll_event(&self) -> Option<AgentEvent> {
-        match self {
-            SessionClient::Acp(client) => client.poll_event().map(AgentEvent::Acp),
-            SessionClient::Pi(session) => session.client.poll_event(),
-            SessionClient::Claude(session) => session.client.poll_event(),
-            SessionClient::Cursor(session) => session.client.poll_event(),
+        match self.transport() {
+            Transport::Acp(client) => client.poll_event().map(AgentEvent::Acp),
+            Transport::Native(core) => core.poll_event(),
         }
     }
 
     pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
-        match self {
-            SessionClient::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
-            SessionClient::Pi(session) => session.client.wait_event(timeout),
-            SessionClient::Claude(session) => session.client.wait_event(timeout),
-            SessionClient::Cursor(session) => session.client.wait_event(timeout),
+        match self.transport() {
+            Transport::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
+            Transport::Native(core) => core.wait_event(timeout),
         }
     }
 
     pub fn begin_prompt(&mut self, blocks: &[ContentBlock]) -> Result<u64, String> {
         match self {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
-            SessionClient::Pi(session) => session.client.begin_prompt(&prompt_text(blocks)),
-            SessionClient::Claude(session) => session.client.begin_prompt(&prompt_text(blocks)),
+            SessionClient::Pi(session) => {
+                let (text, images) = prompt_parts(blocks);
+                session.client.begin_prompt_with_images(&text, &images)
+            }
+            SessionClient::Claude(session) => {
+                let (text, images) = prompt_parts(blocks);
+                session.client.begin_prompt_with_images(&text, &images)
+            }
             SessionClient::Cursor(session) => {
                 let (text, images) = prompt_parts(blocks);
                 session.client.begin_prompt_with_images(&text, &images)
@@ -361,22 +363,11 @@ impl SessionClient {
     }
 
     pub(crate) fn cancel(&mut self) -> Result<CancelOutcome, String> {
-        match self {
-            SessionClient::Acp(client) => return client.cancel(),
-            SessionClient::Pi(session) => {
-                if session.client.prompt_in_flight() || session.client.host_exited() {
-                    session.client.cancel()?;
-                }
-            }
-            SessionClient::Claude(session) => {
-                if session.client.prompt_in_flight() || session.client.host_exited() {
-                    session.client.cancel()?;
-                }
-            }
-
-            SessionClient::Cursor(session) => {
-                if session.client.prompt_in_flight() || session.client.host_exited() {
-                    session.client.cancel()?;
+        match self.transport_mut() {
+            TransportMut::Acp(client) => return client.cancel(),
+            TransportMut::Native(core) => {
+                if core.prompt_in_flight() || core.host_exited() {
+                    core.cancel()?;
                 }
             }
         }
@@ -388,11 +379,9 @@ impl SessionClient {
     }
 
     pub(crate) fn prompt_in_flight(&self) -> bool {
-        match self {
-            SessionClient::Acp(client) => client.prompt_in_flight(),
-            SessionClient::Pi(session) => session.client.prompt_in_flight(),
-            SessionClient::Claude(session) => session.client.prompt_in_flight(),
-            SessionClient::Cursor(session) => session.client.prompt_in_flight(),
+        match self.transport() {
+            Transport::Acp(client) => client.prompt_in_flight(),
+            Transport::Native(core) => core.prompt_in_flight(),
         }
     }
 
@@ -422,16 +411,54 @@ impl SessionClient {
         action: &str,
         content: Option<&serde_json::Value>,
     ) -> Result<(), String> {
-        let action = super::sdk_elicitation::action_from_wire(action, content)?;
         match self {
-            SessionClient::Acp(client) => client.respond_elicitation(request_id, action),
-            // ponytail: follow up when Pi RPC needs elicitation responses.
-            SessionClient::Pi(_) => {
-                Err("Pi RPC mode has no permission or elicitation requests".to_string())
+            SessionClient::Acp(client) => {
+                let action = super::sdk_elicitation::action_from_wire(action, content)?;
+                client.respond_elicitation(request_id, action)
             }
-            SessionClient::Claude(_) => Err(
-                "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
-            ),
+            SessionClient::Pi(session) => {
+                let fields = if action == "accept" {
+                    let mut fields = serde_json::Map::new();
+                    if let Some(serde_json::Value::Object(obj)) = content {
+                        if let Some(confirmed) = obj.get("confirmed").filter(|v| v.is_boolean()) {
+                            fields.insert("confirmed".to_string(), confirmed.clone());
+                        }
+                        if let Some(value) = obj.get("value").filter(|v| v.is_string()) {
+                            fields.insert("value".to_string(), value.clone());
+                        }
+                    }
+                    if fields.is_empty() {
+                        return Err("Pi dialog answer needs `confirmed` or `value`".to_string());
+                    }
+                    serde_json::Value::Object(fields)
+                } else {
+                    serde_json::json!({ "cancelled": true })
+                };
+                session.client.respond_dialog(request_id, fields)
+            }
+            SessionClient::Claude(session) => {
+                let mut fields = serde_json::Map::new();
+                match action {
+                    "accept" | "decline" | "cancel" => {
+                        fields.insert(
+                            "action".to_string(),
+                            serde_json::Value::String(action.to_string()),
+                        );
+                    }
+                    _ => return Err("unsupported elicitation action".to_string()),
+                };
+                if action == "accept" {
+                    if let Some(serde_json::Value::Object(obj)) = content {
+                        fields.insert(
+                            "content".to_string(),
+                            serde_json::Value::Object(obj.clone()),
+                        );
+                    }
+                }
+                session
+                    .client
+                    .respond_elicitation(request_id, serde_json::Value::Object(fields))
+            }
             SessionClient::Cursor(_) => {
                 Err("Cursor SDK mode has no permission or elicitation requests".to_string())
             }
@@ -654,6 +681,8 @@ pub(super) fn prompt_parts(blocks: &[ContentBlock]) -> (String, Vec<NativeImage>
 }
 
 /// Flatten ACP content blocks into a single plain-text prompt.
+// ponytail: only the placeholder-flattening test still uses this; delete both together.
+#[cfg(test)]
 pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
     let mut parts: Vec<String> = Vec::new();
 

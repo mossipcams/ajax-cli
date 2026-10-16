@@ -15,25 +15,16 @@ use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::cursor_sdk_map::map_cursor_message;
 use super::jsonl_process::JsonlProcess;
 use super::rpc_client::RpcClientCore;
-use super::rpc_handshake::{await_init_response, RpcCommand, RpcHandshake, RpcModel};
+use super::rpc_handshake::{
+    await_init_response, check_resumed_session, init_commands, init_session_id, RpcHandshake,
+    RpcModel,
+};
 use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_sidecar.mjs");
 
 pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "--input-type=module".to_string(),
-        "-e".to_string(),
-        SIDECAR_SOURCE.to_string(),
-    ];
-    if let Some(module) = sdk_module {
-        args.extend([
-            "--".to_string(),
-            "--sdk-module".to_string(),
-            module.to_string(),
-        ]);
-    }
-    args
+    super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
 
 /// One model of the SDK's catalog, flattened for the web model picker.
@@ -132,8 +123,6 @@ fn selection_json(selection: &ModelSelection) -> Value {
 }
 pub struct CursorSdkClient {
     core: RpcClientCore,
-    // Slash commands advertised at handshake; one-shot, like an event.
-    commands: Mutex<Option<Vec<NativeCommand>>>,
     // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
     state: Box<Mutex<CursorState>>,
 }
@@ -166,18 +155,8 @@ impl CursorSdkClient {
         let (data, pending) =
             await_init_response(&mut process, &init_id, init_timeout, "cursor sdk")?;
         let models = parse_models(&data);
-        let session_id = data
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "cursor sdk init failed: missing sessionId".to_string())?
-            .to_string();
-        if let Some(id) = resume {
-            if session_id != id {
-                return Err(format!(
-                    "cursor sdk resumed a different session: asked {id}, got {session_id}"
-                ));
-            }
-        }
+        let session_id = init_session_id(&data, "cursor sdk")?;
+        check_resumed_session("cursor sdk", resume, &session_id)?;
         let handshake = RpcHandshake {
             session_id,
             session_file: None,
@@ -203,21 +182,7 @@ impl CursorSdkClient {
                 })
                 .collect(),
             thinking_levels: Vec::new(),
-            commands: data
-                .get("commands")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| {
-                    Some(RpcCommand {
-                        name: entry.get("name")?.as_str()?.to_string(),
-                        description: entry
-                            .get("description")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                    })
-                })
-                .collect(),
+            commands: init_commands(&data),
             context_window: None,
             pending,
         };
@@ -227,13 +192,15 @@ impl CursorSdkClient {
             .map(NativeCommand::from_rpc_command)
             .collect();
         let session = RpcSession::new(process, handshake, map_cursor_message);
+        let core = RpcClientCore::new(session, None);
+        core.set_available_commands(commands);
+
         let apply_defaults = selection.options.is_empty()
             && models
                 .iter()
                 .any(|m| m.id == selection.model && !m.defaults.is_empty());
         let client = CursorSdkClient {
-            core: RpcClientCore::new(session, None),
-            commands: Mutex::new(Some(commands)),
+            core,
             state: Box::new(Mutex::new(CursorState {
                 models,
                 selection: selection.clone(),
@@ -251,17 +218,18 @@ impl CursorSdkClient {
         self.core.child_pid()
     }
 
+    /// The shared transport core, used by the session client's two-arm dispatch.
+    pub(super) fn core(&self) -> &RpcClientCore {
+        &self.core
+    }
+
     pub fn session_id(&self) -> String {
         self.core.session_id()
     }
 
     /// Slash commands advertised at handshake, returned by the first call only.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.commands
-            .lock()
-            .expect("cursor_sdk_client mutex poisoned")
-            .take()
-            .unwrap_or_default()
+        self.core.take_available_commands()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CursorState> {

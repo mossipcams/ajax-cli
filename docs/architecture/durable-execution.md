@@ -137,6 +137,7 @@ which applies its rules **in this order**:
    - `unsafe` -> **interrupt** (ambiguous; no automatic resend).
 
 **What the host does today.** `resolve_recovery` and the reconcile mapping are implemented and tested as pure functions, and crash-tested against the real kernel store with aborted child processes, but the web host does not yet call them. At restart the chat session applies one fixed rule instead: a prompt that was dispatching becomes interrupted (the transcript shows `Prompt <id> was interrupted by host restart and was not retried.`) and is never resent; queued prompts are kept and dispatched in order. Reconcile and replay are not used for chat yet, because no harness adapter reports that it can reconcile a dispatched prompt.
+**Recovery does not wait for an attach.** The first time a host claims the execution owner lease it applies the same restart rule to every chat run owned by a previous boot, without starting any agent: dispatching prompts become `interrupted` and the transcript gets the `Prompt <id> was interrupted by host restart and was not retried.` note, and the task's reported status is moved off "Agent working" to the failed-turn state. Queued prompts are untouched; the per-session acquire path later finds nothing left to interrupt, so the rule is idempotent. Runs whose owner boot id is this host's own are never touched. Queued prompts are then dispatched without a browser: right after that first claim a startup task lists the chats whose queued prompts belong to a previous boot, resolves each to its task, and runs them strictly one chat at a time (concurrency 1) by acquiring the session (which resumes the stored native session and fails closed if the harness cannot resume it), waiting until every prompt of that chat is done or 30 minutes pass, and releasing it. A chat that cannot be resumed keeps its prompts queued for the next attach.
 
 For a `reconcile` task the server queries the harness about the specific
 operation, and maps the answer:
@@ -177,6 +178,8 @@ Exactly one host executes against a given registry. This is enforced by the
   does not authorize takeover.
 - **Attach and read paths are not gated** by the lease: any client can attach
   to, and read state from, a registry whose execution lease is held elsewhere.
+- **Harness children run as process-group leaders.** The host starts every harness child (ACP stdio, Pi RPC, Claude SDK and Cursor SDK sidecars) in its own process group and kills the whole group when it tears the session down, so tool subprocesses cannot outlive a session. When a new host claims the lease it runs a one-time orphan sweep: for each run recorded by another boot whose recorded start-time token still matches the live pid, it sends SIGTERM to the child's process group (falling back to the pid for children recorded before groups existed) and clears the recorded identity; a mismatched or unreadable token is never signalled.
+- **Agents can start with no browser attached.** After a restart the host starts harnesses for chats that still have queued prompts (see section 5); this is the only case where the host starts an agent without an operator action, and it only happens after the host holds the execution lease.
 
 ## 7. Migration
 

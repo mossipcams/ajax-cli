@@ -168,10 +168,14 @@ fn pi_variant_rejects_request_and_elicitation_responses() {
         .expect_err("respond_client_request should be unsupported");
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
+    // The Pi arm answers extension dialogs (issue #1306).
     let err = session
+        .respond_elicitation("elicit-1", "accept", None)
+        .expect_err("accept without an answer should be rejected");
+    assert_eq!(err, "Pi dialog answer needs `confirmed` or `value`");
+    session
         .respond_elicitation("elicit-1", "decline", None)
-        .expect_err("respond_elicitation should be unsupported");
-    assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
+        .expect("decline should resolve the dialog as cancelled");
 
     let _ = session.shutdown();
 }

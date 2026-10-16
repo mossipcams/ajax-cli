@@ -1,6 +1,6 @@
 //! The transport-neutral client core shared by every RPC-style harness transport: it owns the session, the event queue and the prompt request ids.
 
-use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::rpc_session::{RpcSession, RpcStep};
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -10,6 +10,8 @@ pub type RunFinishedHook = fn(&mut RpcSession) -> Option<AgentEvent>;
 
 pub struct RpcClientCore {
     inner: Mutex<CoreInner>,
+    /// Slash commands advertised at handshake; handed out once, like an event.
+    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 struct CoreInner {
@@ -36,6 +38,7 @@ impl RpcClientCore {
                 host_exited: false,
                 on_run_finished,
             }),
+            commands: Mutex::new(None),
         }
     }
 
@@ -46,6 +49,24 @@ impl RpcClientCore {
         g.session
             .as_ref()
             .map(|s| s.session_id().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Record the commands the harness advertised at handshake (handed out once).
+    pub fn set_available_commands(&self, commands: Vec<NativeCommand>) {
+        *self
+            .commands
+            .lock()
+            .expect("rpc_client commands mutex poisoned") = Some(commands);
+    }
+
+    /// Slash commands advertised at handshake, returned by the first call only
+    /// (one-shot, like an event) so every later drain yields an empty list.
+    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
+        self.commands
+            .lock()
+            .expect("rpc_client commands mutex poisoned")
+            .take()
             .unwrap_or_default()
     }
 
@@ -91,6 +112,21 @@ impl RpcClientCore {
             .as_mut()
             .ok_or_else(|| "session not available (shut down)".to_string())?;
         session.abort().map_err(|e| format!("cancel failed: {e}"))
+    }
+
+    /// Write one response line carrying a caller-chosen `id` (e.g. Pi's
+    /// `extension_ui_response`, which must echo the id of its
+    /// `extension_ui_request`). No auto-generated id is allocated.
+    // Issue #1306 part 2b consumes this; the stack needs it before any caller exists.
+    #[allow(dead_code)]
+    pub fn respond(
+        &self,
+        command_type: &str,
+        id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.with_session(|s| s.respond(command_type, id, fields))
+            .and_then(Result::<_, String>::into)
     }
 
     /// True while a prompt run is active.

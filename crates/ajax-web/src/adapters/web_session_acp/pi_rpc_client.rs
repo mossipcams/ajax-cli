@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -22,9 +22,6 @@ pub struct PiRpcClient {
     core: RpcClientCore,
     /// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).
     catalog: Box<Mutex<Catalog>>,
-    /// Slash commands advertised at handshake; handed to the first drain that
-    /// asks for them, one-shot like an event.
-    commands: Mutex<Option<Vec<NativeCommand>>>,
 }
 
 /// Model and thinking-level state snapshotted from the Pi handshake and kept
@@ -141,10 +138,13 @@ impl PiRpcClient {
             .map(NativeCommand::from_rpc_command)
             .collect();
 
-        let session = RpcSession::new(process, hs, map_record);
+        let session = RpcSession::new(process, hs, map_record).with_image_type_tag();
+
+        let core = RpcClientCore::new(session, Some(pi_usage_hook));
+        core.set_available_commands(commands);
 
         Ok(PiRpcClient {
-            core: RpcClientCore::new(session, Some(pi_usage_hook)),
+            core,
             catalog: Box::new(Mutex::new(Catalog {
                 models,
                 thinking_levels,
@@ -152,8 +152,12 @@ impl PiRpcClient {
                 current_model_provider,
                 current_thinking_level,
             })),
-            commands: Mutex::new(Some(commands)),
         })
+    }
+
+    /// The shared transport core, used by the session client's two-arm dispatch.
+    pub(super) fn core(&self) -> &RpcClientCore {
+        &self.core
     }
 
     /// The Pi session id assigned during handshake. Returns an empty string if the
@@ -167,11 +171,7 @@ impl PiRpcClient {
     /// yields an empty list; ACP `AvailableCommandsUpdated` updates replace
     /// the list within the same drain.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.commands
-            .lock()
-            .expect("pi_rpc_client mutex poisoned")
-            .take()
-            .unwrap_or_default()
+        self.core.take_available_commands()
     }
 
     /// OS process id of the live child while a session exists; `None` after shutdown.
@@ -301,6 +301,16 @@ impl PiRpcClient {
         self.core.begin_prompt(message)
     }
 
+    /// Begin a prompt run from a message with attached images. Pi RPC image
+    /// objects carry `"type": "image"` alongside `data` and `mimeType`.
+    pub fn begin_prompt_with_images(
+        &self,
+        message: &str,
+        images: &[NativeImage],
+    ) -> Result<u64, String> {
+        self.core.begin_prompt_with_images(message, images)
+    }
+
     /// Abort the active prompt run. Returns `Err` when no run is in flight.
     pub fn cancel(&self) -> Result<(), String> {
         self.core.cancel()
@@ -322,6 +332,15 @@ impl PiRpcClient {
         self.core.wait_event(timeout)
     }
 
+    /// Answer a Pi extension UI dialog by id (accept or cancel).
+    pub fn respond_dialog(
+        &self,
+        request_id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.core
+            .respond("extension_ui_response", request_id, fields)
+    }
     /// Take the session out of its `Option`, dropping it (which closes stdin and reaps the
     /// child). Returns the session id on first call, `None` thereafter.
     pub fn shutdown(&self) -> Option<String> {

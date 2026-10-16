@@ -472,7 +472,7 @@ impl AcpStdioClient {
         ) {
             Ok(Ok(ready)) => ready,
             Ok(Err(error)) => {
-                let _ = child.kill();
+                super::process_group::kill_tree(&mut child);
                 let _ = child.wait();
                 let stderr_hint = stderr_hint(&stderr_tail);
                 return Err(match error {
@@ -483,7 +483,7 @@ impl AcpStdioClient {
                 });
             }
             Err(_) => {
-                let _ = child.kill();
+                super::process_group::kill_tree(&mut child);
                 let _ = child.wait();
                 return Err(AcpSpawnError::Message(format!(
                     "ACP startup timed out{}",
@@ -570,7 +570,7 @@ impl AcpStdioClient {
             }
         }
         let _ = self.commands.send(ClientCommand::Shutdown);
-        let _ = self.child.kill();
+        super::process_group::kill_tree(&mut self.child);
         let _ = self.child.wait();
         close_error
     }
@@ -585,7 +585,7 @@ impl AcpStdioClient {
 
     #[cfg(test)]
     pub(crate) fn kill_host_for_test(&mut self) {
-        let _ = self.child.kill();
+        super::process_group::kill_tree(&mut self.child);
         let _ = self.child.wait();
     }
 
@@ -853,8 +853,7 @@ fn spawn_acp_process(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        return command
-            .spawn()
+        return super::process_group::spawn_leader(&mut command)
             .map_err(|error| format!("failed to spawn test acp program: {error}"));
     }
 
@@ -881,8 +880,7 @@ fn spawn_acp_process(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            return command
-                .spawn()
+            return super::process_group::spawn_leader(&mut command)
                 .map_err(|error| format!("failed to spawn test acp command: {error}"));
         }
     }
@@ -902,7 +900,7 @@ fn spawn_acp_process(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Ok(child) = command.spawn() {
+        if let Ok(child) = super::process_group::spawn_leader(&mut command) {
             return Ok(child);
         }
     }

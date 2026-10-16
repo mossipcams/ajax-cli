@@ -3,7 +3,6 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
@@ -31,7 +30,7 @@ pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     // queried from the home directory) and load it only as an explicit
     // absolute path, so a repository .npmrc or node_modules in a task
     // worktree can never redirect module resolution.
-    let root = global_npm_root().ok_or_else(|| {
+    let root = crate::adapters::program::global_npm_root().ok_or_else(|| {
         AcpSpawnError::Message(
             "no loadable claude-agent-sdk module: npm root -g failed - npm install -g @anthropic-ai/claude-agent-sdk".into(),
         )
@@ -71,31 +70,6 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// The user's global npm root, resolved by running `npm root -g` from the home
-/// directory so that no repository-controlled `.npmrc` (task worktree or
-/// process cwd) is ever read. Returns None on any failure or a non-absolute result.
-pub(super) fn global_npm_root() -> Option<PathBuf> {
-    let npm = crate::adapters::program::resolve_program("npm")?;
-    let home = std::env::var_os("HOME")?;
-    let home_path = Path::new(&home);
-    if !home_path.is_dir() {
-        return None;
-    }
-    let output = Command::new(npm)
-        .args(["root", "-g"])
-        .current_dir(home_path)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let root = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    let path = PathBuf::from(root);
-    path.is_absolute().then_some(path)
 }
 /// Claude Agent SDK spawn path. The `operator_pin` is applied after the
 /// restore check and the report is built from the post-pin client; a pin error
@@ -146,8 +120,7 @@ pub(super) fn spawn_claude_sdk(
         model_apply_error,
         config_options: Some(client.config_options()),
         prompt_capabilities: PromptCapabilityDescriptor {
-            // ponytail: images are not forwarded yet.
-            image: false,
+            image: true,
             embedded_context: false,
         },
     };

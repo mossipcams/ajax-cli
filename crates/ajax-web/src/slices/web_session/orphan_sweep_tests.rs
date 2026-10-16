@@ -6,6 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use super::orphan_sweep::sweep;
+use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
 use ajax_core::registry::{RunRecord, SqliteRegistryStore};
 
 /// Spawn a real `sleep 60`; the reaper thread keeps it collectable so a killed
@@ -187,6 +188,81 @@ fn dead_pid_clears_row_without_signalling() {
     cleanup(&dir);
 }
 
+#[test]
+fn matching_token_terminates_the_whole_process_group_issue_1298() {
+    use std::os::unix::process::CommandExt;
+
+    let (dir, store) = scratch_store("group");
+    let pidfile = dir.join("grandchild.pid");
+    let mut cmd = Command::new("sh");
+    cmd.args([
+        "-c",
+        r#"sleep 300 & echo $! > "$1"; exec sleep 300"#,
+        "sh",
+        pidfile.to_str().expect("pidfile path is unicode"),
+    ]);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.process_group(0);
+    let child = cmd.spawn().expect("spawn sh process-group helper");
+    let pid = child.id() as i64;
+    let reaper = std::thread::spawn(move || reap(child));
+
+    // Wait for the backgrounded grandchild's pid to be recorded.
+    let mut grandchild: Option<i64> = None;
+    for _ in 0..20 {
+        if let Ok(contents) = std::fs::read_to_string(&pidfile) {
+            if let Ok(p) = contents.trim().parse::<i64>() {
+                grandchild = Some(p);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let grandchild_pid = grandchild.expect("grandchild pid file must appear within 2s");
+
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+
+    let handled = sweep(&store, "this-boot");
+    assert_eq!(handled, 1, "the matching orphan must be handled");
+
+    // The grandchild shares the child's process group and must die too (issue #1298).
+    let pid_alive = |p: i64| {
+        Command::new("kill")
+            .args(["-0", &p.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    let mut gone = false;
+    for _ in 0..30 {
+        if !pid_alive(grandchild_pid) {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !gone {
+        let _ = Command::new("kill")
+            .args(["-KILL", &grandchild_pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        panic!("issue 1298: grandchild {grandchild_pid} of group {pid} survived the sweep's TERM");
+    }
+
+    let status = reaper.join().expect("join sh helper reaper");
+    assert!(
+        !status.success(),
+        "a terminated child must not exit successfully"
+    );
+    cleanup(&dir);
+}
+
 /// The run id for a handle, as `record_child_identity` derives it.
 fn row_id_for(store: &SqliteRegistryStore, handle: &str) -> String {
     store
@@ -194,4 +270,29 @@ fn row_id_for(store: &SqliteRegistryStore, handle: &str) -> String {
         .expect("load run")
         .expect("run must exist")
         .run_id
+}
+
+#[test]
+fn sweep_once_interrupts_dispatching_prompts_of_dead_hosts() {
+    let (dir, store) = scratch_store("recovery");
+
+    record_row(&store, &dir, "handle", None, "foreign-boot");
+
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_string(),
+        "transcript text".to_string(),
+        "prompt text".to_string(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("p1"));
+    prompt_ledger::try_persist(&store, &dir, "handle", &ledger).expect("persist ledger");
+
+    let recovered_handles = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    assert_eq!(recovered_handles, vec!["handle".to_string()]);
+
+    let recovered = prompt_ledger::try_load(&store, &dir, "handle").expect("load ledger");
+    let entry = recovered.entry("p1").expect("p1 must exist in the ledger");
+    assert_eq!(entry.phase, PromptPhase::Interrupted);
+    cleanup(&dir);
 }

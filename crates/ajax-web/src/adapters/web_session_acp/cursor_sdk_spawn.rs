@@ -82,7 +82,7 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     }
     // Resolve the SDK only from the user's global npm root and load it as an
     // explicit absolute path, so a task worktree can never redirect it.
-    let root = super::claude_sdk_spawn::global_npm_root().ok_or_else(|| {
+    let root = crate::adapters::program::global_npm_root().ok_or_else(|| {
         AcpSpawnError::Message(format!(
             "no loadable @cursor/sdk module: npm root -g failed - {INSTALL_HINT}"
         ))

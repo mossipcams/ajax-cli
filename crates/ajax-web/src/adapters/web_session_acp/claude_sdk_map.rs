@@ -6,7 +6,8 @@
 //! [`RpcMapping`] values: each emitted event is forwarded to the session in
 //! order, and `finished` / `ended_aborted` track whether the run settled and
 //! whether it ended aborted. Messages that carry no adapter meaning (`system`,
-//! `rate_limit_event`, unknown types) map to an empty result and never panic
+//! `rate_limit_event`, malformed `elicitation_request` records, unknown types)
+//! map to an empty result and never panic
 //! on missing or malformed fields.
 
 use serde_json::Value;
@@ -46,8 +47,26 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
             (false, false)
         }
         "result" => map_result(message, &mut events),
+        "elicitation_request" => {
+            if let (Some(id), Some(schema)) = (
+                message.get("id").and_then(Value::as_str),
+                message.get("schema").filter(|s| s.is_object()),
+            ) {
+                events.push(AgentEvent::Native(NativeEvent::ElicitationRequest {
+                    request_id: id.to_string(),
+                    message: message
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    schema: schema.clone(),
+                }));
+            }
+            (false, false)
+        }
         // `system` (init/status/hook/thinking_tokens records),
-        // `rate_limit_event`, and unknown message types produce no events.
+        // `rate_limit_event`, malformed `elicitation_request` records, and
+        // unknown message types produce no events.
         _ => (false, false),
     };
     RpcMapping {

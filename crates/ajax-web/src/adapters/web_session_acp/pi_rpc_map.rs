@@ -6,10 +6,10 @@
 //! [`RpcMapping`] values: each emitted event is forwarded to the session in
 //! order, and `finished` / `ended_aborted` track whether the run settled and
 //! whether it ended aborted. Records that carry no adapter meaning (`response`,
-//! `extension_ui_request`, unknown types) map to an empty result and never
-//! panic on missing or malformed fields.
+//! `extension_ui_request` methods that are fire-and-forget, and unknown
+//! types) map to an empty result and never panic on missing or malformed fields.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
@@ -18,9 +18,9 @@ use super::rpc_session::RpcMapping;
 ///
 /// `session_id` is retained for interface parity with the ACP mappers; native
 /// events carry no session id (the session slice binds them). The mapping is
-/// total: any record — including `extension_ui_request` (`setStatus`,
-/// `setWidget`) and unknown types — returns an empty result instead of
-/// panicking.
+/// total: any record — including `extension_ui_request` dialogs, the
+/// fire-and-forget methods, and unknown types — returns an empty result
+/// instead of panicking.
 pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     let finished = match record.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -42,9 +42,16 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
             false
         }
         "agent_settled" => true,
-        // `response`, `extension_ui_request` (including the `setStatus` and
-        // `setWidget` methods), lifecycle records without adapter output, and
-        // unknown record types produce no events.
+        // Dialogs (`confirm`, `select`, `input`, `editor`) become elicitation
+        // requests; fire-and-forget methods (`notify`, `setStatus`,
+        // `setWidget`), lifecycle records without adapter output, and unknown
+        // record types produce no events.
+        "extension_ui_request" => {
+            if let Some(event) = dialog_request(record) {
+                events.push(AgentEvent::Native(event));
+            }
+            false
+        }
         _ => false,
     };
     RpcMapping {
@@ -52,6 +59,84 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
         finished,
         ended_aborted: record_reports_aborted(record),
     }
+}
+
+/// Build an elicitation request from one `extension_ui_request` record that
+/// opens a dialog (`confirm`, `select`, `input`, `editor`). Fire-and-forget
+/// methods (`notify`, `setStatus`, `setWidget`, and anything else) return
+/// `None`, as do records without a string `id`.
+fn dialog_request(record: &Value) -> Option<NativeEvent> {
+    let request_id = record.get("id")?.as_str()?.to_string();
+    match record.get("method")?.as_str()? {
+        "confirm" => {
+            let text = string_field(record, "message").or_else(|| string_field(record, "title"))?;
+            Some(NativeEvent::ElicitationRequest {
+                request_id,
+                message: text.clone(),
+                schema: json!({
+                    "type": "object",
+                    "properties": { "confirmed": { "type": "boolean", "title": text } },
+                    "required": ["confirmed"]
+                }),
+            })
+        }
+        "select" => {
+            let title = string_field(record, "title")?;
+            let options = record.get("options").and_then(Value::as_array)?;
+            let enum_values: Vec<Value> = options
+                .iter()
+                .filter_map(Value::as_str)
+                .map(Value::from)
+                .collect();
+            Some(NativeEvent::ElicitationRequest {
+                request_id,
+                message: title.clone(),
+                schema: json!({
+                    "type": "object",
+                    "properties": { "value": { "type": "string", "title": title, "enum": enum_values } },
+                    "required": ["value"]
+                }),
+            })
+        }
+        "input" => {
+            let title = string_field(record, "title")?;
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "value": { "type": "string", "title": title } },
+                "required": ["value"]
+            });
+            if let Some(placeholder) = string_field(record, "placeholder") {
+                schema["properties"]["value"]["description"] = json!(placeholder);
+            }
+            Some(NativeEvent::ElicitationRequest {
+                request_id,
+                message: title,
+                schema,
+            })
+        }
+        "editor" => {
+            let title = string_field(record, "title")?;
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "value": { "type": "string", "title": title } },
+                "required": ["value"]
+            });
+            if let Some(prefill) = record.get("prefill") {
+                schema["properties"]["value"]["default"] = prefill.clone();
+            }
+            Some(NativeEvent::ElicitationRequest {
+                request_id,
+                message: title,
+                schema,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// One string field of an `extension_ui_request` record, if present.
+fn string_field(record: &Value, key: &str) -> Option<String> {
+    record.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
 /// Map one `message_update` record's `assistantMessageEvent`, if it carries

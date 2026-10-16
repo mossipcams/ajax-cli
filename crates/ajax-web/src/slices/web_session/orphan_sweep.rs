@@ -6,7 +6,9 @@
 //! spawned ACP children keep running forever. This sweep terminates those
 //! children when a *new* host takes over the registry: it runs exactly once per
 //! host process, and only after that host has acquired the execution owner
-//! lease (`ExecutionOwnership::try_claim`). Runs owned by this host — same boot
+//! lease (`ExecutionOwnership::try_claim`). The same once-per-process claim hook
+//! also interrupts prompts left `Dispatching` by dead hosts (see
+//! `super::startup_recovery`). Runs owned by this host — same boot
 //! id — are never touched, so attach/respawn within one process cannot kill a
 //! live child. A pid is signalled only when its live start-time token matches
 //! the stored one (pid-reuse protection); anything else leaves the row as is.
@@ -22,18 +24,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// production each run their own process, so the flag cannot leak between tests.
 static SWEPT_ONCE: AtomicBool = AtomicBool::new(false);
 
-/// Runs [`sweep`] at most once per host process. Called from
+/// Runs [`sweep`] — then `super::startup_recovery::recover_interrupted_prompts`
+/// — at most once per host process. Called from
 /// `ExecutionOwnership::try_claim` immediately after this host holds the
-/// execution owner lease, and never while a live foreign host holds it.
-pub(crate) fn sweep_once(store: &SqliteRegistryStore, boot_id: &str) {
+/// execution owner lease, and never while a live foreign host holds it. The
+/// sweep runs first so it clears dead hosts' child identities before recovery
+/// rewrites prompt state. Returns the handles (task ids) of runs whose prompts
+/// were interrupted by the call that actually ran the sweep, in scan order;
+/// every later call in this process returns an empty `Vec`.
+pub(crate) fn sweep_once(
+    store: &SqliteRegistryStore,
+    state_dir: &std::path::Path,
+    boot_id: &str,
+) -> Vec<String> {
     if SWEPT_ONCE
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        return;
+        return Vec::new();
     }
     // `sweep` logs its own errors and returns only a count.
     let _ = sweep(store, boot_id);
+    super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id)
 }
 
 /// Terminates harness children left behind by previous hosts and clears their
@@ -42,7 +54,9 @@ pub(crate) fn sweep_once(store: &SqliteRegistryStore, boot_id: &str) {
 ///
 /// - A run whose `owner_boot_id` equals `current_boot_id` is never touched —
 ///   it belongs to a live child in this host.
-/// - A child is signalled (`kill -TERM <pid>`) ONLY when the process is alive
+/// - A child is signalled (its process group via `kill -TERM -- -<pid>` first,
+///   since the child is a group leader, falling back to `kill -TERM <pid>`) ONLY
+///   when the process is alive
 ///   and its start-time token equals the stored `child_started`. A missing,
 ///   mismatched (pid reuse), or unreadable token means: do not signal.
 /// - After a matching child is signalled, or when the pid no longer exists,
@@ -78,8 +92,7 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
             start_token(pid).as_deref(),
         ) {
             Verdict::Same => {
-                // ponytail: only the recorded pid is signalled, not its descendants; upgrade path is to spawn children in their own process group (setpgid) and signal the group.
-                if signal_term(pid) && clear_child_identity(store, &run.run_id, pid) {
+                if signal_term_group_or_pid(pid) && clear_child_identity(store, &run.run_id, pid) {
                     handled += 1;
                 }
             }
@@ -139,4 +152,27 @@ fn signal_term(pid: i64) -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+/// Best-effort `kill -TERM -- -<pid>` on the child's process group (the
+/// current host spawns children as their own group leaders, so the recorded
+/// pid is also the pgid), falling back to a plain `kill -TERM <pid>` for
+/// children recorded by older hosts that were not group leaders. The
+/// self-pid and invalid-pid guards apply before either signal.
+fn signal_term_group_or_pid(pid: i64) -> bool {
+    if pid <= 0 || pid == std::process::id() as i64 {
+        return false; // Never signal ourselves (or invalid pids).
+    }
+    let group_signalled = Command::new("kill")
+        .args(["-TERM", "--", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if group_signalled {
+        true
+    } else {
+        signal_term(pid)
+    }
 }

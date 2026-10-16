@@ -211,4 +211,90 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn harness_transport_is_selected_through_transport_for() {
+        let files = [
+            "session_client.rs",
+            "claude_sdk_spawn.rs",
+            "cursor_sdk_spawn.rs",
+            "catalog.rs",
+        ];
+        let forbidden = [
+            concat!("fn uses_", "pi_rpc("),
+            concat!("fn uses_", "claude_sdk("),
+            concat!("fn uses_", "cursor_sdk("),
+        ];
+        for name in files {
+            let source = std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("src/adapters/web_session_acp")
+                    .join(name),
+            )
+            .unwrap_or_else(|error| panic!("missing web_session_acp file {name}: {error}"));
+            for token in forbidden {
+                assert!(
+                    !source.contains(token),
+                    "{name} contains `{token}`: harness transport selection must go through `transport_for`, not per-harness feature gates"
+                );
+            }
+        }
+        let session_client = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/adapters/web_session_acp/session_client.rs"),
+        )
+        .unwrap_or_else(|error| panic!("missing web_session_acp file session_client.rs: {error}"));
+        assert_eq!(
+            session_client.matches("fn transport_for(").count(),
+            1,
+            "session_client.rs must define `transport_for(` exactly once as the single transport selection point"
+        );
+    }
+
+    #[test]
+    fn session_client_shared_methods_dispatch_on_two_arms() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/adapters/web_session_acp/session_client.rs"),
+        )
+        .unwrap_or_else(|error| panic!("missing web_session_acp file session_client.rs: {error}"));
+        for enum_token in ["enum Transport<", "enum TransportMut<"] {
+            assert!(
+                source.contains(enum_token),
+                "session_client.rs is missing `{enum_token}`: the two-arm dispatch needs the transport enums"
+            );
+        }
+        let harness_arms = [
+            concat!("SessionClient::", "Pi("),
+            concat!("SessionClient::", "Claude("),
+            concat!("SessionClient::", "Cursor("),
+        ];
+        let methods = [
+            "pub fn shutdown(",
+            "pub fn host_exited(",
+            "pub fn child_pid(",
+            "pub fn poll_event(",
+            "pub fn wait_event(",
+            "pub(crate) fn cancel(",
+            "pub(crate) fn prompt_in_flight(",
+        ];
+        for signature in methods {
+            let start = source
+                .find(signature)
+                .unwrap_or_else(|| panic!("session_client.rs is missing `{signature}`"));
+            let rest = &source[start..];
+            let end_candidates: Vec<usize> = ["\n    pub", "\n    #[cfg(test)]"]
+                .iter()
+                .filter_map(|marker| rest.find(marker))
+                .collect();
+            let end = end_candidates.into_iter().next().unwrap_or(rest.len());
+            let body = &rest[..end];
+            for token in harness_arms {
+                assert!(
+                    !body.contains(token),
+                    "{signature} contains `{token}`: the shared methods must match on `transport()`/`transport_mut()` (two arms), not on each harness"
+                );
+            }
+        }
+    }
 }

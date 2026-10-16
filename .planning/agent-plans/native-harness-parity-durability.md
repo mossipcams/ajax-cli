@@ -222,10 +222,10 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] Approval of this plan and answers to Q1–Q4 (2026-10-14).
 - [x] W0 spike recorded (2026-10-14, see W0 results). `/cmd` expansion not exercised.
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
-- [ ] W2a done (branch refactor/web/transport-selection), W2b.
-- [ ] W4a (repro → fix or close), W4b, W4d.
-- [ ] W3g, W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
-- [ ] W4c (after W4d).
+- [x] W2a done (branch refactor/web/transport-selection), W2b done (branch refactor/web/shared-native-arms).
+- [x] W4a done (#1298, branch fix/web/harness-process-groups), W4b done (branch fix/web/startup-prompt-recovery), W4d done (branch test/web/host-crash-suite).
+- [x] W3g done (#1299, branch fix/web/harness-swap-stale-commands), W3e done (#1306, branch fix/web/pi-extension-dialogs), W3a done (branch feat/web/pi-image-prompts), W3c done (branch feat/web/native-tool-diffs), W3b done (branch feat/web/claude-image-prompts), W3f done (branch feat/web/claude-elicitation).
+- [x] W4c done (branch feat/web/headless-queued-dispatch).
 
 ## Deviations
 
@@ -233,6 +233,13 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - 2026-10-14: W3d and W4e dropped, W4c approved (Decisions).
 - 2026-10-14: worktree branch ajax/new-adapters was stale (base #1291, 5 behind main, 2 commits duplicating #1295); work continues on stacked branches cut from origin/main starting at chore/web/native-harness-closeout.
 - 2026-10-14: W2a deleted the uses_* selectors, so the 5 gating tests that called them were mechanically rewired from uses_x(a) to transport_for(a) == X (same assertion count and strength); the 'tests unmodified' acceptance could not hold literally.
+- 2026-10-14: W4b reports TurnFailed for recovered handles through the directory's activity reporter (not just ledger+transcript): without it the existing issue_1176 test showed startup recovery pre-empting the per-session path that clears 'Agent working'. Recovery piggybacks on the first lease claim (claimed by the runtime heartbeat tick when no attach happened), not a dedicated startup call.
+- 2026-10-14: W4d asserts the orphan harness is alive after host death only for the ACP and Pi rows: the Claude and Cursor sidecars exit on stdin EOF by design, so for them the post-restart assertions (orphan gone, p1 interrupted, p2 completed once, same native session, lease taken over) are the proof. The lease is taken over immediately when the holder pid is dead (not after the 30 s staleness window). Fixture fake_acp.js also lost one dead const (acceptUnadvertisedGrokHigh) in the edit.
+- 2026-10-16: W3e re-pointed session_client_tests::pi_variant_rejects_request_and_elicitation_responses: Pi respond_elicitation is now supported by plan, so the test keeps rejecting an empty accept and respond_client_request and asserts a decline succeeds.
+- 2026-10-16: W3c did not change NativeEvent::ToolCallUpdate.content to a Vec as planned (it would rewrite many existing mapper tests); diffs are derived in native_map from raw_input and RpcSession re-attaches the call input to result updates (the browser merge replaces content with the latest non-empty block). Cursor diffs are carried as Text (unified diffString) instead of parsed hunks.
+- 2026-10-16: W3e re-pointed session_client_tests::pi_variant_rejects_request_and_elicitation_responses: Pi respond_elicitation is now supported by plan, so the test keeps rejecting an empty accept and respond_client_request and asserts a decline succeeds.
+- 2026-10-16: W3b flipped claude_sdk_spawn_tests::spawn_returns_client_and_report from asserting Claude image=false to image=true (planned contract change); session_client::prompt_text is now cfg(test) only because its sole caller is its own placeholder test. task_session_reliability_tests::terminal_persist_failure_retries_before_fifo_advances failed once under full-suite load and passes alone (pre-existing flake, unrelated).
+- 2026-10-16: W3f re-pointed session_client_claude_tests::request_responses_are_rejected_in_claude_mode (Claude respond_elicitation is supported by plan; it still rejects respond_client_request and an invalid action). cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root failed once under full-suite load and passes alone (pre-existing flake).
 
 ## Validation
 
@@ -244,4 +251,4 @@ pkill -f vite; CI=1 npm run web:smoke   # any PR touching chat UI wiring
 npm run verify                          # PR gate
 ```
 
-No results yet.
+Results (2026-10-16): every PR worktree was gated by the delegate with cargo fmt --check, RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features, cargo nextest run -p ajax-web -p ajax-core --no-fail-fast and cargo clippy --all-targets --all-features -- -D warnings before commit. npm run web:smoke and npm run verify were NOT run (no chat UI wiring or web source changed; node_modules is not installed in this worktree). Two load-sensitive tests flaked once each under the full parallel run and pass alone: task_session_reliability_tests::terminal_persist_failure_retries_before_fifo_advances and cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root. Branches are local and stacked; no push or PR has been made.

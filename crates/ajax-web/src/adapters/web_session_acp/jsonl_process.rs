@@ -57,13 +57,16 @@ impl JsonlProcess {
     /// `cwd`, piped on all three std streams and without any shell. Stdout
     /// starts feeding [`JsonlRecord`]s as soon as the child writes lines.
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        // Run as our own process-group leader so drop can kill the whole tree.
+        super::process_group::own_group(&mut command);
+        let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().expect("stdin was piped");
         let stdout = child.stdout.take().expect("stdout was piped");
@@ -126,16 +129,7 @@ impl JsonlProcess {
     /// JSON object followed by LF. Returns the id; the caller correlates it
     /// against the child's `{ "type": "response", "id": … }` record itself.
     pub fn send(&mut self, command_type: &str, fields: Value) -> Result<String, String> {
-        let mut object = match fields {
-            Value::Object(extra) => extra,
-            Value::Null => serde_json::Map::new(),
-            other => {
-                return Err(format!(
-                    "fields must be a JSON object, got {}",
-                    value_kind(&other)
-                ))
-            }
-        };
+        let mut object = Self::command_fields(fields)?;
 
         self.next_id += 1;
         let id = format!("ajax-rpc-{}", self.next_id);
@@ -143,6 +137,44 @@ impl JsonlProcess {
         object.insert("type".to_owned(), Value::String(command_type.to_owned()));
         object.insert("id".to_owned(), Value::String(id.clone()));
 
+        self.write_record(object)?;
+        Ok(id)
+    }
+
+    /// Write one command with a caller-chosen `id` (for responses such as
+    /// Pi's `extension_ui_response`, which must echo the request's id).
+    /// Same object shape and framing-key protection as [`Self::send`].
+    pub fn send_with_id(
+        &mut self,
+        command_type: &str,
+        id: &str,
+        fields: Value,
+    ) -> Result<(), String> {
+        let mut object = Self::command_fields(fields)?;
+
+        // Ours wins: never let the caller clobber the framing keys.
+        object.insert("type".to_owned(), Value::String(command_type.to_owned()));
+        object.insert("id".to_owned(), Value::String(id.to_owned()));
+
+        self.write_record(object)
+    }
+
+    /// Extract `fields` as a JSON object map, rejecting non-object values.
+    fn command_fields(fields: Value) -> Result<serde_json::Map<String, Value>, String> {
+        match fields {
+            Value::Object(extra) => Ok(extra),
+            Value::Null => Ok(serde_json::Map::new()),
+            other => Err(format!(
+                "fields must be a JSON object, got {}",
+                value_kind(&other)
+            )),
+        }
+    }
+
+    /// Serialize one fully assembled command object and write it, plus LF,
+    /// to the child stdin, flushing. The caller owns id allocation and
+    /// framing-key insertion; this only owns the bytes on the wire.
+    fn write_record(&mut self, object: serde_json::Map<String, Value>) -> Result<(), String> {
         let mut line = serde_json::to_string(&Value::Object(object))
             .map_err(|error| format!("serialize command: {error}"))?;
         line.push('\n');
@@ -156,7 +188,7 @@ impl JsonlProcess {
             .and_then(|()| stdin.flush())
             .map_err(|error| format!("write to child stdin: {error}"))?;
 
-        Ok(id)
+        Ok(())
     }
 
     /// Close the child's stdin to request orderly shutdown. A well-behaved child exits
@@ -172,14 +204,21 @@ impl JsonlProcess {
 impl Drop for JsonlProcess {
     fn drop(&mut self) {
         // Close stdin (idempotent), give a child that is already exiting a
-        // brief grace period, then kill. `Child::wait` reaps the process in
-        // every path, so no zombie survives this struct's lifetime.
+        // brief grace period, then kill the whole process group. `Child::wait`
+        // reaps the leader in every path, so no zombie survives this struct's
+        // lifetime; killing the group also takes down any grandchildren the
+        // leader spawned (issue #1298).
+        let pid = self.child.id();
         self.stdin.take();
 
         let deadline = Instant::now() + DROP_GRACE;
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => return, // already reaped here
+                Ok(Some(_)) => {
+                    // Gracefully exited, but it may have left grandchildren behind.
+                    super::process_group::kill_group(pid);
+                    return;
+                }
                 Ok(None) => {}
                 Err(_) => break, // status no longer available; kill and fall through
             }
@@ -189,7 +228,8 @@ impl Drop for JsonlProcess {
             std::thread::sleep(Duration::from_millis(20));
         }
 
-        let _ = self.child.kill();
+        super::process_group::kill_group(pid);
+        let _ = self.child.kill(); // fallback: group kill is best-effort via kill(1)
         let _ = self.child.wait(); // reaps; errors (e.g. double wait) are fine here
     }
 }

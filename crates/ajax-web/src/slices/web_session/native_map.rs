@@ -8,7 +8,7 @@ use crate::adapters::web_session_acp::NativeEvent;
 
 use super::acp_map::{derive_tool_locations, message_event, target_from_raw_input};
 use super::{PlanEntry, SessionServerEvent, ToolContent};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// Map one native event to the [`SessionServerEvent`] values `acp_map` would
 /// produce for the equivalent ACP session update. Empty chunks and zero-sized
@@ -29,21 +29,25 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             kind,
             status,
             raw_input.as_ref(),
-            Vec::new(),
+            edit_diffs(raw_input.as_ref()),
         )],
         NativeEvent::ToolCallUpdate {
             id,
             status,
             content,
             raw_input,
-        } => vec![native_tool_event(
-            id,
-            "",
-            "",
-            status,
-            raw_input.as_ref(),
-            native_tool_content(content),
-        )],
+        } => {
+            let mut blocks = edit_diffs(raw_input.as_ref());
+            blocks.extend(native_tool_content(content));
+            vec![native_tool_event(
+                id,
+                "",
+                "",
+                status,
+                raw_input.as_ref(),
+                blocks,
+            )]
+        }
         NativeEvent::Plan(entries) => vec![SessionServerEvent::Plan {
             entries: native_plan_entries(entries),
         }],
@@ -54,6 +58,15 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             })
             .into_iter()
             .collect(),
+        NativeEvent::ElicitationRequest {
+            request_id,
+            message,
+            schema,
+        } => vec![SessionServerEvent::ElicitationRequest {
+            request_id: request_id.clone(),
+            message: message.clone(),
+            schema: schema.clone(),
+        }],
         // Lifecycle events are handled by the drain loop, because they need
         // request and host state.
         NativeEvent::TurnFinished { .. } | NativeEvent::Error(_) | NativeEvent::Exited => {
@@ -111,6 +124,56 @@ fn native_tool_content(content: &Option<String>) -> Vec<ToolContent> {
         .collect()
 }
 
+/// [`ToolContent::Diff`] blocks derived from a native edit/write tool's raw
+/// input, like ACP harnesses send. Single edits (Claude `Edit`, Pi `edit`) and
+/// multi-edits (`edits` arrays) produce one diff per new text; write inputs
+/// (`content` with no old/new keys) produce a diff without an old text. Any
+/// other shape produces nothing, and odd shapes never panic.
+fn edit_diffs(raw_input: Option<&Value>) -> Vec<ToolContent> {
+    const NEW_KEYS: [&str; 4] = ["new_string", "newText", "new_text", "newString"];
+    const OLD_KEYS: [&str; 4] = ["old_string", "oldText", "old_text", "oldString"];
+
+    let input = match raw_input.and_then(Value::as_object) {
+        Some(input) => input,
+        None => return Vec::new(),
+    };
+    let path = match first_string(input, &["file_path", "path", "filePath"]) {
+        Some(path) => path.to_string(),
+        None => return Vec::new(),
+    };
+
+    let mut diffs = Vec::new();
+    if let Some(edits) = input.get("edits").and_then(Value::as_array) {
+        for edit in edits.iter().filter_map(Value::as_object) {
+            if let Some(new_text) = first_string(edit, &NEW_KEYS).map(str::to_string) {
+                diffs.push(ToolContent::Diff {
+                    path: path.clone(),
+                    old_text: first_string(edit, &OLD_KEYS).map(str::to_string),
+                    new_text,
+                });
+            }
+        }
+    } else if let Some(new_text) = first_string(input, &NEW_KEYS).map(str::to_string) {
+        diffs.push(ToolContent::Diff {
+            path,
+            old_text: first_string(input, &OLD_KEYS).map(str::to_string),
+            new_text,
+        });
+    } else if let Some(content) = input.get("content").and_then(Value::as_str) {
+        diffs.push(ToolContent::Diff {
+            path,
+            old_text: None,
+            new_text: content.to_string(),
+        });
+    }
+    diffs
+}
+
+/// The first string value among `keys` in a JSON object, if any.
+fn first_string<'a>(input: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_str))
+}
 /// `(content, status)` pairs as [`PlanEntry`] values with `acp_map`'s empty-
 /// entry filtering and content trimming.
 fn native_plan_entries(entries: &[(String, String)]) -> Vec<PlanEntry> {
