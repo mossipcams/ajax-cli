@@ -15,13 +15,13 @@
 
 #![allow(dead_code)]
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::agent_event::{AgentEvent, NativeImage};
+use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_handshake::RpcHandshake;
 
@@ -76,6 +76,13 @@ pub struct RpcSession {
     exited: bool,
     /// Set when a finishing record also carried events; the [`RpcStep::RunFinished`] it implies is delivered on the next call, after those events.
     deferred_finish: Option<bool>,
+    /// When true, image objects in `prompt` commands carry an extra
+    /// `"type": "image"` key (required by Pi RPC); default shape stays
+    /// `{data, mimeType}` for consumers that validate by exact key count.
+    image_type_tag: bool,
+    /// Tool call ids to their last-seen input objects, so a later update with
+    /// no `raw_input` can carry the opening call's input; cleared on every run end.
+    tool_inputs: HashMap<String, Value>,
 }
 
 impl RpcSession {
@@ -93,7 +100,16 @@ impl RpcSession {
             ended_aborted: false,
             exited: false,
             deferred_finish: None,
+            image_type_tag: false,
+            tool_inputs: HashMap::new(),
         }
+    }
+
+    /// Mark this session for consumers whose `prompt` image objects must carry
+    /// a `"type": "image"` key alongside `data` and `mimeType` (e.g. Pi RPC).
+    pub fn with_image_type_tag(mut self) -> Self {
+        self.image_type_tag = true;
+        self
     }
 
     /// The ACP session id this stream is bound to.
@@ -117,8 +133,10 @@ impl RpcSession {
         self.begin_prompt_with_images(text, &[])
     }
 
-    /// Like [`Self::begin_prompt`], attaching images as `images:
-    /// [{data, mimeType}]` when any are given.
+    /// Like [`Self::begin_prompt`], attaching images as `images:` entries when
+    /// any are given. Each entry is `{data, mimeType}` by default; when
+    /// [`Self::with_image_type_tag`] was used it is
+    /// `{"type": "image", data, mimeType}` (required by Pi RPC).
     pub fn begin_prompt_with_images(
         &mut self,
         text: &str,
@@ -129,10 +147,17 @@ impl RpcSession {
         }
         let mut fields = json!({ "message": text });
         if !images.is_empty() {
-            fields["images"] = images
+            let images: Vec<Value> = images
                 .iter()
-                .map(|image| json!({ "data": image.data, "mimeType": image.mime_type }))
+                .map(|image| {
+                    if self.image_type_tag {
+                        json!({ "type": "image", "data": image.data, "mimeType": image.mime_type })
+                    } else {
+                        json!({ "data": image.data, "mimeType": image.mime_type })
+                    }
+                })
                 .collect();
+            fields["images"] = Value::Array(images);
         }
         let id = self.process.send("prompt", fields)?;
         self.prompt_id = Some(id);
@@ -240,6 +265,7 @@ impl RpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
+            self.tool_inputs.clear();
             return RpcStep::Exited;
         }
 
@@ -248,6 +274,7 @@ impl RpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
+            self.tool_inputs.clear();
             return RpcStep::RunFinished { aborted };
         }
 
@@ -266,6 +293,7 @@ impl RpcSession {
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
+                    self.tool_inputs.clear();
                     return RpcStep::Exited;
                 }
                 // No adapter meaning keeps the loop consuming within this
@@ -290,7 +318,8 @@ impl RpcSession {
             return Some(step);
         }
 
-        let mapping: RpcMapping = (self.mapper)(value, self.session_id());
+        let mut mapping: RpcMapping = (self.mapper)(value, self.session_id());
+        carry_tool_inputs(&mut self.tool_inputs, &mut mapping.events);
         if mapping.ended_aborted {
             self.ended_aborted = true;
         }
@@ -301,6 +330,7 @@ impl RpcSession {
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
+                self.tool_inputs.clear();
                 return Some(RpcStep::RunFinished { aborted });
             }
             // A finishing record that also carries events surfaces the
@@ -336,6 +366,7 @@ impl RpcSession {
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
+                self.tool_inputs.clear();
                 Some(RpcStep::PromptRejected(detail))
             }
             _ => {
@@ -344,6 +375,7 @@ impl RpcSession {
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
+                    self.tool_inputs.clear();
                     Some(RpcStep::RunFinished { aborted: false })
                 } else {
                     // e.g. `disposition: "started"` — acknowledgement only; the
@@ -374,6 +406,47 @@ impl RpcSession {
                 return None;
             }
             std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+}
+
+/// Re-attach tool call inputs to their later updates: an update whose
+/// `raw_input` is missing but whose id was remembered from the opening
+/// `ToolCall` (or an earlier input-bearing event) gets that input, and a
+/// terminal (`completed`/`failed`) update drops its memo entry afterwards.
+pub(super) fn carry_tool_inputs(memo: &mut HashMap<String, Value>, events: &mut [AgentEvent]) {
+    for event in events.iter_mut() {
+        let AgentEvent::Native(native) = event else {
+            continue;
+        };
+        match native {
+            NativeEvent::ToolCall { id, raw_input, .. } => {
+                if let Some(input) = raw_input.as_ref() {
+                    if input.is_object() {
+                        memo.insert(id.clone(), input.clone());
+                    }
+                }
+            }
+            NativeEvent::ToolCallUpdate {
+                id,
+                status,
+                raw_input,
+                ..
+            } => match raw_input.as_ref() {
+                Some(input) if input.is_object() => {
+                    memo.insert(id.clone(), input.clone());
+                }
+                None => {
+                    if let Some(input) = memo.get(id).cloned().filter(|v| v.is_object()) {
+                        *raw_input = Some(input);
+                        if status == "completed" || status == "failed" {
+                            memo.remove(id);
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 }

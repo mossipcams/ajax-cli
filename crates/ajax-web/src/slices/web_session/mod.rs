@@ -464,6 +464,9 @@ mod harness_contract_tests;
 mod host_crash_tests;
 
 #[cfg(test)]
+mod native_diff_tests;
+
+#[cfg(test)]
 mod pi_dialog_tests;
 
 #[cfg(test)]

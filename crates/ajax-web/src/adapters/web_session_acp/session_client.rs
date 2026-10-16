@@ -259,7 +259,7 @@ impl SessionClient {
             model_apply_error,
             config_options: Some(client.config_options()),
             prompt_capabilities: PromptCapabilityDescriptor {
-                image: false,
+                image: true,
                 embedded_context: false,
             },
         };
@@ -345,7 +345,10 @@ impl SessionClient {
     pub fn begin_prompt(&mut self, blocks: &[ContentBlock]) -> Result<u64, String> {
         match self {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
-            SessionClient::Pi(session) => session.client.begin_prompt(&prompt_text(blocks)),
+            SessionClient::Pi(session) => {
+                let (text, images) = prompt_parts(blocks);
+                session.client.begin_prompt_with_images(&text, &images)
+            }
             SessionClient::Claude(session) => session.client.begin_prompt(&prompt_text(blocks)),
             SessionClient::Cursor(session) => {
                 let (text, images) = prompt_parts(blocks);
