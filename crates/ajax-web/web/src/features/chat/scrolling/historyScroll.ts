@@ -67,8 +67,7 @@ export function restoreScrollAfterTopGrowth(
 ): void {
   const delta = scrollHeightDelta(beforeScrollHeight, thread.scrollHeight);
   if (delta <= 0) return;
-  // Reversed coords: prepended rows grow distance from the live edge, so the
-  // read position moves further negative by the delta. Pinned windows start at
-  // 0 and land at -delta; a window that still fits clamps back to 0 natively.
-  thread.scrollTop = beforeScrollTop - delta;
+  // In reversed coords, earlier rows grow beyond the history edge; existing
+  // rows keep the same distance from the live edge at the same negative offset.
+  thread.scrollTop = beforeScrollTop;
 }

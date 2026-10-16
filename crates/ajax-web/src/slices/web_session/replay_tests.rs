@@ -342,7 +342,7 @@ fn reset_tail_snaps_back_to_user_message_boundary() {
 #[test]
 fn reset_tail_falls_back_to_naive_start_when_user_message_beyond_limit() {
     // The only user message is further than TAIL_EVENT_LIMIT events before the
-    // naive tail start, so the tail keeps the naive start.
+    // naive tail start (or dropped past the log cap), so the tail keeps the naive start.
     let mut events = vec![user_note("go")];
     events.extend(
         (0..TAIL_EVENT_LIMIT * 2)
@@ -363,7 +363,7 @@ fn reset_tail_falls_back_to_naive_start_when_user_message_beyond_limit() {
         .transcript
         .expect("reset snapshot carries transcript");
     assert_eq!(transcript.len(), TAIL_EVENT_LIMIT);
-    let first_cursor = log.events.len() - TAIL_EVENT_LIMIT;
+    let first_cursor = log.dropped + log.events.len() - TAIL_EVENT_LIMIT;
     assert_eq!(transcript.first().map(|e| e.cursor), Some(first_cursor));
     assert_eq!(snapshot.transcript_from, Some(first_cursor));
 }

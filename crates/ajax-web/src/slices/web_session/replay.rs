@@ -6,7 +6,7 @@ use super::SessionServerEvent;
 
 /// Maximum number of newest transcript events carried in a reset attach
 /// snapshot's `transcript`; older history stays reachable via the cursor.
-pub(crate) const TAIL_EVENT_LIMIT: usize = 300;
+pub(crate) const TAIL_EVENT_LIMIT: usize = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplayPlan {

@@ -28,7 +28,7 @@ function buildLongTranscript(count: number): ConversationItem[] {
 
 describe("useHistoryWindow", () => {
   it("paints only the recent window on first populate", () => {
-    const items = buildLongTranscript(120);
+    const items = buildLongTranscript(250);
     const { result } = renderHook(({ rows, key }) => useHistoryWindow(rows, key), {
       initialProps: { rows: items, key: "task:ready" },
     });
@@ -41,7 +41,8 @@ describe("useHistoryWindow", () => {
   });
 
   it("derives the window slice during first render before layout effects", () => {
-    const items = buildLongTranscript(120);
+    const items = buildLongTranscript(250);
+
     let firstRenderVisible = -1;
     renderHook(({ rows, key }) => {
       const hook = useHistoryWindow(rows, key);
@@ -72,7 +73,7 @@ describe("useHistoryWindow", () => {
   });
 
   it("resets when the session key changes", () => {
-    const items = buildLongTranscript(100);
+    const items = buildLongTranscript(250);
     const { result, rerender } = renderHook(({ rows, key }) => useHistoryWindow(rows, key), {
       initialProps: { rows: items, key: "task-a:ready" },
     });
@@ -88,7 +89,7 @@ describe("useHistoryWindow", () => {
   });
 
   it("reveals earlier already-held rows", () => {
-    const items = buildLongTranscript(120);
+    const items = buildLongTranscript(250);
     const { result } = renderHook(({ rows, key }) => useHistoryWindow(rows, key), {
       initialProps: { rows: items, key: "task:ready" },
     });
@@ -103,7 +104,7 @@ describe("useHistoryWindow", () => {
   });
 
   it("recomputes the window after shrink and replay on the same session key", () => {
-    const items = buildLongTranscript(120);
+    const items = buildLongTranscript(250);
     const { result, rerender } = renderHook(({ rows, key }) => useHistoryWindow(rows, key), {
       initialProps: { rows: items, key: "task:ready" },
     });

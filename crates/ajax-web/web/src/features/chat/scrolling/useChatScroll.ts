@@ -47,7 +47,10 @@ export function useChatScroll({
   const pinnedRef = useRef(true);
   const ignoreScrollIntentRef = useRef(false);
   const contentScrollHeightRef = useRef(0);
-  const autoLoadRef = useRef({ armed: false, lastLoadAt: 0 });
+  // Armed on start: the initial pinned live edge is by definition away from
+  // the history edge, so a fast scroll that lands directly in the preload band
+  // must load without a prior arming pass (the "sometimes doesn't load" flake).
+  const autoLoadRef = useRef({ armed: true, lastLoadAt: 0 });
   const prevWindowGenerationRef = useRef(0);
   const pendingTopRestoreRef = useRef<{
     scrollTop: number;
@@ -93,7 +96,14 @@ export function useChatScroll({
       scrollHeight: node.scrollHeight,
     };
     const revealed = historyScroll.revealEarlier();
-    if (revealed <= 0) return 0;
+    if (revealed <= 0) {
+      // Server fetch path: it returns 0 synchronously and grows the thread
+      // when its page prepends, so arm the top restore with a sentinel reveal
+      // count for that growth. A failed fetch never bumps windowGeneration,
+      // so no stale restore can run.
+      pendingTopRestoreRef.current = { ...before, revealed: 1 };
+      return 0;
+    }
 
     pendingTopRestoreRef.current = { ...before, revealed };
     return revealed;
@@ -126,6 +136,27 @@ export function useChatScroll({
     setBehind(!atLive);
   }, [historyScroll?.windowGeneration, threadRef]);
 
+  // Stable handle for the fill effect below; loadEarlier rebinds on every
+  // historyScroll change, which must not restart the fill loop.
+  const loadEarlierRef = useRef(loadEarlier);
+  loadEarlierRef.current = loadEarlier;
+
+  // While the rendered tail does not overflow the viewport no scroll event can
+  // ever reach the history edge, so scroll-driven loading (armed or manual) is
+  // unreachable and a thin transcript leaves whitespace above it. Auto-load
+  // older pages until the thread overflows or the server history is exhausted.
+  // A successful prepend bumps windowGeneration and re-runs this effect; a
+  // failed fetch never does, so the loop stops there and stays retryable via
+  // the load-earlier pill.
+  const fillHasEarlier = historyScroll?.hasEarlier ?? false;
+  useLayoutEffect(() => {
+    const node = threadRef.current;
+    if (!node || !fillHasEarlier) return;
+    if (pendingTopRestoreRef.current) return;
+    if (node.clientHeight <= 0 || node.scrollHeight > node.clientHeight) return;
+    loadEarlierRef.current();
+  }, [fillHasEarlier, historyScroll?.windowGeneration, threadRef]);
+
   useLayoutEffect(() => {
     const node = threadRef.current;
     if (!node || prevSessionKeyRef.current === sessionKey) return;
@@ -136,7 +167,7 @@ export function useChatScroll({
     pinnedRef.current = true;
     seenRevisionRef.current = revisionRef.current;
     contentScrollHeightRef.current = node.scrollHeight;
-    autoLoadRef.current = { armed: false, lastLoadAt: 0 };
+    autoLoadRef.current = { armed: true, lastLoadAt: 0 };
     prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
     pendingTopRestoreRef.current = null;
     scrollToLiveEdge(node);

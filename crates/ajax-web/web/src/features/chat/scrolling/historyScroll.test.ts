@@ -25,16 +25,15 @@ describe("historyScroll", () => {
     // Reversed: live edge is 0, reading 300px away from it.
     const el = thread(-300, 1300, 400);
     restoreScrollAfterTopGrowth(el, -300, 1200);
-    expect(el.scrollTop).toBe(-400);
+    expect(el.scrollTop).toBe(-300);
   });
 
-  it("moves pinned non-overflowing windows negative after prepend growth", () => {
-    // Pinned at the live edge (scrollTop = 0) in a window that fit; the reveal
-    // grows scrollHeight past clientHeight, so distance from the live edge must
-    // become -delta.
+  it("keeps pinned non-overflowing windows at the live edge after prepend growth", () => {
+    // Earlier rows grow away from the live edge, so an existing pinned window
+    // remains pinned even when the revealed history starts overflowing.
     const el = thread(0, 500, 400);
     restoreScrollAfterTopGrowth(el, 0, 300);
-    expect(el.scrollTop).toBe(-200);
+    expect(el.scrollTop).toBe(0);
   });
 
   it("ignores shrink or zero delta", () => {
