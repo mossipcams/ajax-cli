@@ -403,12 +403,30 @@ impl SessionClient {
         action: &str,
         content: Option<&serde_json::Value>,
     ) -> Result<(), String> {
-        let action = super::sdk_elicitation::action_from_wire(action, content)?;
         match self {
-            SessionClient::Acp(client) => client.respond_elicitation(request_id, action),
-            // ponytail: follow up when Pi RPC needs elicitation responses.
-            SessionClient::Pi(_) => {
-                Err("Pi RPC mode has no permission or elicitation requests".to_string())
+            SessionClient::Acp(client) => {
+                let action = super::sdk_elicitation::action_from_wire(action, content)?;
+                client.respond_elicitation(request_id, action)
+            }
+            SessionClient::Pi(session) => {
+                let fields = if action == "accept" {
+                    let mut fields = serde_json::Map::new();
+                    if let Some(serde_json::Value::Object(obj)) = content {
+                        if let Some(confirmed) = obj.get("confirmed").filter(|v| v.is_boolean()) {
+                            fields.insert("confirmed".to_string(), confirmed.clone());
+                        }
+                        if let Some(value) = obj.get("value").filter(|v| v.is_string()) {
+                            fields.insert("value".to_string(), value.clone());
+                        }
+                    }
+                    if fields.is_empty() {
+                        return Err("Pi dialog answer needs `confirmed` or `value`".to_string());
+                    }
+                    serde_json::Value::Object(fields)
+                } else {
+                    serde_json::json!({ "cancelled": true })
+                };
+                session.client.respond_dialog(request_id, fields)
             }
             SessionClient::Claude(_) => Err(
                 "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),

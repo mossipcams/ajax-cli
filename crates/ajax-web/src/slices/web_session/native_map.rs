@@ -54,6 +54,15 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             })
             .into_iter()
             .collect(),
+        NativeEvent::ElicitationRequest {
+            request_id,
+            message,
+            schema,
+        } => vec![SessionServerEvent::ElicitationRequest {
+            request_id: request_id.clone(),
+            message: message.clone(),
+            schema: schema.clone(),
+        }],
         // Lifecycle events are handled by the drain loop, because they need
         // request and host state.
         NativeEvent::TurnFinished { .. } | NativeEvent::Error(_) | NativeEvent::Exited => {

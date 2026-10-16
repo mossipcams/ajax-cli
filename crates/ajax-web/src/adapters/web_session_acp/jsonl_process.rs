@@ -129,16 +129,7 @@ impl JsonlProcess {
     /// JSON object followed by LF. Returns the id; the caller correlates it
     /// against the child's `{ "type": "response", "id": … }` record itself.
     pub fn send(&mut self, command_type: &str, fields: Value) -> Result<String, String> {
-        let mut object = match fields {
-            Value::Object(extra) => extra,
-            Value::Null => serde_json::Map::new(),
-            other => {
-                return Err(format!(
-                    "fields must be a JSON object, got {}",
-                    value_kind(&other)
-                ))
-            }
-        };
+        let mut object = Self::command_fields(fields)?;
 
         self.next_id += 1;
         let id = format!("ajax-rpc-{}", self.next_id);
@@ -146,6 +137,44 @@ impl JsonlProcess {
         object.insert("type".to_owned(), Value::String(command_type.to_owned()));
         object.insert("id".to_owned(), Value::String(id.clone()));
 
+        self.write_record(object)?;
+        Ok(id)
+    }
+
+    /// Write one command with a caller-chosen `id` (for responses such as
+    /// Pi's `extension_ui_response`, which must echo the request's id).
+    /// Same object shape and framing-key protection as [`Self::send`].
+    pub fn send_with_id(
+        &mut self,
+        command_type: &str,
+        id: &str,
+        fields: Value,
+    ) -> Result<(), String> {
+        let mut object = Self::command_fields(fields)?;
+
+        // Ours wins: never let the caller clobber the framing keys.
+        object.insert("type".to_owned(), Value::String(command_type.to_owned()));
+        object.insert("id".to_owned(), Value::String(id.to_owned()));
+
+        self.write_record(object)
+    }
+
+    /// Extract `fields` as a JSON object map, rejecting non-object values.
+    fn command_fields(fields: Value) -> Result<serde_json::Map<String, Value>, String> {
+        match fields {
+            Value::Object(extra) => Ok(extra),
+            Value::Null => Ok(serde_json::Map::new()),
+            other => Err(format!(
+                "fields must be a JSON object, got {}",
+                value_kind(&other)
+            )),
+        }
+    }
+
+    /// Serialize one fully assembled command object and write it, plus LF,
+    /// to the child stdin, flushing. The caller owns id allocation and
+    /// framing-key insertion; this only owns the bytes on the wire.
+    fn write_record(&mut self, object: serde_json::Map<String, Value>) -> Result<(), String> {
         let mut line = serde_json::to_string(&Value::Object(object))
             .map_err(|error| format!("serialize command: {error}"))?;
         line.push('\n');
@@ -159,7 +188,7 @@ impl JsonlProcess {
             .and_then(|()| stdin.flush())
             .map_err(|error| format!("write to child stdin: {error}"))?;
 
-        Ok(id)
+        Ok(())
     }
 
     /// Close the child's stdin to request orderly shutdown. A well-behaved child exits
