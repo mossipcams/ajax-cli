@@ -1,7 +1,6 @@
 import type { ConversationItem } from "../session/public";
 import Markdown from "./Markdown";
 import OutputContentBlockView from "./OutputContentBlockView";
-import ProseCopyButton from "./ProseCopyButton";
 import { settledText } from "./reveal";
 
 export default function AssistantTurn({
@@ -33,7 +32,6 @@ export default function AssistantTurn({
           aria-hidden="true"
         />
       ) : null}
-      {!live && item.text ? <ProseCopyButton text={item.text} /> : null}
     </article>
   );
 }

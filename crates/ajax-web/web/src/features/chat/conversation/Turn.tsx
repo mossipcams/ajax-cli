@@ -3,6 +3,7 @@ import { cleanTitle } from "../activity/public";
 import type { ConversationItem } from "../session/public";
 import AssistantTurn from "./AssistantTurn";
 import MessageTime from "./MessageTime";
+import ProseCopyButton from "./ProseCopyButton";
 import UserTurn from "./UserTurn";
 
 const TranscriptRow = memo(function TranscriptRow({
@@ -23,7 +24,12 @@ const TranscriptRow = memo(function TranscriptRow({
           ) : (
             <AssistantTurn item={item} live={live} />
           )}
-          {item.id && (item.text || item.contentBlocks?.length) ? <MessageTime handle={handle} itemId={item.id} role={item.role} /> : null}
+          {item.id && (item.text || item.contentBlocks?.length) ? (
+            <div className="session-message-actions">
+              <MessageTime handle={handle} itemId={item.id} role={item.role} />
+              {item.role === "agent" && !live && item.text ? <ProseCopyButton text={item.text} /> : null}
+            </div>
+          ) : null}
         </>
       );
 
