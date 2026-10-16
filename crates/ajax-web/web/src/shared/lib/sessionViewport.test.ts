@@ -86,4 +86,44 @@ describe("sessionViewport", () => {
     pinTranscriptToLiveEdge(node);
     expect(node.scrollTop).toBe(0);
   });
+
+  function webkitRoundingThread(settlesAt: (writeIndex: number) => number): {
+    node: HTMLDivElement;
+    writes: () => number;
+  } {
+    const node = document.createElement("div");
+    let stored = settlesAt(0);
+    let writeIndex = -1;
+    Object.defineProperty(node, "scrollHeight", { configurable: true, value: 1200 });
+    Object.defineProperty(node, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(node, "scrollTop", {
+      configurable: true,
+      get() {
+        return stored;
+      },
+      set(value: number) {
+        writeIndex += 1;
+        // Simulate WebKit column-reverse rounding: the stored value is what
+        // the browser settles at after each programmatic write.
+        stored = value === 0 ? settlesAt(writeIndex) : value;
+      },
+    });
+    return { node, writes: () => writeIndex + 1 };
+  }
+
+  it("re-pins a subpixel -1 live-edge drift on WebKit until it reads back 0", () => {
+    // First scrollTop = 0 write rounds to -1; the second settles exactly at 0.
+    const { node, writes } = webkitRoundingThread((i) => (i === 0 ? -1 : 0));
+    pinTranscriptToLiveEdge(node);
+    expect(node.scrollTop).toBe(0);
+    expect(writes()).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not force-pinning when drift exceeds the correction band (reader intent)", () => {
+    // A write settles at -20: beyond LIVE_EDGE_PIN_BAND_PX, so no re-pin loop.
+    const { node, writes } = webkitRoundingThread(() => -20);
+    pinTranscriptToLiveEdge(node);
+    expect(node.scrollTop).toBe(-20);
+    expect(writes()).toBe(1);
+  });
 });

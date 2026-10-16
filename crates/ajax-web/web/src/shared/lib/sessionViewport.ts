@@ -3,6 +3,8 @@ export const MIN_USABLE_VIEWPORT_PX = 50;
 export const SESSION_PIN_THRESHOLD_PX = 16;
 export const SESSION_VIEWPORT_ATTR = "data-session-viewport";
 export const LAYOUT_STABLE_FRAMES = 2;
+export const LIVE_EDGE_PIN_BAND_PX = 2;
+const LIVE_EDGE_PIN_MAX_ATTEMPTS = 3;
 export const LAYOUT_POLL_MAX_FRAMES = 20;
 
 const THREAD_INNER_SELECTOR = ":scope > .session-thread-inner";
@@ -53,8 +55,15 @@ export function transcriptAtLiveEdge(
 }
 
 export function pinTranscriptToLiveEdge(thread: HTMLDivElement): void {
-  // Reversed coords: the live edge is scrollTop = 0.
-  thread.scrollTop = 0;
+  // Reversed coords: the live edge is scrollTop = 0. WebKit can settle a
+  // column-reverse write at -1 when content crosses a subpixel boundary, so
+  // verify each read-back and re-pin small residuals. Beyond the band we stop
+  // to preserve reader intent (the scroll listener owns unpinning).
+  for (let attempt = 0; attempt < LIVE_EDGE_PIN_MAX_ATTEMPTS; attempt += 1) {
+    thread.scrollTop = 0;
+    if (thread.scrollTop === 0) return;
+    if (Math.abs(thread.scrollTop) > LIVE_EDGE_PIN_BAND_PX) break;
+  }
 }
 
 export interface TranscriptGeometry {
