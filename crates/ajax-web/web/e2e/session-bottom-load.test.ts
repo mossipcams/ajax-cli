@@ -150,11 +150,14 @@ test("#1301 bottom load: tail snapshot first paint", async ({ page }) => {
   await expect(page.getByTestId("session-message-user").first()).toHaveText("Question 60");
   await expect(page.getByText("Question 0", { exact: true })).toHaveCount(0);
   const geometry = await page.getByTestId("session-thread").evaluate((thread) => {
-    const messages = thread.querySelectorAll('[data-testid="session-message-agent"]');
+    // Measure the last turn wrapper (which includes the MessageTime
+    // footnote rendered after each message), not the agent message element,
+    // as the transcript's actual live bottom.
+    const turns = thread.querySelectorAll(".session-turn");
     return {
       scrollTop: thread.scrollTop,
       gap: thread.getBoundingClientRect().bottom
-        - messages.item(messages.length - 1).getBoundingClientRect().bottom,
+        - turns.item(turns.length - 1).getBoundingClientRect().bottom,
     };
   });
   expect(geometry.scrollTop).toBe(0);
