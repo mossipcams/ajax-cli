@@ -660,9 +660,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
   capability state: it is never delivered as a turn-stream event, so it cannot
   reorder a turn's first event, and a repeated drain produces no
   second snapshot.
-- Prompts reach the Claude and Pi clients as plain text: `SessionClient`
-  flattens the slice's content blocks (text, resource-link URI, `[image
-  omitted]` placeholder).
+- Prompts reach the Claude client as plain text: `SessionClient` flattens the slice's content blocks (text, resource-link URI, `[image omitted]` placeholder). Cursor and Pi receive images natively: Pi advertises `promptCapabilities.image` and sends `prompt.images` entries as `{type: "image", data, mimeType}`.
 - The guard test `native_harness_code_never_names_the_acp_protocol` keeps
   `agent_client_protocol` and `AcpClientEvent` out of the Claude, Pi and shared
   RPC files.

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
@@ -138,7 +138,7 @@ impl PiRpcClient {
             .map(NativeCommand::from_rpc_command)
             .collect();
 
-        let session = RpcSession::new(process, hs, map_record);
+        let session = RpcSession::new(process, hs, map_record).with_image_type_tag();
 
         let core = RpcClientCore::new(session, Some(pi_usage_hook));
         core.set_available_commands(commands);
@@ -299,6 +299,16 @@ impl PiRpcClient {
     /// Begin a prompt run from a plain-text message.
     pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
         self.core.begin_prompt(message)
+    }
+
+    /// Begin a prompt run from a message with attached images. Pi RPC image
+    /// objects carry `"type": "image"` alongside `data` and `mimeType`.
+    pub fn begin_prompt_with_images(
+        &self,
+        message: &str,
+        images: &[NativeImage],
+    ) -> Result<u64, String> {
+        self.core.begin_prompt_with_images(message, images)
     }
 
     /// Abort the active prompt run. Returns `Err` when no run is in flight.

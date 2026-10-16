@@ -76,6 +76,10 @@ pub struct RpcSession {
     exited: bool,
     /// Set when a finishing record also carried events; the [`RpcStep::RunFinished`] it implies is delivered on the next call, after those events.
     deferred_finish: Option<bool>,
+    /// When true, image objects in `prompt` commands carry an extra
+    /// `"type": "image"` key (required by Pi RPC); default shape stays
+    /// `{data, mimeType}` for consumers that validate by exact key count.
+    image_type_tag: bool,
 }
 
 impl RpcSession {
@@ -93,7 +97,15 @@ impl RpcSession {
             ended_aborted: false,
             exited: false,
             deferred_finish: None,
+            image_type_tag: false,
         }
+    }
+
+    /// Mark this session for consumers whose `prompt` image objects must carry
+    /// a `"type": "image"` key alongside `data` and `mimeType` (e.g. Pi RPC).
+    pub fn with_image_type_tag(mut self) -> Self {
+        self.image_type_tag = true;
+        self
     }
 
     /// The ACP session id this stream is bound to.
@@ -117,8 +129,10 @@ impl RpcSession {
         self.begin_prompt_with_images(text, &[])
     }
 
-    /// Like [`Self::begin_prompt`], attaching images as `images:
-    /// [{data, mimeType}]` when any are given.
+    /// Like [`Self::begin_prompt`], attaching images as `images:` entries when
+    /// any are given. Each entry is `{data, mimeType}` by default; when
+    /// [`Self::with_image_type_tag`] was used it is
+    /// `{"type": "image", data, mimeType}` (required by Pi RPC).
     pub fn begin_prompt_with_images(
         &mut self,
         text: &str,
@@ -129,10 +143,17 @@ impl RpcSession {
         }
         let mut fields = json!({ "message": text });
         if !images.is_empty() {
-            fields["images"] = images
+            let images: Vec<Value> = images
                 .iter()
-                .map(|image| json!({ "data": image.data, "mimeType": image.mime_type }))
+                .map(|image| {
+                    if self.image_type_tag {
+                        json!({ "type": "image", "data": image.data, "mimeType": image.mime_type })
+                    } else {
+                        json!({ "data": image.data, "mimeType": image.mime_type })
+                    }
+                })
                 .collect();
+            fields["images"] = Value::Array(images);
         }
         let id = self.process.send("prompt", fields)?;
         self.prompt_id = Some(id);

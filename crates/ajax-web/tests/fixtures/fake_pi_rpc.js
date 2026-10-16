@@ -226,6 +226,11 @@ rl.on('line', (raw) => {
       emit({ id: command.id, type: 'response', command: 'prompt', success: true, data: { disposition: 'started' } });
       emit({ type: 'agent_start' });
       emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'ok' } });
+      if (Array.isArray(command.images) && command.images.length > 0) {
+        const first = command.images[0];
+        // Report what the fixture received so tests can verify the wire shape.
+        emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: `images=${command.images.length}:${first.type}/${first.mimeType}` } });
+      }
       if (uiConfirm) {
         // A confirm dialog, then the run stops here (no agent_end, no
         // agent_settled); it settles only when the extension_ui_response
