@@ -1,8 +1,8 @@
 import type { ConversationItem } from "../session/public";
 
-export const DEFAULT_HISTORY_WINDOW = 150;
+export const DEFAULT_HISTORY_WINDOW = 400;
 
-export const HISTORY_REVEAL_BATCH = 50;
+export const HISTORY_REVEAL_BATCH = 100;
 
 function isUserTurnStart(item: ConversationItem): boolean {
   return item.kind === "prose" && item.role === "user";

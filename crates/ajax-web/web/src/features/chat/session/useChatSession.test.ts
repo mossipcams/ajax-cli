@@ -389,4 +389,24 @@ describe("useChatSession", () => {
     expect(result.current.sessionConfigOptions?.[0]?.currentValue).toBe("gpt-5.6-sol");
     unmount();
   });
+
+  it("exposes a stable reducer dispatcher for prepending history", () => {
+    const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+    mockTransport(callbacks);
+    const { result, unmount } = renderHook(() =>
+      useChatSession({ handle: "web/fix-login", detail: null }),
+    );
+    const dispatch = result.current.dispatch;
+    act(() => dispatch({ type: "event", event: { type: "history_bounds", from: 100, floor: 0 } }));
+    act(() => dispatch({ type: "event", event: {
+      type: "prepend", from: 10, events: [{ type: "user_message", text: "Older", itemId: "old" }],
+    } }));
+    expect(result.current.dispatch).toBe(dispatch);
+    expect(result.current.view.serverHistory).toEqual({ from: 10, floor: 0 });
+    expect(result.current.view.conversation).toEqual([
+      expect.objectContaining({ kind: "prose", role: "user", text: "Older" }),
+    ]);
+    unmount();
+  });
+
 });

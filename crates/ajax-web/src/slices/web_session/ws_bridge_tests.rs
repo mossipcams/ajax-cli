@@ -10,13 +10,13 @@ use crate::adapters::web_session_acp::{
 use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Duration};
 
-fn scratch_dir(label: &str) -> PathBuf {
+pub(super) fn scratch_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ajax-web-bridge-{label}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
-fn fake_acp_fixture() -> PathBuf {
+pub(super) fn fake_acp_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
 }
 

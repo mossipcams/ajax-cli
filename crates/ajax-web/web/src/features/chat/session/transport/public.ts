@@ -16,6 +16,8 @@ export type {
 } from "./contracts";
 export { connectWebSessionTransport } from "./webSessionTransport";
 export { parseServerEvent, parseServerFrame } from "./parse";
+export { fetchEarlierTranscript } from "./fetchEarlier";
+export type { TranscriptPage } from "./fetchEarlier";
 export {
   clearSessionOutbox,
   clearSessionTransportState,

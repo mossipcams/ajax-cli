@@ -45,6 +45,25 @@
   color: var(--accent);
 }
 
+/* Send time: a quiet footnote under each message — faint, micro, never bold. */
+.session-time {
+  color: var(--ink-faint);
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.session-time[data-role="user"] {
+  align-self: flex-end;
+  margin: 3px 4px 10px 0;
+}
+
+.session-time[data-role="agent"] {
+  align-self: flex-start;
+  margin: 0 0 10px;
+}
+
 /* Live tail caret: status only — withheld prose stays hidden. Reuses the head's
    session-live-pulse; reduced-motion keeps a static ring (see status.css). */
 .session-reply-pending {

@@ -34,10 +34,14 @@ export function autoLoadDecision(
     return { shouldLoad: false, nextState: { armed: false, lastLoadAt: state.lastLoadAt } };
   }
 
+  // Reversed coords: live edge is scrollTop = 0; the history edge is the
+  // most-negative offset (clientHeight - scrollHeight). The preload band and
+  // arm/disarm are measured from that edge, not from zero.
+  const minScrollTop = Math.min(0, clientHeight - scrollHeight);
   let armed = state.armed;
-  if (scrollTop > HISTORY_PRELOAD_PX) armed = true;
+  if (scrollTop > minScrollTop + HISTORY_PRELOAD_PX) armed = true;
 
-  const nearTop = scrollTop <= HISTORY_PRELOAD_PX;
+  const nearTop = scrollTop <= minScrollTop + HISTORY_PRELOAD_PX;
   if (!nearTop) {
     return { shouldLoad: false, nextState: { armed, lastLoadAt: state.lastLoadAt } };
   }
@@ -63,5 +67,7 @@ export function restoreScrollAfterTopGrowth(
 ): void {
   const delta = scrollHeightDelta(beforeScrollHeight, thread.scrollHeight);
   if (delta <= 0) return;
-  thread.scrollTop = beforeScrollTop + delta;
+  // In reversed coords, earlier rows grow beyond the history edge; existing
+  // rows keep the same distance from the live edge at the same negative offset.
+  thread.scrollTop = beforeScrollTop;
 }

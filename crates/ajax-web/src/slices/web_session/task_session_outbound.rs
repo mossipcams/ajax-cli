@@ -1,7 +1,7 @@
 use super::task_session::{AttachSnapshot, OutboundBatch, TaskSessionState};
 use super::{
     protocol::{SessionChrome, SessionSnapshot},
-    replay::{build_attach, pending_elicitation, pending_permission},
+    replay::{attach_inline_tail, build_attach, pending_elicitation, pending_permission},
 };
 
 pub(super) fn attach_snapshot(
@@ -81,6 +81,14 @@ pub(super) fn collect_outbound(
     };
     state.pump();
     let (events, next) = state.log.read_from_enveloped(read_from);
+    let snapshot = if generation_changed {
+        // Mid-session generation change: the reset snapshot carries the same
+        // inline transcript tail a cold attach would, while `events` still
+        // replays the full read for unflagged clients.
+        snapshot.map(|base| attach_inline_tail(base, &events, next, state.log.dropped))
+    } else {
+        snapshot
+    };
     OutboundBatch {
         generation: current_generation,
         cursor: next,

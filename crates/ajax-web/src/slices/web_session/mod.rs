@@ -43,7 +43,8 @@ pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_
 pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
 pub(crate) use execution_ownership::HEARTBEAT_EVERY;
 pub use protocol::{
-    parse_client_cursor, SessionEventEnvelope, SessionSnapshot, SESSION_PROTOCOL_VERSION,
+    parse_client_cursor, parse_tail_snapshot_flag, SessionEventEnvelope, SessionSnapshot,
+    SESSION_PROTOCOL_VERSION,
 };
 pub(crate) use session_activity::{
     record_session_activity, SessionActivity, SessionActivityReporter,
@@ -471,6 +472,9 @@ mod pi_dialog_tests;
 
 #[cfg(test)]
 mod ws_bridge_tests;
+
+#[cfg(test)]
+mod ws_bridge_tail_tests;
 
 #[cfg(test)]
 mod session_cleanup_tests;
