@@ -44,9 +44,13 @@ fi
 
 git push --set-upstream origin "$BRANCH"
 
-if gh pr view "$BRANCH" >/dev/null 2>&1; then
-  pr_url="$(gh pr view "$BRANCH" --json url --jq '.url')"
-  printf '%s\n' "$pr_url"
+# `gh pr view <branch>` matches ANY state, so a previously merged or closed
+# PR for this branch name would make us short-circuit and never create a
+# fresh open one (issue #1267). Use `gh pr list --state open` to check
+# only for an actually open pull request.
+existing_url="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
+if [[ -n "$existing_url" ]]; then
+  printf '%s\n' "$existing_url"
   exit 0
 fi
 
