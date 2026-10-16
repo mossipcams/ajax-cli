@@ -183,7 +183,7 @@ function ChatSessionBody({
           <ChatScrollThread>
             <ChatTranscriptTail
               itemCount={view.conversation.length}
-              conversation={<Conversation items={visibleItems} busy={view.turn.busy} />}
+              conversation={<Conversation items={visibleItems} busy={view.turn.busy} handle={handle} />}
             />
           </ChatScrollThread>
 

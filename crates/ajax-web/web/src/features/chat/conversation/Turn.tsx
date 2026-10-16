@@ -2,19 +2,30 @@ import { memo } from "react";
 import { cleanTitle } from "../activity/public";
 import type { ConversationItem } from "../session/public";
 import AssistantTurn from "./AssistantTurn";
+import MessageTime from "./MessageTime";
 import UserTurn from "./UserTurn";
 
 const TranscriptRow = memo(function TranscriptRow({
   item,
   live,
+  handle,
 }: {
   item: ConversationItem;
   live: boolean;
+  handle: string;
 }) {
   switch (item.kind) {
     case "prose":
-      if (item.role === "user") return <UserTurn item={item} />;
-      return <AssistantTurn item={item} live={live} />;
+      return (
+        <>
+          {item.role === "user" ? (
+            <UserTurn item={item} />
+          ) : (
+            <AssistantTurn item={item} live={live} />
+          )}
+          {item.id && (item.text || item.contentBlocks?.length) ? <MessageTime handle={handle} itemId={item.id} role={item.role} /> : null}
+        </>
+      );
 
     case "permission":
       return (

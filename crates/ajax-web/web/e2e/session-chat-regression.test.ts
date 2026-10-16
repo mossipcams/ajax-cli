@@ -272,8 +272,11 @@ test("#1301 paints an inline retained transcript at its actual live bottom", asy
   );
   expect(firstAgentText).toContain("Earlier answer 11");
   const geometry = await page.getByTestId("session-thread").evaluate((thread) => {
-    const messages = thread.querySelectorAll('[data-testid="session-message-agent"]');
-    const last = messages.item(messages.length - 1);
+    // Measure the last turn wrapper (which includes the MessageTime
+    // footnote rendered after each message), not the agent message element,
+    // as the transcript's actual live bottom.
+    const turns = thread.querySelectorAll(".session-turn");
+    const last = turns.item(turns.length - 1);
     return {
       scrollTop: thread.scrollTop,
       viewportBottom: thread.getBoundingClientRect().bottom,
