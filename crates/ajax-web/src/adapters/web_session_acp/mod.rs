@@ -16,6 +16,7 @@ mod jsonl_process;
 mod pi_rpc_client;
 mod pi_rpc_handshake;
 mod pi_rpc_map;
+pub(crate) mod process_group;
 mod prompt_capability_descriptors;
 mod rpc_client;
 mod rpc_handshake;
@@ -109,6 +110,8 @@ mod pi_rpc_map_tests;
 #[cfg(test)]
 mod jsonl_process_bound_tests;
 #[cfg(test)]
+mod jsonl_process_group_tests;
+#[cfg(test)]
 mod jsonl_process_tests;
 #[cfg(test)]
 mod rpc_session_mapper_tests;
@@ -118,6 +121,8 @@ mod rpc_session_tests;
 #[cfg(test)]
 mod rpc_session_request_tests;
 
+#[cfg(test)]
+mod client_process_group_tests;
 #[cfg(test)]
 mod session_client_claude_tests;
 #[cfg(test)]

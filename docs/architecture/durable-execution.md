@@ -177,6 +177,7 @@ Exactly one host executes against a given registry. This is enforced by the
   does not authorize takeover.
 - **Attach and read paths are not gated** by the lease: any client can attach
   to, and read state from, a registry whose execution lease is held elsewhere.
+- **Harness children run as process-group leaders.** The host starts every harness child (ACP stdio, Pi RPC, Claude SDK and Cursor SDK sidecars) in its own process group and kills the whole group when it tears the session down, so tool subprocesses cannot outlive a session. When a new host claims the lease it runs a one-time orphan sweep: for each run recorded by another boot whose recorded start-time token still matches the live pid, it sends SIGTERM to the child's process group (falling back to the pid for children recorded before groups existed) and clears the recorded identity; a mismatched or unreadable token is never signalled.
 
 ## 7. Migration
 
