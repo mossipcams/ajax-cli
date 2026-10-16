@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use ajax_core::registry::SqliteRegistryStore;
 
-use super::startup_recovery::recover_interrupted_prompts;
+use super::startup_recovery::{queued_prompt_handles, recover_interrupted_prompts};
 use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
 
 /// A scratch state dir plus a fresh registry store inside it.
@@ -147,6 +147,76 @@ fn current_boot_run_is_untouched() {
     let ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load ledger");
     assert_eq!(ledger.entry("p1").unwrap().phase, PromptPhase::Dispatching);
     assert_eq!(interruption_note_count(&store, &dir, handle), 0);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn foreign_boot_queued_prompt_is_listed() {
+    let (dir, store) = scratch_store("queued-foreign");
+    let handle = "chat-foreign";
+    record_owner(&store, &dir, handle, "other-boot");
+    persist_ledger(&store, &dir, handle, &[], &["p1"]);
+
+    assert_eq!(
+        queued_prompt_handles(&store, &dir, "this-boot"),
+        vec![handle.to_string()]
+    );
+
+    cleanup(&dir);
+}
+
+#[test]
+fn foreign_boot_completed_only_is_not_listed() {
+    let (dir, store) = scratch_store("queued-completed");
+    let handle = "chat-foreign";
+    record_owner(&store, &dir, handle, "other-boot");
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "p1".to_owned(),
+        "transcript p1".to_owned(),
+        "prompt p1".to_owned(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("p1"));
+    assert!(ledger.mark_completed("p1"));
+    prompt_ledger::try_persist(&store, &dir, handle, &ledger).expect("persist ledger");
+
+    assert_eq!(
+        queued_prompt_handles(&store, &dir, "this-boot"),
+        Vec::<String>::new()
+    );
+
+    cleanup(&dir);
+}
+
+#[test]
+fn own_boot_queued_prompt_is_not_listed() {
+    let (dir, store) = scratch_store("queued-own");
+    let handle = "chat-live";
+    record_owner(&store, &dir, handle, "this-boot");
+    persist_ledger(&store, &dir, handle, &[], &["p1"]);
+
+    assert_eq!(
+        queued_prompt_handles(&store, &dir, "this-boot"),
+        Vec::<String>::new()
+    );
+
+    cleanup(&dir);
+}
+
+#[test]
+fn queued_prompt_handles_are_sorted() {
+    let (dir, store) = scratch_store("queued-sorted");
+    record_owner(&store, &dir, "chat-z", "other-boot");
+    persist_ledger(&store, &dir, "chat-z", &[], &["pz"]);
+    record_owner(&store, &dir, "chat-a", "other-boot");
+    persist_ledger(&store, &dir, "chat-a", &[], &["pa"]);
+
+    assert_eq!(
+        queued_prompt_handles(&store, &dir, "this-boot"),
+        vec!["chat-a".to_string(), "chat-z".to_string()]
+    );
 
     cleanup(&dir);
 }
