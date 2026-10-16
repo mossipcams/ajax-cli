@@ -404,3 +404,48 @@ fn total_on_non_object_and_malformed_inputs() {
         assert!(!mapping.ended_aborted);
     }
 }
+
+#[test]
+fn completed_tool_call_update_carries_value_diff_string() {
+    let message = serde_json::json!({
+        "type": "tool_call",
+        "call_id": "c5",
+        "name": "Edit",
+        "status": "completed",
+        "args": {"path": "/tmp/file.txt"},
+        "result": {
+            "status": "success",
+            "value": {"diffString": "--- a\n+++ b\n-old\n+new"}
+        }
+    });
+    match native_event(&map(&message).events[0]) {
+        NativeEvent::ToolCallUpdate {
+            status, content, ..
+        } => {
+            assert_eq!(status, "completed");
+            assert_eq!(content.as_deref(), Some("--- a\n+++ b\n-old\n+new"));
+        }
+        other => panic!("expected a ToolCallUpdate, got {other:?}"),
+    }
+}
+
+#[test]
+fn content_wins_over_diff_string() {
+    let message = serde_json::json!({
+        "type": "tool_call",
+        "call_id": "c6",
+        "name": "Edit",
+        "status": "completed",
+        "args": {"path": "/tmp/file.txt"},
+        "result": {
+            "status": "success",
+            "value": {"content": "edited", "diffString": "--- a\n+++ b"}
+        }
+    });
+    match native_event(&map(&message).events[0]) {
+        NativeEvent::ToolCallUpdate { content, .. } => {
+            assert_eq!(content.as_deref(), Some("edited"));
+        }
+        other => panic!("expected a ToolCallUpdate, got {other:?}"),
+    }
+}
