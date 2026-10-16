@@ -160,7 +160,8 @@ fn tool_title(name: &str, args: Option<&Value>) -> String {
 }
 
 /// The update content of a settled tool call: `result.value.content` when it is
-/// a string; else `result.value.stdout` when it is a non-empty string; else
+/// a string; else `result.value.stdout` and `result.value.diffString` when they
+/// are non-empty strings (the edit result's unified diff); else
 /// `result.error.message` when it is a string; else nothing.
 fn tool_update_content(result: Option<&Value>) -> Option<String> {
     let result = result?;
@@ -170,6 +171,11 @@ fn tool_update_content(result: Option<&Value>) -> Option<String> {
     if let Some(stdout) = result.pointer("/value/stdout").and_then(Value::as_str) {
         if !stdout.is_empty() {
             return Some(stdout.to_string());
+        }
+    }
+    if let Some(diff) = result.pointer("/value/diffString").and_then(Value::as_str) {
+        if !diff.is_empty() {
+            return Some(diff.to_string());
         }
     }
     result
