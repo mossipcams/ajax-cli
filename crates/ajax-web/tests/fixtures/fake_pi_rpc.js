@@ -57,6 +57,10 @@ const degradeOptionals = flags.has('--degrade-optionals'); // the three discover
 const interleaveEvent = flags.has('--interleave-event'); // one event mid-handshake
 const rejectPrompt = flags.has('--reject-prompt'); // prompt answers success:false, no events
 const holdRun = flags.has('--hold-run'); // prompt starts the run, which settles only on abort
+// Host-crash tests kill the host mid-turn: stdin then closes while the harness
+// is a live orphan. With this flag the fixture survives that close so the
+// restart sweep has an orphan to reap; default behavior is unchanged.
+const surviveStdinClose = flags.has('--survive-stdin-eof');
 const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
 const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
 
@@ -250,5 +254,11 @@ rl.on('line', (raw) => {
   }
 });
 
+// With --survive-stdin-eof there are no other live handles after stdin
+// closes, so keep the event loop alive for the orphan premise.
+if (surviveStdinClose) setInterval(() => {}, 60_000);
 // Closing stdin is pi's documented orderly shutdown: exit cleanly with code 0.
-rl.on('close', () => process.exit(0));
+rl.on('close', () => {
+  if (surviveStdinClose) return;
+  process.exit(0);
+});
