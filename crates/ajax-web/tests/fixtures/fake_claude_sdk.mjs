@@ -178,9 +178,14 @@ export function query({ prompt, options = {} }) {
       return;
     }
     systemInit();
-    streamEvent("ok");
-    assistant([{ type: "text", text: "ok" }], "end_turn");
-    result("success", { result: "ok" });
+    const imageBlocks = (message?.message?.content ?? []).filter((block) => block?.type === "image");
+    const reply =
+      imageBlocks.length > 0
+        ? `ok images=${imageBlocks.length}:${imageBlocks[0].source.media_type}`
+        : "ok";
+    streamEvent(reply);
+    assistant([{ type: "text", text: reply }], "end_turn");
+    result("success", { result: reply });
   }
 
   (async () => {

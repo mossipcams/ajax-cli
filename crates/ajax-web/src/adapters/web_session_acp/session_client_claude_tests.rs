@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
+use agent_client_protocol::schema::v1::{ContentBlock, ImageContent, TextContent};
 use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
@@ -287,5 +287,48 @@ fn other_agents_do_not_take_the_claude_path() {
             super::session_client::transport_for(AgentClient::Cursor)
                 != HarnessTransport::ClaudeSdk
         );
+    });
+}
+
+#[test]
+fn claude_advertises_images_and_forwards_them_to_the_sdk() {
+    with_fake(|| {
+        let (mut client, report) = spawn_claude_variant();
+        assert!(
+            report.prompt_capabilities.image,
+            "claude spawn report must advertise image support"
+        );
+
+        let blocks = vec![
+            ContentBlock::Text(TextContent::new("look")),
+            ContentBlock::Image(ImageContent::new("AAAA", "image/png")),
+        ];
+        let id = client
+            .begin_prompt(&blocks)
+            .expect("begin_prompt with image");
+
+        let mut saw_image_echo = false;
+        loop {
+            let event = client
+                .wait_event(TIMEOUT)
+                .expect("event before RequestFinished");
+            match &event {
+                AgentEvent::Native(NativeEvent::AgentText(text)) => {
+                    if text.contains("images=1:image/png") {
+                        saw_image_echo = true;
+                    }
+                }
+                AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: finished_id,
+                    ..
+                }) => {
+                    assert_eq!(*finished_id, id);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_image_echo, "agent text must echo the forwarded image");
     });
 }

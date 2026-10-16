@@ -263,6 +263,60 @@ fn prompt_yields_started_disposition_and_full_turn() {
 }
 
 #[test]
+fn prompt_with_images_completes_turn_with_image_reply() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let prompt_id = sidecar.command(
+        "prompt",
+        json!({
+            "message": "look",
+            "images": [{ "data": "AAAA", "mimeType": "image/png" }]
+        }),
+    );
+    let response = sidecar.response(&prompt_id);
+    assert_eq!(response.get("success"), Some(&Value::Bool(true)));
+    sidecar.wait_until("result success", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+    let assistant = events(&sidecar.records, "assistant")
+        .next()
+        .expect("assistant event");
+    let text: String = assistant
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .expect("assistant content array")
+        .iter()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect();
+    assert!(
+        text.contains("images=1:image/png"),
+        "assistant text: {text}"
+    );
+}
+
+#[test]
+fn prompt_with_malformed_images_is_rejected() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let prompt_id = sidecar.command(
+        "prompt",
+        json!({ "message": "look", "images": [{ "data": 1 }] }),
+    );
+    let response = sidecar.response(&prompt_id);
+    assert_eq!(
+        response.get("command").and_then(Value::as_str),
+        Some("prompt")
+    );
+    assert_eq!(response.get("success"), Some(&Value::Bool(false)));
+    let error = response
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(error.contains("prompt images must be"), "error: {error}");
+}
+
+#[test]
 fn abort_interrupts_slow_turn_and_process_stays_usable() {
     let mut sidecar = Sidecar::spawn();
     sidecar.init();

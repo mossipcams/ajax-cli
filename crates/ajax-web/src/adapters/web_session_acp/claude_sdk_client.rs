@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use super::agent_event::NativeImage;
 use super::agent_event::{AgentEvent, NativeCommand};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::JsonlProcess;
@@ -241,6 +242,15 @@ impl ClaudeSdkClient {
     /// Begin a prompt run from a plain-text message.
     pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
         self.core.begin_prompt(message)
+    }
+
+    /// Begin a prompt run from a text message plus attached images.
+    pub fn begin_prompt_with_images(
+        &self,
+        message: &str,
+        images: &[NativeImage],
+    ) -> Result<u64, String> {
+        self.core.begin_prompt_with_images(message, images)
     }
 
     pub fn cancel(&self) -> Result<(), String> {

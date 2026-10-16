@@ -660,7 +660,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
   capability state: it is never delivered as a turn-stream event, so it cannot
   reorder a turn's first event, and a repeated drain produces no
   second snapshot.
-- Prompts reach the Claude client as plain text: `SessionClient` flattens the slice's content blocks (text, resource-link URI, `[image omitted]` placeholder). Cursor and Pi receive images natively: Pi advertises `promptCapabilities.image` and sends `prompt.images` entries as `{type: "image", data, mimeType}`.
+- Cursor, Pi and Claude receive images natively: each advertises `promptCapabilities.image`, `SessionClient` splits the slice's content blocks into text and images (resource-link URIs are folded into the text), Pi sends `prompt.images` entries as `{type: "image", data, mimeType}`, and the Claude sidecar turns `images` into base64 image content blocks for the Agent SDK.
 - Native tool calls show diffs like ACP ones: `native_map` derives `diff` content from the call's input (`file_path`/`path` with `old_string`/`oldText` and `new_string`/`newText`, `edits` arrays, or a `Write` `content`), and `RpcSession` remembers each call's input by id and re-attaches it to the later result update so the plain-text result does not replace the diff in the browser's per-call content merge. Cursor's edit tool carries only `path` in its args, so its unified diff (`result.value.diffString`) is shown as the update text instead.
 - The guard test `native_harness_code_never_names_the_acp_protocol` keeps
   `agent_client_protocol` and `AcpClientEvent` out of the Claude, Pi and shared

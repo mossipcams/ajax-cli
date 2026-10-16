@@ -63,7 +63,7 @@ fn spawn_returns_client_and_report() {
         assert!(report.restore_advertised);
         assert!(!report.close_advertised);
         assert!(!report.resumed);
-        assert!(!report.prompt_capabilities.image);
+        assert!(report.prompt_capabilities.image);
         assert!(!report.prompt_capabilities.embedded_context);
 
         let options = report

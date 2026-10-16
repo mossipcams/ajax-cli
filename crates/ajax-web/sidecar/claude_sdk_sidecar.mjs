@@ -242,9 +242,35 @@ function handlePrompt(cmd) {
   if (typeof cmd.message !== "string") {
     return fail("prompt", cmd.id, "prompt requires a message string");
   }
+  if (cmd.images !== undefined) {
+    if (
+      !Array.isArray(cmd.images) ||
+      cmd.images.some(
+        (image) =>
+          typeof image !== "object" ||
+          image === null ||
+          typeof image.data !== "string" ||
+          image.data.length === 0 ||
+          typeof image.mimeType !== "string" ||
+          image.mimeType.length === 0,
+      )
+    ) {
+      return fail("prompt", cmd.id, "prompt images must be {data, mimeType} objects");
+    }
+  }
+  const content = [];
+  if (cmd.message.length > 0 || !(cmd.images && cmd.images.length > 0)) {
+    content.push({ type: "text", text: cmd.message });
+  }
+  for (const image of cmd.images ?? []) {
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: image.mimeType, data: image.data },
+    });
+  }
   state.input.push({
     type: "user",
-    message: { role: "user", content: [{ type: "text", text: cmd.message }] },
+    message: { role: "user", content },
     parent_tool_use_id: null,
     session_id: state.sessionId,
   });
