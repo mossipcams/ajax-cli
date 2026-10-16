@@ -356,7 +356,7 @@ jobs:
       ${{ !startsWith(github.head_ref, 'release-please--branches--main') &&
       (needs.changes.outputs.full == 'true' || needs.changes.outputs.web == 'true') }}
     container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf
       options: --ipc=host
     timeout-minutes: 20
     # Container jobs run as root against a runner-owned checkout. checkout's
