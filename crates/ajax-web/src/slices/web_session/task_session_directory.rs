@@ -329,6 +329,7 @@ impl TaskSessionDirectory {
             &self.storage.registry_store(),
             &self.storage.state_dir,
             handle,
+            "unknown",
         ) {
             tracing::warn!(%error, handle, "failed to clear stored ACP session id on drop");
         }
@@ -743,8 +744,13 @@ pub(crate) async fn apply_client_message(
 }
 
 fn clear_stored_session_id(storage: &SessionStorage, handle: &str) -> Result<(), String> {
-    web_session_store::clear_acp_session_id(&storage.registry_store(), &storage.state_dir, handle)
-        .map_err(|error| format!("stored session id could not be cleared: {error}"))
+    web_session_store::clear_acp_session_id(
+        &storage.registry_store(),
+        &storage.state_dir,
+        handle,
+        "unknown",
+    )
+    .map_err(|error| format!("stored session id could not be cleared: {error}"))
 }
 
 /// Stored transcript for a handle with no live slot, plus what to tell the

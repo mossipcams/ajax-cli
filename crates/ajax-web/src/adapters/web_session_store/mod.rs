@@ -14,6 +14,7 @@ pub mod prompt_ledger;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSession<T> {
+    pub harness: String,
     pub acp_session_id: Option<String>,
     pub model: String,
     pub events: Vec<T>,
@@ -25,6 +26,7 @@ pub struct StoredSession<T> {
 impl<T> Default for StoredSession<T> {
     fn default() -> Self {
         Self {
+            harness: "unknown".to_string(),
             acp_session_id: None,
             model: "auto".to_string(),
             events: Vec::new(),
@@ -146,6 +148,7 @@ pub fn try_load<T: DeserializeOwned + Serialize>(
         }
     }
     Ok(StoredSession {
+        harness: run.harness,
         acp_session_id: run.native_session_id,
         model: run.model,
         dropped: usize::try_from(dropped).map_err(io::Error::other)?,
@@ -215,6 +218,7 @@ pub fn try_save_meta(
         .commit_execution(&ExecutionCommit {
             run_id,
             run_update: Some(RunUpdate {
+                harness: Some(harness.to_owned()),
                 native_session_id: Some(acp_session_id.map(str::to_owned)),
                 model: Some(model.to_owned()),
                 ..Default::default()
@@ -229,12 +233,13 @@ pub fn clear_acp_session_id(
     store: &SqliteRegistryStore,
     state_dir: &Path,
     handle: &str,
+    harness: &str,
 ) -> io::Result<()> {
     #[cfg(test)]
     if force_meta_write_fail() {
         return Err(io::Error::other("forced session metadata write failure"));
     }
-    let Some(run) = load_run(store, state_dir, handle, "unknown")? else {
+    let Some(run) = load_run(store, state_dir, handle, harness)? else {
         return Ok(());
     };
     store

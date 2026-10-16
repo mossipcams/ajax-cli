@@ -78,6 +78,7 @@ pub struct CheckpointResult {
 /// may be `None` to clear a nullable column).
 #[derive(Clone, Debug, Default)]
 pub struct RunUpdate {
+    pub harness: Option<String>,
     pub native_session_id: Option<Option<String>>,
     pub capabilities_json: Option<String>,
     pub model: Option<String>,
@@ -435,6 +436,12 @@ impl SqliteRegistryStore {
 
         // 6. In-place run updates.
         if let Some(run_update) = &commit.run_update {
+            if let Some(harness) = &run_update.harness {
+                transaction.execute(
+                    "UPDATE agent_runs SET harness = ?2 WHERE run_id = ?1",
+                    params![commit.run_id, harness],
+                )?;
+            }
             if let Some(native_session_id) = &run_update.native_session_id {
                 transaction.execute(
                     "UPDATE agent_runs SET native_session_id = ?2 WHERE run_id = ?1",
