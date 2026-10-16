@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { HISTORY_REVEAL_BATCH } from "../src/features/chat/conversation/historyWindow";
+import { LIVE_EDGE_PIN_BAND_PX } from "../src/shared/lib/sessionViewport";
 import { DETAIL_FIXTURE, mockFetch, sessionEventJson, sessionSnapshotJson } from "./fixtures";
 
 const TOTAL_TURNS = 100;
@@ -184,7 +185,11 @@ test("#1304 a short first-load tail auto-fills without interaction", async ({ pa
         - messages.item(messages.length - 1).getBoundingClientRect().bottom,
     };
   });
-  expect(geometry.scrollTop).toBe(0);
+  // #1309: on WebKit this auto-fill layout settles at -1px when content
+  // height crosses a subpixel boundary (column-reverse); repeated scrollTop=0
+  // writes settle back there deterministically, so assert the app's own
+  // live-edge pin band instead of an engine-specific exact 0.
+  expect(Math.abs(geometry.scrollTop)).toBeLessThanOrEqual(LIVE_EDGE_PIN_BAND_PX);
   expect(geometry.last).toContain(`Answer ${TOTAL_TURNS - 1}`);
   expect(geometry.gap).toBeGreaterThanOrEqual(0);
   expect(requests.length).toBeGreaterThan(0);
