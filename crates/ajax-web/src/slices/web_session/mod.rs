@@ -23,6 +23,7 @@ mod session_cleanup;
 mod session_error;
 mod session_evidence;
 mod session_storage;
+mod startup_recovery;
 mod task_pane_agent;
 mod task_session;
 mod task_session_answers;
@@ -460,6 +461,9 @@ mod acp_usage_tests;
 mod harness_contract_tests;
 
 #[cfg(test)]
+mod host_crash_tests;
+
+#[cfg(test)]
 mod ws_bridge_tests;
 
 #[cfg(test)]
@@ -467,6 +471,9 @@ mod session_cleanup_tests;
 
 #[cfg(test)]
 mod session_close_tests;
+
+#[cfg(test)]
+mod startup_recovery_tests;
 
 #[cfg(test)]
 pub(crate) mod test_support;

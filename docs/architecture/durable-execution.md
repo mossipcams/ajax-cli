@@ -137,6 +137,7 @@ which applies its rules **in this order**:
    - `unsafe` -> **interrupt** (ambiguous; no automatic resend).
 
 **What the host does today.** `resolve_recovery` and the reconcile mapping are implemented and tested as pure functions, and crash-tested against the real kernel store with aborted child processes, but the web host does not yet call them. At restart the chat session applies one fixed rule instead: a prompt that was dispatching becomes interrupted (the transcript shows `Prompt <id> was interrupted by host restart and was not retried.`) and is never resent; queued prompts are kept and dispatched in order. Reconcile and replay are not used for chat yet, because no harness adapter reports that it can reconcile a dispatched prompt.
+**Recovery does not wait for an attach.** The first time a host claims the execution owner lease it applies the same restart rule to every chat run owned by a previous boot, without starting any agent: dispatching prompts become `interrupted` and the transcript gets the `Prompt <id> was interrupted by host restart and was not retried.` note, and the task's reported status is moved off "Agent working" to the failed-turn state. Queued prompts are untouched; the per-session acquire path later finds nothing left to interrupt, so the rule is idempotent. Runs whose owner boot id is this host's own are never touched.
 
 For a `reconcile` task the server queries the harness about the specific
 operation, and maps the answer:

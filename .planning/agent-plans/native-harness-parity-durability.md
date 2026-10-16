@@ -223,7 +223,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] W0 spike recorded (2026-10-14, see W0 results). `/cmd` expansion not exercised.
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
 - [ ] W2a done (branch refactor/web/transport-selection), W2b done (branch refactor/web/shared-native-arms).
-- [ ] W4a done (#1298, branch fix/web/harness-process-groups), W4b, W4d.
+- [ ] W4a done (#1298, branch fix/web/harness-process-groups), W4b done (branch fix/web/startup-prompt-recovery), W4d done (branch test/web/host-crash-suite).
 - [ ] W3g, W3e (repro → fix or close), W3a, W3c ×4, W3b, W3f.
 - [ ] W4c (after W4d).
 
@@ -233,6 +233,8 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - 2026-10-14: W3d and W4e dropped, W4c approved (Decisions).
 - 2026-10-14: worktree branch ajax/new-adapters was stale (base #1291, 5 behind main, 2 commits duplicating #1295); work continues on stacked branches cut from origin/main starting at chore/web/native-harness-closeout.
 - 2026-10-14: W2a deleted the uses_* selectors, so the 5 gating tests that called them were mechanically rewired from uses_x(a) to transport_for(a) == X (same assertion count and strength); the 'tests unmodified' acceptance could not hold literally.
+- 2026-10-14: W4b reports TurnFailed for recovered handles through the directory's activity reporter (not just ledger+transcript): without it the existing issue_1176 test showed startup recovery pre-empting the per-session path that clears 'Agent working'. Recovery piggybacks on the first lease claim (claimed by the runtime heartbeat tick when no attach happened), not a dedicated startup call.
+- 2026-10-14: W4d asserts the orphan harness is alive after host death only for the ACP and Pi rows: the Claude and Cursor sidecars exit on stdin EOF by design, so for them the post-restart assertions (orphan gone, p1 interrupted, p2 completed once, same native session, lease taken over) are the proof. The lease is taken over immediately when the holder pid is dead (not after the 30 s staleness window). Fixture fake_acp.js also lost one dead const (acceptUnadvertisedGrokHigh) in the edit.
 
 ## Validation
 

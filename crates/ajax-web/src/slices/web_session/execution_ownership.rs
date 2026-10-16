@@ -9,6 +9,7 @@ pub(crate) struct ExecutionOwnership {
     boot_id: String,
     lost: AtomicBool,
     consecutive_heartbeat_failures: AtomicU32,
+    recovered_handles: std::sync::Mutex<Vec<String>>,
 }
 
 /// How often the runtime task renews the execution owner lease.
@@ -24,11 +25,17 @@ impl ExecutionOwnership {
             boot_id,
             lost: AtomicBool::new(false),
             consecutive_heartbeat_failures: AtomicU32::new(0),
+            recovered_handles: std::sync::Mutex::new(Vec::new()),
         }
     }
 
     pub(crate) fn boot_id(&self) -> &str {
         &self.boot_id
+    }
+
+    /// Takes the handles whose turns startup recovery interrupted, for activity reporting.
+    pub(crate) fn take_recovered_handles(&self) -> Vec<String> {
+        std::mem::take(&mut *self.recovered_handles.lock().unwrap())
     }
 
     #[cfg(test)]
@@ -48,7 +55,8 @@ impl ExecutionOwnership {
     /// registry. Fails only when a live foreign process holds it. The first
     /// successful claim in this process also runs the one-time orphan sweep
     /// (`orphan_sweep::sweep_once`), terminating harness children left behind
-    /// by previous hosts. On success
+    /// by previous hosts, and then the startup recovery that interrupts prompts
+    /// left `Dispatching` by dead hosts. On success
     /// clears `lost` and resets the heartbeat failure counter, so a host that
     /// lost its lease recovers as soon as the lease is free, stale, or held by
     /// a process that is gone.
@@ -60,7 +68,14 @@ impl ExecutionOwnership {
                 self.lost.store(false, Ordering::SeqCst);
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
-                super::orphan_sweep::sweep_once(&store, &self.boot_id);
+                self.recovered_handles
+                    .lock()
+                    .unwrap()
+                    .extend(super::orphan_sweep::sweep_once(
+                        &store,
+                        &self.storage.state_dir,
+                        &self.boot_id,
+                    ));
                 Ok(())
             }
             Ok(OwnerClaim::HeldBy {
@@ -75,7 +90,13 @@ impl ExecutionOwnership {
                         self.lost.store(false, Ordering::SeqCst);
                         self.consecutive_heartbeat_failures
                             .store(0, Ordering::SeqCst);
-                        super::orphan_sweep::sweep_once(&store, &self.boot_id);
+                        self.recovered_handles.lock().unwrap().extend(
+                            super::orphan_sweep::sweep_once(
+                                &store,
+                                &self.storage.state_dir,
+                                &self.boot_id,
+                            ),
+                        );
                         Ok(())
                     }
                     Ok(OwnerClaim::HeldBy { pid: holder, .. }) => Err(refused(holder)),

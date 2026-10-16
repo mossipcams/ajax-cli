@@ -295,9 +295,7 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
     }
     let mut recovery_events = Vec::new();
     for id in interrupted {
-        recovery_events.push(SessionServerEvent::Error {
-            message: format!("Prompt {id} was interrupted by host restart and was not retried."),
-        });
+        recovery_events.push(super::startup_recovery::interrupted_by_restart_event(&id));
     }
     state.prompts.queued.clear();
     for entry in queued_entries {

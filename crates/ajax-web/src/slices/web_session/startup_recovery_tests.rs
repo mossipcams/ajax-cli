@@ -1,0 +1,152 @@
+//! Tests for startup recovery of prompts cut off by a host restart. Each
+//! nextest case runs in its own process, so scratch directories cannot collide
+//! between tests.
+
+use std::path::{Path, PathBuf};
+
+use ajax_core::registry::SqliteRegistryStore;
+
+use super::startup_recovery::recover_interrupted_prompts;
+use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
+
+/// A scratch state dir plus a fresh registry store inside it.
+fn scratch_store(label: &str) -> (PathBuf, SqliteRegistryStore) {
+    let dir = std::env::temp_dir().join(format!(
+        "ajax-startup-recovery-{}-{label}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let store = SqliteRegistryStore::new(dir.join("registry.db"));
+    (dir, store)
+}
+
+/// Set the run row's owning boot id exactly as a live session would.
+fn record_owner(store: &SqliteRegistryStore, state_dir: &Path, handle: &str, owner_boot_id: &str) {
+    crate::adapters::web_session_store::record_child_identity(
+        store,
+        state_dir,
+        handle,
+        "acp",
+        None,
+        owner_boot_id,
+    )
+    .expect("record child identity");
+}
+
+/// Persist a ledger with `dispatching` prompts in the Dispatching phase and
+/// `queued` prompts in the Queued phase.
+fn persist_ledger(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    dispatching: &[&str],
+    queued: &[&str],
+) {
+    let mut ledger = PromptLedger::default();
+    for id in dispatching {
+        ledger.upsert_queued(
+            (*id).to_owned(),
+            format!("transcript {id}"),
+            format!("prompt {id}"),
+            Vec::new(),
+        );
+        assert!(ledger.mark_dispatching(id));
+    }
+    for id in queued {
+        ledger.upsert_queued(
+            (*id).to_owned(),
+            format!("transcript {id}"),
+            format!("prompt {id}"),
+            Vec::new(),
+        );
+    }
+    prompt_ledger::try_persist(store, state_dir, handle, &ledger).expect("persist ledger");
+}
+
+fn interruption_note_count(store: &SqliteRegistryStore, state_dir: &Path, handle: &str) -> usize {
+    let session = crate::adapters::web_session_store::try_load::<serde_json::Value>(
+        store, state_dir, handle, "acp",
+    )
+    .expect("load transcript");
+    session
+        .events
+        .iter()
+        .filter(|event| {
+            serde_json::to_string(event)
+                .ok()
+                .is_some_and(|text| text.contains("was interrupted by host restart"))
+        })
+        .count()
+}
+
+fn cleanup(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn foreign_boot_dispatching_prompt_is_interrupted_with_note() {
+    let (dir, store) = scratch_store("dispatching");
+    let handle = "chat-foreign";
+    record_owner(&store, &dir, handle, "other-boot");
+    persist_ledger(&store, &dir, handle, &["p1"], &["p2"]);
+
+    let recovered = recover_interrupted_prompts(&store, &dir, "this-boot");
+    assert_eq!(recovered, vec![handle.to_string()]);
+
+    let ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load ledger");
+    assert_eq!(ledger.entry("p1").unwrap().phase, PromptPhase::Interrupted);
+    assert_eq!(ledger.entry("p2").unwrap().phase, PromptPhase::Queued);
+
+    let session = crate::adapters::web_session_store::try_load::<serde_json::Value>(
+        &store, &dir, handle, "acp",
+    )
+    .expect("load transcript");
+    let expected = "Prompt p1 was interrupted by host restart and was not retried.";
+    assert!(session.events.iter().any(|event| {
+        serde_json::to_string(event)
+            .ok()
+            .is_some_and(|text| text.contains(expected))
+    }));
+    assert_eq!(interruption_note_count(&store, &dir, handle), 1);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn recover_is_idempotent() {
+    let (dir, store) = scratch_store("idempotent");
+    let handle = "chat-foreign";
+    record_owner(&store, &dir, handle, "other-boot");
+    persist_ledger(&store, &dir, handle, &["p1"], &["p2"]);
+
+    assert_eq!(
+        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        vec![handle.to_string()]
+    );
+    assert_eq!(
+        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        Vec::<String>::new()
+    );
+    assert_eq!(interruption_note_count(&store, &dir, handle), 1);
+
+    cleanup(&dir);
+}
+
+#[test]
+fn current_boot_run_is_untouched() {
+    let (dir, store) = scratch_store("current");
+    let handle = "chat-live";
+    record_owner(&store, &dir, handle, "this-boot");
+    persist_ledger(&store, &dir, handle, &["p1"], &[]);
+
+    assert_eq!(
+        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        Vec::<String>::new()
+    );
+
+    let ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load ledger");
+    assert_eq!(ledger.entry("p1").unwrap().phase, PromptPhase::Dispatching);
+    assert_eq!(interruption_note_count(&store, &dir, handle), 0);
+
+    cleanup(&dir);
+}
