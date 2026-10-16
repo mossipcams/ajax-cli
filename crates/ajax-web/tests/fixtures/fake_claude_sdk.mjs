@@ -140,6 +140,25 @@ export function query({ prompt, options = {} }) {
     interrupted = false;
     const block = message?.message?.content?.[0];
     const text = block?.type === "text" ? block.text : "";
+    if (text.includes("ELICIT")) {
+      systemInit();
+      const secret = text.includes("ELICIT_SECRET");
+      const answer = await options.onElicitation?.({
+        serverName: "fake",
+        message: "Pick a name",
+        mode: "form",
+        requestedSchema: {
+          type: "object",
+          properties: secret ? { apiKey: { type: "string" } } : { name: { type: "string" } },
+          required: [secret ? "apiKey" : "name"],
+        },
+      });
+      const reply = `elicit:${answer?.action ?? "none"}:${JSON.stringify(answer?.content ?? null)}`;
+      streamEvent(reply);
+      assistant([{ type: "text", text: reply }], "end_turn");
+      result("success", { result: reply });
+      return;
+    }
     if (text.includes("SLOW")) {
       systemInit();
       let ticks = 0;

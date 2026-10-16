@@ -436,9 +436,29 @@ impl SessionClient {
                 };
                 session.client.respond_dialog(request_id, fields)
             }
-            SessionClient::Claude(_) => Err(
-                "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
-            ),
+            SessionClient::Claude(session) => {
+                let mut fields = serde_json::Map::new();
+                match action {
+                    "accept" | "decline" | "cancel" => {
+                        fields.insert(
+                            "action".to_string(),
+                            serde_json::Value::String(action.to_string()),
+                        );
+                    }
+                    _ => return Err("unsupported elicitation action".to_string()),
+                };
+                if action == "accept" {
+                    if let Some(serde_json::Value::Object(obj)) = content {
+                        fields.insert(
+                            "content".to_string(),
+                            serde_json::Value::Object(obj.clone()),
+                        );
+                    }
+                }
+                session
+                    .client
+                    .respond_elicitation(request_id, serde_json::Value::Object(fields))
+            }
             SessionClient::Cursor(_) => {
                 Err("Cursor SDK mode has no permission or elicitation requests".to_string())
             }

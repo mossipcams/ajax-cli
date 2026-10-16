@@ -224,7 +224,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - [x] W1 close-out PR (W1a contract row, W1b/W1c docs, W1d plan hygiene done on branch chore/web/native-harness-closeout; PR pending).
 - [ ] W2a done (branch refactor/web/transport-selection), W2b done (branch refactor/web/shared-native-arms).
 - [ ] W4a done (#1298, branch fix/web/harness-process-groups), W4b done (branch fix/web/startup-prompt-recovery), W4d done (branch test/web/host-crash-suite).
-- [ ] W3g done (#1299, branch fix/web/harness-swap-stale-commands), W3e done (#1306, branch fix/web/pi-extension-dialogs), W3a done (branch feat/web/pi-image-prompts), W3c done (branch feat/web/native-tool-diffs), W3b done (branch feat/web/claude-image-prompts), W3f.
+- [ ] W3g done (#1299, branch fix/web/harness-swap-stale-commands), W3e done (#1306, branch fix/web/pi-extension-dialogs), W3a done (branch feat/web/pi-image-prompts), W3c done (branch feat/web/native-tool-diffs), W3b done (branch feat/web/claude-image-prompts), W3f done (branch feat/web/claude-elicitation).
 - [ ] W4c (after W4d).
 
 ## Deviations
@@ -239,6 +239,7 @@ Parent reviews every `session_client.rs` hunk (W2b) and every recovery hunk
 - 2026-10-16: W3c did not change NativeEvent::ToolCallUpdate.content to a Vec as planned (it would rewrite many existing mapper tests); diffs are derived in native_map from raw_input and RpcSession re-attaches the call input to result updates (the browser merge replaces content with the latest non-empty block). Cursor diffs are carried as Text (unified diffString) instead of parsed hunks.
 - 2026-10-16: W3e re-pointed session_client_tests::pi_variant_rejects_request_and_elicitation_responses: Pi respond_elicitation is now supported by plan, so the test keeps rejecting an empty accept and respond_client_request and asserts a decline succeeds.
 - 2026-10-16: W3b flipped claude_sdk_spawn_tests::spawn_returns_client_and_report from asserting Claude image=false to image=true (planned contract change); session_client::prompt_text is now cfg(test) only because its sole caller is its own placeholder test. task_session_reliability_tests::terminal_persist_failure_retries_before_fifo_advances failed once under full-suite load and passes alone (pre-existing flake, unrelated).
+- 2026-10-16: W3f re-pointed session_client_claude_tests::request_responses_are_rejected_in_claude_mode (Claude respond_elicitation is supported by plan; it still rejects respond_client_request and an invalid action). cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root failed once under full-suite load and passes alone (pre-existing flake).
 
 ## Validation
 

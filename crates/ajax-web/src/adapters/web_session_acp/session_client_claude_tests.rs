@@ -174,8 +174,17 @@ fn request_responses_are_rejected_in_claude_mode() {
             .respond_client_request(&serde_json::json!(1), serde_json::json!({}))
             .expect_err("respond_client_request must be rejected");
         client
+            .respond_elicitation("r-1", "bogus", None)
+            .expect_err("an unknown elicitation action must be rejected");
+        let err = client
+            .respond_elicitation("r-1", "bogus", None)
+            .unwrap_err();
+        assert_eq!(err, "unsupported elicitation action");
+
+        // Claude answers elicitations now (W3f); the sidecar ignores unknown ids.
+        client
             .respond_elicitation("r-1", "decline", None)
-            .expect_err("respond_elicitation must be rejected");
+            .expect("a decline is forwarded to the sidecar");
     });
 }
 

@@ -510,3 +510,138 @@ fn shutdown_responds_then_child_exits_once() {
     }
     assert_eq!(exited, 1, "Exited arrives exactly once");
 }
+
+/// The assistant text of the first `assistant` event, panicking when absent.
+fn first_assistant_text(records: &[Value]) -> String {
+    let assistant = events(records, "assistant")
+        .next()
+        .expect("assistant event");
+    assistant
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+        .expect("assistant content array")
+        .iter()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect()
+}
+
+#[test]
+fn form_elicitation_is_forwarded_and_answered() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let prompt_id = sidecar.command("prompt", json!({ "message": "ELICIT go" }));
+    assert_eq!(
+        sidecar.response(&prompt_id).get("success"),
+        Some(&Value::Bool(true))
+    );
+    // The form elicitation is forwarded to the host before any turn output.
+    sidecar.wait_until("elicitation_request", |records| {
+        events(records, "elicitation_request").next().is_some()
+    });
+    let request = events(&sidecar.records, "elicitation_request")
+        .next()
+        .expect("elicitation request record");
+    assert_eq!(
+        request.get("message").and_then(Value::as_str),
+        Some("Pick a name")
+    );
+    let properties = request
+        .get("schema")
+        .and_then(|schema| schema.get("properties"))
+        .and_then(Value::as_object)
+        .expect("schema properties object");
+    assert!(
+        properties.contains_key("name"),
+        "schema has a `name` property: {properties:?}"
+    );
+    let request_id = request
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("request id")
+        .to_owned();
+    // The response command's `id` field is the REQUEST id, not a fresh one.
+    sidecar
+        .process
+        .send_with_id(
+            "elicitation_response",
+            &request_id,
+            json!({ "action": "accept", "content": { "name": "Ada" } }),
+        )
+        .expect("send elicitation response");
+    let answer = sidecar.response(&request_id);
+    assert_eq!(answer.get("success"), Some(&Value::Bool(true)));
+    sidecar.wait_until("elicit result", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+    let text = first_assistant_text(&sidecar.records);
+    assert_eq!(text, r#"elicit:accept:{"name":"Ada"}"#);
+}
+
+#[test]
+fn abort_cancels_pending_elicitation() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let prompt_id = sidecar.command("prompt", json!({ "message": "ELICIT go" }));
+    assert_eq!(
+        sidecar.response(&prompt_id).get("success"),
+        Some(&Value::Bool(true))
+    );
+    sidecar.wait_until("elicitation_request", |records| {
+        events(records, "elicitation_request").next().is_some()
+    });
+    let abort_id = sidecar.command("abort", json!({}));
+    assert_eq!(
+        sidecar.response(&abort_id).get("success"),
+        Some(&Value::Bool(true))
+    );
+    // The still-pending elicitation resolves as cancelled, completing the turn.
+    sidecar.wait_until("elicit result", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+    let text = first_assistant_text(&sidecar.records);
+    assert!(text.contains("elicit:cancel"), "assistant text: {text}");
+}
+
+#[test]
+fn secret_elicitation_is_declined_without_forwarding() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let prompt_id = sidecar.command("prompt", json!({ "message": "ELICIT_SECRET go" }));
+    assert_eq!(
+        sidecar.response(&prompt_id).get("success"),
+        Some(&Value::Bool(true))
+    );
+    sidecar.wait_until("elicit result", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+    assert!(
+        !sidecar.records.iter().any(|record| {
+            record.get("type").and_then(Value::as_str) == Some("elicitation_request")
+        }),
+        "no elicitation_request was forwarded for a secret schema"
+    );
+    let text = first_assistant_text(&sidecar.records);
+    assert_eq!(text, "elicit:decline:null");
+}
+
+#[test]
+fn elicitation_response_with_unknown_id_fails() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    let id = "not-a-real-elicitation-id";
+    sidecar
+        .process
+        .send_with_id("elicitation_response", id, json!({ "action": "accept" }))
+        .expect("send elicitation response with unknown id");
+    let answer = sidecar.response(id);
+    assert_eq!(answer.get("success"), Some(&Value::Bool(false)));
+    let error = answer
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        error.contains("unknown or invalid elicitation answer"),
+        "error: {error}"
+    );
+}
