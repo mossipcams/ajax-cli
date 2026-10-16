@@ -9,9 +9,11 @@ import TranscriptRow from "./Turn";
 export default function Conversation({
   items,
   busy,
+  handle = "",
 }: {
   items: ConversationItem[];
   busy: boolean;
+  handle?: string;
 }) {
   const streamingProseId = (() => {
     const last = items[items.length - 1];
@@ -35,7 +37,7 @@ export default function Conversation({
             className="session-turn"
             data-testid={turn.user ? "session-turn" : "session-turn-preamble"}
           >
-            {turn.user ? <TranscriptRow item={turn.user} live={false} /> : null}
+            {turn.user ? <TranscriptRow item={turn.user} live={false} handle={handle} /> : null}
             {turn.rows.map((row) =>
               row.kind === "work" ? (
                 <TurnActivity
@@ -48,6 +50,7 @@ export default function Conversation({
                 <TranscriptRow
                   key={row.id}
                   item={row.item}
+                  handle={handle}
                   live={isLiveTurn && row.item.id === streamingProseId}
                 />
               ),
