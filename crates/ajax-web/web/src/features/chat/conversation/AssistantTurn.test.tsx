@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AssistantTurn from "./AssistantTurn";
+import TranscriptRow from "./Turn";
 import type { ConversationItem } from "../session/public";
 
 const agentProse = (text: string): ConversationItem => ({
@@ -51,20 +52,20 @@ describe("AssistantTurn — copy control", () => {
   });
 
   it("shows a copy control on a settled assistant message", () => {
-    render(<AssistantTurn item={agentProse("Done:\n\n- item")} live={false} />);
+    render(<TranscriptRow item={agentProse("Done:\n\n- item")} live={false} handle="test" />);
 
     expect(screen.getByRole("button", { name: "Copy answer" })).toBeInTheDocument();
   });
 
   it("omits the copy control on the live streaming row", () => {
-    render(<AssistantTurn item={agentProse("Half a sen")} live />);
+    render(<TranscriptRow item={agentProse("Half a sen")} live handle="test" />);
 
     expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
   });
 
   it("copies markdown source text, not rendered prose", async () => {
     const source = "Done:\n\n- **item**";
-    render(<AssistantTurn item={agentProse(source)} live={false} />);
+    render(<TranscriptRow item={agentProse(source)} live={false} handle="test" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Copy answer" }));
 
@@ -77,7 +78,7 @@ describe("AssistantTurn — copy control", () => {
   it("does not throw or show success when clipboard write is rejected", async () => {
     vi.mocked(navigator.clipboard.writeText).mockRejectedValue(new DOMException("denied"));
 
-    render(<AssistantTurn item={agentProse("Settled answer.")} live={false} />);
+    render(<TranscriptRow item={agentProse("Settled answer.")} live={false} handle="test" />);
 
     expect(() => {
       fireEvent.click(screen.getByRole("button", { name: "Copy answer" }));

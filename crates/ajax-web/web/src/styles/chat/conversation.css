@@ -31,12 +31,22 @@
   overflow-wrap: anywhere;
 }
 
-/* In-flow after settled prose — reuses `.pill`; never overlays answer text. */
+/* One quiet action row under settled prose: send time on the left, copy button
+   at the right edge. It replaces the standalone footnote line so the pair reads
+   as one control strip. */
+.session-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* In-flow in that row — reuses `.pill`; never overlays answer text. Smaller than
+   the old stand-alone button so it reads as a footnote affordance. */
 .session-reply-copy {
   display: block;
   width: fit-content;
-  margin: 6px 0 0 auto;
-  min-height: 44px;
+  min-height: 30px;
   color: var(--ink-muted);
   font-size: var(--text-micro);
 }
@@ -54,14 +64,8 @@
   white-space: nowrap;
 }
 
-.session-time[data-role="user"] {
-  align-self: flex-end;
-  margin: 3px 4px 10px 0;
-}
-
-.session-time[data-role="agent"] {
-  align-self: flex-start;
-  margin: 0 0 10px;
+.session-message-actions .session-time {
+  margin-left: auto;
 }
 
 /* Live tail caret: status only — withheld prose stays hidden. Reuses the head's
