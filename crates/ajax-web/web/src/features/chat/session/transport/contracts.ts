@@ -105,6 +105,24 @@ export interface SessionSnapshot {
     message: string;
     schema: unknown;
   };
+  transcript?: SessionTranscriptEvent[];
+  /**
+   * Absolute cursor of the first event included in `transcript`. Present when
+   * the server sends a tail-only inline transcript; replay envelopes below it
+   * must be discarded wholesale.
+   */
+  transcriptFrom?: number;
+  /**
+   * Retention floor cursor: the oldest cursor of history the server still
+   * retains. Older retrievable history exists when
+   * `transcriptFrom > transcriptFloor`.
+   */
+  transcriptFloor?: number;
+}
+
+export interface SessionTranscriptEvent {
+  cursor: number;
+  event: WebSessionServerEvent;
 }
 
 export type ParsedServerFrame =

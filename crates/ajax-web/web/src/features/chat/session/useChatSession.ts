@@ -220,6 +220,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
 
   return {
     view,
+    dispatch,
     connected,
     connectionState,
     everOpened,

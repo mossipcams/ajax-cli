@@ -9,8 +9,10 @@ import {
 import {
   SESSION_PROTOCOL_VERSION,
   type ParsedServerFrame,
+  type SessionTranscriptEvent,
   type WebSessionServerEvent,
 } from "./contracts";
+import type { TranscriptPage } from "./fetchEarlier";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
@@ -193,6 +195,67 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
   }
 }
 
+function parseEventFrame(payload: Record<string, unknown>): SessionTranscriptEvent | null {
+  if (
+    payload.type !== "event" ||
+    payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+    typeof payload.cursor !== "number" ||
+    !Number.isSafeInteger(payload.cursor) ||
+    payload.cursor < 0 ||
+    !isRecord(payload.payload)
+  ) {
+    return null;
+  }
+  const event = parsePayload(payload.payload);
+  return event ? { cursor: payload.cursor, event } : null;
+}
+
+export function parseTranscriptPage(payload: unknown): TranscriptPage | null {
+  if (
+    !isRecord(payload) ||
+    Array.isArray(payload) ||
+    payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
+    !Array.isArray(payload.events) ||
+    typeof payload.from !== "number" ||
+    !Number.isSafeInteger(payload.from) ||
+    payload.from < 0 ||
+    typeof payload.floor !== "number" ||
+    !Number.isSafeInteger(payload.floor) ||
+    payload.floor < 0 ||
+    payload.floor > payload.from
+  ) {
+    return null;
+  }
+  const events: SessionTranscriptEvent[] = [];
+  let previousCursor = -1;
+  for (const value of payload.events) {
+    if (!isRecord(value)) return null;
+    const parsed = parseEventFrame(value);
+    if (!parsed || parsed.cursor <= previousCursor || parsed.cursor < payload.from) return null;
+    previousCursor = parsed.cursor;
+    events.push(parsed);
+  }
+  return { events, from: payload.from, floor: payload.floor };
+}
+
+function parseSnapshotTranscript(
+  payload: Record<string, unknown>,
+  snapshotCursor: number,
+): SessionTranscriptEvent[] | null | undefined {
+  if (payload.transcript === undefined) return undefined;
+  if (!Array.isArray(payload.transcript)) return null;
+  const transcript: SessionTranscriptEvent[] = [];
+  let previousCursor = -1;
+  for (const value of payload.transcript) {
+    if (!isRecord(value)) return null;
+    const parsed = parseEventFrame(value);
+    if (!parsed || parsed.cursor <= previousCursor || parsed.cursor >= snapshotCursor) return null;
+    previousCursor = parsed.cursor;
+    transcript.push(parsed);
+  }
+  return transcript;
+}
+
 export function parseServerFrame(raw: string): ParsedServerFrame | null {
   try {
     const payload = JSON.parse(raw) as unknown;
@@ -202,6 +265,8 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       if (
         payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
         typeof payload.cursor !== "number" ||
+        !Number.isSafeInteger(payload.cursor) ||
+        payload.cursor < 0 ||
         typeof payload.model !== "string" ||
         typeof payload.reset !== "boolean" ||
         (payload.turnState !== "idle" && payload.turnState !== "busy")
@@ -243,6 +308,39 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
       const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
+      const transcript = parseSnapshotTranscript(payload, payload.cursor);
+      if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
+      let transcriptFrom: number | undefined;
+      const rawTranscriptFrom = payload.transcriptFrom;
+      if (rawTranscriptFrom !== undefined) {
+        if (
+          typeof rawTranscriptFrom !== "number" ||
+          !Number.isSafeInteger(rawTranscriptFrom) ||
+          rawTranscriptFrom < 0
+        ) {
+          return null;
+        }
+        if (transcript === undefined) return null;
+        const firstCursor = transcript.length > 0 ? transcript[0].cursor : payload.cursor;
+        if (rawTranscriptFrom > firstCursor || rawTranscriptFrom > payload.cursor) return null;
+        transcriptFrom = rawTranscriptFrom;
+      }
+      let transcriptFloor: number | undefined;
+      const rawTranscriptFloor = payload.transcriptFloor;
+      if (rawTranscriptFloor !== undefined) {
+        if (
+          typeof rawTranscriptFloor !== "number" ||
+          !Number.isSafeInteger(rawTranscriptFloor) ||
+          rawTranscriptFloor < 0
+        ) {
+          return null;
+        }
+        if (transcript === undefined) return null;
+        if (transcriptFrom !== undefined && rawTranscriptFloor > transcriptFrom) {
+          return null;
+        }
+        transcriptFloor = rawTranscriptFloor;
+      }
       return {
         kind: "snapshot",
         snapshot: {
@@ -258,21 +356,16 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
+          ...(transcript !== undefined ? { transcript } : {}),
+          ...(transcriptFrom !== undefined ? { transcriptFrom } : {}),
+          ...(transcriptFloor !== undefined ? { transcriptFloor } : {}),
         },
       };
     }
 
     if (payload.type === "event") {
-      if (
-        payload.protocolVersion !== SESSION_PROTOCOL_VERSION ||
-        typeof payload.cursor !== "number" ||
-        !isRecord(payload.payload)
-      ) {
-        return null;
-      }
-      const event = parsePayload(payload.payload);
-      if (!event) return null;
-      return { kind: "event", cursor: payload.cursor, event };
+      const parsed = parseEventFrame(payload);
+      return parsed ? { kind: "event", ...parsed } : null;
     }
 
     const legacy = parsePayload(payload);

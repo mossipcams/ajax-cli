@@ -4,6 +4,10 @@ use super::protocol::{
 use super::transcript::TranscriptLog;
 use super::SessionServerEvent;
 
+/// Maximum number of newest transcript events carried in a reset attach
+/// snapshot's `transcript`; older history stays reachable via the cursor.
+pub(crate) const TAIL_EVENT_LIMIT: usize = 1000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReplayPlan {
     pub reset: bool,
@@ -32,6 +36,20 @@ pub(crate) fn plan_replay(client_cursor: Option<usize>, log: &TranscriptLog) -> 
     }
 }
 
+/// One page of older retained transcript events, returned for a cursor walk
+/// back toward the retention floor.
+pub(crate) struct TranscriptPage {
+    pub events: Vec<SessionEventEnvelope>,
+    /// Cursor of the first event in `events`. For an empty page with
+    /// `limit > 0` this is the lowered (post-snap) lower bound, strictly less
+    /// than `before` whenever `before > floor`; with `limit == 0` it is
+    /// `end`, which makes no progress. Pass as the next page's `before`
+    /// to keep walking backwards.
+    pub from: usize,
+    /// Retention floor; no older page exists once a walk reaches it.
+    pub floor: usize,
+}
+
 pub(crate) fn build_attach(
     log: &TranscriptLog,
     model: String,
@@ -50,7 +68,149 @@ pub(crate) fn build_attach(
         pending_elicitation(log),
         chrome,
     );
+    let snapshot = if plan.reset {
+        attach_inline_tail(snapshot, &replayed, next, log.dropped)
+    } else {
+        snapshot
+    };
     (snapshot, replayed)
+}
+
+/// Attach the inline transcript tail to a reset snapshot: the newest
+/// `TAIL_EVENT_LIMIT` events of `replayed`, extended backwards to include the
+/// request event of any open permission or elicitation carried on the
+/// snapshot, then snapped back to a user-message boundary. Sets
+/// `transcript_from` to the first tail cursor (or `next` when empty) and
+/// `transcript_floor` to `floor`.
+pub(crate) fn attach_inline_tail(
+    snapshot: SessionSnapshot,
+    replayed: &[SessionEventEnvelope],
+    next: usize,
+    floor: usize,
+) -> SessionSnapshot {
+    let start = tail_start_index(
+        replayed,
+        snapshot.pending_permission.as_ref(),
+        snapshot.pending_elicitation.as_ref(),
+    );
+    let transcript_from = Some(replayed.get(start).map(|env| env.cursor).unwrap_or(next));
+    snapshot
+        .with_transcript(replayed[start..].to_vec(), transcript_from)
+        .with_transcript_floor(floor)
+}
+
+/// Index into `replayed` where a reset snapshot's transcript tail begins:
+/// the newest `TAIL_EVENT_LIMIT` events, extended backwards to include the
+/// request event of any currently open permission or elicitation.
+fn tail_start_index(
+    replayed: &[SessionEventEnvelope],
+    pending_perm: Option<&PendingPermission>,
+    pending_eli: Option<&PendingElicitation>,
+) -> usize {
+    let mut start = replayed.len().saturating_sub(TAIL_EVENT_LIMIT);
+    if let Some(pending) = pending_perm {
+        if let Some(index) = replayed.iter().position(|env| {
+            matches!(
+                &env.payload,
+                SessionServerEvent::PermissionRequest {
+                    request_id, ..
+                } if *request_id == pending.request_id
+            )
+        }) {
+            start = start.min(index);
+        }
+    }
+    if let Some(pending) = pending_eli {
+        if let Some(index) = replayed.iter().position(|env| {
+            matches!(
+                &env.payload,
+                SessionServerEvent::ElicitationRequest {
+                    request_id, ..
+                } if *request_id == pending.request_id
+            )
+        }) {
+            start = start.min(index);
+        }
+    }
+    // Snap the tail start back to the nearest preceding user-role message so
+    // the client never starts mid-turn, bounded by one more TAIL_EVENT_LIMIT.
+    if let Some(cursor) =
+        user_message_boundary(replayed, start, TAIL_EVENT_LIMIT).map(|idx| replayed[idx].cursor)
+    {
+        if let Some(index) = replayed.iter().position(|env| env.cursor == cursor) {
+            return index;
+        }
+    }
+    start
+}
+
+/// One page of older retained transcript events before `before` (exclusive),
+/// with the page start snapped back to a user-message boundary. Envelopes come
+/// from the same filtered read as attach replay, so cursors stay absolute and
+/// permission/usage filtering matches `build_attach`. A non-empty page sets
+/// `from` to its first event cursor; an empty page with `limit > 0` sets it to
+/// the lowered (post-snap) lower bound, strictly less than `before`
+/// whenever `before > floor`, so repeated pages terminate at the floor.
+/// A page requested with `limit == 0` is always empty and makes no progress
+/// (`from == end`); callers walking back must use `limit >= 1`.
+pub(crate) fn read_before(log: &TranscriptLog, before: usize, limit: usize) -> TranscriptPage {
+    let end = before.clamp(log.dropped, log.absolute_next_cursor());
+    let (envelopes, _) = log.read_from_enveloped(log.dropped);
+    // First index whose envelope cursor is >= `start`; the page is the slice
+    // [i0, i1) in ascending cursor order.
+    let mut start = end.saturating_sub(limit).max(log.dropped);
+    if limit > 0 {
+        let bound_index = envelopes
+            .iter()
+            .rposition(|env| env.cursor < start)
+            .map_or(0, |i| i + 1);
+        if let Some(idx) = user_message_boundary(&envelopes, bound_index, limit) {
+            start = envelopes[idx].cursor;
+        }
+    }
+    let i0 = envelopes
+        .iter()
+        .rposition(|env| env.cursor < start)
+        .map_or(0, |i| i + 1);
+    let i1 = envelopes.partition_point(|env| env.cursor < end);
+    let events = envelopes[i0..i1].to_vec();
+    // An empty page with `limit > 0` must still make progress: report the
+    // computed post-snap lower bound as `from`, never `end`. That guarantees
+    // `from < before` whenever `before > log.dropped`, so a caller walking
+    // history backwards (`before = page.from`) advances toward the floor.
+    // With `limit == 0` no progress is possible and `from == end`; callers
+    // must use `limit >= 1` when walking back.
+    let from = if events.is_empty() && limit > 0 {
+        start
+    } else {
+        events.first().map(|env| env.cursor).unwrap_or(end)
+    };
+    TranscriptPage {
+        from,
+        floor: log.dropped,
+        events,
+    }
+}
+
+/// Index of the nearest user-role message envelope within `bound` positions
+/// before `start` in `replayed`, if any; both tails and older pages use it so
+/// a page never starts mid-turn.
+fn user_message_boundary(
+    replayed: &[SessionEventEnvelope],
+    start: usize,
+    bound: usize,
+) -> Option<usize> {
+    let mut seen = 0usize;
+    for (idx, env) in replayed[..start].iter().enumerate().rev() {
+        seen += 1;
+        if seen > bound {
+            break;
+        }
+        if matches!(&env.payload, SessionServerEvent::Message { ref role, .. } if role == "user") {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 pub(crate) fn pending_permission(log: &TranscriptLog) -> Option<PendingPermission> {

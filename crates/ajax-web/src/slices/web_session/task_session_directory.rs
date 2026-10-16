@@ -510,6 +510,25 @@ impl TaskSessionDirectory {
         }
     }
 
+    /// One page of older retained transcript events for a handle, read the
+    /// same way the detached attach fallback loads history (load_detached +
+    /// `TranscriptLog::from_events`), then sliced by the pure `replay::read_before`
+    /// walker. Read-only: never spawns or touches a live session actor.
+    pub(crate) fn retained_transcript_page(
+        &self,
+        handle: &str,
+        before: Option<usize>,
+        limit: Option<usize>,
+    ) -> super::replay::TranscriptPage {
+        let (stored, _) = load_detached(&self.storage, handle);
+        let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
+        // A missing `before` walks from the newest retained event; a missing
+        // `limit` uses the same tail bound as attach snapshots.
+        let before = before.unwrap_or(usize::MAX);
+        let limit = limit.unwrap_or(super::replay::TAIL_EVENT_LIMIT);
+        super::replay::read_before(&log, before, limit)
+    }
+
     #[cfg(test)]
     pub async fn read_from(&self, handle: &str, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         if let Ok(tx) = self.command_tx(handle) {
