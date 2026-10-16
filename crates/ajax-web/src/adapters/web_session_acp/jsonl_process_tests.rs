@@ -333,3 +333,27 @@ fn dropping_the_process_reaps_the_child() {
         "child pid {pid} still exists after Drop; expected it to be reaped"
     );
 }
+
+#[test]
+fn send_with_id_writes_the_caller_chosen_id() {
+    // `cat` echoes every stdin line straight back to stdout, so the echoed
+    // record must be exactly what `send_with_id` wrote.
+    let cwd = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let args: Vec<String> = vec![];
+    let mut process = JsonlProcess::spawn(Path::new("cat"), &args, &cwd)
+        .expect("spawn `cat` (is coreutils installed?)");
+
+    process
+        .send_with_id(
+            "extension_ui_response",
+            "ui-1",
+            json!({ "confirmed": true }),
+        )
+        .expect("send_with_id extension_ui_response");
+
+    let value = as_json(recv_within(&process));
+    assert_eq!(
+        value,
+        json!({ "type": "extension_ui_response", "id": "ui-1", "confirmed": true })
+    );
+}

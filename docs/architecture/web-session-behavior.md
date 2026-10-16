@@ -702,6 +702,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
 - ACP `elicitation/create` in form mode is held on the host until the browser
   operator answers. Accept sends schema-shaped `content`; Decline and Cancel
   send the standard non-accept outcomes and do not include content.
+- Pi RPC extension dialogs (`extension_ui_request` with method `select`, `confirm`, `input` or `editor`) are published as elicitation requests (form schema with a boolean `confirmed` or string `value` property) and answered with `extension_ui_response`; accept sends the chosen `confirmed`/`value`, decline or cancel sends `cancelled`. Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, ...) are ignored ([#1306](https://github.com/mossipcams/ajax-cli/issues/1306)).
 - Form schemas must not collect secrets, passwords, or tokens. The host rejects
   secret-like field names before surfacing a prompt to the browser.
 - Live Chat treats elicitation as an agent request in the session head (not task

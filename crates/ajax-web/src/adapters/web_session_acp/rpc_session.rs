@@ -150,6 +150,13 @@ impl RpcSession {
         Ok(())
     }
 
+    /// Write one response line carrying a caller-chosen `id` (e.g. Pi's
+    /// `extension_ui_response`, which must echo the id of its
+    /// `extension_ui_request`). No auto-generated id is allocated.
+    pub fn respond(&mut self, command_type: &str, id: &str, fields: Value) -> Result<(), String> {
+        self.process.send_with_id(command_type, id, fields)
+    }
+
     /// Send a one-shot command and wait for its `response` record. Unlike
     /// [`Self::next_step`], this reads straight from the process stream (the
     /// `queued` pending records are never consumed here); every other record

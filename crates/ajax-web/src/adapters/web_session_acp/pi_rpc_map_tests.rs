@@ -302,3 +302,100 @@ fn malformed_records_never_panic() {
         );
     }
 }
+
+#[test]
+fn confirm_dialog_maps_to_elicitation_request() {
+    let mapping = map_record(
+        &serde_json::json!({
+            "type": "extension_ui_request",
+            "id": "ui-1",
+            "method": "confirm",
+            "message": "Delete branch?"
+        }),
+        SESSION_ID,
+    );
+    assert_eq!(mapping.events.len(), 1);
+    let native = native_event(&mapping.events[0]);
+    match native {
+        NativeEvent::ElicitationRequest {
+            request_id,
+            message,
+            schema,
+        } => {
+            assert_eq!(request_id, "ui-1");
+            assert_eq!(message, "Delete branch?");
+            let confirmed = &schema["properties"]["confirmed"];
+            assert_eq!(confirmed["type"], "boolean");
+            assert!(schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "confirmed"));
+        }
+        other => panic!("expected ElicitationRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn select_dialog_carries_enum_options() {
+    let mapping = map_record(
+        &serde_json::json!({
+            "type": "extension_ui_request",
+            "id": "ui-2",
+            "method": "select",
+            "title": "Pick target",
+            "options": ["a", "b"]
+        }),
+        SESSION_ID,
+    );
+    assert_eq!(mapping.events.len(), 1);
+    let native = native_event(&mapping.events[0]);
+    match native {
+        NativeEvent::ElicitationRequest {
+            request_id,
+            message,
+            schema,
+        } => {
+            assert_eq!(request_id, "ui-2");
+            assert_eq!(message, "Pick target");
+            let value = &schema["properties"]["value"];
+            assert_eq!(value["type"], "string");
+            let enum_values = value["enum"].as_array().unwrap();
+            assert_eq!(enum_values.len(), 2);
+            assert_eq!(enum_values[0], "a");
+            assert_eq!(enum_values[1], "b");
+        }
+        other => panic!("expected ElicitationRequest, got {other:?}"),
+    }
+}
+
+#[test]
+fn fire_and_forget_methods_map_to_nothing() {
+    for method in ["notify", "setStatus", "setWidget", "setTitle"] {
+        let mapping = map_record(
+            &serde_json::json!({
+                "type": "extension_ui_request",
+                "id": "ui-3",
+                "method": method
+            }),
+            SESSION_ID,
+        );
+        assert!(
+            mapping.events.is_empty(),
+            "{method} should produce no events"
+        );
+    }
+}
+
+#[test]
+fn dialog_without_id_maps_to_nothing() {
+    let mapping = map_record(
+        &serde_json::json!({
+            "type": "extension_ui_request",
+            "method": "confirm",
+            "message": "Delete branch?"
+        }),
+        SESSION_ID,
+    );
+    assert!(mapping.events.is_empty());
+}

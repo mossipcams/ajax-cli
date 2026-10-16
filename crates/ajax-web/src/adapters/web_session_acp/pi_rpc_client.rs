@@ -322,6 +322,15 @@ impl PiRpcClient {
         self.core.wait_event(timeout)
     }
 
+    /// Answer a Pi extension UI dialog by id (accept or cancel).
+    pub fn respond_dialog(
+        &self,
+        request_id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.core
+            .respond("extension_ui_response", request_id, fields)
+    }
     /// Take the session out of its `Option`, dropping it (which closes stdin and reaps the
     /// child). Returns the session id on first call, `None` thereafter.
     pub fn shutdown(&self) -> Option<String> {

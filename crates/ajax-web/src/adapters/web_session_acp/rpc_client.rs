@@ -114,6 +114,21 @@ impl RpcClientCore {
         session.abort().map_err(|e| format!("cancel failed: {e}"))
     }
 
+    /// Write one response line carrying a caller-chosen `id` (e.g. Pi's
+    /// `extension_ui_response`, which must echo the id of its
+    /// `extension_ui_request`). No auto-generated id is allocated.
+    // Issue #1306 part 2b consumes this; the stack needs it before any caller exists.
+    #[allow(dead_code)]
+    pub fn respond(
+        &self,
+        command_type: &str,
+        id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.with_session(|s| s.respond(command_type, id, fields))
+            .and_then(Result::<_, String>::into)
+    }
+
     /// True while a prompt run is active.
     pub fn prompt_in_flight(&self) -> bool {
         let g = self.inner.lock().expect("rpc_client mutex poisoned");

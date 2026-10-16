@@ -51,6 +51,13 @@ pub enum NativeEvent {
     Error(String),
     /// The harness process exited.
     Exited,
+    /// A harness dialog the operator must answer; `request_id` identifies the
+    /// pending request and `schema` describes the expected answer.
+    ElicitationRequest {
+        request_id: String,
+        message: String,
+        schema: Value,
+    },
 }
 
 /// One slash command a native harness advertises. ACP-free by construction:
