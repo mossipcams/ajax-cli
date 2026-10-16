@@ -4,6 +4,7 @@
 //! record stream into [`RpcStep`]s: prompt and abort runs, guard errors, prompt
 //! rejection, handshake pending records first, and child exit.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -12,7 +13,9 @@ use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
 use super::rpc_handshake::RpcHandshake;
-use super::rpc_session::{RpcSession, RpcStep};
+use serde_json::{json, Value};
+
+use super::rpc_session::{carry_tool_inputs, RpcSession, RpcStep};
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -204,4 +207,108 @@ fn closed_child_surfaces_exited() {
         "child exit must surface: {step:?}"
     );
     assert!(!session.run_active());
+}
+
+/// Build a `ToolCall` event with the given id and optional raw input.
+fn tool_call(id: &str, raw_input: Option<Value>) -> AgentEvent {
+    AgentEvent::Native(NativeEvent::ToolCall {
+        id: id.to_owned(),
+        title: "Edit file".to_owned(),
+        kind: "edit".to_owned(),
+        status: "in_progress".to_owned(),
+        raw_input,
+    })
+}
+
+/// Build a `ToolCallUpdate` event with the given id, status, and optional raw input.
+fn tool_update(id: &str, status: &str, raw_input: Option<Value>) -> AgentEvent {
+    AgentEvent::Native(NativeEvent::ToolCallUpdate {
+        id: id.to_owned(),
+        status: status.to_owned(),
+        content: Some("tool output".to_owned()),
+        raw_input,
+    })
+}
+
+/// Extract `raw_input` from a `ToolCallUpdate`, panicking on any other shape.
+fn update_raw_input(event: &AgentEvent) -> Option<Value> {
+    match event {
+        AgentEvent::Native(NativeEvent::ToolCallUpdate { raw_input, .. }) => raw_input.clone(),
+        other => panic!("expected ToolCallUpdate, got: {other:?}"),
+    }
+}
+
+#[test]
+fn carry_tool_inputs_attaches_call_input_to_later_updates() {
+    let mut memo = HashMap::new();
+    let input = json!({ "path": "src/a.rs", "old_text": "x" });
+    let mut events = vec![
+        tool_call("c1", Some(input.clone())),
+        tool_update("c1", "in_progress", None),
+        tool_update("c1", "completed", None),
+    ];
+
+    carry_tool_inputs(&mut memo, &mut events);
+
+    assert_eq!(update_raw_input(&events[1]), Some(input.clone()));
+    // A terminal update consumes the memo entry.
+    assert_eq!(update_raw_input(&events[2]), Some(input));
+    assert!(memo.is_empty());
+}
+
+#[test]
+fn carry_tool_inputs_drops_entry_after_terminal_update() {
+    let mut memo = HashMap::new();
+    let input = json!({ "path": "src/a.rs" });
+    let mut events = vec![
+        tool_call("c1", Some(input)),
+        tool_update("c1", "completed", None),
+        tool_update("c1", "completed", None),
+    ];
+
+    carry_tool_inputs(&mut memo, &mut events);
+
+    // The second update arrives after the entry was removed: no input leaks.
+    assert_eq!(update_raw_input(&events[2]), None);
+    assert!(memo.is_empty());
+}
+
+#[test]
+fn carry_tool_inputs_update_with_own_input_is_kept_and_refreshes_memo() {
+    let mut memo = HashMap::new();
+    let first = json!({ "path": "src/a.rs" });
+    let second = json!({ "path": "src/b.rs" });
+    let mut events = vec![
+        tool_call("c1", Some(first)),
+        tool_update("c1", "in_progress", Some(second.clone())),
+        tool_update("c1", "completed", None),
+    ];
+
+    carry_tool_inputs(&mut memo, &mut events);
+
+    // The update's own input is untouched and the later update gets it.
+    assert_eq!(update_raw_input(&events[1]), Some(second.clone()));
+    assert_eq!(update_raw_input(&events[2]), Some(second));
+}
+
+#[test]
+fn carry_tool_inputs_ignores_non_object_inputs_and_foreign_ids() {
+    let mut memo = HashMap::new();
+    let object_input = json!({ "path": "src/a.rs" });
+    let mut events = vec![
+        // Non-object inputs are never remembered.
+        tool_call("c1", Some(json!(42))),
+        tool_update("c1", "completed", None),
+        // Unrelated ids do not leak inputs across calls.
+        tool_call("c2", Some(object_input.clone())),
+        tool_update("c9", "completed", None),
+    ];
+
+    carry_tool_inputs(&mut memo, &mut events);
+
+    assert_eq!(update_raw_input(&events[1]), None);
+    assert_eq!(update_raw_input(&events[3]), None);
+    // c2's entry is still pending: no terminal update arrived for it.
+    assert_eq!(memo.len(), 1);
+    assert_eq!(memo.get("c2"), Some(&object_input));
 }

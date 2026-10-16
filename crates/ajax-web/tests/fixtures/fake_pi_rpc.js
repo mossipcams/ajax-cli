@@ -57,6 +57,7 @@ const degradeOptionals = flags.has('--degrade-optionals'); // the three discover
 const interleaveEvent = flags.has('--interleave-event'); // one event mid-handshake
 const rejectPrompt = flags.has('--reject-prompt'); // prompt answers success:false, no events
 const holdRun = flags.has('--hold-run'); // prompt starts the run, which settles only on abort
+const uiConfirm = flags.has('--ui-confirm'); // prompt emits a confirm dialog, then waits for its answer
 // Host-crash tests kill the host mid-turn: stdin then closes while the harness
 // is a live orphan. With this flag the fixture survives that close so the
 // restart sweep has an orphan to reap; default behavior is unchanged.
@@ -225,6 +226,18 @@ rl.on('line', (raw) => {
       emit({ id: command.id, type: 'response', command: 'prompt', success: true, data: { disposition: 'started' } });
       emit({ type: 'agent_start' });
       emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'ok' } });
+      if (Array.isArray(command.images) && command.images.length > 0) {
+        const first = command.images[0];
+        // Report what the fixture received so tests can verify the wire shape.
+        emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: `images=${command.images.length}:${first.type}/${first.mimeType}` } });
+      }
+      if (uiConfirm) {
+        // A confirm dialog, then the run stops here (no agent_end, no
+        // agent_settled); it settles only when the extension_ui_response
+        // for id ui-1 arrives.
+        emit({ type: 'extension_ui_request', id: 'ui-1', method: 'confirm', title: 'Run the tool?', message: 'Allow bash?' });
+        break;
+      }
       if (holdRun) {
         // The run stops here (no agent_end, no agent_settled); it settles
         // only once an `abort` command arrives.
@@ -232,6 +245,17 @@ rl.on('line', (raw) => {
       }
       emit({ type: 'agent_end', messages: [], willRetry: false });
       emit({ type: 'agent_settled' })
+      break;
+
+    case 'extension_ui_response':
+      // Pi's dialog answer carries its own `id`, no command envelope. Answer
+      // with a mappable text_delta, then settle the run.
+      if (command.id === 'ui-1') {
+        const answer = command.cancelled ? 'cancelled' : command.confirmed ? 'confirmed:true' : 'confirmed:false';
+        emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: answer } });
+        emit({ type: 'agent_end', messages: [], willRetry: false });
+        emit({ type: 'agent_settled' });
+      }
       break;
 
     case 'abort':

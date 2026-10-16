@@ -5,7 +5,11 @@
 //! session, and the test-only Pi gating.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use agent_client_protocol::schema::v1::{ContentBlock, ImageContent, TextContent};
+
+use super::agent_event::{AgentEvent, NativeEvent};
 use super::client::AcpSpawnError;
 use super::session_client::{transport_for, with_test_pi_program, SessionClient};
 use ajax_core::adapters::HarnessTransport;
@@ -106,4 +110,55 @@ fn uses_pi_rpc_requires_pi_agent_and_override() {
         transport_for(AgentClient::Pi) != HarnessTransport::PiRpc,
         "the override must be cleared after with_test_pi_program returns"
     );
+}
+
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+#[test]
+fn pi_prompt_forwards_images() {
+    with_test_pi_program(&fixture_path(), &[], || {
+        let (mut client, report) = match SessionClient::spawn_with_operator_pin(
+            AgentClient::Pi,
+            worktree_path(),
+            "default",
+            None,
+        ) {
+            Ok(pair) => pair,
+            Err(_) => panic!("fake pi rpc spawn must succeed"),
+        };
+
+        assert!(report.prompt_capabilities.image);
+
+        let blocks = vec![
+            ContentBlock::Text(TextContent::new("look")),
+            ContentBlock::Image(ImageContent::new("AAAA", "image/png")),
+        ];
+        let id = client
+            .begin_prompt(&blocks)
+            .expect("begin_prompt with text and an image");
+
+        let mut echo_seen = false;
+        loop {
+            let event = client
+                .wait_event(TIMEOUT)
+                .expect("event before turn finish");
+            match &event {
+                AgentEvent::Native(NativeEvent::AgentText(text)) => {
+                    if text.contains("images=1:image/image/png") {
+                        echo_seen = true;
+                    }
+                }
+                AgentEvent::Native(NativeEvent::TurnFinished { request_id, .. }) => {
+                    assert_eq!(*request_id, id);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(
+            echo_seen,
+            "the fake echo must surface: \"images=1:image/image/png\""
+        );
+    });
 }

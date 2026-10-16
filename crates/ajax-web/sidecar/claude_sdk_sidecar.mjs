@@ -19,7 +19,10 @@
 // get_context_usage, shutdown. stdin EOF behaves like shutdown (no response).
 // Permissions run in dangerous mode (permissionMode "bypassPermissions" +
 // allowDangerouslySkipPermissions; canUseTool stays as an always-allow
-// fallback) and MCP elicitation is declined.
+// fallback) and MCP form elicitations are forwarded to the host as
+// `elicitation_request` events answered by `elicitation_response` commands;
+// url-mode and secret-looking elicitations are declined, and any elicitation
+// still pending on abort/shutdown resolves as cancelled.
 
 import { randomUUID } from "node:crypto";
 import { argv, exit, stderr, stdin, stdout } from "node:process";
@@ -151,15 +154,50 @@ const state = {
   query: null,
   pump: null,
   shuttingDown: false,
+  pendingElicitations: new Map(),
 };
 
 async function canUseTool(_toolName, input) {
   return { behavior: "allow", updatedInput: input };
 }
 
+// Property-name markers (compared against the name lowercased with `-` and
+// `_` removed) that mark an elicitation schema as secret-sensitive.
+const SECRET_MARKERS = ["password", "secret", "token", "apikey", "authcode", "otp"];
+
+function normalisePropertyName(name) {
+  return String(name).toLowerCase().replace(/[-_]/g, "");
+}
+
+function hasSecretProperty(schema) {
+  const properties = schema?.properties;
+  if (properties === null || typeof properties !== "object") return false;
+  return Object.keys(properties).some((key) =>
+    SECRET_MARKERS.some((marker) => normalisePropertyName(key).includes(marker)),
+  );
+}
+
 async function onElicitation(request) {
-  log(`declining elicitation from ${request?.serverName ?? "unknown server"}`);
-  return { action: "decline" };
+  const serverName = request?.serverName ?? "unknown server";
+  const schema = request?.requestedSchema;
+  if (
+    request?.mode === "url" ||
+    schema === null ||
+    typeof schema !== "object" ||
+    hasSecretProperty(schema)
+  ) {
+    log(`declining elicitation from ${serverName}`);
+    return { action: "decline" };
+  }
+  const id = randomUUID();
+  writeLine({ type: "elicitation_request", id, message: request.message ?? "", schema });
+  const answer = new Promise((resolve) => state.pendingElicitations.set(id, resolve));
+  return answer;
+}
+
+function cancelPendingElicitations() {
+  for (const resolve of state.pendingElicitations.values()) resolve({ action: "cancel" });
+  state.pendingElicitations.clear();
 }
 
 async function optional(fn, fallback) {
@@ -242,9 +280,35 @@ function handlePrompt(cmd) {
   if (typeof cmd.message !== "string") {
     return fail("prompt", cmd.id, "prompt requires a message string");
   }
+  if (cmd.images !== undefined) {
+    if (
+      !Array.isArray(cmd.images) ||
+      cmd.images.some(
+        (image) =>
+          typeof image !== "object" ||
+          image === null ||
+          typeof image.data !== "string" ||
+          image.data.length === 0 ||
+          typeof image.mimeType !== "string" ||
+          image.mimeType.length === 0,
+      )
+    ) {
+      return fail("prompt", cmd.id, "prompt images must be {data, mimeType} objects");
+    }
+  }
+  const content = [];
+  if (cmd.message.length > 0 || !(cmd.images && cmd.images.length > 0)) {
+    content.push({ type: "text", text: cmd.message });
+  }
+  for (const image of cmd.images ?? []) {
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: image.mimeType, data: image.data },
+    });
+  }
   state.input.push({
     type: "user",
-    message: { role: "user", content: [{ type: "text", text: cmd.message }] },
+    message: { role: "user", content },
     parent_tool_use_id: null,
     session_id: state.sessionId,
   });
@@ -253,6 +317,7 @@ function handlePrompt(cmd) {
 
 async function handleAbort(cmd) {
   if (!state.initialized) return fail("abort", cmd.id, "not initialized");
+  cancelPendingElicitations();
   const result = await state.query.interrupt();
   respond("abort", cmd.id, true, result ?? null);
 }
@@ -289,6 +354,7 @@ async function handleShutdown(cmd) {
 async function shutdown() {
   if (state.shuttingDown) return;
   state.shuttingDown = true;
+  cancelPendingElicitations();
   try {
     state.input?.end();
   } catch (error) {
@@ -314,6 +380,25 @@ async function shutdown() {
   fallback.unref();
 }
 
+async function handleElicitationResponse(cmd) {
+  const action = cmd?.action;
+  if (
+    typeof cmd?.id !== "string" ||
+    !state.pendingElicitations.has(cmd.id) ||
+    (action !== "accept" && action !== "decline" && action !== "cancel")
+  ) {
+    return fail("elicitation_response", cmd.id, "unknown or invalid elicitation answer");
+  }
+  const resolve = state.pendingElicitations.get(cmd.id);
+  state.pendingElicitations.delete(cmd.id);
+  resolve(
+    action === "accept" && cmd.content && typeof cmd.content === "object"
+      ? { action, content: cmd.content }
+      : { action },
+  );
+  respond("elicitation_response", cmd.id, true, null);
+}
+
 const handlers = {
   init: handleInit,
   prompt: handlePrompt,
@@ -322,6 +407,7 @@ const handlers = {
   set_effort: handleSetEffort,
   get_context_usage: handleGetContextUsage,
   shutdown: handleShutdown,
+  elicitation_response: handleElicitationResponse,
 };
 
 function dispatch(cmd) {

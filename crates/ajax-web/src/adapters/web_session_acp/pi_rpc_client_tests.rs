@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::pi_rpc_client::PiRpcClient;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
@@ -278,4 +278,36 @@ fn degraded_handshake_exposes_no_commands() {
     client
         .shutdown()
         .expect("shutdown after degraded handshake");
+}
+
+#[test]
+fn prompt_with_images_reports_the_wire_shape() {
+    let client = spawn_client(&[]);
+    let id = client
+        .begin_prompt_with_images(
+            "look",
+            &[NativeImage {
+                data: "AAAA".into(),
+                mime_type: "image/png".into(),
+            }],
+        )
+        .expect("begin_prompt_with_images");
+
+    let (events, finished) = drain_until_finished(&client, id);
+    assert!(
+        events.iter().any(|event| {
+            matches!(event,
+                AgentEvent::Native(NativeEvent::AgentText(text))
+                    if text == "images=1:image/image/png")
+        }),
+        "expected the fixture to report the image wire shape: {events:?}"
+    );
+    match finished {
+        NativeEvent::TurnFinished { request_id, result } => {
+            assert_eq!(request_id, id);
+            assert_eq!(stop_reason(&result), Some("end_turn"));
+        }
+        other => panic!("drain returned a non-finished event: {other:?}"),
+    }
+    assert!(!client.prompt_in_flight());
 }

@@ -213,3 +213,70 @@ fn snapshot_serializes_available_commands_field() {
     assert_eq!(json["availableCommands"][0]["name"], "web");
     assert_eq!(json["availableCommands"][0]["inputHint"], "query");
 }
+
+#[test]
+fn harness_swap_does_not_keep_the_previous_harness_commands() {
+    let dir = scratch_dir("harness-swap-commands");
+    let handle = "web/harness-swap-commands";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--slash-commands"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let attach = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                "auto".to_string(),
+                None,
+            ));
+            assert_eq!(
+                attach.snapshot.available_commands,
+                Some(vec![
+                    AvailableCommandDescriptor {
+                        name: "web".to_string(),
+                        description: "Query the web".to_string(),
+                        input_hint: Some("query".to_string()),
+                    },
+                    AvailableCommandDescriptor {
+                        name: "help".to_string(),
+                        description: "Show help".to_string(),
+                        input_hint: None,
+                    },
+                ]),
+                "expected the first harness to advertise web/help commands"
+            );
+
+            // Swap the harness while the replacement advertises no slash commands.
+            with_test_acp_extra_args(&[], || {
+                let _ = rt.block_on(directory.inner().reset_harness_context(
+                    handle,
+                    &dir,
+                    AgentClient::Cursor,
+                    "auto",
+                ));
+            });
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                directory.pump(handle);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            let after = rt.block_on(directory.inner().attach_snapshot(
+                handle,
+                "auto".to_string(),
+                None,
+            ));
+            assert!(
+                matches!(after.snapshot.available_commands.as_deref(), None | Some([])),
+                "harness swap should stop advertising the previous harness's slash commands; got {:?}",
+                after.snapshot.available_commands
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

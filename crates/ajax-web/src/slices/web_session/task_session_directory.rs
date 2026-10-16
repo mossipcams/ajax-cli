@@ -22,7 +22,7 @@ async fn send_command<T>(
     rx.await
         .map_err(|_| SessionError::protocol("session task dropped reply"))
 }
-use crate::adapters::web_session_store;
+use crate::adapters::web_session_store::{self, prompt_ledger::PromptPhase};
 use ajax_core::models::AgentClient;
 use std::{
     collections::HashMap,
@@ -42,6 +42,7 @@ pub(crate) struct TaskSessionDirectory {
     ownership: std::sync::Arc<ExecutionOwnership>,
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
+    headless_scanned: std::sync::atomic::AtomicBool,
 }
 
 impl TaskSessionDirectory {
@@ -52,11 +53,49 @@ impl TaskSessionDirectory {
             ownership,
             storage,
             report_activity: Mutex::new(None),
+            headless_scanned: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     pub(crate) fn set_report_session_activity(&self, report: ReportSessionActivity) {
         *self.report_activity.lock().unwrap() = Some(report);
+    }
+
+    /// Claims the execution lease (running the one-time orphan sweep and startup recovery) and returns, once per process, the handles whose queued prompts should be dispatched without a browser attached. Later calls return an empty list. Fails like `ensure_owner` when a live foreign host holds the lease.
+    pub(crate) fn startup_dispatch_handles(&self) -> Result<Vec<String>, String> {
+        self.ownership.ensure_owner()?;
+        self.report_recovered_turns();
+        if self
+            .headless_scanned
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(Vec::new());
+        }
+        Ok(super::startup_recovery::queued_prompt_handles(
+            &self.storage.registry_store(),
+            &self.storage.state_dir,
+            self.ownership.boot_id(),
+        ))
+    }
+    /// Counts the chat's prompts that are not yet done (ledger entries in the
+    /// Queued or Dispatching phase). A ledger load error reports 1 so a headless
+    /// runner keeps waiting until its deadline instead of releasing a session it
+    /// cannot verify.
+    pub(crate) fn unfinished_prompt_count(&self, handle: &str) -> usize {
+        match crate::adapters::web_session_store::prompt_ledger::try_load(
+            &self.storage.registry_store(),
+            &self.storage.state_dir,
+            handle,
+        ) {
+            Ok(ledger) => ledger
+                .entries
+                .iter()
+                .filter(|entry| {
+                    matches!(entry.phase, PromptPhase::Queued | PromptPhase::Dispatching)
+                })
+                .count(),
+            Err(_) => 1,
+        }
     }
 
     /// Renews the chat execution owner lease; called from the runtime heartbeat task.
