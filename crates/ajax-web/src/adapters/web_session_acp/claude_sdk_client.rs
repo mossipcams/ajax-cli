@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use super::agent_event::NativeImage;
 use super::agent_event::{AgentEvent, NativeCommand};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::JsonlProcess;
@@ -243,12 +244,31 @@ impl ClaudeSdkClient {
         self.core.begin_prompt(message)
     }
 
+    /// Begin a prompt run from a text message plus attached images.
+    pub fn begin_prompt_with_images(
+        &self,
+        message: &str,
+        images: &[NativeImage],
+    ) -> Result<u64, String> {
+        self.core.begin_prompt_with_images(message, images)
+    }
+
     pub fn cancel(&self) -> Result<(), String> {
         self.core.cancel()
     }
 
     pub fn prompt_in_flight(&self) -> bool {
         self.core.prompt_in_flight()
+    }
+
+    /// Send a response for a pending elicitation to the SDK sidecar.
+    pub fn respond_elicitation(
+        &self,
+        request_id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.core
+            .respond("elicitation_response", request_id, fields)
     }
 
     pub fn poll_event(&self) -> Option<AgentEvent> {

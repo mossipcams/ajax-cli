@@ -9,7 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent};
+use agent_client_protocol::schema::v1::ContentBlock;
+#[cfg(test)]
+use agent_client_protocol::schema::v1::{ResourceLink, TextContent};
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::available_command_descriptors::AvailableCommandDescriptor;
@@ -349,7 +351,10 @@ impl SessionClient {
                 let (text, images) = prompt_parts(blocks);
                 session.client.begin_prompt_with_images(&text, &images)
             }
-            SessionClient::Claude(session) => session.client.begin_prompt(&prompt_text(blocks)),
+            SessionClient::Claude(session) => {
+                let (text, images) = prompt_parts(blocks);
+                session.client.begin_prompt_with_images(&text, &images)
+            }
             SessionClient::Cursor(session) => {
                 let (text, images) = prompt_parts(blocks);
                 session.client.begin_prompt_with_images(&text, &images)
@@ -431,9 +436,29 @@ impl SessionClient {
                 };
                 session.client.respond_dialog(request_id, fields)
             }
-            SessionClient::Claude(_) => Err(
-                "Claude SDK mode auto-approves permissions and declines elicitation".to_string(),
-            ),
+            SessionClient::Claude(session) => {
+                let mut fields = serde_json::Map::new();
+                match action {
+                    "accept" | "decline" | "cancel" => {
+                        fields.insert(
+                            "action".to_string(),
+                            serde_json::Value::String(action.to_string()),
+                        );
+                    }
+                    _ => return Err("unsupported elicitation action".to_string()),
+                };
+                if action == "accept" {
+                    if let Some(serde_json::Value::Object(obj)) = content {
+                        fields.insert(
+                            "content".to_string(),
+                            serde_json::Value::Object(obj.clone()),
+                        );
+                    }
+                }
+                session
+                    .client
+                    .respond_elicitation(request_id, serde_json::Value::Object(fields))
+            }
             SessionClient::Cursor(_) => {
                 Err("Cursor SDK mode has no permission or elicitation requests".to_string())
             }
@@ -656,6 +681,8 @@ pub(super) fn prompt_parts(blocks: &[ContentBlock]) -> (String, Vec<NativeImage>
 }
 
 /// Flatten ACP content blocks into a single plain-text prompt.
+// ponytail: only the placeholder-flattening test still uses this; delete both together.
+#[cfg(test)]
 pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
     let mut parts: Vec<String> = Vec::new();
 

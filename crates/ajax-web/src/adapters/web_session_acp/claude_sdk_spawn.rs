@@ -120,8 +120,7 @@ pub(super) fn spawn_claude_sdk(
         model_apply_error,
         config_options: Some(client.config_options()),
         prompt_capabilities: PromptCapabilityDescriptor {
-            // ponytail: images are not forwarded yet.
-            image: false,
+            image: true,
             embedded_context: false,
         },
     };

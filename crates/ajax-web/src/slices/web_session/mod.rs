@@ -6,6 +6,8 @@ pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
 mod execution_ownership;
+mod headless_dispatch;
+pub(crate) use headless_dispatch::{run_all as run_headless_dispatch, HeadlessTarget};
 pub(crate) mod model_change;
 
 pub mod native_map;
@@ -465,10 +467,15 @@ mod harness_contract_tests;
 mod host_crash_tests;
 
 #[cfg(test)]
+mod headless_dispatch_tests;
+#[cfg(test)]
 mod native_diff_tests;
 
 #[cfg(test)]
 mod pi_dialog_tests;
+
+#[cfg(test)]
+mod claude_elicitation_tests;
 
 #[cfg(test)]
 mod ws_bridge_tests;
