@@ -2,6 +2,45 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.60.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.59.0...ajax-cli-v0.60.0) (2026-10-16)
+
+
+### Features
+
+* **chat:** durable chat execution ([#1280](https://github.com/mossipcams/ajax-cli/issues/1280)) ([5927d0a](https://github.com/mossipcams/ajax-cli/commit/5927d0a167cfe81be20fe0359d4ab186ddc01925))
+* **claude:** sdk integration ([#1264](https://github.com/mossipcams/ajax-cli/issues/1264)) ([c2a0b55](https://github.com/mossipcams/ajax-cli/commit/c2a0b556238092d1b15f848861d8d29b729a2cf6))
+* **core:** acp execution state ([#1258](https://github.com/mossipcams/ajax-cli/issues/1258)) ([09a2965](https://github.com/mossipcams/ajax-cli/commit/09a2965f7c16184954bb23966cea2cdeae757306))
+* **web:** acp execution state ([#1259](https://github.com/mossipcams/ajax-cli/issues/1259)) ([f30edcc](https://github.com/mossipcams/ajax-cli/commit/f30edcc52d0bebaecf0a5929a5d513ca10874489))
+* **web:** bottom first rendering ([#1300](https://github.com/mossipcams/ajax-cli/issues/1300)) ([d38ac1a](https://github.com/mossipcams/ajax-cli/commit/d38ac1a8070c9ae1966e2cfb2ea43564a3536fa8))
+* **web:** inline message time copy ([#1308](https://github.com/mossipcams/ajax-cli/issues/1308)) ([3fdd0dd](https://github.com/mossipcams/ajax-cli/commit/3fdd0ddd7e0a39169b06da850b42578af21f3fc0))
+* **web:** local training ux ([#1265](https://github.com/mossipcams/ajax-cli/issues/1265)) ([5fade7a](https://github.com/mossipcams/ajax-cli/commit/5fade7a7506dcd76e6981ee9973c6a426d4e4762))
+* **web:** local training ux ([#1266](https://github.com/mossipcams/ajax-cli/issues/1266)) ([d179d6e](https://github.com/mossipcams/ajax-cli/commit/d179d6e1211b17fea2417058dda20acf453787f7))
+* **web:** native harness slash commands ([#1288](https://github.com/mossipcams/ajax-cli/issues/1288)) ([964f945](https://github.com/mossipcams/ajax-cli/commit/964f945ffc6a5e9add3f57d60ec6564ae3c62f10))
+* **web:** orphan sweep on claim ([#1289](https://github.com/mossipcams/ajax-cli/issues/1289)) ([b53a604](https://github.com/mossipcams/ajax-cli/commit/b53a604132811a4fd278ae311f51719ce04849c7))
+* **web:** run Cursor chat through @cursor/sdk ([#1294](https://github.com/mossipcams/ajax-cli/issues/1294)) ([1ba0de1](https://github.com/mossipcams/ajax-cli/commit/1ba0de1b3de23bce5fd485f750f261c88f9561ef))
+* **web:** show send times on chat messages ([#1307](https://github.com/mossipcams/ajax-cli/issues/1307)) ([db7cdf8](https://github.com/mossipcams/ajax-cli/commit/db7cdf89df3abcb0aee45834f5085f589c5e8dad))
+
+
+### Bug Fixes
+
+* **ci:** shell gesture lock ([#1269](https://github.com/mossipcams/ajax-cli/issues/1269)) ([04877e3](https://github.com/mossipcams/ajax-cli/commit/04877e3381442ed33dcc516f5d40bf41919e3294))
+* **core:** report delete-branch diagnostics on drop failure ([#1261](https://github.com/mossipcams/ajax-cli/issues/1261)) ([c77e70f](https://github.com/mossipcams/ajax-cli/commit/c77e70fdc78dc8eedd4e3ccba377ee759cfd3e80))
+* **web:** acknowledge terminal input without holding the shared state lock ([#1256](https://github.com/mossipcams/ajax-cli/issues/1256)) ([12252e5](https://github.com/mossipcams/ajax-cli/commit/12252e588c18f28195addced51bd99103d6c7fe5))
+* **web:** atomic transcript snapshot ([#1302](https://github.com/mossipcams/ajax-cli/issues/1302)) ([f95b2be](https://github.com/mossipcams/ajax-cli/commit/f95b2be5a6efdb2b2c6a81fde4127d548f41b579))
+* **web:** bottom load tail first transcript ([#1304](https://github.com/mossipcams/ajax-cli/issues/1304)) ([e261b61](https://github.com/mossipcams/ajax-cli/commit/e261b61195bfd173124cfe594cee543d92dc575f))
+* **web:** claude sdk dangerous permissions ([#1297](https://github.com/mossipcams/ajax-cli/issues/1297)) ([b5ed585](https://github.com/mossipcams/ajax-cli/commit/b5ed5853063f591cbb52970a03168994e6c269e5))
+* **web:** claude usage error ([#1296](https://github.com/mossipcams/ajax-cli/issues/1296)) ([803f033](https://github.com/mossipcams/ajax-cli/commit/803f033f65b0a47a0dbd44de5d823fcf7780b908))
+* **web:** drop a deferred activity report once a newer one lands ([#1262](https://github.com/mossipcams/ajax-cli/issues/1262)) ([ff115e0](https://github.com/mossipcams/ajax-cli/commit/ff115e0c71bc92e85dc0ae3e2a5fbdffa2e473da))
+* **web:** history autofill anchor ([#1305](https://github.com/mossipcams/ajax-cli/issues/1305)) ([38e30ff](https://github.com/mossipcams/ajax-cli/commit/38e30ff575d71beb6345eeb29c28b1b827215be8))
+* **web:** resume Pi sessions by exact id so a chat that never sent a prompt can restart ([#1284](https://github.com/mossipcams/ajax-cli/issues/1284)) ([3f197e0](https://github.com/mossipcams/ajax-cli/commit/3f197e08dd53144c4a728200e994dc50f25f2bf7))
+* **web:** training modal scroll lock ([#1303](https://github.com/mossipcams/ajax-cli/issues/1303)) ([9b99230](https://github.com/mossipcams/ajax-cli/commit/9b99230e65d3e399c47b6403f4797eef05ae8d3d))
+
+
+### Code Refactoring
+
+* **web:** neutral config options ([#1285](https://github.com/mossipcams/ajax-cli/issues/1285)) ([e872f53](https://github.com/mossipcams/ajax-cli/commit/e872f534b7e038d0591c40d4b96d0c13eb98add0))
+* **web:** shared native arms ([#1313](https://github.com/mossipcams/ajax-cli/issues/1313)) ([0960a74](https://github.com/mossipcams/ajax-cli/commit/0960a742d9345df05b6073afdddedd70978c2545))
+
 ## [0.59.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.58.2...ajax-cli-v0.59.0) (2026-10-07)
 
 
