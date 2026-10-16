@@ -34,6 +34,7 @@ use crate::adapters::http::{
 };
 
 mod bridge;
+mod headless;
 mod state;
 mod task_routes;
 use task_routes::{
@@ -152,6 +153,10 @@ where
                 directory.heartbeat_execution_ownership();
             }
         });
+
+        // Dispatch queued prompts left by a previous host without any browser
+        // attached, one chat at a time. Cloned before `state` moves into axum_app.
+        headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
             .await

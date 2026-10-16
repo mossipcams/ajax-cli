@@ -247,6 +247,7 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   reload into the in-memory host FIFO. **Dispatching** rows recovered from disk
   become **interrupted**: the host emits one typed `error` event and does not
   automatically retry the prompt.
+- After a host restart, queued prompts are dispatched headlessly in order, one chat at a time, once the host holds the execution lease; a dispatching prompt is never resent (it is marked interrupted).
 - Ledger persist failure rejects the submit before acknowledgement or ACP dispatch.
 - The live `TaskSession` actor owns prompt terminal transitions and FIFO
   advancement. Only the `session/prompt` command result (success,

@@ -101,3 +101,59 @@ pub(crate) fn recover_interrupted_prompts(
     }
     recovered_handles
 }
+
+/// The runs whose queued prompts a restarted host should dispatch headlessly:
+/// every run whose latest run row is not owned by `current_boot_id` (the same
+/// skip rule as [`recover_interrupted_prompts`]) and whose prompt ledger still
+/// has at least one `Queued` prompt. Handles are returned sorted for
+/// determinism. Every load error is logged with `tracing::warn` and the scan
+/// continues, so this function never panics.
+pub(crate) fn queued_prompt_handles(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    current_boot_id: &str,
+) -> Vec<String> {
+    let handles = match store.list_run_task_ids() {
+        Ok(handles) => handles,
+        Err(error) => {
+            tracing::warn!(target: "ajax_web", %error, "startup dispatch scan: cannot list run task ids");
+            return Vec::new();
+        }
+    };
+    let mut pending_handles: Vec<String> = Vec::new();
+    for handle in handles {
+        match store.latest_run_for_task(&handle) {
+            // Live in this host: leave it to its live session.
+            Ok(Some(run)) if run.owner_boot_id.as_deref() == Some(current_boot_id) => continue,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "ajax_web",
+                    handle = %handle,
+                    %error,
+                    "startup dispatch scan: cannot read run row"
+                );
+                continue;
+            }
+        }
+
+        let ledger = match ledger_module::try_load(store, state_dir, &handle) {
+            Ok(ledger) => ledger,
+            Err(error) => {
+                tracing::warn!(
+                    target: "ajax_web",
+                    handle = %handle,
+                    %error,
+                    "startup dispatch scan: cannot load prompt ledger"
+                );
+                continue;
+            }
+        };
+
+        if ledger.queued_count() > 0 {
+            pending_handles.push(handle);
+        }
+    }
+    pending_handles.sort();
+    pending_handles
+}
