@@ -19,6 +19,7 @@ describe("useChatScroll", () => {
       revealEarlier: () => number;
       windowGeneration: number;
     },
+    initialMetrics?: [number, number, number],
   ) {
     const thread = document.createElement("div");
     thread.className = "session-thread";
@@ -26,7 +27,7 @@ describe("useChatScroll", () => {
     inner.className = "session-thread-inner";
     inner.appendChild(document.createElement("article"));
     thread.appendChild(inner);
-    stubScrollMetrics(thread, 1200, 400, 0);
+    stubScrollMetrics(thread, ...(initialMetrics ?? [1200, 400, 0]));
 
     const threadRef = { current: thread };
     const layoutTransitionRef = { current: false };
@@ -145,9 +146,9 @@ describe("useChatScroll", () => {
       });
     });
 
-    // Reveal added 300px above the viewport; the read position must stay at a
-    // constant distance from the live edge (180 -> 480, further negative).
-    expect(thread.scrollTop).toBe(-480);
+    // Earlier rows grow beyond the history edge, so the existing negative
+    // offset continues to identify the same read position.
+    expect(thread.scrollTop).toBe(-180);
   });
 
   it("restores scroll position after prepend even when the window fits the viewport", () => {
@@ -183,9 +184,8 @@ describe("useChatScroll", () => {
       });
     });
 
-    // Reveal grows the window past the viewport; pinned read position becomes
-    // -delta from the live edge.
-    expect(thread.scrollTop).toBe(-200);
+    // Earlier rows grow away from the pinned live edge.
+    expect(thread.scrollTop).toBe(0);
   });
 
   it("does not pin to live edge while a prepend restore is pending", () => {
@@ -244,5 +244,73 @@ describe("useChatScroll", () => {
 
     expect(revealEarlier).toHaveBeenCalledOnce();
     vi.useRealTimers();
+  });
+
+  it("auto-loads on first approach to the history edge without a prior arming pass", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const revealEarlier = vi.fn(() => 1);
+    let windowGeneration = 0;
+    const historyScroll = {
+      hasEarlier: true,
+      revealEarlier: () => {
+        windowGeneration += 1;
+        return revealEarlier();
+      },
+      get windowGeneration() {
+        return windowGeneration;
+      },
+    };
+    const { view, thread } = mountScroll("s1", 0, historyScroll);
+
+    // Fast flick straight into the preload band (history edge -800, band is
+    // [-800, -600]): no scroll away from the edge happened beforehand, so the
+    // loader must already be armed. At t=0 the initial cooldown also blocks; a
+    // real scroll arrives after it.
+    stubScrollMetrics(thread, 1200, 400, -750);
+    act(() => {
+      view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    expect(revealEarlier).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.setSystemTime(AUTO_LOAD_COOLDOWN_MS + 10);
+      view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    expect(revealEarlier).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("fills the viewport while the tail does not overflow and earlier history remains", () => {
+    const revealEarlier = vi.fn(() => 2);
+    let windowGeneration = 0;
+    const historyScroll = {
+      hasEarlier: true,
+      revealEarlier: () => {
+        windowGeneration += 1;
+        return revealEarlier();
+      },
+      get windowGeneration() {
+        return windowGeneration;
+      },
+    };
+    // Non-overflowing tail (scrollHeight 300 < clientHeight 400).
+    const { view, thread } = mountScroll("s1", 0, historyScroll, [300, 400, 0]);
+
+    // First paint auto-loads one page without any user interaction.
+    expect(revealEarlier).toHaveBeenCalledOnce();
+
+    // The prepend overflows the viewport (500 > 400); the generation bump
+    // re-runs the fill effect and it must stop, keeping the live-edge pin.
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 500 });
+    act(() => {
+      view.rerender({
+        rev: 0,
+        key: "s1",
+        historyScroll: { hasEarlier: true, revealEarlier: () => 2, windowGeneration },
+      });
+    });
+    expect(revealEarlier).toHaveBeenCalledOnce();
+    expect(thread.scrollTop).toBe(0);
   });
 });

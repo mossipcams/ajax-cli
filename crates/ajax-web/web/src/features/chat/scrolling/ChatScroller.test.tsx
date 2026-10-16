@@ -345,7 +345,7 @@ describe("server history controls", () => {
   it("reveals one batch from a fetched page and reveals its remainder locally", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       protocolVersion: 2, from: 0, floor: 0,
-      events: Array.from({ length: 120 }, (_, index) => ({
+      events: Array.from({ length: 200 }, (_, index) => ({
         type: "event", protocolVersion: 2, cursor: index,
         payload: { type: "message", role: "user", text: `Earlier row ${index}`, itemId: `older-${index}` },
       })),
@@ -354,13 +354,13 @@ describe("server history controls", () => {
     mountChat();
     loadRecentSnapshot();
     fireEvent.click(screen.getByTestId("session-load-earlier"));
-    await waitFor(() => expect(screen.getAllByText(/^Earlier row /)).toHaveLength(50));
-    expect(screen.queryByText("Earlier row 69")).not.toBeInTheDocument();
-    expect(screen.getByText("Earlier row 70")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText(/^Earlier row /)).toHaveLength(100));
+    expect(screen.queryByText("Earlier row 99")).not.toBeInTheDocument();
+    expect(screen.getByText("Earlier row 100")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-load-earlier"));
-    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(100);
-    fireEvent.click(screen.getByTestId("session-load-earlier"));
-    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(120);
+    // The remainder reveals locally, exhausting the fetched page (rows 0–199).
+    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(200);
+    expect(screen.getByText("Earlier row 0")).toBeInTheDocument();
     expect(screen.getByText("Recent message")).toBeInTheDocument();
     expect(screen.queryByTestId("session-load-earlier")).not.toBeInTheDocument();
     expect(fetchImpl).toHaveBeenCalledOnce();

@@ -136,3 +136,19 @@ Goal restated by the user on 2026-10-15: the transcript must *load* from the bot
 - Defects caught in review and fixed before acceptance: cursor-0 socket errors were swallowed by the envelope floor; the older-range route rejected same-origin fetches with no `Origin` header; an empty older page made no forward progress; a stale page could be prepended after a reset re-based the tail; a Rust test file exceeded the 1,000-line limit.
 - Compatibility risk: the host now always carries the tail (not the whole log) in a reset snapshot. A browser tab still running the pre-change bundle (it parses `transcript` but only dedupes cursors inside it) can show older envelopes after the tail until reloaded. Bundle and host ship in one binary, so this is limited to tabs left open across an upgrade.
 - "Load earlier" scroll-anchor behavior for the prepend path is covered in Chromium only; WebKit is covered by CI.
+
+## Follow-up: auto-fill, armed auto-load, anchor restore (uncommitted, 2026-10-16)
+
+Branch commits were squash-merged as #1304; this work sits uncommitted on top and needs a fresh branch off `main` before a PR.
+
+- [x] `TAIL_EVENT_LIMIT` 300→1000; `DEFAULT_HISTORY_WINDOW` 150→400, `HISTORY_REVEAL_BATCH` 50→100.
+- [x] Auto-load armed from the start; server-fetch path arms the top restore; fill loop loads older pages while the thread does not overflow.
+- [x] `restoreScrollAfterTopGrowth` keeps the negative offset unchanged (top growth does not move the live-edge distance).
+- [x] Test repairs: `ChatScroller.test.tsx` page 201→200 rows (row 0 stayed hidden, button could never clear); `replay_tests.rs` cursor math now adds `log.dropped` (2×1000 events exceeds the 2000-event cap); `session-bottom-load` short tail now sends cursor envelopes (raw events were rejected → "Reconnecting"), uses 2 turns (4 already overflowed desktop), measures the gap from the last message; `session-chat-regression` anchor test scrolls midway so armed auto-load does not reveal everything before the manual click.
+
+### Results
+
+- Web unit 1,638 passed / 9 skipped; `web:check`, `web:lint` pass.
+- `cargo test -p ajax-web --lib web_session -- --test-threads=1`: 775 passed (parallel shows the known 7-test forced-write isolation flake).
+- desktop-chromium session bottom-load + regression + keyboard: 31 passed.
+- [ ] mobile-webkit: still blocked locally at `page` setup (30s); CI is the WebKit evidence.

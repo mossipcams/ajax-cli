@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { HISTORY_REVEAL_BATCH } from "../src/features/chat/conversation/historyWindow";
 import { DETAIL_FIXTURE, mockFetch, sessionEventJson, sessionSnapshotJson } from "./fixtures";
 
 const TOTAL_TURNS = 100;
@@ -16,7 +17,7 @@ const transcript = Array.from({ length: TOTAL_TURNS }, (_, turn) => [
   JSON.parse(sessionEventJson(cursor, event)) as Record<string, unknown> & { cursor: number },
 );
 
-async function openSession(page: Page, legacy = false) {
+async function openSession(page: Page, legacy = false, shortTail = false) {
   // Install mockFetch and its transcript pass-through in one script: separate
   // addInitScript calls have no guaranteed execution order.
   const fixturePage = {
@@ -43,18 +44,46 @@ async function openSession(page: Page, legacy = false) {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
   });
   const socketUrls: string[] = [];
+  const tailTurns = shortTail ? 2 : TAIL_TURNS;
+  const tailFrom = shortTail ? (TOTAL_TURNS - tailTurns) * 2 : TAIL_FROM;
+  // A real first-load report uses a few short turns that do not fill the
+  // viewport; drop the padding for that variant.
+  const bodyPadding = shortTail ? "" : " Padding to overflow the transcript. ";
+  const tailTranscript = Array.from({ length: tailTurns }, (_, turn) => {
+    const index = TOTAL_TURNS - tailTurns + turn;
+    return [
+      { type: "message", role: "user" as const, text: `Question ${index}`, itemId: `u${index}` },
+      {
+        type: "message",
+        role: "agent" as const,
+        text: `Answer ${index}.${bodyPadding.repeat(4)}`,
+        itemId: `a${index}`,
+      },
+    ];
+  }).flat().map((event, offset) =>
+    JSON.parse(sessionEventJson(tailFrom + offset, event)) as Record<string, unknown>,
+  );
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
     socketUrls.push(socket.url());
     socket.send(sessionSnapshotJson({
       reset: true,
       cursor: legacy ? 80 : transcript.length,
-      transcript: legacy ? transcript.slice(0, 80) : transcript.slice(TAIL_FROM),
-      ...(!legacy ? { transcriptFrom: TAIL_FROM, transcriptFloor: 0 } : {}),
+      transcript: legacy
+        ? transcript.slice(0, 80)
+        : shortTail
+          ? tailTranscript
+          : transcript.slice(TAIL_FROM),
+      ...(!legacy ? { transcriptFrom: shortTail ? tailFrom : TAIL_FROM, transcriptFloor: 0 } : {}),
     }));
   });
 
   await page.goto("/app.html#/session/web%2Ffix-login");
-  await expect(page.getByTestId("session-message-agent")).toHaveCount(TAIL_TURNS);
+  if (shortTail) {
+    // A short tail auto-fills immediately, so its count is not stable here.
+    await expect(page.getByTestId("session-message-agent").last()).toContainText(`Answer ${TOTAL_TURNS - 1}`);
+  } else {
+    await expect(page.getByTestId("session-message-agent")).toHaveCount(tailTurns);
+  }
   return socketUrls;
 }
 
@@ -133,6 +162,31 @@ test("#1301 bottom load: tail snapshot first paint", async ({ page }) => {
   expect(requests).toHaveLength(0);
 });
 
+test("#1304 a short first-load tail auto-fills without interaction", async ({ page }) => {
+  const requests = await routeHistory(page);
+  await openSession(page, false, true);
+
+  // No scroll and no click: the viewport must fill itself from older server
+  // history while it does not overflow.
+  const thread = page.getByTestId("session-thread");
+  await expect.poll(() => thread.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+  await expect(page.getByTestId("session-message-user").first()).not.toHaveText("Question 98");
+
+  const geometry = await thread.evaluate((node) => {
+    const messages = node.querySelectorAll('[data-testid="session-message-agent"]');
+    return {
+      scrollTop: node.scrollTop,
+      last: messages.item(messages.length - 1).textContent,
+      gap: node.getBoundingClientRect().bottom
+        - messages.item(messages.length - 1).getBoundingClientRect().bottom,
+    };
+  });
+  expect(geometry.scrollTop).toBe(0);
+  expect(geometry.last).toContain(`Answer ${TOTAL_TURNS - 1}`);
+  expect(geometry.gap).toBeGreaterThanOrEqual(0);
+  expect(requests.length).toBeGreaterThan(0);
+});
+
 test("#1301 bottom load: load earlier pulls older history and keeps the anchor", async ({ page }) => {
   const requests = await routeHistory(page);
   await openSession(page);
@@ -156,7 +210,7 @@ test("#1301 bottom load: load earlier pulls older history and keeps the anchor",
   expect(Math.abs(await thread.evaluate((node) => node.scrollTop) - before.scrollTop)).toBeLessThanOrEqual(1);
   const count = await page.getByTestId("session-message-user").count();
   expect(count).toBeGreaterThan(TAIL_TURNS);
-  expect(count).toBeLessThanOrEqual(TAIL_TURNS + 25);
+  expect(count).toBeLessThanOrEqual(TAIL_TURNS + Math.ceil(HISTORY_REVEAL_BATCH / 2));
   await expect(page.getByTestId("session-load-earlier")).toBeAttached();
   // The server is exhausted; the remaining clicks reveal locally held batches.
   for (let batch = 0; batch < 3 && await page.getByTestId("session-load-earlier").count(); batch += 1) {
