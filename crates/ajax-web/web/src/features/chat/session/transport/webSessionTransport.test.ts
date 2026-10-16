@@ -455,6 +455,102 @@ describe("connectWebSessionTransport", () => {
     transport.dispose();
   });
 
+  it("#1301 uses an inline reset transcript once and suppresses its compatibility replay", () => {
+    const socket = fakeSocket();
+    const onSnapshot = vi.fn();
+    const onCursorAdvance = vi.fn();
+    const cbs = { ...callbacks(), onSnapshot, onCursorAdvance };
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    const first = JSON.parse(
+      eventJson(0, { type: "message", role: "user", text: "Question", itemId: "u1" }),
+    );
+    const second = JSON.parse(
+      eventJson(1, { type: "message", role: "agent", text: "Answer", itemId: "a1" }),
+    );
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: JSON.stringify({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 2,
+        model: "auto",
+        turnState: "idle",
+        reset: true,
+        transcript: [first, second],
+      }),
+    } as MessageEvent);
+
+    expect(onSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursor: 2,
+        transcript: [
+          { cursor: 0, event: expect.objectContaining({ text: "Question" }) },
+          { cursor: 1, event: expect.objectContaining({ text: "Answer" }) },
+        ],
+      }),
+    );
+    expect(onCursorAdvance).toHaveBeenCalledWith(2);
+    expect(cbs.onEvent).not.toHaveBeenCalled();
+
+    socket.emit("message", { data: JSON.stringify(first) } as MessageEvent);
+    socket.emit("message", { data: JSON.stringify(second) } as MessageEvent);
+    expect(cbs.onEvent).not.toHaveBeenCalled();
+
+    socket.emit("message", {
+      data: eventJson(2, { type: "message", role: "agent", text: "Live", itemId: "a2" }),
+    } as MessageEvent);
+    expect(cbs.onEvent).toHaveBeenCalledTimes(1);
+    expect(cbs.onEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "message", text: "Live" }),
+    );
+    expect(onCursorAdvance).toHaveBeenLastCalledWith(3);
+    transport.dispose();
+  });
+
+  it("falls back to compatibility replay when no snapshot consumer is registered", () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/fix-login", cbs, platformFor(socket));
+    const replay = JSON.parse(
+      eventJson(0, { type: "message", role: "agent", text: "Answer", itemId: "a1" }),
+    );
+
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", {
+      data: JSON.stringify({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 1,
+        model: "auto",
+        turnState: "idle",
+        reset: true,
+        transcript: [replay],
+      }),
+    } as MessageEvent);
+    socket.emit("message", { data: JSON.stringify(replay) } as MessageEvent);
+
+    expect(cbs.onEvent).toHaveBeenNthCalledWith(1, {
+      type: "ready",
+      model: "auto",
+      busy: false,
+      reset: true,
+    });
+    expect(cbs.onEvent).toHaveBeenNthCalledWith(2, {
+      type: "message",
+      role: "agent",
+      text: "Answer",
+      itemId: "a1",
+    });
+    expect(cbs.onEvent).toHaveBeenNthCalledWith(3, {
+      type: "ready",
+      model: "auto",
+      busy: false,
+      reset: false,
+    });
+    transport.dispose();
+  });
+
   it("cold attach omits cursor even when sessionStorage holds a legacy value", () => {
     writeSessionCursor("web/fix-login", 2);
     const socket = fakeSocket();
@@ -699,6 +795,39 @@ describe("parseServerEvent", () => {
 });
 
 describe("parseServerFrame", () => {
+  it("parses a chronological inline transcript only on reset snapshots", () => {
+    const transcript = [
+      JSON.parse(eventJson(3, { type: "message", role: "user", text: "Question" })),
+      JSON.parse(eventJson(4, { type: "message", role: "agent", text: "Answer" })),
+    ];
+    const snapshot = {
+      type: "snapshot",
+      protocolVersion: 2,
+      cursor: 5,
+      model: "auto",
+      turnState: "idle",
+      reset: true,
+      transcript,
+    };
+
+    expect(parseServerFrame(JSON.stringify(snapshot))).toEqual({
+      kind: "snapshot",
+      snapshot: expect.objectContaining({
+        reset: true,
+        transcript: [
+          { cursor: 3, event: { type: "message", role: "user", text: "Question" } },
+          { cursor: 4, event: { type: "message", role: "agent", text: "Answer" } },
+        ],
+      }),
+    });
+    expect(parseServerFrame(JSON.stringify({ ...snapshot, reset: false }))).toBeNull();
+    expect(
+      parseServerFrame(
+        JSON.stringify({ ...snapshot, transcript: [transcript[1], transcript[0]] }),
+      ),
+    ).toBeNull();
+  });
+
   it("accepts well-formed variants", () => {
     expect(parseServerFrame(snapshotJson({ model: "auto" }))).toEqual({
       kind: "snapshot",

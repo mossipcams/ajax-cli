@@ -52,37 +52,38 @@ describe("sessionViewport", () => {
     expect(sessionVisibleHeight(800, 0)).toBe(800);
   });
 
-  it("detects transcript live edge from scrollTop with AoE slop", () => {
-    expect(transcriptAtLiveEdge(thread(800, 1200, 400))).toBe(true);
-    expect(transcriptAtLiveEdge(thread(800 - SESSION_PIN_THRESHOLD_PX, 1200, 400))).toBe(true);
-    expect(transcriptAtLiveEdge(thread(400, 1200, 400))).toBe(false);
+  it("treats scrollTop = 0 as the live edge with negative offsets away (AoE slop)", () => {
+    expect(transcriptAtLiveEdge(thread(0, 1200, 400))).toBe(true);
+    expect(transcriptAtLiveEdge(thread(-SESSION_PIN_THRESHOLD_PX, 1200, 400))).toBe(true);
+    expect(transcriptAtLiveEdge(thread(-400, 1200, 400))).toBe(false);
   });
 
-  it("transcriptAtBottom matches scroll metrics with AoE slop", () => {
-    expect(transcriptAtBottom(784, 1200, 400)).toBe(true);
-    expect(transcriptAtBottom(783, 1200, 400)).toBe(false);
-    expect(transcriptAtBottom(400, 1200, 400)).toBe(false);
+  it("transcriptAtBottom matches reversed scroll metrics with AoE slop", () => {
+    expect(transcriptAtBottom(0, 1200, 400)).toBe(true);
+    expect(transcriptAtBottom(-SESSION_PIN_THRESHOLD_PX, 1200, 400)).toBe(true);
+    expect(transcriptAtBottom(-SESSION_PIN_THRESHOLD_PX - 1, 1200, 400)).toBe(false);
+    expect(transcriptAtBottom(-400, 1200, 400)).toBe(false);
   });
 
   it("restores live bottom via stick-to-bottom after keyboard dismiss", () => {
-    const node = thread(120, 2000, 400);
+    const node = thread(-120, 2000, 400);
     restoreTranscriptGeometry(node, { atBottom: true });
-    expect(node.scrollTop).toBe(1600);
+    expect(node.scrollTop).toBe(0);
   });
 
-  it("preserves history scrollTop and applies scrollHeight delta above viewport", () => {
-    const node = thread(320, 1400, 400);
+  it("preserves distance from the live edge and applies scrollHeight delta above viewport", () => {
+    const node = thread(-320, 1400, 400);
     restoreTranscriptGeometry(node, {
       atBottom: false,
-      scrollTop: 120,
+      scrollTop: -120,
       scrollHeight: 1200,
     });
-    expect(node.scrollTop).toBe(320);
+    expect(node.scrollTop).toBe(-320);
   });
 
-  it("pins live edge by assigning scrollTop to scrollHeight minus clientHeight", () => {
-    const node = thread(0, 1200, 400);
+  it("pins live edge by assigning scrollTop to zero (reversed coordinates)", () => {
+    const node = thread(-800, 1200, 400);
     pinTranscriptToLiveEdge(node);
-    expect(node.scrollTop).toBe(800);
+    expect(node.scrollTop).toBe(0);
   });
 });

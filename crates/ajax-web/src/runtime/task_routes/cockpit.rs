@@ -18,12 +18,12 @@ use ajax_core::{
 };
 use axum::{
     extract::{Path as AxumPath, Request as AxumRequest, State},
-    http::HeaderMap,
+    http::{header, HeaderMap},
     response::Response as AxumResponse,
 };
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
-use super::live::{axum_task_session, axum_task_stt, axum_task_terminal};
+use super::live::{axum_task_session, axum_task_stt, axum_task_terminal, origin_authority};
 
 pub(crate) const AJAX_FOREGROUND_HEADER: &str = "x-ajax-foreground";
 
@@ -249,6 +249,15 @@ where
         };
         return axum_task_stt(State(state), task_handle.to_string(), req).await;
     }
+    if req.uri().path().ends_with("/session/transcript") {
+        let Some(task_handle) = handle.strip_suffix("/session/transcript") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
+        return axum_task_session_transcript(State(state), task_handle.to_string(), req).await;
+    }
     if req.uri().path().ends_with("/session") {
         let Some(task_handle) = handle.strip_suffix("/session") else {
             return json_value_response(
@@ -271,6 +280,122 @@ where
         return axum_task_diff(State(state), task_handle.to_string(), req).await;
     }
     axum_task_detail::<C, B>(State(state), handle).await
+}
+
+fn transcript_origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let Some(origin) = origin.to_str().ok() else {
+        return false;
+    };
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    origin_authority(origin).is_some_and(|authority| authority.eq_ignore_ascii_case(host))
+}
+
+/// GET /api/tasks/<handle>/session/transcript — one page of older retained
+/// transcript events for the browser's "Load earlier" walk. Same-origin
+/// browser fetches send no Origin header and are allowed; a present Origin must
+/// match Host. Task-handle validation runs before reading storage; read-only,
+/// never touches a live session actor.
+pub(crate) async fn axum_task_session_transcript<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    if !transcript_origin_allowed(req.headers()) {
+        return json_value_response(
+            403,
+            serde_json::json!({ "ok": false, "error": "origin forbidden" }),
+        );
+    }
+
+    let task_found = {
+        let guard = state.shared();
+        guard
+            .context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .any(|task| task.qualified_handle() == handle)
+    };
+    if !task_found {
+        return json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        );
+    }
+
+    let query = req.uri().query().unwrap_or("");
+    let before = match parse_usize_param(query, "before") {
+        QueryParam::Missing => None,
+        QueryParam::Value(value) => Some(value),
+        QueryParam::Invalid => return invalid_query_param_response("before"),
+    };
+    let limit = match parse_usize_param(query, "limit") {
+        QueryParam::Missing => None,
+        QueryParam::Value(value) => Some(value.clamp(1, 1000)),
+        QueryParam::Invalid => return invalid_query_param_response("limit"),
+    };
+
+    let directory = Arc::clone(&state.task_session_directory);
+    let page = match tokio::task::spawn_blocking(move || {
+        directory.retained_transcript_page(&handle, before, limit)
+    })
+    .await
+    {
+        Ok(page) => page,
+        Err(error) => {
+            return web_error_response(WebError::CommandFailed(format!(
+                "transcript page worker failed: {error}"
+            )));
+        }
+    };
+
+    json_value_response(
+        200,
+        serde_json::json!({
+            "protocolVersion": 2,
+            "events": page.events,
+            "from": page.from,
+            "floor": page.floor,
+        }),
+    )
+}
+
+enum QueryParam {
+    Missing,
+    Value(usize),
+    Invalid,
+}
+
+fn parse_usize_param(query: &str, key: &str) -> QueryParam {
+    let Some(raw) = query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    }) else {
+        return QueryParam::Missing;
+    };
+    match raw.parse::<usize>() {
+        Ok(value) => QueryParam::Value(value),
+        Err(_) => QueryParam::Invalid,
+    }
+}
+
+fn invalid_query_param_response(key: &str) -> AxumResponse {
+    json_value_response(
+        400,
+        serde_json::json!({ "ok": false, "error": format!("invalid {key} parameter") }),
+    )
 }
 
 pub(crate) async fn axum_task_pull_requests<C, B>(

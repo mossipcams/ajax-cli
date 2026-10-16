@@ -185,6 +185,8 @@ where
         .query()
         .and_then(|query| crate::slices::web_session::parse_client_cursor(Some(query)));
 
+    let tail_snapshot = crate::slices::web_session::parse_tail_snapshot_flag(req.uri().query());
+
     let state_for_prepare = state.clone();
     let handle_for_prepare = handle.clone();
     let prepare_result = tokio::task::spawn_blocking(move || {
@@ -241,6 +243,7 @@ where
             directory,
             plan,
             client_cursor,
+            tail_snapshot,
             Some(persist_session_model),
         )
         .await;

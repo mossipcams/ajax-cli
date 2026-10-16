@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@/test/testing-library-shim";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import TrainingModal from "./TrainingModal";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
@@ -76,6 +79,23 @@ afterEach(() => {
 });
 
 describe("TrainingModal", () => {
+
+  it("locks the training modal as a vertical-only scroll owner (no horizontal drag pan)", () => {
+    // Defect lock — training page horizontal press-and-drag panned the page:
+    // overflow-y:auto alone implies overflow-x:auto, so a touch drag starting
+    // in the modal scrolled it sideways. The shell must be non-scrollable
+    // horizontally and vertical-pan-only; unit tests cannot simulate native
+    // touch pan, so the stylesheet declaration is the focused regression lock.
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../styles/settings.css"),
+      "utf8",
+    );
+    const ruleBody = /(^|\n)\.training-modal\s*\{([^}]*)\}/.exec(css)?.[2] ?? "";
+    expect(ruleBody, ".training-modal rule not found in styles/settings.css").not.toBe("");
+    expect(ruleBody).toMatch(/overflow-x:\s*hidden/);
+    expect(ruleBody).toMatch(/touch-action:\s*pan-y/);
+    expect(ruleBody).toMatch(/overscroll-behavior:\s*contain/);
+  });
   it("shows a skeleton while the first status fetch is pending, then the hero", async () => {
     const routeMock = globalThis.fetch as unknown as FetchMock;
     let settleStatus: (response: Response) => void = () => undefined;

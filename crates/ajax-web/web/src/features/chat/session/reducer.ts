@@ -6,6 +6,7 @@ import { applyStatusEvent, isStatusEvent } from "./statusProjection";
 import { applyTurnEvent, applyOptimisticPrompt, isTurnEvent } from "./turnProjection";
 import { applyUsageEvent, isUsageEvent } from "./usageProjection";
 import type {
+  ConversationItem,
   ChatSessionAction,
   ChatSessionEvent,
   ChatSessionReducerState,
@@ -23,7 +24,53 @@ function applyChatSessionEvent(
   if (isUsageEvent(event)) return applyUsageEvent(state, event);
   if (isStatusEvent(event)) return applyStatusEvent(state, event);
   if (isTurnEvent(event)) return applyTurnEvent(state, event);
+  if (event.type === "history_bounds") {
+    return {
+      ...state,
+      view: {
+        ...state.view,
+        serverHistory: { from: event.from, floor: event.floor },
+        revision: state.view.revision + 1,
+      },
+    };
+  }
+  if (event.type === "prepend") return applyPrependOlderEvents(state, event);
   return state;
+}
+
+function offsetPrependedIds(
+  items: ConversationItem[],
+  taken: Set<string>,
+): ConversationItem[] {
+  return items.map((item) => {
+    if (!taken.has(item.id)) {
+      taken.add(item.id);
+      return item;
+    }
+    let candidate = `${item.id}-h1`;
+    for (let n = 1; taken.has(candidate); n += 1) {
+      candidate = `${item.id}-h${n + 1}`;
+    }
+    taken.add(candidate);
+    return { ...item, id: candidate };
+  });
+}
+
+function applyPrependOlderEvents(
+  state: ChatSessionReducerState,
+  event: Extract<ChatSessionEvent, { type: "prepend" }>,
+): ChatSessionReducerState {
+  const projected = event.events.reduce(applyChatSessionEvent, initialChatSessionReducerState);
+  const taken = new Set(state.view.conversation.map((item) => item.id));
+  const older = offsetPrependedIds(projected.view.conversation, taken);
+  return {
+    ...state,
+    view: {
+      ...state.view,
+      conversation: older.length ? [...older, ...state.view.conversation] : state.view.conversation,
+      serverHistory: { from: event.from, floor: state.view.serverHistory?.floor ?? event.from },
+    },
+  };
 }
 
 export function reduceChatSession(
@@ -41,7 +88,10 @@ export function reduceChatSession(
       return applyElicitationAnswered(state);
     case "event":
       return applyChatSessionEvent(state, action.event);
+    case "events":
+      return action.events.reduce(applyChatSessionEvent, state);
   }
 }
 
+export type { ChatSessionReducerState };
 export { initialChatSessionReducerState };

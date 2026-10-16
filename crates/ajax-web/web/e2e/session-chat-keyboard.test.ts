@@ -209,7 +209,7 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 30);
     await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
-      thread.scrollTop = thread.scrollHeight;
+      thread.scrollTop = 0;
     });
     await simulateKeyboard(page, 280);
     const geo = await readGeometry(page);
@@ -222,7 +222,7 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 30);
     const beforeOpen = await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
-      thread.scrollTop = thread.scrollHeight;
+      thread.scrollTop = 0;
       return {
         scrollTop: thread.scrollTop,
         scrollHeight: thread.scrollHeight,
@@ -238,9 +238,8 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.appViewportPosition).not.toBe("fixed");
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
     expect(geo.gapTranscriptComposer - during.gapTranscriptComposer).toBeLessThan(20);
-    expect(geo.threadScrollTop + geo.threadClientHeight).toBeGreaterThanOrEqual(
-      geo.threadScrollHeight - 48,
-    );
+    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
+    expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
     expect(geo.threadScrollHeight).toBeGreaterThanOrEqual(beforeOpen.scrollHeight);
   });
 
@@ -254,8 +253,12 @@ test.describe("Session chat keyboard geometry (#877)", () => {
       ) as HTMLElement | undefined;
       if (!mid) throw new Error("expected mid-history Line 41 message");
 
-      const lineTop = mid.offsetTop;
-      thread.scrollTop = Math.max(0, lineTop - Math.floor(thread.clientHeight / 3));
+      // Reversed column container: offsetTop is not directly mappable to the
+      // negative scrollTop range, so adjust from measured viewport positions.
+      const threadRect0 = thread.getBoundingClientRect();
+      const midRect0 = mid.getBoundingClientRect();
+      const desiredTop = threadRect0.top + Math.floor(thread.clientHeight / 3);
+      thread.scrollTop += midRect0.top - desiredTop;
       thread.dispatchEvent(new Event("scroll", { bubbles: false }));
 
       const threadRect = thread.getBoundingClientRect();
@@ -312,7 +315,8 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 80);
     const thread = page.getByTestId("session-thread");
     await thread.evaluate((el) => {
-      const target = Math.min(480, el.scrollHeight - el.clientHeight - 120);
+      // Reversed container: scroll offset toward history is negative.
+      const target = -Math.min(480, el.scrollHeight - el.clientHeight - 120);
       el.scrollTop = target;
       el.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
@@ -341,7 +345,7 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.surfacePaddingBottom).toBe(0);
     expect(geo.appViewportPosition).not.toBe("fixed");
     expect(geo.gapComposerLayout).toBeLessThan(48);
-    const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight - geo.threadScrollTop);
+    const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight + geo.threadScrollTop);
     expect(blankRegion).toBeLessThan(during.surfacePaddingBottom);
     expect(blankRegion).toBeLessThan(80);
   });
@@ -351,7 +355,7 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 30);
     await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
-      thread.scrollTop = thread.scrollHeight;
+      thread.scrollTop = 0;
     });
     const composer = page.getByLabel("Message");
     await composer.click();
@@ -370,9 +374,8 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     const geo = await readGeometry(page);
     expect(geo.surfacePaddingBottom).toBe(0);
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
-    expect(geo.threadScrollTop + geo.threadClientHeight).toBeGreaterThanOrEqual(
-      geo.threadScrollHeight - 48,
-    );
+    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
+    expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
   });
 
   test("multiline composer growth while pinned keeps live edge", async ({ page }) => {
@@ -380,16 +383,15 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 20);
     await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
-      thread.scrollTop = thread.scrollHeight;
+      thread.scrollTop = 0;
     });
     const composer = page.getByLabel("Message");
     await composer.fill("line one\nline two\nline three\nline four");
     await page.waitForTimeout(200);
     const geo = await readGeometry(page);
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
-    expect(geo.threadScrollTop + geo.threadClientHeight).toBeGreaterThanOrEqual(
-      geo.threadScrollHeight - 48,
-    );
+    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
+    expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
   });
 
   test("does not reserve surface padding when innerHeight shrinks (PWA path)", async ({ page }) => {
@@ -415,12 +417,12 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 50);
     await page.evaluate(() => {
       const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
-      thread.scrollTop = thread.scrollHeight;
+      thread.scrollTop = 0;
     });
     await simulateKeyboard(page, 300);
     await dismissKeyboard(page);
     const geo = await readGeometry(page);
-    const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight - geo.threadScrollTop);
+    const blankRegion = geo.threadClientHeight - (geo.threadScrollHeight + geo.threadScrollTop);
     expect(blankRegion).toBeLessThan(80);
     expect(geo.surfacePaddingBottom).toBe(0);
   });

@@ -38,8 +38,9 @@ export function stubScrollMetrics(
   thread.scrollTop = scrollTop;
 }
 
-export function liveEdgeScrollTop(scrollHeight: number, clientHeight: number): number {
-  return Math.max(0, scrollHeight - clientHeight);
+/** Reversed coords (column-reverse outer thread): the live edge is scrollTop = 0; history reads are negative. */
+export function liveEdgeScrollTop(_scrollHeight: number, _clientHeight: number): number {
+  return 0;
 }
 
 export function mockScrollByToAdjustScrollTop(): () => void {

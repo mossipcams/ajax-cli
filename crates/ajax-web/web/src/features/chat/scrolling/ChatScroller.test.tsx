@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { fireEvent, screen, act } from "@testing-library/react";
+import { fireEvent, screen, act, waitFor } from "@testing-library/react";
 import { mountChat, prepareChatSurface, send, transport, flushRaf, ChatWithSheet, chatH } from "../ChatSurface.testHarness";
 import { stylesSource } from "../ChatSurface.testHarness";
 import {
@@ -93,7 +93,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1400, 400, 800);
+    stubScrollMetrics(thread, 1400, 400, -200);
 
     send({ type: "message", role: "agent", text: "Streaming chunk", itemId: "a2" });
     expectThreadAtLiveEdge(thread);
@@ -103,7 +103,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     send({ type: "message", role: "agent", text: "First", itemId: "a1" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2000, 400, 120);
+    stubScrollMetrics(thread, 2000, 400, -1480);
     fireEvent.scroll(thread);
 
     const before = thread.scrollTop;
@@ -127,7 +127,7 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1400, 400, 800);
+    stubScrollMetrics(thread, 1400, 400, -200);
 
     act(() => {
       for (const callback of resizeCallbacks) {
@@ -153,7 +153,7 @@ describe("ChatScroller integration", () => {
 
     mountChat();
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 1500, 400, 800);
+    stubScrollMetrics(thread, 1500, 400, -300);
 
     act(() => {
       mutationCallbacks.at(-1)?.([], {} as MutationObserver);
@@ -162,17 +162,20 @@ describe("ChatScroller integration", () => {
     expectThreadAtLiveEdge(thread);
   });
 
-  it("uses a chronological transcript column, not column-reverse", () => {
+  it("anchors the live edge via a column-reverse outer thread", () => {
     mountChat();
     const thread = screen.getByTestId("session-thread");
     const inner = screen.getByTestId("session-thread-inner");
     expect(thread).toContainElement(inner);
     const rule = stylesSource.match(/\.session-thread\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(rule).not.toMatch(/flex-direction:\s*column-reverse/);
-    expect(rule).toMatch(/flex-direction:\s*column/);
+    expect(rule).toMatch(/flex-direction:\s*column-reverse/);
     const innerRule =
       stylesSource.match(/\.session-thread-inner\s*\{([^}]*)\}/)?.[1] ?? "";
+    // The inner column stays chronological (oldest at top) and unpinned, so
+    // the reversed outer container is what makes scrollTop = 0 the live edge.
     expect(innerRule).not.toMatch(/column-reverse/);
+    expect(innerRule).toMatch(/flex-direction:\s*column/);
+    expect(innerRule).toMatch(/flex:\s*0 0 auto/);
   });
 });
 
@@ -190,7 +193,7 @@ describe("Jump to latest", () => {
 
   function scrollAway() {
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2000, 400, 120);
+    stubScrollMetrics(thread, 2000, 400, -1480);
     fireEvent.scroll(thread);
     return thread;
   }
@@ -263,13 +266,13 @@ describe("task open positioning (#1065)", () => {
   it("re-pins to the live edge when session identity changes on task open", () => {
     const { rerender } = mountChat({ detailStatus: "loading" });
     const thread = screen.getByTestId("session-thread") as HTMLDivElement;
-    stubScrollMetrics(thread, 2400, 400, 80);
+    stubScrollMetrics(thread, 2400, 400, -1920);
     fireEvent.scroll(thread);
 
     for (let i = 0; i < 4; i += 1) {
       send({ type: "message", role: "agent", text: `Earlier ${i}`, itemId: `a${i}` });
     }
-    scrollThreadToHistory(thread, 80);
+    scrollThreadToHistory(thread, -1920);
     fireEvent.scroll(thread);
     expect(screen.getByTestId("session-jump")).toBeInTheDocument();
 
@@ -296,5 +299,70 @@ describe("task open positioning (#1065)", () => {
 
     expect(transcriptAtLiveEdge(thread)).toBe(true);
     expect(thread.scrollTop).toBe(liveEdgeScrollTop(thread.scrollHeight, thread.clientHeight));
+  });
+});
+
+
+describe("server history controls", () => {
+  beforeEach(() => prepareChatSurface());
+
+  function loadRecentSnapshot() {
+    act(() => chatH.snapshot?.({
+      type: "snapshot", protocolVersion: 2, cursor: 500, model: "auto",
+      turnState: "idle", reset: true, transcriptFrom: 500, transcriptFloor: 0,
+      transcript: [{ cursor: 500, event: {
+        type: "message", role: "user", text: "Recent message", itemId: "recent",
+      } }],
+    }));
+  }
+
+  it("shows the retry label after failure and uses the same button to load history", async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        protocolVersion: 2, from: 0, floor: 0,
+        events: [{ type: "event", protocolVersion: 2, cursor: 0, payload: {
+          type: "message", role: "user", text: "Earlier message", itemId: "earlier",
+        } }],
+      })));
+    vi.stubGlobal("fetch", fetchImpl);
+    mountChat();
+    loadRecentSnapshot();
+    const button = screen.getByTestId("session-load-earlier");
+    expect(button).toHaveTextContent("Load earlier");
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toHaveTextContent("Couldn't load earlier messages — tap to retry"));
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByText("Earlier message")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-load-earlier")).toBe(button);
+    fireEvent.click(button);
+    expect(await screen.findByText("Earlier message")).toBeInTheDocument();
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-load-earlier")).not.toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("reveals one batch from a fetched page and reveals its remainder locally", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      protocolVersion: 2, from: 0, floor: 0,
+      events: Array.from({ length: 200 }, (_, index) => ({
+        type: "event", protocolVersion: 2, cursor: index,
+        payload: { type: "message", role: "user", text: `Earlier row ${index}`, itemId: `older-${index}` },
+      })),
+    })));
+    vi.stubGlobal("fetch", fetchImpl);
+    mountChat();
+    loadRecentSnapshot();
+    fireEvent.click(screen.getByTestId("session-load-earlier"));
+    await waitFor(() => expect(screen.getAllByText(/^Earlier row /)).toHaveLength(100));
+    expect(screen.queryByText("Earlier row 99")).not.toBeInTheDocument();
+    expect(screen.getByText("Earlier row 100")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("session-load-earlier"));
+    // The remainder reveals locally, exhausting the fetched page (rows 0–199).
+    expect(screen.getAllByText(/^Earlier row /)).toHaveLength(200);
+    expect(screen.getByText("Earlier row 0")).toBeInTheDocument();
+    expect(screen.getByText("Recent message")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-load-earlier")).not.toBeInTheDocument();
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

@@ -77,6 +77,24 @@ pub struct SessionSnapshot {
         rename = "transcriptError"
     )]
     pub transcript_error: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcript"
+    )]
+    pub transcript: Option<Vec<SessionEventEnvelope>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcriptFrom"
+    )]
+    pub transcript_from: Option<usize>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "transcriptFloor"
+    )]
+    pub transcript_floor: Option<usize>,
 }
 
 impl SessionSnapshot {
@@ -103,11 +121,29 @@ impl SessionSnapshot {
             pending_permission,
             pending_elicitation,
             transcript_error: None,
+            transcript: None,
+            transcript_from: None,
+            transcript_floor: None,
         }
     }
 
     pub fn with_transcript_error(mut self, error: Option<String>) -> Self {
         self.transcript_error = error;
+        self
+    }
+
+    pub fn with_transcript(
+        mut self,
+        transcript: Vec<SessionEventEnvelope>,
+        transcript_from: Option<usize>,
+    ) -> Self {
+        self.transcript = Some(transcript);
+        self.transcript_from = transcript_from;
+        self
+    }
+
+    pub fn with_transcript_floor(mut self, floor: usize) -> Self {
+        self.transcript_floor = Some(floor);
         self
     }
 }
@@ -140,5 +176,20 @@ pub fn parse_client_cursor(query: Option<&str>) -> Option<usize> {
             return None;
         }
         value.parse().ok()
+    })
+}
+
+/// Parse the `snapshotTail` opt-in flag from a WebSocket attach query string.
+///
+/// Clients that send `snapshotTail=1` consume the inline tail transcript and
+/// need no per-event compatibility frames, so the server skips envelope
+/// replay for them. Returns true only when the query contains a pair whose key
+/// is exactly `snapshotTail` and value is exactly `1`; any other value,
+/// missing key, empty value, or absent query yields false.
+pub fn parse_tail_snapshot_flag(query: Option<&str>) -> bool {
+    query.is_some_and(|query| {
+        query
+            .split('&')
+            .any(|pair| pair.split_once('=') == Some(("snapshotTail", "1")))
     })
 }

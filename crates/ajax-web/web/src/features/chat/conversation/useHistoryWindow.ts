@@ -7,11 +7,12 @@ import {
   snapRevealStart,
 } from "./historyWindow";
 
-export function useHistoryWindow(items: ConversationItem[], sessionKey: string) {
+export function useHistoryWindow(items: ConversationItem[], sessionKey: string, historyFrom?: number) {
   const [windowStart, setWindowStart] = useState(0);
   const [windowGeneration, setWindowGeneration] = useState(0);
   const anchorLenRef = useRef<number | null>(null);
   const prevSessionKeyRef = useRef(sessionKey);
+  const previousHistoryRef = useRef({ from: historyFrom, firstId: items[0]?.id });
 
   const len = items.length;
   const sessionChanged = prevSessionKeyRef.current !== sessionKey;
@@ -22,8 +23,17 @@ export function useHistoryWindow(items: ConversationItem[], sessionKey: string) 
     len === 0 ||
     (anchorLen !== null && len < anchorLen);
 
-  const effectiveWindowStart =
-    !needsRecompute
+  const previousHistory = previousHistoryRef.current;
+  const prepended = !sessionChanged && historyFrom !== undefined &&
+    previousHistory.from !== undefined && historyFrom < previousHistory.from;
+  const prependCount = prepended
+    ? previousHistory.firstId === undefined
+      ? len
+      : Math.max(0, items.findIndex((item) => item.id === previousHistory.firstId))
+    : 0;
+  const effectiveWindowStart = prependCount > 0
+    ? snapRevealStart(items, windowStart + prependCount, HISTORY_REVEAL_BATCH)
+    : !needsRecompute
       ? windowStart
       : len === 0
         ? 0
@@ -58,6 +68,13 @@ export function useHistoryWindow(items: ConversationItem[], sessionKey: string) 
       anchorLenRef.current = len;
     }
   }, [items, sessionKey]);
+
+  useLayoutEffect(() => {
+    previousHistoryRef.current = { from: historyFrom, firstId: items[0]?.id };
+    if (prependCount === 0) return;
+    setWindowStart(effectiveWindowStart);
+    setWindowGeneration((generation) => generation + 1);
+  }, [items, historyFrom, sessionKey, prependCount, effectiveWindowStart]);
 
   const visibleItems = useMemo(
     () => items.slice(effectiveWindowStart),
