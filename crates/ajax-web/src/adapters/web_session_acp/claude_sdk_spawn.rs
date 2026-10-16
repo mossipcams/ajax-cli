@@ -5,29 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use ajax_core::models::AgentClient;
-
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::PromptCapabilityDescriptor;
-
-/// Whether `agent` spawns a Claude Agent SDK session. The selector follows the
-/// core launch table: Claude takes the SDK path in production. The test build
-/// additionally requires the module override from
-/// [`with_test_claude_sdk_module`] so existing ACP-based tests keep their path.
-pub(super) fn uses_claude_sdk(agent: AgentClient) -> bool {
-    let claude_sdk = ajax_core::adapters::acp_launch_for_agent(agent)
-        .is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::ClaudeSdk);
-    #[cfg(not(test))]
-    {
-        claude_sdk
-    }
-    #[cfg(test)]
-    {
-        claude_sdk && claude_sdk_module_override().is_some()
-    }
-}
-
 /// Resolve the Node program and its sidecar spawn arguments.
 pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     #[cfg(test)]
@@ -198,13 +178,11 @@ pub(super) fn apply_pin_to_claude(client: &ClaudeSdkClient, pin: &str) -> Option
 }
 
 #[cfg(test)]
-thread_local! {
-    static TEST_CLAUDE_SDK_MODULE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
-}
+static TEST_CLAUDE_SDK_MODULE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 #[cfg(test)]
-fn claude_sdk_module_override() -> Option<PathBuf> {
-    TEST_CLAUDE_SDK_MODULE.with(|slot| slot.borrow().clone())
+pub(super) fn claude_sdk_module_override() -> Option<PathBuf> {
+    TEST_CLAUDE_SDK_MODULE.lock().unwrap().clone()
 }
 
 /// Run `f` with the fake Claude Agent SDK module installed as `sdk_module`;
@@ -214,8 +192,8 @@ pub(crate) fn with_test_claude_sdk_module<F, R>(sdk_module: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    TEST_CLAUDE_SDK_MODULE.with(|slot| *slot.borrow_mut() = Some(sdk_module.to_path_buf()));
+    *TEST_CLAUDE_SDK_MODULE.lock().unwrap() = Some(sdk_module.to_path_buf());
     let result = f();
-    TEST_CLAUDE_SDK_MODULE.with(|slot| *slot.borrow_mut() = None);
+    *TEST_CLAUDE_SDK_MODULE.lock().unwrap() = None;
     result
 }

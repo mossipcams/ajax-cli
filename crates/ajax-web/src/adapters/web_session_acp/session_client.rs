@@ -8,8 +8,6 @@
 
 #![allow(dead_code)] // not every method has a call site yet
 
-#[cfg(test)]
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,13 +16,13 @@ use agent_client_protocol::schema::v1::{ContentBlock, ResourceLink, TextContent}
 use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::available_command_descriptors::AvailableCommandDescriptor;
 use super::claude_sdk_client::ClaudeSdkClient;
-use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk, uses_claude_sdk};
+use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk};
 
 use super::client::{
     AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
 };
 use super::cursor_sdk_client::CursorSdkClient;
-use super::cursor_sdk_spawn::{apply_pin_to_cursor, spawn_cursor_sdk, uses_cursor_sdk};
+use super::cursor_sdk_spawn::{apply_pin_to_cursor, spawn_cursor_sdk};
 use super::pi_rpc_client::PiRpcClient;
 use super::{
     ApplyModelOutcome, CancelOutcome, NeutralConfigOption, PromptCapabilityDescriptor,
@@ -167,33 +165,35 @@ impl SessionClient {
     }
 
     /// Spawn the live session for `agent` at `worktree_path`, resuming
-    /// `resume_session_id` when given. Agents selected for the Claude Agent
-    /// SDK take the SDK path (unreachable in production until the core launch
-    /// table supports it); agents selected for Pi RPC by the core launch table
-    /// take the Pi path (Pi in production); every other agent goes through the
-    /// ACP stdio spawn unchanged.
+    /// `resume_session_id` when given. The transport is selected by
+    /// `transport_for`: Cursor and Claude agents take their SDK paths,
+    /// Pi agents take the Pi RPC path (Pi in production), and every other
+    /// agent goes through the ACP stdio spawn unchanged.
     pub fn spawn_with_operator_pin(
         agent: AgentClient,
         worktree_path: &Path,
         operator_pin: &str,
         resume_session_id: Option<&str>,
     ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
-        if uses_cursor_sdk(agent) {
-            spawn_cursor_sdk(worktree_path, operator_pin, resume_session_id)
-                .map(|(client, report)| (SessionClient::from_cursor(client), report))
-        } else if uses_claude_sdk(agent) {
-            spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
-                .map(|(client, report)| (SessionClient::from_claude(client), report))
-        } else if uses_pi_rpc(agent) {
-            SessionClient::spawn_pi_rpc(worktree_path, operator_pin, resume_session_id)
-        } else {
-            AcpStdioClient::spawn_with_operator_pin(
+        match transport_for(agent) {
+            ajax_core::adapters::HarnessTransport::CursorSdk => {
+                spawn_cursor_sdk(worktree_path, operator_pin, resume_session_id)
+                    .map(|(client, report)| (SessionClient::from_cursor(client), report))
+            }
+            ajax_core::adapters::HarnessTransport::ClaudeSdk => {
+                spawn_claude_sdk(worktree_path, operator_pin, resume_session_id)
+                    .map(|(client, report)| (SessionClient::from_claude(client), report))
+            }
+            ajax_core::adapters::HarnessTransport::PiRpc => {
+                SessionClient::spawn_pi_rpc(worktree_path, operator_pin, resume_session_id)
+            }
+            ajax_core::adapters::HarnessTransport::Acp => AcpStdioClient::spawn_with_operator_pin(
                 agent,
                 worktree_path,
                 operator_pin,
                 resume_session_id,
             )
-            .map(|(client, report)| (SessionClient::from_acp(client), report.into_neutral()))
+            .map(|(client, report)| (SessionClient::from_acp(client), report.into_neutral())),
         }
     }
 
@@ -546,22 +546,32 @@ impl SessionClient {
     }
 }
 
-/// Whether `agent` spawns a Pi RPC session.
+/// The transport `agent` spawns on, from the core launch table.
 ///
-/// The selector follows the core launch table: an agent whose `AcpLaunch`
-/// transport is `PiRpc` takes the Pi path (Pi in production), and every other
-/// agent stays on the ACP stdio spawn.
-pub(super) fn uses_pi_rpc(agent: AgentClient) -> bool {
-    let pi_rpc = ajax_core::adapters::acp_launch_for_agent(agent)
-        .is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::PiRpc);
-    #[cfg(not(test))]
-    {
-        pi_rpc
-    }
+/// Under test a native transport is selected only while its program/module
+/// override is installed, so ordinary tests keep the ACP path.
+pub(super) fn transport_for(agent: AgentClient) -> ajax_core::adapters::HarnessTransport {
+    let transport = ajax_core::adapters::acp_launch_for_agent(agent)
+        .map_or(ajax_core::adapters::HarnessTransport::Acp, |launch| {
+            launch.transport
+        });
     #[cfg(test)]
     {
-        pi_rpc && pi_program_override().is_some()
+        let installed = match transport {
+            ajax_core::adapters::HarnessTransport::Acp => true,
+            ajax_core::adapters::HarnessTransport::PiRpc => pi_program_override().is_some(),
+            ajax_core::adapters::HarnessTransport::ClaudeSdk => {
+                super::claude_sdk_spawn::claude_sdk_module_override().is_some()
+            }
+            ajax_core::adapters::HarnessTransport::CursorSdk => {
+                super::cursor_sdk_spawn::cursor_sdk_module_override().is_some()
+            }
+        };
+        if !installed {
+            return ajax_core::adapters::HarnessTransport::Acp;
+        }
     }
+    transport
 }
 
 /// Apply a persisted operator pin (`model|configId=value|...`) to a Pi RPC
@@ -601,13 +611,12 @@ pub(super) fn pi_program_and_args() -> Result<(PathBuf, Vec<String>), AcpSpawnEr
 }
 
 #[cfg(test)]
-thread_local! {
-    static TEST_PI_PROGRAM: RefCell<Option<(PathBuf, Vec<String>)>> = const { RefCell::new(None) };
-}
+static TEST_PI_PROGRAM: std::sync::Mutex<Option<(PathBuf, Vec<String>)>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(test)]
 fn pi_program_override() -> Option<(PathBuf, Vec<String>)> {
-    TEST_PI_PROGRAM.with(|slot| slot.borrow().clone())
+    TEST_PI_PROGRAM.lock().unwrap().clone()
 }
 
 /// Run `f` with the Pi program override installed as `path` plus
@@ -618,9 +627,9 @@ where
     F: FnOnce() -> R,
 {
     let args: Vec<String> = extra_args.iter().map(|arg| arg.to_string()).collect();
-    TEST_PI_PROGRAM.with(|slot| *slot.borrow_mut() = Some((path.to_path_buf(), args)));
+    *TEST_PI_PROGRAM.lock().unwrap() = Some((path.to_path_buf(), args));
     let result = f();
-    TEST_PI_PROGRAM.with(|slot| *slot.borrow_mut() = None);
+    *TEST_PI_PROGRAM.lock().unwrap() = None;
     result
 }
 

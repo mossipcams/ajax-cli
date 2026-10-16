@@ -4,10 +4,12 @@
 
 use std::path::Path;
 
+use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
-use super::claude_sdk_spawn::{spawn_claude_sdk, uses_claude_sdk, with_test_claude_sdk_module};
+use super::claude_sdk_spawn::{spawn_claude_sdk, with_test_claude_sdk_module};
 use super::client::{AcpSpawnError, RestoreFailure};
+use super::session_client::transport_for;
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -156,13 +158,13 @@ fn pin_unknown_option_id_is_ignored() {
 #[test]
 fn uses_claude_sdk_gating() {
     // Outside the override no agent takes the SDK path.
-    assert!(!uses_claude_sdk(AgentClient::Claude));
+    assert!(transport_for(AgentClient::Claude) != HarnessTransport::ClaudeSdk);
 
     with_fake_sdk(|_cwd| {
-        assert!(uses_claude_sdk(AgentClient::Claude));
-        assert!(!uses_claude_sdk(AgentClient::Cursor));
-        assert!(!uses_claude_sdk(AgentClient::Codex));
-        assert!(!uses_claude_sdk(AgentClient::Pi));
+        assert!(transport_for(AgentClient::Claude) == HarnessTransport::ClaudeSdk);
+        assert!(transport_for(AgentClient::Cursor) != HarnessTransport::ClaudeSdk);
+        assert!(transport_for(AgentClient::Codex) != HarnessTransport::ClaudeSdk);
+        assert!(transport_for(AgentClient::Pi) != HarnessTransport::ClaudeSdk);
     });
 }
 

@@ -7,7 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use super::client::AcpSpawnError;
-use super::session_client::{uses_pi_rpc, with_test_pi_program, SessionClient};
+use super::session_client::{transport_for, with_test_pi_program, SessionClient};
+use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
 fn fixture_path() -> PathBuf {
@@ -91,18 +92,18 @@ fn pi_spawn_fails_closed_when_session_id_differs() {
 #[test]
 fn uses_pi_rpc_requires_pi_agent_and_override() {
     assert!(
-        !uses_pi_rpc(AgentClient::Pi),
+        transport_for(AgentClient::Pi) != HarnessTransport::PiRpc,
         "production gating: pi rpc stays off without the test override"
     );
     with_test_pi_program(&fixture_path(), &[], || {
-        assert!(uses_pi_rpc(AgentClient::Pi));
+        assert!(transport_for(AgentClient::Pi) == HarnessTransport::PiRpc);
         assert!(
-            !uses_pi_rpc(AgentClient::Cursor),
+            transport_for(AgentClient::Cursor) != HarnessTransport::PiRpc,
             "the override must not switch other agents to the pi path"
         );
     });
     assert!(
-        !uses_pi_rpc(AgentClient::Pi),
+        transport_for(AgentClient::Pi) != HarnessTransport::PiRpc,
         "the override must be cleared after with_test_pi_program returns"
     );
 }
