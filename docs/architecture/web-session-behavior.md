@@ -702,6 +702,7 @@ all-zero usage is skipped so cancelling does not reset the meter.
   operator answers. Accept sends schema-shaped `content`; Decline and Cancel
   send the standard non-accept outcomes and do not include content.
 - Pi RPC extension dialogs (`extension_ui_request` with method `select`, `confirm`, `input` or `editor`) are published as elicitation requests (form schema with a boolean `confirmed` or string `value` property) and answered with `extension_ui_response`; accept sends the chosen `confirmed`/`value`, decline or cancel sends `cancelled`. Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, ...) are ignored ([#1306](https://github.com/mossipcams/ajax-cli/issues/1306)).
+- Claude MCP form elicitations (SDK `onElicitation`) are forwarded by the sidecar as `elicitation_request` records, published as elicitation requests, and answered with an `elicitation_response` command carrying `accept` (with the form content), `decline` or `cancel`. URL-mode requests and schemas with secret-looking property names (password, secret, token, apiKey, authCode, otp) are declined without asking, and anything still pending when the turn is aborted or the sidecar shuts down resolves as `cancel`.
 - Form schemas must not collect secrets, passwords, or tokens. The host rejects
   secret-like field names before surfacing a prompt to the browser.
 - Live Chat treats elicitation as an agent request in the session head (not task

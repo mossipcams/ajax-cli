@@ -261,6 +261,16 @@ impl ClaudeSdkClient {
         self.core.prompt_in_flight()
     }
 
+    /// Send a response for a pending elicitation to the SDK sidecar.
+    pub fn respond_elicitation(
+        &self,
+        request_id: &str,
+        fields: serde_json::Value,
+    ) -> Result<(), String> {
+        self.core
+            .respond("elicitation_response", request_id, fields)
+    }
+
     pub fn poll_event(&self) -> Option<AgentEvent> {
         self.core.poll_event()
     }

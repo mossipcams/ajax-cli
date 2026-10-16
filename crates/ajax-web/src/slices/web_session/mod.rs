@@ -470,6 +470,9 @@ mod native_diff_tests;
 mod pi_dialog_tests;
 
 #[cfg(test)]
+mod claude_elicitation_tests;
+
+#[cfg(test)]
 mod ws_bridge_tests;
 
 #[cfg(test)]

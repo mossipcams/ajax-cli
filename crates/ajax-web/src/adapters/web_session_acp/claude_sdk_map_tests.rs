@@ -249,6 +249,57 @@ fn sub_agent_messages_map_to_empty() {
 }
 
 #[test]
+fn elicitation_request_maps_to_a_native_elicitation_event() {
+    let expected_schema = serde_json::json!({"questions": [{"id": "q1"}]});
+    let message = serde_json::json!({
+        "type": "elicitation_request",
+        "id": "req-1234",
+        "message": "Confirm the action?",
+        "schema": expected_schema
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1);
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ElicitationRequest {
+            request_id,
+            message,
+            schema,
+        } => {
+            assert_eq!(request_id, "req-1234");
+            assert_eq!(message, "Confirm the action?");
+            assert_eq!(*schema, expected_schema);
+        }
+        other => panic!("expected an ElicitationRequest event, got {other:?}"),
+    }
+}
+
+#[test]
+fn malformed_elicitation_requests_map_to_empty() {
+    for message in [
+        // Missing id.
+        serde_json::json!({
+            "type": "elicitation_request",
+            "message": "hi",
+            "schema": {"questions": []}
+        }),
+        // Non-object schema.
+        serde_json::json!({
+            "type": "elicitation_request",
+            "id": "req-9",
+            "message": "hi",
+            "schema": [1, 2]
+        }),
+    ] {
+        let mapping = map_sdk_message(&message, SESSION_ID);
+        assert!(mapping.events.is_empty());
+        assert!(!mapping.finished);
+        assert!(!mapping.ended_aborted);
+    }
+}
+
+#[test]
 fn tool_result_status_and_content() {
     let failed = serde_json::json!({
         "type": "user",
