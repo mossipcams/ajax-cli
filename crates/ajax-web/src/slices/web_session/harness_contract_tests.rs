@@ -1,5 +1,6 @@
-//! Table-driven execution-contract tests for the three harness transports:
-//! ACP, Pi RPC, and Claude SDK sessions must each follow the same core
+//! Table-driven execution-contract tests for the four harness transports:
+//! ACP, Pi RPC, Claude SDK, and Cursor SDK sessions must each follow the
+//! same core
 //! session execution contract that the web session slice sees through
 //! [`super::acp_drain::drain_acp_events`]: spawn with identity, prompt to a
 //! single successful terminal, idle-cancel purity (issue 1272), and clean
@@ -12,7 +13,8 @@ use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 use ajax_core::models::AgentClient;
 
 use crate::adapters::web_session_acp::{
-    with_test_acp_program, with_test_claude_sdk_module, with_test_pi_program, SessionClient,
+    with_test_acp_program, with_test_claude_sdk_module, with_test_cursor_sdk_module,
+    with_test_pi_program, SessionClient,
 };
 
 use super::acp_drain::{drain_acp_events, PromptTerminalOutcome};
@@ -54,6 +56,14 @@ fn contract_rows() -> Vec<ContractRow> {
             install: Box::new(|f| {
                 let fixture = manifest_dir().join("tests/fixtures/fake_claude_sdk.mjs");
                 with_test_claude_sdk_module(&fixture, f)
+            }),
+        },
+        ContractRow {
+            name: "cursor-sdk",
+            agent: AgentClient::Cursor,
+            install: Box::new(|f| {
+                let fixture = manifest_dir().join("tests/fixtures/fake_cursor_sdk.mjs");
+                with_test_cursor_sdk_module(&fixture, f)
             }),
         },
     ]

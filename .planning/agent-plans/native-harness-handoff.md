@@ -1,5 +1,7 @@
 # Handoff: native harnesses through one shared layer + in-session durability
 
+> **SUPERSEDED 2026-10-14** by `native-harness-parity-durability.md` (open checklist items moved there; keep this file as history only).
+
 Written 2026-10-13 from task `ajax-cli/durability-v2`
 (`/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-durability-v2`,
 branch `ajax/durability-v2`). This task: `ajax-cli/native-harness-durability`,

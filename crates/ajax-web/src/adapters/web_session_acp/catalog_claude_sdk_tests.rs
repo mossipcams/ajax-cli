@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use super::catalog::read_agent_model_catalog;
-use super::claude_sdk_spawn::{uses_claude_sdk, with_test_claude_sdk_module};
+use super::claude_sdk_spawn::with_test_claude_sdk_module;
+use super::session_client::transport_for;
+use ajax_core::adapters::HarnessTransport;
 use ajax_core::models::AgentClient;
 
 fn fixture_path() -> PathBuf {
@@ -61,7 +63,7 @@ fn claude_sdk_catalog_with_missing_module_is_empty() {
 #[test]
 fn claude_needs_the_module_override_in_the_test_build() {
     assert!(
-        !uses_claude_sdk(AgentClient::Claude),
+        transport_for(AgentClient::Claude) != HarnessTransport::ClaudeSdk,
         "the test build only takes the SDK path inside with_test_claude_sdk_module"
     );
 }

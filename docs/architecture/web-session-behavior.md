@@ -1,8 +1,8 @@
 # Web Session Behavior Contract
 
 Falsifiable invariants for the optional flag-gated **Ajax Chat** orchestration
-session mode in Web Cockpit. Ajax Chat is multi-harness: Cursor speaks ACP
-natively; Codex reaches ACP through its bridge package, Claude is driven over the
+session mode in Web Cockpit. Ajax Chat is multi-harness: Cursor runs as a `@cursor/sdk` Node sidecar;
+Codex reaches ACP through its bridge package, Claude is driven over the
 Claude Agent SDK sidecar, and Pi over its RPC mode. Later
 PRs implement against this ledger; nothing here is implementation how-to.
 
@@ -48,9 +48,8 @@ existing paths.
 ## Launch
 
 - Provisioned starts skip tmux send-keys but still create the task tmux session.
-Every harness with an ACP entry point (Cursor native, Codex via its bridge, plus
-Pi's RPC transport and the Claude Agent SDK sidecar) may use that launch mode; a
-harness without one cannot.
+Every harness with an orchestration-chat transport (Codex via its ACP bridge, plus
+Pi's RPC transport, the Claude Agent SDK sidecar, and the Cursor `@cursor/sdk` Node sidecar) may use that launch mode; a harness
 without one cannot.
 - The browser routes a task to chat when its projection reports
   `session_capable`, or when orchestration chat is on and the task's agent has an
@@ -164,8 +163,7 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   the only header identity). Updates are not transcript rows.
 - Ajax `initialize` advertises `clientCapabilities.session.configOptions.boolean:
   {}` so harnesses may expose boolean Fast; filesystem and terminal capabilities
-  remain false. Cursor `_meta.parameterizedModelPicker` is a vendor extra, not the
-  model contract.
+  remain false.
 - In-band apply maps the desired pin onto **currently advertised** options: find
   selectors by `category` (`model`, `thought_level`, `model_config`, `mode`) with
   id fallback; send `session/set_config_option` with the advertised `configId`
@@ -186,16 +184,8 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   after fresh creation and resume/load. Unsupported settings still produce a
   typed refusal; report the confirmed base model even if a later setting fails
   ([#1145](https://github.com/mossipcams/ajax-cli/issues/1145)).
-- Cursor spawn `--model` is a launch hint only (`grok-4.6` when Auto/unspecified;
-  catalog ids and bare handshake bases for explicit pins; pipe-form and bracket
-  handshake ids reconstruct to exploded catalog ids before argv, never passing
-  `|` or `[` on the spawn command line
-  ([#1079](https://github.com/mossipcams/ajax-cli/issues/1079))). Live model pins
-  use only WebSocket `set_config_option` → ACP `session/set_config_option`; the
-  browser sends the exact advertised descriptor value, never an Ajax catalog id.
-  Stored session meta keeps pipe-form, not bare handshake `currentValue`. A dead child is
-  respawned before applying the pin; in-band refusal is a typed error and a live
-  child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
+- Cursor chat has no ACP handshake or spawn `--model`: its model catalog comes from the SDK's `Cursor.models.list()`, and live model switches go through the sidecar's `set_model` command.
+- For ACP harnesses (Codex), live model pins use only WebSocket `set_config_option` → ACP `session/set_config_option`; the browser sends the exact advertised descriptor value, never an Ajax catalog id. Stored session meta keeps pipe-form, not bare handshake `currentValue`. A dead child is respawned before applying the pin; in-band refusal is a typed error and a live child keeps running ([#989](https://github.com/mossipcams/ajax-cli/issues/989)).
 - Connected session model, effort, and Fast controls list only advertised
   `sessionConfigOptions`. New Task before a session exists uses
   `GET /api/session/models`. Deprecated `models.availableModels` is not authority.
@@ -248,7 +238,9 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   sends `session/set_mode`; it also does not reinterpret model, thought-level, Pi,
   or unknown Cursor options. Any remaining `session/request_permission` is
   auto-approved on the host (`AllowAlways` when advertised, otherwise
-  `AllowOnce`; otherwise cancelled with a warning).
+  `AllowOnce`; otherwise cancelled with a warning). Cursor chat has no ACP
+  `session/request_permission`: its sidecar runs prompt-free under that same
+  auto-approve policy.
 
 ## Queue and cancellation across WebSocket reconnect
 
@@ -305,7 +297,7 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   `[canceled]`/`[cancelled]` tags, gRPC `Canceled`, or HTTP/2
   `error code cancel` / `CANCEL (0x8)`), the host emits `turn_end` with
   `stopReason: cancelled` (Stopped). **Unsolicited** cancel-shaped
-  `session/prompt` failures — typical of Cursor ACP HTTP/2 `CANCEL (0x8)` on the
+  `session/prompt` failures — typical of an ACP harness's HTTP/2 `CANCEL (0x8)` on its
   default agent transport — emit a typed `error` with the host-owned sentence
   `The connection was interrupted. Try sending again.` and mark the prompt ledger
   **interrupted**, not completed-cancelled
@@ -318,10 +310,6 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   `explainAcpError`. Genuine non-retriable prompt failures still surface as
   errors with their original message. Non-prompt RPC methods still surface
   cancellation-shaped messages as errors. The host does not retry the prompt.
-  Cursor `agent acp` cloud transport is HTTP/2 by default; operators can opt
-  into HTTP/1.1 via `"network": { "useHttp1ForAgent": true }` in
-  `~/.cursor/cli-config.json` (the config the ACP child reads — not IDE Network
-  settings).
 - After a WebSocket drop and reconnect, the browser supplies the last applied
   cursor on the WebSocket URL (`?cursor=`). The host sends a protocol v2
   `snapshot` plus only events after that cursor; invalid or compacted-away
@@ -621,11 +609,8 @@ whole transcript inside `session/load` before responding.
   such as `gpt-5.6-sol[fast=false]` decode to the matching catalog base and expose
   effort controls; choosing a level emits pipe-form with `effort=`. Legacy exploded
   catalog ids such as `cursor-grok-4.6-high` still decode in the New Task picker
-  and apply on the backend. For Cursor, `GET /api/session/models` still reads ids
-  and effort/fast axes from `agent models`, but row labels are overlaid from a
-  short-lived Cursor ACP handshake (`choice.name` on the advertised `model`
-  option) so New Task matches the connected switcher; when that overlay is
-  unavailable the route fails open to the CLI labels. **Switch** is harness-only: it opens with the current
+  and apply on the backend. For Cursor, `GET /api/session/models` reads ids and
+  effort/fast axes from the SDK's `Cursor.models.list()` catalog — no ACP handshake. **Switch** is harness-only: it opens with the current
   harness disabled, sends `{ agent }` for a different harness, clears the prior
   pin, and resets backend context so the new harness starts with empty context
   while prior chat turns stay visible. A failed catalog read shows an
@@ -655,9 +640,9 @@ At 90%+ the indicator uses the warning tone. Pi reports context usage from
 from its SDK `result` message, delivered before the finish — and a cancelled turn's
 all-zero usage is skipped so cancelling does not reset the meter.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
-  `turn_usage` wire event. Cursor reports camelCase fields (`inputTokens`,
+  `turn_usage` wire event. Cursor's sidecar reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /
-  `cachedWriteTokens`, `totalTokens`); snake_case equivalents normalize to the
+  `cachedWriteTokens`, `totalTokens`) over JSONL stdio; snake_case equivalents normalize to the
   same shape. Missing fields are omitted from the wire event, never sent as zero.
   When `totalTokens` is absent but component fields are present, the host may
   emit a summed total. Duplicate usage for the same request, generation, or turn

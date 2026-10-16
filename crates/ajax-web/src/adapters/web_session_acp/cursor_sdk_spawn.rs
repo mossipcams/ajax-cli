@@ -7,8 +7,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use ajax_core::models::AgentClient;
-
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::cursor_sdk_client::CursorSdkClient;
 use super::PromptCapabilityDescriptor;
@@ -17,19 +15,6 @@ const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
 const LOGIN_HINT: &str = "log in with the Cursor SDK as the ajax-web host user: run Cursor.auth.login() from @cursor/sdk (credentials in ~/.cursor/sdk/auth.json; renew every 90 days)";
 /// `@cursor/sdk` requires Node.js 22.13; Claude's Node 20 floor is unaffected.
 const MIN_NODE: (u32, u32) = (22, 13);
-
-pub(super) fn uses_cursor_sdk(agent: AgentClient) -> bool {
-    let cursor_sdk = ajax_core::adapters::acp_launch_for_agent(agent)
-        .is_some_and(|launch| launch.transport == ajax_core::adapters::HarnessTransport::CursorSdk);
-    #[cfg(not(test))]
-    {
-        cursor_sdk
-    }
-    #[cfg(test)]
-    {
-        cursor_sdk && cursor_sdk_module_override().is_some()
-    }
-}
 
 /// Whether `node --version` output (e.g. `v22.13.0`) meets the Cursor SDK floor.
 pub(super) fn node_version_ok(text: &str) -> bool {
@@ -204,7 +189,7 @@ pub(super) fn apply_pin_to_cursor(client: &CursorSdkClient, pin: &str) -> Option
 static TEST_CURSOR_SDK_MODULE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 #[cfg(test)]
-fn cursor_sdk_module_override() -> Option<PathBuf> {
+pub(super) fn cursor_sdk_module_override() -> Option<PathBuf> {
     TEST_CURSOR_SDK_MODULE.lock().unwrap().clone()
 }
 
