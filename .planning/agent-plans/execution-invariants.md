@@ -55,13 +55,13 @@ and the idle-path gap.
 - [x] **T1.2** Cold acquire (spawn.rs:63-73) and `replace_resume_id`: treat `native_session_id` as `None` when `run.harness != agent_client_name(agent)`. This fixes the crash between route persist and session-id clear.
 - [x] **T1.3** Warm acquire (spawn.rs:40-46): compare the incoming `agent` against `state.agent` **before** assigning. On mismatch, run the reset path (`reset_harness_context`) instead of reusing the client. If the reset fails, return the error and do not report success.
 - [x] **T1.4** Make the queue discard durable and fail-closed. In `reset_harness_context` and `clear_session_context`, replace `remove_queued` + `let _ = try_persist` with `commit_ledger_with_events(|l| l.remove_queued(), vec![])`, called **before** `release_live_client`. Propagate the error. Apply `apply_cancel_to_queue` in memory only after the commit succeeds.
-- [ ] **T1.5** Idle path (`directory.reset_harness_context`, no live entry): load the ledger, run `remove_queued`, and persist with the session-id clear. Update web-session-behavior.md:207-226 so both paths say "discard the queue".
+- [x] **T1.5** Idle path (`directory.reset_harness_context`, no live entry): load the ledger, run `remove_queued`, and persist with the session-id clear. Update web-session-behavior.md:207-226 so both paths say "discard the queue".
 Tests (red first; reuse the existing `force_meta_write_fail`-style hooks):
 
 - [x] **(a)** A forced ledger-persist failure during switch leaves the queue and the old client untouched and returns an error.
 - [x] **(b)** A live slot plus a registry agent change, followed by `acquire(new_agent)`, does not reuse the old client.
 - [x] **(c)** A run with harness=claude and a stored id, cold-acquired as codex, does not resume.
-- [ ] **(d)** An idle switch with queued SQLite prompts leaves `queued_count() == 0`.
+- [x] **(d)** An idle switch with queued SQLite prompts leaves `queued_count() == 0`.
 - [ ] **Doc:** Update web-session-behavior.md:207-226 so both live and idle switch paths say "discard the queue".
 
 ## PR 2: no observed event is dropped or reported early (2B + 2A)
@@ -122,3 +122,9 @@ Prior implementation validation reported for PR 1 slice A:
 - `cargo fmt --check`: passed.
 - `cargo clippy --all-targets --all-features -- -D warnings`: passed.
 - `cargo nextest run -p ajax-core -p ajax-web`: 2247/2247 passed. One load flake in `terminal_persist_failure_retries_before_fifo_advances` was seen once; it passed in isolation and on two reruns.
+
+Slice C validation (T1.5, test d, web-session-behavior.md doc update):
+
+- `cargo fmt --check`: passed.
+- `cargo clippy --all-targets --all-features -D warnings`: passed.
+- `cargo nextest run -p ajax-core -p ajax-web`: 2248/2248 passed.

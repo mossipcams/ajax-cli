@@ -673,3 +673,43 @@ fn issue_1324_warm_acquire_converges_to_registry_agent() {
     drop(directory);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn issue_1324_idle_switch_discards_queued_prompts() {
+    use crate::adapters::web_session_store::prompt_ledger;
+    use ajax_core::registry::SqliteRegistryStore;
+
+    let dir = scratch_dir("idle-switch-queue-1324");
+    let handle = "web/idle-switch-queue-1324";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    assert!(!directory.inner().has_live_entry(handle));
+
+    // No live session: seed the SQLite ledger with queued prompts directly.
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    let mut ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load empty ledger");
+    ledger.upsert_queued(
+        "queued-a-1324".into(),
+        "queued a".into(),
+        "queued a".into(),
+        Vec::new(),
+    );
+    ledger.upsert_queued(
+        "queued-b-1324".into(),
+        "queued b".into(),
+        "queued b".into(),
+        Vec::new(),
+    );
+    prompt_ledger::try_persist(&store, &dir, handle, &ledger).expect("persist queued prompts");
+
+    directory
+        .runtime_handle()
+        .block_on(
+            directory
+                .inner()
+                .reset_harness_context(handle, &dir, AgentClient::Codex, "auto"),
+        )
+        .expect("idle harness switch");
+
+    let reloaded = prompt_ledger::try_load(&store, &dir, handle).expect("reload ledger");
+    assert_eq!(reloaded.queued_count(), 0);
+}
