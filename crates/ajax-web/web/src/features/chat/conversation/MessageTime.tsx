@@ -4,16 +4,20 @@ import { useState } from "react";
 // time it renders and remembers it per session. Messages that predate this
 // feature show the time they were first loaded, not the time they were sent.
 const ZONE = "America/Chicago";
+
+// Fixed zone label: Intl's short name flips to CDT during DST; the UI always
+// labels Chicago clock hours as CST.
+const ZONE_LABEL = "CST";
 const clock = new Intl.DateTimeFormat("en-US", {
   timeZone: ZONE,
   hour: "numeric",
   minute: "2-digit",
-  timeZoneName: "short",
 });
 const day = new Intl.DateTimeFormat("en-US", { timeZone: ZONE, month: "short", day: "numeric" });
 
 export function formatMessageTime(ms: number, now = Date.now()): string {
-  const time = clock.format(ms);
+  // Fixed zone label (see ZONE_LABEL) — Intl's short name flips to CDT in DST.
+  const time = `${clock.format(ms)} ${ZONE_LABEL}`;
   return day.format(ms) === day.format(now) ? time : `${day.format(ms)}, ${time}`;
 }
 

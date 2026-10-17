@@ -41,14 +41,22 @@
   margin-top: 6px;
 }
 
-/* In-flow in that row — reuses `.pill`; never overlays answer text. Smaller than
-   the old stand-alone button so it reads as a footnote affordance. */
+/* In-flow in that row; never overlays answer text. The inherited .pill box
+   (padding, min-height, border) is stripped so the action reads at the same
+   scale as the adjacent time label — a footnote affordance. */
 .session-reply-copy {
   display: block;
   width: fit-content;
-  min-height: 30px;
+  min-height: 0;
+  padding: 0;
+  border: none;
   color: var(--ink-muted);
   font-size: var(--text-micro);
+}
+
+.session-reply-copy:hover,
+.session-reply-copy:focus-visible {
+  color: var(--ink);
 }
 
 .session-reply-copy[data-copied="true"] {

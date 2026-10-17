@@ -9,7 +9,7 @@ describe("formatMessageTime", () => {
     const noonUtc = Date.UTC(2026, 0, 15, 18, 5);
     expect(formatMessageTime(noonUtc, noonUtc)).toBe("12:05 PM CST");
     const summer = Date.UTC(2026, 6, 15, 18, 5);
-    expect(formatMessageTime(summer, summer)).toBe("1:05 PM CDT");
+    expect(formatMessageTime(summer, summer)).toBe("1:05 PM CST");
   });
 
   it("adds the date when the message is from another day", () => {
