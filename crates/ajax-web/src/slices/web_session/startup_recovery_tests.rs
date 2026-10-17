@@ -160,7 +160,7 @@ fn foreign_boot_queued_prompt_is_listed() {
     persist_ledger(&store, &dir, handle, &[], &["p1"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         vec![handle.to_string()]
     );
 
@@ -184,7 +184,7 @@ fn foreign_boot_completed_only_is_not_listed() {
     prompt_ledger::try_persist(&store, &dir, handle, &ledger).expect("persist ledger");
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         Vec::<String>::new()
     );
 
@@ -199,7 +199,7 @@ fn own_boot_queued_prompt_is_not_listed() {
     persist_ledger(&store, &dir, handle, &[], &["p1"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         Vec::<String>::new()
     );
 
@@ -215,7 +215,7 @@ fn queued_prompt_handles_are_sorted() {
     persist_ledger(&store, &dir, "chat-a", &[], &["pa"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         vec!["chat-a".to_string(), "chat-z".to_string()]
     );
 
@@ -274,5 +274,24 @@ fn recovery_retries_failure(persist_failure: bool) {
     let third = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
     assert!(third.complete);
     assert!(third.recovered_handles.is_empty());
+    cleanup(&dir);
+}
+
+#[test]
+fn queued_scan_reports_incomplete_on_ledger_load_failure_issue_1326() {
+    let (dir, store) = scratch_store("queued-scan-failure");
+    for handle in ["chat-a", "chat-b"] {
+        record_owner(&store, &dir, handle, "other-boot");
+        persist_ledger(&store, &dir, handle, &[], &["p1"]);
+    }
+
+    let broken_ledger = prompt_ledger::ledger_path(&dir, "chat-b");
+    std::fs::create_dir_all(broken_ledger.parent().unwrap()).unwrap();
+    std::fs::write(&broken_ledger, "malformed ledger").unwrap();
+
+    let scan = queued_prompt_handles(&store, &dir, "this-boot");
+    assert!(!scan.complete);
+    assert_eq!(scan.handles, vec!["chat-a".to_string()]);
+
     cleanup(&dir);
 }

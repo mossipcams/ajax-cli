@@ -79,11 +79,11 @@ Branch `fix/web/event-commit-order`. Open one issue.
 Branch `fix/web/recovery-retry`. Open one issue.
 
 - [x] **T3.1** `sweep` / `recover_interrupted_prompts` return `Result` with a "complete" flag: listing failure, ledger load failure, or persist failure counts as incomplete. Set `SWEPT_ONCE` only when the run completes, using compare_exchange **after** the work. Hold a mutex so ticks cannot run it concurrently.
-- [ ] **T3.2** `startup_dispatch_handles`: set `headless_scanned` only on a complete scan. Keep a `HashSet` of handles already handed out, so a rescan does not dispatch the same chat twice.
+- [x] **T3.2** `startup_dispatch_handles`: set `headless_scanned` only on a complete scan. Keep a `HashSet` of handles already handed out, so a rescan does not dispatch the same chat twice.
 - [x] **T3.3** `report_recovered_turns`: push handles whose `report` returned false back into `recovered_handles`. The heartbeat retries them every 10 s.
 - [x] **T3.4** Call the sweep and scan retry from `heartbeat_execution_ownership` while incomplete. No new task or coordinator.
-- [ ] **Tests:** fail `runs_with_children` / ledger load on the first call and succeed on the second within the same process. Assert the orphan is signalled, the prompt is interrupted, and the status is reported exactly once.
-- [ ] Doc: durable-execution.md §5/§6 replace "one-time" with "until complete".
+- [x] **Tests:** fail `runs_with_children` / ledger load on the first call and succeed on the second within the same process. Assert the orphan is signalled, the prompt is interrupted, and the status is reported exactly once.
+- [x] Doc: durable-execution.md §5/§6 replace "one-time" with "until complete".
 
 ## PR 4: fencing and verified termination (3). Ships now (D3), without T4.4 (D2).
 
@@ -117,6 +117,7 @@ touched, so web:smoke is not required.
 - The 2000-event backlog ceiling is documented in a ponytail comment but not enforced, because dropping would reintroduce a transcript hole.
 - Existing sweep/startup-recovery tests were updated mechanically for the new RecoveryResult/SweepResult return shape (assertion meaning kept, `complete` asserts added); the Codex delegate hit its usage quota mid-run but its edits were reviewed and gated by the orchestrator.
 - Slice G was split into Qwen-sized packets (G2 T3.3, G3 T3.4, then G1 T3.2 and G4 headless retry + docs) because only the Qwen route was dispatchable (Codex over quota, Cursor needs login, Haiku route rejected its model id).
+- The first `claim_startup_handles` draft dropped the lease-claim retry on `Err` and double-slept per retry; both were caught in review and fixed before commit. The scan retry is capped at CLAIM_RETRIES attempts and a later heartbeat does not rescan (ponytail ceiling).
 
 ## Validation
 
@@ -143,3 +144,5 @@ PR 2 slice E (T2.3: activity reported only after the transcript commit, in appen
 PR 3 slice F (T3.1: sweep/recover_interrupted_prompts return a completeness flag; SWEPT_ONCE set via compare_exchange only after a complete run, under a mutex) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2255/2255.
 
 PR 3 packets G2/G3 (T3.3: handles whose activity report failed are requeued and retried by the heartbeat; T3.4: a healthy heartbeat retries an incomplete orphan sweep via sweep_once) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2257/2257 (one unrelated flake, cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root, failed once under load; it passed in isolation and on two full reruns).
+
+PR 3 packets G1/G4 (T3.2: startup scan reports completeness via QueuedScan, headless_scanned is set only after a complete scan with a handed-out set; headless runner claim_startup_handles retries an incomplete scan and a failed lease claim, bounded by CLAIM_RETRIES; durable-execution.md section 6 reworded) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2262/2262 (two unrelated load flakes seen once each while the host load average was 13: issue_1324_clear_context_ledger_failure_preserves_queue_and_client and cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root; both passed alone and on full reruns).

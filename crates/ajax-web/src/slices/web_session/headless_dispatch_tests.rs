@@ -232,3 +232,49 @@ fn a_turn_that_never_finishes_times_out_and_releases() {
         "a timed-out turn must not complete its prompt"
     );
 }
+
+#[test]
+fn an_incomplete_scan_is_rescanned_without_rehanding_out_issue_1326() {
+    let dir = test_support::scratch_dir("headless-dispatch-incomplete-scan");
+    seed_queued(&dir, "web/a", "p1", "first");
+    seed_queued(&dir, "web/b", "p2", "second");
+
+    let directory = TaskSessionDirectory::new(SessionStorage::under(dir.clone()));
+
+    // A malformed legacy sidecar shadows web/b's durable (SQLite) ledger, so
+    // the first scan cannot read it; deleting it clears the failure.
+    let broken_ledger = prompt_ledger::ledger_path(&dir, "web/b");
+    std::fs::create_dir_all(broken_ledger.parent().unwrap()).expect("create ledger dir");
+    std::fs::write(&broken_ledger, "malformed ledger").expect("corrupt ledger");
+
+    let first = directory
+        .startup_dispatch_handles()
+        .expect("first scan runs");
+    assert_eq!(first, vec!["web/a".to_owned()]);
+    assert!(
+        !directory.headless_scan_complete(),
+        "a failed scan must leave the directory rescannable"
+    );
+
+    std::fs::remove_file(&broken_ledger).expect("clear ledger failure");
+
+    let second = directory
+        .startup_dispatch_handles()
+        .expect("second scan runs");
+    assert_eq!(second, vec!["web/b".to_owned()]);
+    assert!(directory.headless_scan_complete());
+
+    let third = directory
+        .startup_dispatch_handles()
+        .expect("third scan runs");
+    assert!(
+        third.is_empty(),
+        "after a complete scan later calls return empty"
+    );
+
+    let mut handed_out = first.clone();
+    handed_out.extend(second.iter().cloned());
+    handed_out.sort();
+    handed_out.dedup();
+    assert_eq!(handed_out.len(), 2, "no handle is handed out twice");
+}
