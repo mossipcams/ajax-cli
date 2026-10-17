@@ -110,15 +110,25 @@ impl TaskSessionDirectory {
         self.ownership.boot_id().to_owned()
     }
 
+    /// Test seed: put recovered handles back so heartbeat reporting can be exercised.
+    #[cfg(test)]
+    pub(crate) fn requeue_recovered_handles_for_test(&self, handles: Vec<String>) {
+        self.ownership.requeue_recovered_handles(handles);
+    }
+
     /// Report the turns that startup recovery interrupted as failed, so a restart never leaves a task on "Agent working" (#1176).
-    /// Handles stay pending until an activity reporter is wired.
+    /// A handle whose report returns false is requeued and retried on the next heartbeat.
     fn report_recovered_turns(&self) {
         let Some(report) = self.report_activity_for_spawn() else {
             return;
         };
+        let mut failed = Vec::new();
         for handle in self.ownership.take_recovered_handles() {
-            let _ = report(&handle, super::SessionActivity::TurnFailed);
+            if !report(&handle, super::SessionActivity::TurnFailed) {
+                failed.push(handle);
+            }
         }
+        self.ownership.requeue_recovered_handles(failed);
     }
 
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {

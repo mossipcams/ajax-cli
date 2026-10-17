@@ -38,6 +38,12 @@ impl ExecutionOwnership {
         std::mem::take(&mut *self.recovered_handles.lock().unwrap())
     }
 
+    /// Puts recovered handles back for the next activity-reporting pass, so a
+    /// turn whose report failed is retried on the next heartbeat.
+    pub(crate) fn requeue_recovered_handles(&self, handles: Vec<String>) {
+        self.recovered_handles.lock().unwrap().extend(handles);
+    }
+
     #[cfg(test)]
     pub(crate) fn mark_lost_for_test(&self) {
         self.lost.store(true, Ordering::SeqCst);
@@ -116,10 +122,13 @@ impl ExecutionOwnership {
             Ok(())
         }
     }
-    /// Renews the lease. If ownership was already lost, each tick attempts a
-    /// re-claim instead of doing nothing: recovery happens here (or on the next
-    /// acquire) as soon as the lease is free, stale, or held by a process that
-    /// is gone; while a live foreign host holds it, `lost` stays set.
+    /// Renews the lease. A healthy heartbeat also retries the orphan sweep in
+    /// case the startup sweep was incomplete; completed sweeps are no-ops.
+    ///
+    /// If ownership was already lost, each tick attempts a re-claim instead of
+    /// doing nothing: recovery happens here (or on the next acquire) as soon as
+    /// the lease is free, stale, or held by a process that is gone; while a
+    /// live foreign host holds it, `lost` stays set.
     pub(crate) fn heartbeat(&self) {
         if self.lost.load(Ordering::SeqCst) {
             match self.try_claim() {
@@ -138,6 +147,17 @@ impl ExecutionOwnership {
             Ok(true) => {
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
+                // A sweep that failed at startup (or during an earlier
+                // re-claim) is retried here; once complete in this process
+                // this is a cheap no-op.
+                self.recovered_handles.lock().unwrap().extend(
+                    super::orphan_sweep::sweep_once(
+                        &self.storage.registry_store(),
+                        &self.storage.state_dir,
+                        &self.boot_id,
+                    )
+                    .recovered_handles,
+                );
             }
             Ok(false) => {
                 // Another boot owns the lease now.
