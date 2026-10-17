@@ -244,9 +244,16 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
                 .expect("active prompt retained");
             if !active.persist_error_reported {
                 active.persist_error_reported = true;
-                let _ = state.append_to_log(vec![SessionServerEvent::Error {
+                let events = vec![SessionServerEvent::Error {
                     message: error.to_string(),
-                }]);
+                }];
+                if state.unpersisted.is_empty() {
+                    let _ = state.append_to_log(events);
+                } else {
+                    // Keep the backlog in the terminal transaction, including on retry.
+                    let filtered = state.filter_events_for_log(events);
+                    state.unpersisted.extend(filtered);
+                }
             }
             return;
         }

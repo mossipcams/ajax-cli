@@ -401,3 +401,173 @@ fn empty_text_withdraw_removes_queued_ledger_row() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn transcript_append_failure_backlog_recovers_in_order() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_dir("append-backlog-retry");
+    let handle = "web/append-backlog-retry";
+    let script = fake_acp_fixture();
+    // Chmod target: the state directory. The store re-chmods the db file itself
+    // back to writable on every open, so only locking the directory reliably
+    // blocks journal-file creation.
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            let directory = BlockingSessionDirectory::new(dir.clone());
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".into(), "first".into())
+                .expect("active");
+
+            // Fail transcript persistence once: a read-only database rejects the
+            // append; restoring write access lets the next commit succeed.
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+                .expect("chmod state dir read-only");
+            directory.record(
+                handle,
+                SessionServerEvent::Message {
+                    role: "note".to_string(),
+                    text: "backlog-a".to_string(),
+                    content_blocks: Vec::new(),
+                    item_id: "backlog-a".to_string(),
+                    message_id: None,
+                },
+            );
+            directory.record(
+                handle,
+                SessionServerEvent::Message {
+                    role: "note".to_string(),
+                    text: "backlog-b".to_string(),
+                    content_blocks: Vec::new(),
+                    item_id: "backlog-b".to_string(),
+                    message_id: None,
+                },
+            );
+
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(
+                !events.iter().any(|event| matches!(
+                    event,
+                    SessionServerEvent::Message { text, .. }
+                        if text == "backlog-a" || text == "backlog-b"
+                )),
+                "failed appends must not reach the log: {events:?}"
+            );
+
+            // While the backlog is unpersisted, terminating the prompt must not
+            // mark the turn completed.
+            directory
+                .cancel(handle, true)
+                .expect("cancel accepted for retry");
+            thread::sleep(Duration::from_millis(200));
+            // The read-only directory may also block reads (None); what must
+            // never be observed is a completed turn without the persisted events.
+            assert_ne!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(PromptPhase::Completed),
+                "turn must not complete while the backlog is unpersisted"
+            );
+
+            let fail_terminal = ForcePersistFailGuard::enable();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod state dir writable");
+            let (pending, _) = directory.read_from(handle, 0);
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(PromptPhase::Dispatching),
+                "a failed terminal transaction must retain the active turn"
+            );
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            for events in [&pending, &stored.events] {
+                assert!(
+                    !events.iter().any(|event| matches!(
+                        event,
+                        SessionServerEvent::Message { text, .. }
+                            if text == "backlog-a" || text == "backlog-b"
+                    )),
+                    "backlog must wait for the terminal transaction: {events:?}"
+                );
+            }
+            drop(fail_terminal);
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events.iter().any(|event| {
+                    matches!(
+                        event,
+                        SessionServerEvent::Message { text, .. } if text == "backlog-b"
+                    )
+                })
+            });
+
+            let (events, _) = directory.read_from(handle, 0);
+            let index_of = |text: &str| {
+                events.iter().position(|event| {
+                    matches!(event, SessionServerEvent::Message { text: t, .. } if t == text)
+                })
+            };
+            let a = index_of("backlog-a").expect("backlog-a must persist after recovery");
+            let b = index_of("backlog-b").expect("backlog-b must persist after recovery");
+            assert!(a < b, "backlog must persist oldest-first: {events:?}");
+            let terminal = events
+                .iter()
+                .position(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+                .expect("terminal event persisted");
+            assert!(b < terminal, "backlog must precede turn completion");
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            assert_eq!(
+                stored.events, events,
+                "durable and visible order must match"
+            );
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(PromptPhase::Completed)
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn issue_1325_next_append_persists_backlog_before_new_events() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_dir("append-backlog-next-batch");
+    let handle = "web/append-backlog-next-batch";
+    let script = fake_acp_fixture();
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let message = |text: &str| SessionServerEvent::Message {
+            role: "note".into(),
+            text: text.into(),
+            content_blocks: Vec::new(),
+            item_id: text.into(),
+            message_id: None,
+        };
+        let (_, before) = directory.read_from(handle, 0);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+            .expect("block append");
+        directory.record(handle, message("first"));
+        let (failed, cursor) = directory.read_from(handle, before);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+            .expect("restore appends");
+        assert!(failed.is_empty());
+        assert_eq!(cursor, before, "failed append must not consume a sequence");
+
+        directory.record(handle, message("second"));
+        let (events, cursor) = directory.read_from(handle, before);
+        assert_eq!(events, vec![message("first"), message("second")]);
+        assert_eq!(cursor, before + 2);
+        let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert_eq!(&stored.events[before..], events.as_slice());
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}

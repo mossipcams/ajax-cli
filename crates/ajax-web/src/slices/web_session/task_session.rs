@@ -154,6 +154,8 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
+    // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
+    pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
@@ -213,7 +215,8 @@ impl TaskSessionState {
             return Ok(());
         }
 
-        let filtered = self.filter_events_for_log(events);
+        let mut filtered = std::mem::take(&mut self.unpersisted);
+        filtered.extend(self.filter_events_for_log(events));
         if filtered.is_empty() {
             return Ok(());
         }
@@ -225,6 +228,7 @@ impl TaskSessionState {
             agent_client_name(self.agent),
             &filtered,
         ) {
+            self.unpersisted = filtered;
             let reason = format!("transcript could not be saved: {error}");
             self.evidence
                 .note_transcript_durability_fault(reason.clone());
@@ -278,7 +282,9 @@ impl TaskSessionState {
         }
         if !events.is_empty() {
             let normalized = normalize_session_events(&mut self.stream_normalizer, events);
-            let _ = self.append_to_log(normalized);
+            if let Err(error) = self.append_to_log(normalized) {
+                tracing::warn!(%error, handle = %self.qualified_handle, "transcript events retained for retry");
+            }
         }
         if host_gone && !self.prompts.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);
@@ -361,6 +367,7 @@ pub(crate) fn spawn_task_session(
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
+            unpersisted: Vec::new(),
             stream_normalizer: StreamNormalizer::default(),
             last_released: None,
             agent: AgentClient::Cursor,

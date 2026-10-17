@@ -68,8 +68,8 @@ Tests (red first; reuse the existing `force_meta_write_fail`-style hooks):
 
 Branch `fix/web/event-commit-order`. Open one issue.
 
-- [ ] **T2.1** Add `unpersisted: Vec<SessionServerEvent>` to `TaskSessionState`. `append_to_log` prepends the backlog. On failure it stores the batch there and returns `Err`. On success it clears the backlog. Order and sequence are preserved because nothing reaches `log` before commit. Add `// ponytail:` with a cap of 2000, matching run retention.
-- [ ] **T2.2** `try_finalize_active_prompt`: if `unpersisted` is non-empty, move it in front of `terminal.events` so both commit in one `commit_ledger_with_events` transaction. On failure everything stays and the next pump retries. No turn completes with a hole.
+- [x] **T2.1** Add `unpersisted: Vec<SessionServerEvent>` to `TaskSessionState`. `append_to_log` prepends the backlog. On failure it stores the batch there and returns `Err`. On success it clears the backlog. Order and sequence are preserved because nothing reaches `log` before commit. Add `// ponytail:` with a cap of 2000, matching run retention.
+- [x] **T2.2** `try_finalize_active_prompt`: if `unpersisted` is non-empty, move it in front of `terminal.events` so both commit in one `commit_ledger_with_events` transaction. On failure everything stays and the next pump retries. No turn completes with a hole.
 - [ ] **T2.3** Split `filter_events_for_log` into dedupe (before commit) and `report_activity_for_event` (after commit). Apply the split in both `append_to_log` and `commit_ledger_with_events`.
 - [ ] **Tests (red first):** the append fails once, then succeeds. Assert: no status reported for the failed batch, the events appear in order after recovery, and the turn is not marked completed until they do.
 - [ ] Doc: durable-execution.md §4 "No partial visibility" adds that activity reporting follows the commit.
@@ -114,6 +114,7 @@ touched, so web:smoke is not required.
 
 - Slice A scope had to widen to `web_session_store/` and `task_session_directory` / `task_session_replacement` for mechanical caller updates.
 - `finalize_client_metadata` also passed `"unknown"` as harness and was fixed to pass the real harness; otherwise `try_save_meta` overwrote it and crash-recovery resume broke.
+- The 2000-event backlog ceiling is documented in a ponytail comment but not enforced, because dropping would reintroduce a transcript hole.
 
 ## Validation
 
@@ -128,3 +129,9 @@ Slice C validation (T1.5, test d, web-session-behavior.md doc update):
 - `cargo fmt --check`: passed.
 - `cargo clippy --all-targets --all-features -D warnings`: passed.
 - `cargo nextest run -p ajax-core -p ajax-web`: 2248/2248 passed.
+
+PR 2 slice D (T2.1/T2.2: unpersisted backlog retained on append failure and committed with the terminal events) validation:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy --all-targets --all-features -D warnings`: passed.
+- `cargo nextest run -p ajax-core -p ajax-web`: 2250/2250 passed.
