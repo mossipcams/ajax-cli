@@ -108,8 +108,10 @@ Consequences:
   terminal state, checkpoint result) and its final assistant/tool events commit
   together, so a run can never show completed without its output being present.
 - **No partial visibility**: in-memory execution state and event publication to
-  connected browsers happen only *after* the transaction commits. Readers see
-  either the complete old state or the complete new state, never a mixture.
+  connected browsers happen only *after* the transaction commits. Activity and
+  status reporting also follow the transcript commit, including when retained
+  events are retried after a persistence failure. Readers see either the complete
+  old state or the complete new state, never a mixture.
 
 ## 5. Checkpoints and Replay Policy
 

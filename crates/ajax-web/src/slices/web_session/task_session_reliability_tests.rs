@@ -571,3 +571,175 @@ fn issue_1325_next_append_persists_backlog_before_new_events() {
     });
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[cfg(unix)]
+#[test]
+fn issue_1325_activity_waits_for_append_retry_commit() {
+    assert_activity_waits_for_transcript_commit(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn issue_1325_activity_waits_for_terminal_retry_commit() {
+    assert_activity_waits_for_transcript_commit(true);
+}
+
+#[cfg(unix)]
+fn assert_activity_waits_for_transcript_commit(recover_with_terminal: bool) {
+    use std::{os::unix::fs::PermissionsExt, sync::Mutex};
+
+    let dir = scratch_dir("activity-after-transcript");
+    let handle = "web/activity-after-transcript";
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let permission = SessionServerEvent::PermissionRequest {
+        request_id: "persist-first".into(),
+        title: Some("Run?".into()),
+        detail: None,
+    };
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = Arc::clone(&reports);
+    let report_dir = dir.clone();
+    directory.inner().set_report_session_activity(Arc::new(
+        move |handle: &str, activity: SessionActivity| {
+            let stored = web_session_store::load::<SessionServerEvent>(&report_dir, handle);
+            let phase = ledger_phase(&report_dir, handle, "active-1");
+            reported
+                .lock()
+                .unwrap()
+                .push((activity, stored.events, phase));
+            true
+        },
+    ));
+
+    with_test_acp_program(&fake_acp_fixture(), || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".into(), "hold".into())
+                .expect("active prompt");
+            let (_, before) = directory.read_from(handle, 0);
+            reports.lock().unwrap().clear();
+
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+                .expect("block transcript append");
+            directory.record(handle, permission.clone());
+            let (failed, cursor) = directory.read_from(handle, before);
+            let fail_terminal = ForcePersistFailGuard::enable();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+                .expect("restore transcript append");
+            assert!(failed.is_empty(), "failed batch must not be visible");
+            assert_eq!(cursor, before);
+            assert!(
+                reports.lock().unwrap().is_empty(),
+                "failed append must not report activity or status"
+            );
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(PromptPhase::Dispatching)
+            );
+
+            if recover_with_terminal {
+                directory.cancel(handle, true).expect("cancel");
+                thread::sleep(Duration::from_millis(200));
+                let (pending, _) = directory.read_from(handle, before);
+                assert!(pending.is_empty(), "failed terminal must retain backlog");
+                assert!(
+                    reports.lock().unwrap().is_empty(),
+                    "failed terminal commit must not report backlog or terminal activity"
+                );
+                assert_eq!(
+                    ledger_phase(&dir, handle, "active-1"),
+                    Some(PromptPhase::Dispatching),
+                    "turn must remain active until backlog and terminal persist"
+                );
+            } else {
+                directory.record(
+                    handle,
+                    SessionServerEvent::Message {
+                        role: "note".into(),
+                        text: "after backlog".into(),
+                        content_blocks: Vec::new(),
+                        item_id: "after-backlog".into(),
+                        message_id: None,
+                    },
+                );
+                let (events, _) = directory.read_from(handle, before);
+                assert_eq!(events.len(), 2);
+                assert_eq!(events[0], permission);
+                assert!(
+                    matches!(&events[1], SessionServerEvent::Message { text, .. }
+                    if text == "after backlog")
+                );
+                assert_eq!(
+                    reports.lock().unwrap()[0].0,
+                    SessionActivity::AwaitingOperator
+                );
+            }
+            drop(fail_terminal);
+            if !recover_with_terminal {
+                directory.cancel(handle, true).expect("cancel");
+            }
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+            let (events, _) = directory.read_from(handle, before);
+            assert_eq!(
+                events[0], permission,
+                "backlog must precede terminal events"
+            );
+            assert!(matches!(
+                events.last(),
+                Some(SessionServerEvent::TurnEnd { .. })
+            ));
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            assert_eq!(&stored.events[before..], events.as_slice());
+            assert_eq!(
+                ledger_phase(&dir, handle, "active-1"),
+                Some(PromptPhase::Completed)
+            );
+
+            // Further pumps must not replay activity from the recovered backlog.
+            directory.read_from(handle, 0);
+            let reports = reports.lock().unwrap();
+            let waiting: Vec<_> = reports
+                .iter()
+                .filter(|(activity, _, _)| *activity == SessionActivity::AwaitingOperator)
+                .collect();
+            assert_eq!(
+                waiting.len(),
+                1,
+                "backlog activity must be reported exactly once"
+            );
+            assert!(
+                waiting[0].1.contains(&permission),
+                "activity must follow durable events"
+            );
+            // The retained persistence error keeps its existing failed-turn status.
+            let terminal_activity = if recover_with_terminal {
+                SessionActivity::TurnFailed
+            } else {
+                SessionActivity::TurnEnded
+            };
+            let ended: Vec<_> = reports
+                .iter()
+                .filter(|(activity, _, _)| *activity == terminal_activity)
+                .collect();
+            assert_eq!(
+                ended.len(),
+                1,
+                "terminal activity must be reported exactly once"
+            );
+            assert_eq!(ended[0].2, Some(PromptPhase::Completed));
+            assert_eq!(
+                ended[0].1, stored.events,
+                "completion must follow the transcript commit"
+            );
+        });
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}

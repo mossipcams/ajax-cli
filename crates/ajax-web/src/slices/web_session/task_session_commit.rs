@@ -28,6 +28,7 @@ impl TaskSessionState {
 
         self.prompts.prompt_ledger = next;
         self.unpersisted.clear();
+        self.report_committed_events(&filtered);
         self.log.append(filtered);
 
         Ok(())

@@ -70,9 +70,9 @@ Branch `fix/web/event-commit-order`. Open one issue.
 
 - [x] **T2.1** Add `unpersisted: Vec<SessionServerEvent>` to `TaskSessionState`. `append_to_log` prepends the backlog. On failure it stores the batch there and returns `Err`. On success it clears the backlog. Order and sequence are preserved because nothing reaches `log` before commit. Add `// ponytail:` with a cap of 2000, matching run retention.
 - [x] **T2.2** `try_finalize_active_prompt`: if `unpersisted` is non-empty, move it in front of `terminal.events` so both commit in one `commit_ledger_with_events` transaction. On failure everything stays and the next pump retries. No turn completes with a hole.
-- [ ] **T2.3** Split `filter_events_for_log` into dedupe (before commit) and `report_activity_for_event` (after commit). Apply the split in both `append_to_log` and `commit_ledger_with_events`.
-- [ ] **Tests (red first):** the append fails once, then succeeds. Assert: no status reported for the failed batch, the events appear in order after recovery, and the turn is not marked completed until they do.
-- [ ] Doc: durable-execution.md §4 "No partial visibility" adds that activity reporting follows the commit.
+- [x] **T2.3** Split `filter_events_for_log` into dedupe (before commit) and `report_activity_for_event` (after commit). Apply the split in both `append_to_log` and `commit_ledger_with_events`.
+- [x] **Tests (red first):** the append fails once, then succeeds. Assert: no status reported for the failed batch, the events appear in order after recovery, and the turn is not marked completed until they do.
+- [x] Doc: durable-execution.md §4 "No partial visibility" adds that activity reporting follows the commit.
 
 ## PR 3: recovery retries until it succeeds (4)
 
@@ -135,3 +135,5 @@ PR 2 slice D (T2.1/T2.2: unpersisted backlog retained on append failure and comm
 - `cargo fmt --check`: passed.
 - `cargo clippy --all-targets --all-features -D warnings`: passed.
 - `cargo nextest run -p ajax-core -p ajax-web`: 2250/2250 passed.
+
+PR 2 slice E (T2.3: activity reported only after the transcript commit, in append_to_log and commit_ledger_with_events; durable-execution.md section 4 updated) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2252/2252.
