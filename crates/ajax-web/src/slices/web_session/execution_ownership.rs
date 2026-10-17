@@ -53,7 +53,7 @@ impl ExecutionOwnership {
 
     /// Attempts to claim (or re-claim) the execution owner lease for this
     /// registry. Fails only when a live foreign process holds it. The first
-    /// successful claim in this process also runs the one-time orphan sweep
+    /// successful claim in this process also runs the orphan sweep until complete
     /// (`orphan_sweep::sweep_once`), terminating harness children left behind
     /// by previous hosts, and then the startup recovery that interrupts prompts
     /// left `Dispatching` by dead hosts. On success
@@ -68,14 +68,10 @@ impl ExecutionOwnership {
                 self.lost.store(false, Ordering::SeqCst);
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
-                self.recovered_handles
-                    .lock()
-                    .unwrap()
-                    .extend(super::orphan_sweep::sweep_once(
-                        &store,
-                        &self.storage.state_dir,
-                        &self.boot_id,
-                    ));
+                self.recovered_handles.lock().unwrap().extend(
+                    super::orphan_sweep::sweep_once(&store, &self.storage.state_dir, &self.boot_id)
+                        .recovered_handles,
+                );
                 Ok(())
             }
             Ok(OwnerClaim::HeldBy {
@@ -95,7 +91,8 @@ impl ExecutionOwnership {
                                 &store,
                                 &self.storage.state_dir,
                                 &self.boot_id,
-                            ),
+                            )
+                            .recovered_handles,
                         );
                         Ok(())
                     }

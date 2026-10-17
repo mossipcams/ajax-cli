@@ -1,12 +1,12 @@
-//! One-time orphan sweep for Chat harness child processes.
+//! Orphan sweep for Chat harness child processes, retried until complete.
 //!
 //! Each run row records the live agent child's pid, a start-time token, and the
 //! owning host's boot id (`TaskSessionState::record_child_identity`); this is
 //! the only code that consumes that data. When a host dies (crash, kill), its
 //! spawned ACP children keep running forever. This sweep terminates those
-//! children when a *new* host takes over the registry: it runs exactly once per
+//! children when a *new* host takes over the registry: it runs until complete per
 //! host process, and only after that host has acquired the execution owner
-//! lease (`ExecutionOwnership::try_claim`). The same once-per-process claim hook
+//! lease (`ExecutionOwnership::try_claim`). The same claim hook
 //! also interrupts prompts left `Dispatching` by dead hosts (see
 //! `super::startup_recovery`). Runs owned by this host — same boot
 //! id — are never touched, so attach/respawn within one process cannot kill a
@@ -16,41 +16,55 @@
 //! logged with `tracing::warn` and the run moves on.
 
 use super::process_identity::{judge, start_token, Verdict};
+use super::startup_recovery::RecoveryResult;
 use ajax_core::registry::{ExecutionCommit, RunUpdate, SqliteRegistryStore};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// Set the first time this process successfully runs the sweep. nextest and
 /// production each run their own process, so the flag cannot leak between tests.
 static SWEPT_ONCE: AtomicBool = AtomicBool::new(false);
+static SWEEP_LOCK: Mutex<()> = Mutex::new(());
 
 /// Runs [`sweep`] — then `super::startup_recovery::recover_interrupted_prompts`
-/// — at most once per host process. Called from
+/// — until both complete in this host process. Called from
 /// `ExecutionOwnership::try_claim` immediately after this host holds the
 /// execution owner lease, and never while a live foreign host holds it. The
 /// sweep runs first so it clears dead hosts' child identities before recovery
 /// rewrites prompt state. Returns the handles (task ids) of runs whose prompts
 /// were interrupted by the call that actually ran the sweep, in scan order;
-/// every later call in this process returns an empty `Vec`.
+/// every call after completion returns no handles and does no work.
 pub(crate) fn sweep_once(
     store: &SqliteRegistryStore,
     state_dir: &std::path::Path,
     boot_id: &str,
-) -> Vec<String> {
-    if SWEPT_ONCE
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Vec::new();
+) -> RecoveryResult {
+    let _guard = SWEEP_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if SWEPT_ONCE.load(Ordering::SeqCst) {
+        return RecoveryResult {
+            recovered_handles: Vec::new(),
+            complete: true,
+        };
     }
-    // `sweep` logs its own errors and returns only a count.
-    let _ = sweep(store, boot_id);
-    super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id)
+    let sweep = sweep(store, boot_id);
+    let mut recovery =
+        super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id);
+    recovery.complete &= sweep.complete;
+    if recovery.complete {
+        let _ = SWEPT_ONCE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+    }
+    recovery
+}
+
+pub(crate) struct SweepResult {
+    pub(crate) handled: u64,
+    pub(crate) complete: bool,
 }
 
 /// Terminates harness children left behind by previous hosts and clears their
 /// recorded identity. Returns the number of run rows handled (signalled or
-/// found already gone). Invariants:
+/// found already gone) and whether listing and identity writes succeeded. Invariants:
 ///
 /// - A run whose `owner_boot_id` equals `current_boot_id` is never touched —
 ///   it belongs to a live child in this host.
@@ -64,15 +78,19 @@ pub(crate) fn sweep_once(
 ///   `RunUpdate { child: Some(None), child_started: Some(None), .. }`. When
 ///   the token is unreadable for a pid that may still exist, the row is left
 ///   unchanged.
-pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
+pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> SweepResult {
+    let mut result = SweepResult {
+        handled: 0,
+        complete: true,
+    };
     let runs = match store.runs_with_children() {
         Ok(runs) => runs,
         Err(error) => {
             tracing::warn!(target: "ajax_web", %error, "orphan sweep: cannot list child rows");
-            return 0;
+            result.complete = false;
+            return result;
         }
     };
-    let mut handled = 0u64;
     for run in &runs {
         if run.owner_boot_id.as_deref() == Some(current_boot_id) {
             continue; // This host's own live child.
@@ -83,7 +101,9 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
         };
         if !pid_alive(pid) {
             if clear_child_identity(store, &run.run_id, pid) {
-                handled += 1;
+                result.handled += 1;
+            } else {
+                result.complete = false;
             }
             continue;
         }
@@ -93,7 +113,9 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
         ) {
             Verdict::Same => {
                 if signal_term_group_or_pid(pid) && clear_child_identity(store, &run.run_id, pid) {
-                    handled += 1;
+                    result.handled += 1;
+                } else {
+                    result.complete = false;
                 }
             }
             _ => tracing::debug!(
@@ -104,7 +126,7 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> u64 {
             ),
         }
     }
-    handled
+    result
 }
 
 /// Clears the run's child identity fields; everything else is untouched.

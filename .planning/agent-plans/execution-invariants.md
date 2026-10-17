@@ -78,7 +78,7 @@ Branch `fix/web/event-commit-order`. Open one issue.
 
 Branch `fix/web/recovery-retry`. Open one issue.
 
-- [ ] **T3.1** `sweep` / `recover_interrupted_prompts` return `Result` with a "complete" flag: listing failure, ledger load failure, or persist failure counts as incomplete. Set `SWEPT_ONCE` only when the run completes, using compare_exchange **after** the work. Hold a mutex so ticks cannot run it concurrently.
+- [x] **T3.1** `sweep` / `recover_interrupted_prompts` return `Result` with a "complete" flag: listing failure, ledger load failure, or persist failure counts as incomplete. Set `SWEPT_ONCE` only when the run completes, using compare_exchange **after** the work. Hold a mutex so ticks cannot run it concurrently.
 - [ ] **T3.2** `startup_dispatch_handles`: set `headless_scanned` only on a complete scan. Keep a `HashSet` of handles already handed out, so a rescan does not dispatch the same chat twice.
 - [ ] **T3.3** `report_recovered_turns`: push handles whose `report` returned false back into `recovered_handles`. The heartbeat retries them every 10 s.
 - [ ] **T3.4** Call the sweep and scan retry from `heartbeat_execution_ownership` while incomplete. No new task or coordinator.
@@ -115,6 +115,7 @@ touched, so web:smoke is not required.
 - Slice A scope had to widen to `web_session_store/` and `task_session_directory` / `task_session_replacement` for mechanical caller updates.
 - `finalize_client_metadata` also passed `"unknown"` as harness and was fixed to pass the real harness; otherwise `try_save_meta` overwrote it and crash-recovery resume broke.
 - The 2000-event backlog ceiling is documented in a ponytail comment but not enforced, because dropping would reintroduce a transcript hole.
+- Existing sweep/startup-recovery tests were updated mechanically for the new RecoveryResult/SweepResult return shape (assertion meaning kept, `complete` asserts added); the Codex delegate hit its usage quota mid-run but its edits were reviewed and gated by the orchestrator.
 
 ## Validation
 
@@ -137,3 +138,5 @@ PR 2 slice D (T2.1/T2.2: unpersisted backlog retained on append failure and comm
 - `cargo nextest run -p ajax-core -p ajax-web`: 2250/2250 passed.
 
 PR 2 slice E (T2.3: activity reported only after the transcript commit, in append_to_log and commit_ledger_with_events; durable-execution.md section 4 updated) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2252/2252.
+
+PR 3 slice F (T3.1: sweep/recover_interrupted_prompts return a completeness flag; SWEPT_ONCE set via compare_exchange only after a complete run, under a mutex) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2255/2255.
