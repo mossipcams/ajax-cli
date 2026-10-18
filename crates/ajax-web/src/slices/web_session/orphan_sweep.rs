@@ -21,6 +21,7 @@ use ajax_core::registry::{ExecutionCommit, RunUpdate, SqliteRegistryStore};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Set the first time this process successfully runs the sweep. nextest and
 /// production each run their own process, so the flag cannot leak between tests.
@@ -63,8 +64,8 @@ pub(crate) struct SweepResult {
 }
 
 /// Terminates harness children left behind by previous hosts and clears their
-/// recorded identity. Returns the number of run rows handled (signalled or
-/// found already gone) and whether listing and identity writes succeeded. Invariants:
+/// recorded identity. Returns the number of run rows cleared and whether
+/// listing, termination, and identity writes succeeded. Invariants:
 ///
 /// - A run whose `owner_boot_id` equals `current_boot_id` is never touched —
 ///   it belongs to a live child in this host.
@@ -73,12 +74,23 @@ pub(crate) struct SweepResult {
 ///   when the process is alive
 ///   and its start-time token equals the stored `child_started`. A missing,
 ///   mismatched (pid reuse), or unreadable token means: do not signal.
-/// - After a matching child is signalled, or when the pid no longer exists,
+/// - After TERM, wait up to 5 s for exit, then escalate to KILL and wait up to
+///   2 s more. Clear identity only once the pid is observed gone; a surviving
+///   child leaves the sweep incomplete for the next heartbeat to retry.
+/// - When the pid no longer exists,
 ///   the run's child fields are cleared via `commit_execution` with
 ///   `RunUpdate { child: Some(None), child_started: Some(None), .. }`. When
 ///   the token is unreadable for a pid that may still exist, the row is left
 ///   unchanged.
 pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> SweepResult {
+    sweep_with_grace(store, current_boot_id, Duration::from_secs(5))
+}
+
+pub(super) fn sweep_with_grace(
+    store: &SqliteRegistryStore,
+    current_boot_id: &str,
+    grace: Duration,
+) -> SweepResult {
     let mut result = SweepResult {
         handled: 0,
         complete: true,
@@ -112,7 +124,27 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> Sweep
             start_token(pid).as_deref(),
         ) {
             Verdict::Same => {
-                if signal_term_group_or_pid(pid) && clear_child_identity(store, &run.run_id, pid) {
+                if !signal_group_or_pid(pid, "-TERM") {
+                    result.complete = false;
+                    continue;
+                }
+                if !wait_until_gone(pid, grace) {
+                    // The pid may have been reused during the grace period.
+                    if judge(
+                        run.child_started.as_deref().unwrap_or(""),
+                        start_token(pid).as_deref(),
+                    ) == Verdict::Same
+                    {
+                        signal_group_or_pid(pid, "-KILL");
+                    }
+                    if !wait_until_gone(pid, Duration::from_secs(2)) {
+                        tracing::warn!(target: "ajax_web", run_id = %run.run_id, pid,
+                            "orphan sweep: child still alive after termination attempt; retaining identity for retry");
+                        result.complete = false;
+                        continue;
+                    }
+                }
+                if clear_child_identity(store, &run.run_id, pid) {
                     result.handled += 1;
                 } else {
                     result.complete = false;
@@ -127,6 +159,20 @@ pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> Sweep
         }
     }
     result
+}
+
+fn wait_until_gone(pid: i64, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        if !pid_alive(pid) {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(50)));
+    }
 }
 
 /// Clears the run's child identity fields; everything else is untouched.
@@ -148,27 +194,45 @@ fn clear_child_identity(store: &SqliteRegistryStore, run_id: &str, pid: i64) -> 
     }
 }
 
-/// `kill -0` succeeds only for an existing process we may signal.
+/// `kill -0` succeeds for zombies too; consult `ps` so unreaped exits read as gone.
 fn pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    Command::new("kill")
+    let exists = Command::new("kill")
         .args(["-0", &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !exists {
+        return false;
+    }
+    Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let stat = String::from_utf8(output.stdout)
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())?;
+            Some(!stat.starts_with('Z'))
+        })
         .unwrap_or(false)
 }
 
-/// Best-effort `kill -TERM <pid>`; `true` when the signal was sent.
-fn signal_term(pid: i64) -> bool {
+/// Best-effort signal to a pid; `true` when the signal was sent.
+fn signal_pid(pid: i64, signal: &str) -> bool {
     if pid <= 0 || pid == std::process::id() as i64 {
         return false; // Never signal ourselves (or invalid pids).
     }
     Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
+        .args([signal, &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -176,17 +240,17 @@ fn signal_term(pid: i64) -> bool {
         .unwrap_or(false)
 }
 
-/// Best-effort `kill -TERM -- -<pid>` on the child's process group (the
+/// Best-effort signal to the child's process group via `kill <signal> -- -<pid>` (the
 /// current host spawns children as their own group leaders, so the recorded
-/// pid is also the pgid), falling back to a plain `kill -TERM <pid>` for
+/// pid is also the pgid), falling back to a plain `kill <signal> <pid>` for
 /// children recorded by older hosts that were not group leaders. The
 /// self-pid and invalid-pid guards apply before either signal.
-fn signal_term_group_or_pid(pid: i64) -> bool {
+fn signal_group_or_pid(pid: i64, signal: &str) -> bool {
     if pid <= 0 || pid == std::process::id() as i64 {
         return false; // Never signal ourselves (or invalid pids).
     }
     let group_signalled = Command::new("kill")
-        .args(["-TERM", "--", &format!("-{pid}")])
+        .args([signal, "--", &format!("-{pid}")])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -195,6 +259,6 @@ fn signal_term_group_or_pid(pid: i64) -> bool {
     if group_signalled {
         true
     } else {
-        signal_term(pid)
+        signal_pid(pid, signal)
     }
 }

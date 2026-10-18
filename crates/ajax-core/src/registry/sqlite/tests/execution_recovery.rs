@@ -541,6 +541,140 @@ fn deletion_removes_all_execution_rows_for_only_the_selected_task_atomically() {
 }
 
 #[test]
+fn owner_fence_takeover_rejects_old_owner_without_writes() {
+    let store_a = store().with_owner_fence("A");
+    let store_b = SqliteRegistryStore::new(&store_a.path).with_owner_fence("B");
+    assert_eq!(
+        store_a.claim_execution_owner("A", 10, 100, 100).unwrap(),
+        OwnerClaim::Acquired { previous: None }
+    );
+    store_a
+        .commit_execution(&ExecutionCommit {
+            events: vec!["before takeover".into()],
+            ..commit()
+        })
+        .unwrap();
+    assert_eq!(
+        store_b.claim_execution_owner("B", 20, 201, 100).unwrap(),
+        OwnerClaim::Acquired {
+            previous: Some(("A".into(), 10))
+        }
+    );
+    let change = ExecutionCommit {
+        new_tasks: vec![new_task("new")],
+        prompts: vec![prompt("new")],
+        transitions: vec![to("new", State::Running)],
+        checkpoint_intents: vec![intent("new")],
+        run_update: Some(RunUpdate {
+            model: Some("changed".into()),
+            ..Default::default()
+        }),
+        events: vec!["after takeover".into()],
+        ..commit()
+    };
+    let before = snapshot(&store_a);
+    let error = store_a.commit_execution(&change).unwrap_err();
+    assert!(matches!(error, ExecutionCommitError::Fenced));
+    assert_eq!(
+        error.to_string(),
+        "execution fenced: this host no longer owns the execution lease"
+    );
+    assert_eq!(snapshot(&store_a), before);
+    assert_eq!(
+        store_a.execution_events_since("run", 0).unwrap(),
+        vec![(1, "before takeover".into())]
+    );
+    assert_eq!(
+        store_a
+            .latest_run_for_task("registry-task")
+            .unwrap()
+            .unwrap()
+            .next_event_seq,
+        2
+    );
+    assert_eq!(
+        store_b.commit_execution(&change).unwrap().event_seqs,
+        vec![2]
+    );
+    assert_eq!(
+        store_b.execution_events_since("run", 0).unwrap(),
+        vec![(1, "before takeover".into()), (2, "after takeover".into())]
+    );
+}
+
+#[test]
+fn owner_fence_absent_preserves_unfenced_commits() {
+    let store = store();
+    for (index, owner) in [None, Some("A"), Some("B")].into_iter().enumerate() {
+        if let Some(owner) = owner {
+            assert!(matches!(
+                store
+                    .claim_execution_owner(owner, 10, index as i64 * 101, 100)
+                    .unwrap(),
+                OwnerClaim::Acquired { .. }
+            ));
+        }
+        assert_eq!(
+            store
+                .commit_execution(&ExecutionCommit {
+                    events: vec!["unfenced".into()],
+                    ..commit()
+                })
+                .unwrap()
+                .event_seqs,
+            vec![index as u64 + 1]
+        );
+    }
+}
+
+#[test]
+fn owner_fence_release_rejects_old_owner_without_writes() {
+    let store = store();
+    assert_eq!(
+        store.claim_execution_owner("A", 10, 100, 100).unwrap(),
+        OwnerClaim::Acquired { previous: None }
+    );
+    let change = ExecutionCommit {
+        owner_fence: Some("A".into()),
+        events: vec!["owned".into()],
+        ..commit()
+    };
+    store.commit_execution(&change).unwrap();
+    store.release_execution_owner("A").unwrap();
+    let before = snapshot(&store);
+    assert!(matches!(
+        store.commit_execution(&change),
+        Err(ExecutionCommitError::Fenced)
+    ));
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
+fn owner_fence_commit_overrides_store_default() {
+    let store = store().with_owner_fence("A");
+    assert_eq!(
+        store.claim_execution_owner("B", 20, 100, 100).unwrap(),
+        OwnerClaim::Acquired { previous: None }
+    );
+    let change = ExecutionCommit {
+        owner_fence: Some("B".into()),
+        events: vec!["override".into()],
+        ..commit()
+    };
+    assert_eq!(store.commit_execution(&change).unwrap().event_seqs, vec![1]);
+    let store = store.with_owner_fence("B");
+    let before = snapshot(&store);
+    assert!(matches!(
+        store.commit_execution(&ExecutionCommit {
+            owner_fence: Some("A".into()),
+            ..change
+        }),
+        Err(ExecutionCommitError::Fenced)
+    ));
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
 fn owner_lease_refresh_refusal_takeover_and_release() {
     let store = store();
     let claim = |boot, pid, now| store.claim_execution_owner(boot, pid, now, 100).unwrap();

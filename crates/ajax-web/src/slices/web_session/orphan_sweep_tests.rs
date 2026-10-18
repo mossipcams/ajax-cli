@@ -77,6 +77,151 @@ fn cleanup(dir: &Path) {
 }
 
 #[test]
+fn term_ignoring_child_is_killed_before_identity_is_cleared_issue_1327() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::time::Instant;
+
+    // Keep failure paths (including the red run) from leaving a child behind.
+    struct ChildGuard {
+        pid: i64,
+        reaper: Option<std::thread::JoinHandle<std::process::ExitStatus>>,
+    }
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Some(reaper) = self.reaper.take() {
+                let _ = Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{}", self.pid)])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                kill_and_reap(self.pid, reaper);
+            }
+        }
+    }
+
+    let (dir, store) = scratch_store("term-ignoring-1327");
+    let ready = dir.join("ready");
+    // Use shell builtins so the fixture has no grandchildren to orphan.
+    let child = Command::new("sh")
+        .args([
+            "-c",
+            r#"trap '' TERM; echo ready > "$1"; while :; do :; done"#,
+            "sh",
+        ])
+        .arg(&ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .expect("spawn TERM-ignoring process-group leader");
+    let pid = child.id() as i64;
+    let mut child = ChildGuard {
+        pid,
+        reaper: Some(std::thread::spawn(move || reap(child))),
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.exists(),
+        "child must install its TERM trap before sweep"
+    );
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+    let run_id = row_id_for(&store, "handle");
+    let alive = || {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("probe child")
+            .success()
+    };
+
+    let (result, cleared_while_alive) = std::thread::scope(|scope| {
+        let sweep = scope.spawn(|| {
+            super::orphan_sweep::sweep_with_grace(&store, "this-boot", Duration::from_millis(200))
+        });
+        let mut cleared_while_alive = false;
+        while !sweep.is_finished() {
+            if listed_row(&store, &run_id).is_none() && alive() {
+                cleared_while_alive = true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        (sweep.join().expect("join sweep"), cleared_while_alive)
+    });
+
+    assert!(
+        !alive(),
+        "sweep must observe the child gone before returning"
+    );
+    assert!(
+        !cleared_while_alive,
+        "identity must remain while the child lives"
+    );
+    assert!(result.complete);
+    assert_eq!(result.handled, 1);
+    assert!(listed_row(&store, &run_id).is_none());
+    let status = child
+        .reaper
+        .take()
+        .unwrap()
+        .join()
+        .expect("join child reaper");
+    assert_eq!(
+        status.signal(),
+        Some(9),
+        "SIGKILL escalation must end the child"
+    );
+    cleanup(&dir);
+}
+
+#[test]
+fn zombie_child_is_treated_as_gone_before_term_grace_issue_1327() {
+    use std::time::Instant;
+
+    let (dir, store) = scratch_store("zombie-1327");
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("spawn sleep helper");
+    let pid = child.id() as i64;
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+    let run_id = row_id_for(&store, "handle");
+
+    Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("SIGKILL sleep helper without wait so it remains a zombie");
+
+    let start = Instant::now();
+    let result = super::orphan_sweep::sweep_with_grace(&store, "this-boot", Duration::from_secs(5));
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "sweep must not wait out TERM/KILL grace on a zombie (took {:?})",
+        elapsed
+    );
+    assert!(result.complete, "zombie orphan sweep must complete");
+    assert!(
+        listed_row(&store, &run_id).is_none(),
+        "zombie child's run row must be cleared"
+    );
+
+    child.wait().expect("reap zombie child");
+    cleanup(&dir);
+}
+
+#[test]
 fn matching_token_terminates_child_and_clears_row() {
     let (dir, store) = scratch_store("matching");
     let (pid, reaper) = spawn_sleep_child();

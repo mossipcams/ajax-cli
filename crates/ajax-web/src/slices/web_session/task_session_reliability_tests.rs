@@ -743,3 +743,119 @@ fn assert_activity_waits_for_transcript_commit(recover_with_terminal: bool) {
     drop(directory);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn acquire_blocks_while_foreign_live_child_is_recorded_issue_1327() {
+    use super::process_identity;
+    use super::SessionStorage;
+    use crate::adapters::web_session_store::record_child_identity;
+    use ajax_core::models::AgentClient;
+    use std::process::{Command, Stdio};
+
+    fn spawn_sleep_child() -> (i64, std::process::Child) {
+        let child = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("spawn sleep helper");
+        (child.id() as i64, child)
+    }
+
+    let dir = scratch_dir("foreign-child-acquire-block");
+    let handle = "web/foreign-child-acquire-block";
+    let store = SessionStorage::under(dir.clone()).registry_store();
+    // Startup sweep already ran; record a foreign child as if it appeared after boot.
+    super::orphan_sweep::sweep_once(&store, &dir, "test-host");
+    let (pid, mut sleep_child) = spawn_sleep_child();
+    let token = process_identity::start_token(pid).expect("live child token");
+    record_child_identity(
+        &store,
+        &dir,
+        handle,
+        "cursor",
+        Some((pid, token.clone())),
+        "foreign-boot",
+    )
+    .expect("seed foreign child row");
+
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        let err = directory
+            .acquire_typed(handle, &dir, "auto", AgentClient::Cursor)
+            .expect_err("acquire must fail while foreign child is live");
+        assert!(
+            err.to_string().contains("still shutting down"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            directory.child_id(handle).is_none(),
+            "no ACP client must be created while blocked"
+        );
+
+        Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("kill sleep helper");
+        sleep_child.wait().expect("wait on sleep helper");
+
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire after foreign child is gone");
+        let acp_pid = directory.child_id(handle).expect("ACP child after acquire");
+        assert_ne!(acp_pid as i64, pid, "ACP child must be a new process");
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn acquire_does_not_block_on_own_boot_child_row_issue_1327() {
+    use super::process_identity;
+    use super::SessionStorage;
+    use crate::adapters::web_session_store::record_child_identity;
+    use ajax_core::models::AgentClient;
+    use std::process::{Command, Stdio};
+
+    let dir = scratch_dir("own-boot-child-acquire");
+    let handle = "web/own-boot-child-acquire";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let host_boot = directory.inner().ownership_boot_id();
+    let store = SessionStorage::under(dir.clone()).registry_store();
+
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("spawn sleep helper");
+    let pid = child.id() as i64;
+    let token = process_identity::start_token(pid).expect("live child token");
+    record_child_identity(
+        &store,
+        &dir,
+        handle,
+        "cursor",
+        Some((pid, token)),
+        &host_boot,
+    )
+    .expect("seed own-boot child row");
+
+    let script = fake_acp_fixture();
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("own-boot row must not block acquire");
+    });
+
+    Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("kill sleep helper");
+    child.wait().expect("wait on sleep helper");
+    let _ = std::fs::remove_dir_all(dir);
+}

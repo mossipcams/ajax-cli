@@ -1,3 +1,4 @@
+use super::process_identity::foreign_live_child;
 use super::session_storage::SessionStorage;
 use super::task_session::{agent_client_name, TaskSessionState};
 use super::task_session_exit::{
@@ -56,6 +57,7 @@ pub(super) async fn acquire(
             &state.qualified_handle,
         )?;
         release_live_client(state, resume_id.is_none(), "attach replaced a dead slot")?;
+        reject_foreign_live_child(state)?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
         install_replaced_client(state, new_client, &report, model)?;
@@ -78,10 +80,17 @@ pub(super) async fn acquire(
         .acp_session_id
         .as_deref()
         .filter(|_| stored.harness == agent_client_name(agent));
+    reject_foreign_live_child(state)?;
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id).await?;
 
     state.acp.client = Some(client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
@@ -222,6 +231,7 @@ pub(super) async fn respawn(
     )?;
     let agent = state.agent;
     release_live_client(state, resume_id.is_none(), "respawn")?;
+    reject_foreign_live_child(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
     install_replaced_client(state, new_client, &report, model)?;
     Ok(state.generation)
@@ -249,6 +259,7 @@ pub(super) async fn reset_harness_context(
         SessionError::persist(format!("stored session id could not be cleared: {error}"))
     })?;
 
+    reject_foreign_live_child(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
 
     if let Err(error) = web_session_store::try_save_meta(
@@ -269,7 +280,13 @@ pub(super) async fn reset_harness_context(
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     state.acp.client = Some(new_client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
@@ -308,6 +325,7 @@ pub(super) async fn clear_session_context(
         SessionError::persist(format!("stored session id could not be cleared: {error}"))
     })?;
 
+    reject_foreign_live_child(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
 
     if let Err(error) = web_session_store::try_save_meta(
@@ -328,7 +346,13 @@ pub(super) async fn clear_session_context(
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     state.acp.client = Some(new_client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
@@ -430,6 +454,30 @@ fn release_live_client(
 
 fn unreadable_session(error: std::io::Error) -> SessionError {
     SessionError::persist(format!("stored session is unreadable: {error}"))
+}
+
+fn reject_foreign_live_child(state: &TaskSessionState) -> Result<(), SessionError> {
+    let run = state
+        .storage
+        .registry_store()
+        .latest_run_for_task(&state.qualified_handle)
+        .map_err(|error| SessionError::persist(format!("run row could not be read: {error}")))?;
+    let Some(run) = run else {
+        return Ok(());
+    };
+    if foreign_live_child(
+        run.child,
+        run.child_started.as_deref(),
+        run.owner_boot_id.as_deref(),
+        state.ownership.boot_id(),
+    )
+    .is_some()
+    {
+        return Err(SessionError::persist(
+            "previous host's agent for this chat is still shutting down; retry shortly",
+        ));
+    }
+    Ok(())
 }
 
 fn replace_resume_id(

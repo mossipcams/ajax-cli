@@ -174,13 +174,24 @@ Exactly one host executes against a given registry. This is enforced by the
   The refusal is not permanent: at each 10 s heartbeat tick, and on the next
   acquire, the host tries to claim the lease again and resumes as soon as it is
   free, stale, or held by a process that is gone. Agents that were already
-  running when the lease was lost are not stopped.
+  running when the lease was lost are not stopped by that host itself; the new
+  owner's first-claim orphan sweep ends them instead, targeting every run whose
+  `owner_boot_id` is foreign and whose recorded child start-time token still
+  matches the live pid, including live-but-stale children left by the previous
+  owner.
+- **Owner fence.** Execution commits carry the host's lease `boot_id` (a
+  store-level default set after the host's first successful claim, or a
+  per-commit override). `commit_execution` checks `execution_owner.boot_id`
+  inside the IMMEDIATE transaction and rejects the write with `Fenced` when the
+  boot id differs or the row is gone. A displaced host's late writes therefore
+  never reach history: they surface as persist errors and, for transcript
+  events, land in the in-memory unpersisted backlog as a durability fault.
 - A dead owner is detected with `ps -p <pid>` and counts as dead **only on
   positive evidence** that the process is gone; a failed or inconclusive check
   does not authorize takeover.
 - **Attach and read paths are not gated** by the lease: any client can attach
   to, and read state from, a registry whose execution lease is held elsewhere.
-- **Harness children run as process-group leaders.** The host starts every harness child (ACP stdio, Pi RPC, Claude SDK and Cursor SDK sidecars) in its own process group and kills the whole group when it tears the session down, so tool subprocesses cannot outlive a session. When a new host claims the lease it runs an orphan sweep; the sweep and startup recovery run until complete (an incomplete run is retried on the next heartbeat tick, and the headless startup scan is retried until it completes or a bounded number of attempts), so recovered turns whose activity report failed are re-reported by the heartbeat. For each run recorded by another boot whose recorded start-time token still matches the live pid, it sends SIGTERM to the child's process group (falling back to the pid for children recorded before groups existed) and clears the recorded identity; a mismatched or unreadable token is never signalled.
+- **Harness children run as process-group leaders.** The host starts every harness child (ACP stdio, Pi RPC, Claude SDK and Cursor SDK sidecars) in its own process group, records each child's pid and start-time token before the attach succeeds (if the token cannot be recorded or is unreadable, the attach fails and the staged client is discarded, so every live child is findable by a later sweep), and kills the whole group when it tears the session down, so tool subprocesses cannot outlive a session. A host does not acquire, respawn, or reset while a previous owner's child for that chat is still recorded and alive. When a new host claims the lease it runs an orphan sweep; the sweep and startup recovery run until complete (an incomplete run is retried on the next heartbeat tick, and the headless startup scan is retried until it completes or a bounded number of attempts), so recovered turns whose activity report failed are re-reported by the heartbeat. For each run whose `owner_boot_id` is foreign and whose recorded start-time token still matches the live pid, the sweep sends SIGTERM to the child's process group (falling back to the pid for children recorded before groups existed), polls up to 5 s for exit, escalates to SIGKILL after re-checking the token so a reused pid is never killed, polls up to 2 s more, and clears the recorded child identity only once the process is observed gone (unreaped zombies count as gone); a survivor leaves the row and the sweep incomplete so the heartbeat retries. A mismatched or unreadable token is never signalled.
 - **Agents can start with no browser attached.** After a restart the host starts harnesses for chats that still have queued prompts (see section 5); this is the only case where the host starts an agent without an operator action, and it only happens after the host holds the execution lease.
 
 ## 7. Migration

@@ -221,10 +221,9 @@ fn companion_session_storage(paths: Option<&CliContextPaths>) -> Result<SessionS
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))?;
-    Ok(SessionStorage {
-        state_dir,
-        registry_db: state_file,
-    })
+    let mut storage = SessionStorage::under(state_dir);
+    storage.registry_db = state_file;
+    Ok(storage)
 }
 
 #[derive(Clone)]
