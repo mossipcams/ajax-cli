@@ -62,6 +62,7 @@ const uiConfirm = flags.has('--ui-confirm'); // prompt emits a confirm dialog, t
 // is a live orphan. With this flag the fixture survives that close so the
 // restart sweep has an orphan to reap; default behavior is unchanged.
 const surviveStdinClose = flags.has('--survive-stdin-eof');
+const exitAfterState = flags.has('--exit-after-state'); // child exits right after answering get_state
 const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
 const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
 
@@ -91,7 +92,12 @@ if (flags.has('--emit-stderr-noise')) {
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
+// Set once --exit-after-state has answered get_state: the child is dying, so
+// the commands already buffered on stdin must not be answered.
+let exiting = false;
+
 rl.on('line', (raw) => {
+  if (exiting) return;
   const text = raw.replace(/\r$/, '');
   let command;
   try {
@@ -128,6 +134,13 @@ rl.on('line', (raw) => {
       // A --session <id> argv pair overrides the fixed id (resume path).
       if (!noSessionId) stateData.sessionId = overriddenSessionId ?? sessionId;
       emit({ id: command.id, type: 'response', command: 'get_state', success: true, data: stateData });
+      if (exitAfterState) {
+        // Exit once the get_state line is flushed; the three discovery
+        // responses are never sent.
+        exiting = true;
+        process.stdout.write('', () => process.exit(1));
+        break;
+      }
       if (interleaveEvent) {
         // A non-response record between the four handshake responses; the
         // handshake must collect it into pending, not drop it.

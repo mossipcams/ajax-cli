@@ -150,6 +150,24 @@ fn handshake_times_out_with_silent_state_and_includes_stderr_tail() {
     );
 }
 
+/// GitHub #1276: a child that exits right after answering get_state never sends
+/// the remaining discovery responses. That is a dead session, so the handshake
+/// must fail instead of returning a healthy-looking RpcHandshake with empty lists.
+#[test]
+fn pi_startup_child_exit_after_get_state_is_not_healthy_1276() {
+    let mut process = spawn_fake_pi(&["--exit-after-state"]);
+    let started = Instant::now();
+
+    let result = handshake(&mut process, HANDSHAKE_TIMEOUT);
+
+    assert!(started.elapsed() < Duration::from_secs(5), "handshake hung");
+    let error = result.expect_err("a child that exits after get_state must not be healthy");
+    assert!(
+        error.contains("exited"),
+        "error must report the child exit: {error}"
+    );
+}
+
 #[test]
 fn handshake_degrades_failed_optional_commands_to_empty_lists() {
     let mut process = spawn_fake_pi(&["--degrade-optionals"]);
