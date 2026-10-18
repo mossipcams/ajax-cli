@@ -1,6 +1,6 @@
 # Native harness parity and defects
 
-Status: **awaiting approval** (2026-10-18)
+Status: **approved** 2026-10-18. P0 and P3 done; P5 deferred (Codex still uses ACP).
 
 The web chat moved from ACP (claude-agent-acp, pi-acp, cursor ACP) to native
 transports: Claude Agent SDK sidecar, Pi RPC, Cursor SDK sidecar. Codex stays on
@@ -19,7 +19,7 @@ ACP. This plan covers what is still missing or broken after that move.
 ## Scope
 
 ### P0. Ship group 1
-- [ ] Rename and commit onto a new branch `feat/web/native-tool-titles-and-plan`
+- [x] (PR #1343) Rename and commit onto a new branch `feat/web/native-tool-titles-and-plan`
       from the current HEAD, then open the PR with
       `BASE_BRANCH=fix/web/native-harness-defects scripts/gh-pr-create`. The PR is
       stacked on #1337 because both touch `claude_sdk_map.rs`. Body: `Closes #1338`,
@@ -60,7 +60,7 @@ files goes to Haiku.
 - Files: `claude_sdk_map.rs`, `claude_sdk_map_tests.rs`. Docs bullet in
   `web-session-behavior.md`. Delivered as a `feat/web/...` PR.
 
-### P3. Close #1340 and #1341 with evidence (no code)
+### P3. Close #1340 and #1341 with evidence (no code) — DONE, both closed not planned
 - [ ] #1340 (session title, live status, per-turn usage): none of these is
       visible today, even for Codex on ACP.
   - `sessionTitle` reaches `useChatSession` but no component renders it.
