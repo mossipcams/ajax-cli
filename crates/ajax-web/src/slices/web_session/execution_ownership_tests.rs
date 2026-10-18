@@ -40,6 +40,112 @@ fn second_directory_in_same_process_takes_over_lease() {
 }
 
 #[test]
+fn directory_writes_before_first_claim_issue_1327() {
+    use super::TaskSessionDirectory;
+    use crate::adapters::web_session_store::{try_load, try_save_meta};
+
+    let dir = test_support::scratch_dir("exec-ownership-before-claim");
+    let directory = TaskSessionDirectory::new(SessionStorage::under(dir.clone()));
+    for (index, storage) in directory.execution_storages_for_test().iter().enumerate() {
+        let handle = format!("web/before-claim-{index}");
+        try_save_meta(
+            &storage.registry_store(),
+            &dir,
+            &handle,
+            "codex",
+            Some("idle-session"),
+            "idle-model",
+        )
+        .expect("an unclaimed directory must allow idle writes");
+        let saved =
+            try_load::<serde_json::Value>(&storage.registry_store(), &dir, &handle, "codex")
+                .unwrap();
+        assert_eq!(saved.acp_session_id.as_deref(), Some("idle-session"));
+        assert_eq!(saved.model, "idle-model");
+    }
+    drop(directory);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn takeover_fences_directory_and_recovery_writes_issue_1327() {
+    use super::TaskSessionDirectory;
+    use crate::adapters::web_session_store::{try_load, try_save_meta};
+
+    let dir = test_support::scratch_dir("exec-ownership-fenced-writes");
+    let first = TaskSessionDirectory::new(SessionStorage::under(dir.clone()));
+    first
+        .startup_dispatch_handles()
+        .expect("first owner claims");
+    for (index, storage) in first.execution_storages_for_test().iter().enumerate() {
+        try_save_meta(
+            &storage.registry_store(),
+            &dir,
+            &format!("web/fenced-{index}"),
+            "codex",
+            Some("original-session"),
+            "original-model",
+        )
+        .expect("first owner commits before takeover");
+    }
+
+    // Make the first lease stale so the second directory takes the existing
+    // stale-owner claim path without waiting for the timeout.
+    assert!(SessionStorage::under(dir.clone())
+        .registry_store()
+        .heartbeat_execution_owner(&first.ownership_boot_id(), 0)
+        .unwrap());
+    let second = TaskSessionDirectory::new(first.execution_storages_for_test()[0].clone());
+    second.startup_dispatch_handles().expect("stale takeover");
+    assert_ne!(first.ownership_boot_id(), second.ownership_boot_id());
+
+    for (index, (old, new)) in first
+        .execution_storages_for_test()
+        .iter()
+        .zip(second.execution_storages_for_test())
+        .enumerate()
+    {
+        let handle = format!("web/fenced-{index}");
+        let error = try_save_meta(
+            &old.registry_store(),
+            &dir,
+            &handle,
+            "claude",
+            Some("stale-session"),
+            "stale-model",
+        )
+        .expect_err("displaced directory and recovery storage must reject commits");
+        assert!(error.to_string().contains("fenced"), "{error}");
+        let unchanged =
+            try_load::<serde_json::Value>(&new.registry_store(), &dir, &handle, "codex").unwrap();
+        assert_eq!(unchanged.harness, "codex");
+        assert_eq!(
+            unchanged.acp_session_id.as_deref(),
+            Some("original-session")
+        );
+        assert_eq!(unchanged.model, "original-model");
+
+        try_save_meta(
+            &new.registry_store(),
+            &dir,
+            &handle,
+            "claude",
+            Some("current-session"),
+            "current-model",
+        )
+        .expect("current directory and recovery storage must commit");
+        let updated =
+            try_load::<serde_json::Value>(&new.registry_store(), &dir, &handle, "claude").unwrap();
+        assert_eq!(updated.harness, "claude");
+        assert_eq!(updated.acp_session_id.as_deref(), Some("current-session"));
+        assert_eq!(updated.model, "current-model");
+    }
+    drop(first);
+    drop(second);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn live_foreign_owner_is_refused() {
     let dir = test_support::scratch_dir("exec-ownership-live-foreign");
     let mut child = std::process::Command::new("sleep")

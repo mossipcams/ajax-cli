@@ -89,7 +89,7 @@ Branch `fix/web/recovery-retry`. Open one issue.
 
 Branch `fix/web/execution-fencing`. Open one issue.
 
-- [ ] **T4.1** Add `owner_fence: Option<String>` to `ExecutionCommit`. When it is set, `commit_execution` checks `SELECT boot_id FROM execution_owner WHERE id = 1` inside the IMMEDIATE transaction and returns `ExecutionCommitError::Fenced` on mismatch. The web host's `web_session_store` writes pass `ownership.boot_id()`. The sweep and recovery pass it too, because they run after the claim.
+- [x] **T4.1** Add `owner_fence: Option<String>` to `ExecutionCommit`. When it is set, `commit_execution` checks `SELECT boot_id FROM execution_owner WHERE id = 1` inside the IMMEDIATE transaction and returns `ExecutionCommitError::Fenced` on mismatch. The web host's `web_session_store` writes pass `ownership.boot_id()`. The sweep and recovery pass it too, because they run after the claim.
 - [ ] **T4.2** Orphan sweep: after `kill -TERM`, poll `pid_alive` for up to 5 s, then `kill -KILL` the group. Clear the identity only once the process is observed gone; otherwise leave the row so the PR 3 retry picks it up. Block `acquire` for that handle while its row still holds a foreign live child.
 - [ ] **T4.3** `record_child_identity` returns `Result`. Spawn and replace paths discard the staged client and fail the attach on error. Without this, the sweep cannot find the child later.
 - ~~T4.4 Stop local children on lease loss~~ **Dropped (D2).** durable-execution.md §6 stays: agents running at lease loss are not stopped by their own host. The new owner still ends them: its first-claim orphan sweep targets every run whose `owner_boot_id` is foreign and whose child token matches, which includes a live-but-stale previous owner's children. T4.2 makes that termination verified. The old host's late writes are rejected by T4.1 and land in PR 2's `unpersisted` backlog as a durability fault, not in history.
@@ -119,6 +119,10 @@ touched, so web:smoke is not required.
 - Slice G was split into Qwen-sized packets (G2 T3.3, G3 T3.4, then G1 T3.2 and G4 headless retry + docs) because only the Qwen route was dispatchable (Codex over quota, Cursor needs login, Haiku route rejected its model id).
 - The first `claim_startup_handles` draft dropped the lease-claim retry on `Err` and double-slept per retry; both were caught in review and fixed before commit. The scan retry is capped at CLAIM_RETRIES attempts and a later heartbeat does not rescan (ponytail ceiling).
 
+- PR 4 packets H1/H2: the fence is a shared `OnceLock` cell on `SessionStorage` that is armed only after the host's first successful claim, not at construction, because a pre-claim write (e.g. the idle-path harness switch from #1324) must stay unfenced; the store-level default fence replaces per-call plumbing of `boot_id`.
+- PR 4 packets H1/H2: `ExecutionOwnership` now exposes `storage()`, and the directory takes its storage from the ownership so both share the fence cell; ajax-cli `web_backend.rs` now builds `SessionStorage` via `SessionStorage::under`.
+- PR 4 packets H1/H2: known intermittent test flake, seen twice in ~12 full runs: `issue_1324_clear_context_ledger_failure_preserves_queue_and_client` and `issue_1324_harness_switch_ledger_failure_preserves_queue_and_client` fail at ~5s in the full suite and pass alone in ~0.15s; cause not yet identified - follow up under #1324 if it recurs.
+
 ## Validation
 
 Prior implementation validation reported for PR 1 slice A:
@@ -146,3 +150,5 @@ PR 3 slice F (T3.1: sweep/recover_interrupted_prompts return a completeness flag
 PR 3 packets G2/G3 (T3.3: handles whose activity report failed are requeued and retried by the heartbeat; T3.4: a healthy heartbeat retries an incomplete orphan sweep via sweep_once) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2257/2257 (one unrelated flake, cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root, failed once under load; it passed in isolation and on two full reruns).
 
 PR 3 packets G1/G4 (T3.2: startup scan reports completeness via QueuedScan, headless_scanned is set only after a complete scan with a handed-out set; headless runner claim_startup_handles retries an incomplete scan and a failed lease claim, bounded by CLAIM_RETRIES; durable-execution.md section 6 reworded) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2262/2262 (two unrelated load flakes seen once each while the host load average was 13: issue_1324_clear_context_ledger_failure_preserves_queue_and_client and cursor_sdk_spawn_tests::module_is_resolved_only_from_the_given_root; both passed alone and on full reruns).
+
+PR 4 packets H1/H2 (T4.1: ExecutionCommit.owner_fence and SqliteRegistryStore::with_owner_fence, checked against execution_owner.boot_id inside the IMMEDIATE transaction, ExecutionCommitError::Fenced; web host wires a per-ownership fence into SessionStorage) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2268/2268 (three consecutive full runs).

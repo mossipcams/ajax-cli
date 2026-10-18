@@ -48,7 +48,8 @@ pub(crate) struct TaskSessionDirectory {
 
 impl TaskSessionDirectory {
     pub fn new(storage: SessionStorage) -> Arc<Self> {
-        let ownership = std::sync::Arc::new(ExecutionOwnership::new(storage.clone()));
+        let ownership = std::sync::Arc::new(ExecutionOwnership::new(storage));
+        let storage = ownership.storage().clone();
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             ownership,
@@ -127,6 +128,11 @@ impl TaskSessionDirectory {
     #[cfg(test)]
     pub(crate) fn ownership_boot_id(&self) -> String {
         self.ownership.boot_id().to_owned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn execution_storages_for_test(&self) -> [&SessionStorage; 2] {
+        [&self.storage, self.ownership.storage()]
     }
 
     /// Test seed: put recovered handles back so heartbeat reporting can be exercised.

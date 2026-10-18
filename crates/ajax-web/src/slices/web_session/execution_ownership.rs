@@ -18,8 +18,10 @@ pub(crate) const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const STALE_AFTER_MS: i64 = 30_000;
 
 impl ExecutionOwnership {
-    pub(crate) fn new(storage: SessionStorage) -> Self {
+    pub(crate) fn new(mut storage: SessionStorage) -> Self {
         let boot_id = random_boot_id();
+        // Each host arms its own shared fence only after a successful claim.
+        storage.owner_fence = Default::default();
         Self {
             storage,
             boot_id,
@@ -31,6 +33,10 @@ impl ExecutionOwnership {
 
     pub(crate) fn boot_id(&self) -> &str {
         &self.boot_id
+    }
+
+    pub(crate) fn storage(&self) -> &SessionStorage {
+        &self.storage
     }
 
     /// Takes the handles whose turns startup recovery interrupted, for activity reporting.
@@ -71,12 +77,17 @@ impl ExecutionOwnership {
         let pid = std::process::id() as i64;
         match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), STALE_AFTER_MS) {
             Ok(OwnerClaim::Acquired { .. }) => {
+                let _ = self.storage.owner_fence.set(self.boot_id.clone());
                 self.lost.store(false, Ordering::SeqCst);
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
                 self.recovered_handles.lock().unwrap().extend(
-                    super::orphan_sweep::sweep_once(&store, &self.storage.state_dir, &self.boot_id)
-                        .recovered_handles,
+                    super::orphan_sweep::sweep_once(
+                        &self.storage.registry_store(),
+                        &self.storage.state_dir,
+                        &self.boot_id,
+                    )
+                    .recovered_handles,
                 );
                 Ok(())
             }
@@ -89,12 +100,13 @@ impl ExecutionOwnership {
                 // check always passes and the takeover does not wait STALE_AFTER_MS.
                 match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), -1) {
                     Ok(OwnerClaim::Acquired { .. }) => {
+                        let _ = self.storage.owner_fence.set(self.boot_id.clone());
                         self.lost.store(false, Ordering::SeqCst);
                         self.consecutive_heartbeat_failures
                             .store(0, Ordering::SeqCst);
                         self.recovered_handles.lock().unwrap().extend(
                             super::orphan_sweep::sweep_once(
-                                &store,
+                                &self.storage.registry_store(),
                                 &self.storage.state_dir,
                                 &self.boot_id,
                             )
