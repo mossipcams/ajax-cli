@@ -19,7 +19,10 @@
 //! commands degrade to empty lists so a partial discovery state still yields a
 //! usable [`RpcHandshake`]. A timeout, non-JSON stdout line, or child exit
 //! *before* `get_state` completes returns an error that carries the process
-//! stderr tail for diagnostics.
+//! stderr tail for diagnostics. A child exit (or closed stdout) *after*
+//! `get_state` but before the other discovery responses also fails: a dead
+//! child cannot answer the rest, so it must not look like a healthy session
+//! (#1276). Only a live child that stays silent past the deadline degrades.
 
 // Not yet reachable from the crate surface: nothing wires this in until the
 // connection-loop task lands, so every public item is dead code for now.
@@ -110,15 +113,14 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
                     pending.push(Value::String(text));
                 }
                 JsonlRecord::Exited => {
-                    if state.is_none() {
-                        return Err(format!(
-                            "pi child exited before get_state completed (stderr tail: {})",
-                            process.stderr_tail()
-                        ));
-                    }
-                    // No more records can arrive; the remaining discovery lists
-                    // degrade to empty below.
-                    break;
+                    // No more records can arrive. Before get_state this is a
+                    // dead child; after it, the missing discovery responses
+                    // would never arrive, so the child is dead either way (#1276).
+                    return Err(format!(
+                        "pi child exited before the handshake completed (get_state received: {}, stderr tail: {})",
+                        state.is_some(),
+                        process.stderr_tail()
+                    ));
                 }
             },
             Err(mpsc::TryRecvError::Empty) => {
@@ -137,15 +139,15 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 // The reader thread only disconnects after delivering Exited,
-                // which the arm above has already handled (or exited on).
-                if state.is_none() {
-                    return Err(format!(
-                        "pi child stdout closed before get_state completed \
-                         (stderr tail: {})",
-                        process.stderr_tail()
-                    ));
-                }
-                break;
+                // which the arm above has already handled (or exited on). A
+                // closed stream ends the handshake whether or not get_state
+                // has arrived (#1276).
+                return Err(format!(
+                    "pi child stdout closed before the handshake completed \
+                     (get_state received: {}, stderr tail: {})",
+                    state.is_some(),
+                    process.stderr_tail()
+                ));
             }
         }
     }
