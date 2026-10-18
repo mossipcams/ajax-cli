@@ -22,6 +22,10 @@ struct CoreInner {
     active_request_id: Option<u64>,
     /// Monotonically increasing counter for request ids (starts at 1).
     next_request_id: u64,
+    /// Error text raised while a run was active (#1275), held back from the event
+    /// stream. Folded into the run's `TurnFinished` as `Err` on a non-aborted finish,
+    /// otherwise forwarded as a `NativeEvent::Error` so it is never dropped.
+    held_run_error: Option<String>,
     /// True once `Exited` was observed or `shutdown` removed the session.
     host_exited: bool,
     on_run_finished: Option<RunFinishedHook>,
@@ -35,6 +39,7 @@ impl RpcClientCore {
                 event_queue: VecDeque::new(),
                 active_request_id: None,
                 next_request_id: 1,
+                held_run_error: None,
                 host_exited: false,
                 on_run_finished,
             }),
@@ -142,59 +147,88 @@ impl RpcClientCore {
     }
 
     /// Block up to `timeout` for the next event. Returns `None` on timeout with no events.
+    ///
+    /// A [`NativeEvent::Error`] raised while a prompt run is active is held back (#1275)
+    /// and folded into that run's `TurnFinished` as `Err`, so the prompt settles as
+    /// failed and the error is shown once. An aborted run, or one that ends another way,
+    /// forwards the held error as a plain event instead.
     pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
-        let mut g = self.inner.lock().expect("rpc_client mutex poisoned");
+        let mut guard = self.inner.lock().expect("rpc_client mutex poisoned");
+        let g = &mut *guard;
 
         // Drain the remainder of a previous Events batch first.
         if let Some(ev) = g.event_queue.pop_front() {
             return Some(ev);
         }
 
-        let session = g.session.as_mut()?;
+        loop {
+            let session = g.session.as_mut()?;
 
-        match session.next_step(timeout) {
-            RpcStep::Events(evs) => {
-                for ev in evs {
-                    g.event_queue.push_back(ev);
-                }
-                g.event_queue.pop_front()
-            }
-            RpcStep::RunFinished { aborted } => {
-                let id = g.active_request_id.take().unwrap_or(0);
-                let stop_reason = if aborted { "cancelled" } else { "end_turn" };
-
-                let on_run_finished = g.on_run_finished;
-                let usage = match (on_run_finished, g.session.as_mut()) {
-                    (Some(hook), Some(session)) => hook(session),
-                    _ => None,
-                };
-
-                let finished = AgentEvent::Native(NativeEvent::TurnFinished {
-                    request_id: id,
-                    result: Ok(stop_reason.to_string()),
-                });
-
-                match usage {
-                    Some(usage_event) => {
-                        g.event_queue.push_back(finished);
-                        Some(usage_event)
+            match session.next_step(timeout) {
+                RpcStep::Events(evs) => {
+                    for ev in evs {
+                        match ev {
+                            AgentEvent::Native(NativeEvent::Error(text))
+                                if g.active_request_id.is_some() =>
+                            {
+                                g.held_run_error = Some(match g.held_run_error.take() {
+                                    Some(earlier) => format!("{earlier}\n{text}"),
+                                    None => text,
+                                });
+                            }
+                            other => g.event_queue.push_back(other),
+                        }
                     }
-                    None => Some(finished),
+                    if let Some(ev) = g.event_queue.pop_front() {
+                        return Some(ev);
+                    }
+                    // The whole batch was a held-back error: keep waiting for the run's outcome.
                 }
+                RpcStep::RunFinished { aborted } => {
+                    let id = g.active_request_id.take().unwrap_or(0);
+                    let (forwarded, result) = match (aborted, g.held_run_error.take()) {
+                        (false, Some(text)) => (None, Err(text)),
+                        (true, Some(text)) => (Some(text), Ok("cancelled".to_string())),
+                        (false, None) => (None, Ok("end_turn".to_string())),
+                        (true, None) => (None, Ok("cancelled".to_string())),
+                    };
+
+                    let on_run_finished = g.on_run_finished;
+                    let usage = match (on_run_finished, g.session.as_mut()) {
+                        (Some(hook), Some(session)) => hook(session),
+                        _ => None,
+                    };
+
+                    let finished = AgentEvent::Native(NativeEvent::TurnFinished {
+                        request_id: id,
+                        result,
+                    });
+
+                    g.event_queue
+                        .extend(forwarded.map(|text| AgentEvent::Native(NativeEvent::Error(text))));
+                    g.event_queue.extend(usage);
+                    g.event_queue.push_back(finished);
+                    return g.event_queue.pop_front();
+                }
+                RpcStep::PromptRejected(e) => {
+                    let id = g.active_request_id.take();
+                    return forward_held_error(
+                        g,
+                        AgentEvent::Native(NativeEvent::TurnFinished {
+                            request_id: id.unwrap_or(0),
+                            result: Err(e),
+                        }),
+                    );
+                }
+                RpcStep::Error(t) => {
+                    return forward_held_error(g, AgentEvent::Native(NativeEvent::Error(t)));
+                }
+                RpcStep::Exited => {
+                    g.host_exited = true;
+                    return forward_held_error(g, AgentEvent::Native(NativeEvent::Exited));
+                }
+                RpcStep::Idle => return None,
             }
-            RpcStep::PromptRejected(e) => {
-                let id = g.active_request_id.take();
-                Some(AgentEvent::Native(NativeEvent::TurnFinished {
-                    request_id: id.unwrap_or(0),
-                    result: Err(e),
-                }))
-            }
-            RpcStep::Error(t) => Some(AgentEvent::Native(NativeEvent::Error(t))),
-            RpcStep::Exited => {
-                g.host_exited = true;
-                Some(AgentEvent::Native(NativeEvent::Exited))
-            }
-            RpcStep::Idle => None,
         }
     }
 
@@ -231,4 +265,15 @@ impl RpcClientCore {
             .ok_or_else(|| "session not available (shut down)".to_string())?;
         Ok(f(session))
     }
+}
+
+/// Queue the error held for a run that is ending without a failed `TurnFinished` ahead of
+/// `event`, so it is forwarded rather than dropped (#1275), and return the next event.
+fn forward_held_error(g: &mut CoreInner, event: AgentEvent) -> Option<AgentEvent> {
+    if let Some(text) = g.held_run_error.take() {
+        g.event_queue
+            .push_back(AgentEvent::Native(NativeEvent::Error(text)));
+    }
+    g.event_queue.push_back(event);
+    g.event_queue.pop_front()
 }
