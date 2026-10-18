@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 
 use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::pi_rpc_map::{run_error, PiRunError};
 use super::rpc_handshake::RpcHandshake;
 
 /// How long each `try_recv` gap sleeps before re-polling the record channel.
@@ -71,6 +72,10 @@ pub struct RpcSession {
     /// Set when a record in the current run reports an aborted stop reason;
     /// folded into the next [`RpcStep::RunFinished`] and reset on every run end.
     ended_aborted: bool,
+    /// An assistant error the current run may still retry, surfaced as an
+    /// [`NativeEvent::Error`] just before [`RpcStep::RunFinished`] unless a
+    /// retry or a later assistant message clears it; reset on every run end.
+    pending_error: Option<String>,
     /// Set when `Exited` was read while a [`Self::request`] was in flight; the
     /// next [`Self::next_step`] reports it exactly once and clears this flag.
     exited: bool,
@@ -98,6 +103,7 @@ impl RpcSession {
             prompt_id: None,
             run_active: false,
             ended_aborted: false,
+            pending_error: None,
             exited: false,
             deferred_finish: None,
             image_type_tag: false,
@@ -163,6 +169,7 @@ impl RpcSession {
         self.prompt_id = Some(id);
         self.run_active = true;
         self.ended_aborted = false;
+        self.pending_error = None;
         Ok(())
     }
 
@@ -265,6 +272,7 @@ impl RpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
+            self.pending_error = None;
             self.tool_inputs.clear();
             return RpcStep::Exited;
         }
@@ -274,6 +282,7 @@ impl RpcSession {
             self.run_active = false;
             self.prompt_id = None;
             self.ended_aborted = false;
+            self.pending_error = None;
             self.tool_inputs.clear();
             return RpcStep::RunFinished { aborted };
         }
@@ -293,6 +302,7 @@ impl RpcSession {
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
+                    self.pending_error = None;
                     self.tool_inputs.clear();
                     return RpcStep::Exited;
                 }
@@ -323,6 +333,7 @@ impl RpcSession {
         if mapping.ended_aborted {
             self.ended_aborted = true;
         }
+        fold_pending_error(&mut self.pending_error, value, &mut mapping);
         if mapping.finished {
             let aborted = self.ended_aborted;
             if mapping.events.is_empty() {
@@ -330,6 +341,7 @@ impl RpcSession {
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
+                self.pending_error = None;
                 self.tool_inputs.clear();
                 return Some(RpcStep::RunFinished { aborted });
             }
@@ -366,6 +378,7 @@ impl RpcSession {
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
+                self.pending_error = None;
                 self.tool_inputs.clear();
                 Some(RpcStep::PromptRejected(detail))
             }
@@ -375,6 +388,7 @@ impl RpcSession {
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
+                    self.pending_error = None;
                     self.tool_inputs.clear();
                     Some(RpcStep::RunFinished { aborted: false })
                 } else {
@@ -406,6 +420,31 @@ impl RpcSession {
                 return None;
             }
             std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+}
+
+/// Fold one Pi record's run-error meaning into the pending assistant error.
+/// An assistant error sets `pending`; a retry, a later assistant message, or a
+/// failed run clears it; an extension notice passes through untouched. When
+/// `mapping` finishes the run with an error still pending, that error is
+/// appended as the run's final [`NativeEvent::Error`]. Claude and Cursor
+/// records never carry the Pi types classified here, so they pass through.
+pub(super) fn fold_pending_error(
+    pending: &mut Option<String>,
+    record: &Value,
+    mapping: &mut RpcMapping,
+) {
+    match run_error(record) {
+        Some(PiRunError::Pending(text)) => *pending = Some(text),
+        Some(PiRunError::Clear | PiRunError::Failed(_)) => *pending = None,
+        Some(PiRunError::Notice(_)) | None => {}
+    }
+    if mapping.finished {
+        if let Some(text) = pending.take() {
+            mapping
+                .events
+                .push(AgentEvent::Native(NativeEvent::Error(text)));
         }
     }
 }

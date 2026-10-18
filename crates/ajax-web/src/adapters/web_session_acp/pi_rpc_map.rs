@@ -54,10 +54,81 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
         }
         _ => false,
     };
+    if let Some(PiRunError::Failed(text) | PiRunError::Notice(text)) = run_error(record) {
+        events.push(AgentEvent::Native(NativeEvent::Error(text)));
+    }
     RpcMapping {
         events,
         finished,
         ended_aborted: record_reports_aborted(record),
+    }
+}
+
+/// How one Pi record bears on the error state of the current run. The
+/// assistant error memo itself lives in the session (see
+/// `rpc_session::fold_pending_error`); `Failed` and `Notice` are also emitted
+/// as events by [`map_record`].
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PiRunError {
+    /// An assistant message ended with `stopReason: "error"`. Pi may still
+    /// retry it, so it is only surfaced if the run settles without a retry.
+    Pending(String),
+    /// A retry started or a later assistant message ended, so any pending
+    /// assistant error was superseded.
+    Clear,
+    /// The run itself failed (final retry failure or a failed compaction).
+    Failed(String),
+    /// An extension failed; the run's own outcome is unaffected.
+    Notice(String),
+}
+
+/// The run-error meaning of one Pi record, if any.
+pub(super) fn run_error(record: &Value) -> Option<PiRunError> {
+    match record.get("type").and_then(Value::as_str)? {
+        "message_end" => {
+            let message = record.get("message")?;
+            if message.get("role").and_then(Value::as_str) != Some("assistant") {
+                return None;
+            }
+            match message.get("stopReason").and_then(Value::as_str) {
+                Some("error") => Some(PiRunError::Pending(
+                    string_field(message, "errorMessage")
+                        .unwrap_or_else(|| "assistant message ended with an error".to_string()),
+                )),
+                _ => Some(PiRunError::Clear),
+            }
+        }
+        "auto_retry_start" => Some(PiRunError::Clear),
+        "auto_retry_end" => {
+            if record.get("success").and_then(Value::as_bool) == Some(false) {
+                Some(PiRunError::Failed(
+                    string_field(record, "finalError")
+                        .unwrap_or_else(|| "automatic retry failed".to_string()),
+                ))
+            } else {
+                Some(PiRunError::Clear)
+            }
+        }
+        "compaction_start" => (record.get("reason").and_then(Value::as_str) == Some("overflow"))
+            .then_some(PiRunError::Clear),
+        "compaction_end" => {
+            if record.get("aborted").and_then(Value::as_bool) == Some(true) {
+                return None;
+            }
+            string_field(record, "errorMessage").map(PiRunError::Failed)
+        }
+        "extension_error" => {
+            let path = string_field(record, "extensionPath")
+                .unwrap_or_else(|| "unknown extension".to_string());
+            let event =
+                string_field(record, "event").unwrap_or_else(|| "unknown event".to_string());
+            let error =
+                string_field(record, "error").unwrap_or_else(|| "unknown error".to_string());
+            Some(PiRunError::Notice(format!(
+                "Pi extension {path} failed during {event}: {error}"
+            )))
+        }
+        _ => None,
     }
 }
 

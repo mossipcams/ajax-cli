@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::agent_event::NativeImage;
-use super::agent_event::{AgentEvent, NativeCommand};
+use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::JsonlProcess;
 use super::rpc_client::RpcClientCore;
@@ -21,13 +21,30 @@ use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.mjs");
 
+/// Timeout for the `get_context_usage` request sent before a prompt finish.
+const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
+
 // ponytail: fixed list; the SDK reports per-model effort support, refine later.
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
     super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
-
+/// Context-usage snapshot taken from the sidecar before the turn-finished event:
+/// `totalTokens` / `maxTokens` from the SDK's `getContextUsage()`. Returns
+/// nothing when the request fails, a field is missing, or either value is 0,
+/// so a cancelled turn never resets the live context meter.
+fn claude_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
+    let data = session
+        .request("get_context_usage", json!({}), USAGE_TIMEOUT)
+        .ok()?;
+    let used = data.get("totalTokens")?.as_u64()?;
+    let size = data.get("maxTokens")?.as_u64()?;
+    if used == 0 || size == 0 {
+        return None;
+    }
+    Some(AgentEvent::Native(NativeEvent::Usage { used, size }))
+}
 pub struct ClaudeSdkClient {
     core: RpcClientCore,
     // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
@@ -119,8 +136,7 @@ impl ClaudeSdkClient {
             .collect();
 
         let session = RpcSession::new(process, handshake, map_sdk_message);
-        let core = RpcClientCore::new(session, None);
-        // The mapper emits usage from Claude's result message.
+        let core = RpcClientCore::new(session, Some(claude_usage_hook));
         core.set_available_commands(commands);
 
         Ok(ClaudeSdkClient {

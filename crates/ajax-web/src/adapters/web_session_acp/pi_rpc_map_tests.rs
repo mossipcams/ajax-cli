@@ -399,3 +399,102 @@ fn dialog_without_id_maps_to_nothing() {
     );
     assert!(mapping.events.is_empty());
 }
+
+/// The error text of the single `NativeEvent::Error` in `events`, failing on
+/// any other event count or shape.
+fn sole_error(events: &[AgentEvent]) -> &str {
+    let [event] = events else {
+        panic!("expected exactly one event, got {events:?}");
+    };
+    match native_event(event) {
+        NativeEvent::Error(text) => text.as_str(),
+        other => panic!("expected an Error event, got {other:?}"),
+    }
+}
+
+#[test]
+fn assistant_error_message_end_is_held_not_emitted_1335() {
+    // The assistant error alone is not an event: Pi may still retry it.
+    let record = serde_json::json!({
+        "type": "message_end",
+        "message": { "role": "assistant", "stopReason": "error", "errorMessage": "529 overloaded" },
+    });
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert!(mapping.events.is_empty());
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+}
+
+#[test]
+fn auto_retry_end_failure_emits_final_error_1335() {
+    let record = serde_json::json!({
+        "type": "auto_retry_end",
+        "success": false,
+        "attempt": 3,
+        "finalError": "529 overloaded after 3 attempts",
+    });
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert_eq!(
+        sole_error(&mapping.events),
+        "529 overloaded after 3 attempts"
+    );
+    assert!(!mapping.finished);
+}
+
+#[test]
+fn auto_retry_end_success_and_retry_start_emit_nothing_1335() {
+    for record in [
+        serde_json::json!({ "type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 2000, "errorMessage": "529 overloaded" }),
+        serde_json::json!({ "type": "auto_retry_end", "success": true, "attempt": 2 }),
+    ] {
+        assert!(
+            map_record(&record, SESSION_ID).events.is_empty(),
+            "{record}"
+        );
+    }
+}
+
+#[test]
+fn compaction_end_error_emits_error_1335() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "overflow",
+        "aborted": false,
+        "willRetry": false,
+        "errorMessage": "compaction model unavailable",
+    });
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert_eq!(sole_error(&mapping.events), "compaction model unavailable");
+}
+
+#[test]
+fn aborted_compaction_emits_nothing_1335() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "overflow",
+        "aborted": true,
+        "willRetry": false,
+        "errorMessage": "cancelled by user",
+    });
+
+    assert!(map_record(&record, SESSION_ID).events.is_empty());
+}
+
+#[test]
+fn extension_error_names_extension_and_error_1335() {
+    let record = serde_json::json!({
+        "type": "extension_error",
+        "extensionPath": "/p/ext.ts",
+        "event": "tool_call",
+        "error": "boom",
+    });
+    let mapping = map_record(&record, SESSION_ID);
+    let text = sole_error(&mapping.events);
+
+    assert!(text.contains("boom"), "{text}");
+    assert!(text.contains("/p/ext.ts"), "{text}");
+    assert!(!mapping.finished);
+}

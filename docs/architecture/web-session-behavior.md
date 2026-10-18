@@ -639,9 +639,12 @@ whole transcript inside `session/load` before responding.
   Reconnecting label, before the head controls. When task attention hides the
   head line, the meter appears once at the bottom of the live head instead.
 At 90%+ the indicator uses the warning tone. Pi reports context usage from
-`get_session_stats` (2 second cap) after each finished prompt; Claude does likewise
-from its SDK `result` message, delivered before the finish — and a cancelled turn's
-all-zero usage is skipped so cancelling does not reset the meter.
+`get_session_stats` (2 second cap) after each finished prompt; Claude reports it
+from the sidecar's `get_context_usage` (the SDK's `getContextUsage()`: totalTokens /
+maxTokens, 2 second cap) after each finished prompt, mirroring Pi; the result
+message's usage is not used because it sums every API call in the turn
+([#1334](https://github.com/mossipcams/ajax-cli/issues/1334)). Zero values are skipped
+so a cancelled turn does not reset the meter.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
   `turn_usage` wire event. Cursor's sidecar reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /
@@ -709,6 +712,20 @@ all-zero usage is skipped so cancelling does not reset the meter.
   blocks before `SessionClient`.
 - The adapter layer must not name slice wire types; the guard test
   `web_session_acp_adapter_does_not_import_slice_wire_types` enforces this.
+- The Claude sidecar runs the Agent SDK with `systemPrompt: { type: "preset",
+  preset: "claude_code" }`; an omitted `systemPrompt` is an empty prompt in the
+  SDK, so the preset must be set explicitly
+  ([#1333](https://github.com/mossipcams/ajax-cli/issues/1333)).
+- Pi run errors: an assistant message ending with stopReason `"error"` is held by
+  `RpcSession` and surfaced as one error before the run finishes, unless Pi retries
+  it (`auto_retry_start`, or an overflow compaction). `auto_retry_end` with
+  `success: false`, a failed `compaction_end`, and `extension_error` each surface
+  one operator-visible error
+  ([#1335](https://github.com/mossipcams/ajax-cli/issues/1335)).
+- A native harness exit reports "Agent process exited"; ACP exits keep "ACP
+  process exited"; both are deduped by the pump and explained in the browser as
+  'The agent stopped. It will restart when you reconnect.'
+  ([#1336](https://github.com/mossipcams/ajax-cli/issues/1336)).
 
 ## Permission persistence
 

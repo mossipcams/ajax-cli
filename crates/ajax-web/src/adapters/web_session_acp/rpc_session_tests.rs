@@ -15,7 +15,7 @@ use super::pi_rpc_map::map_record;
 use super::rpc_handshake::RpcHandshake;
 use serde_json::{json, Value};
 
-use super::rpc_session::{carry_tool_inputs, RpcSession, RpcStep};
+use super::rpc_session::{carry_tool_inputs, fold_pending_error, RpcSession, RpcStep};
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -311,4 +311,127 @@ fn carry_tool_inputs_ignores_non_object_inputs_and_foreign_ids() {
     // c2's entry is still pending: no terminal update arrived for it.
     assert_eq!(memo.len(), 1);
     assert_eq!(memo.get("c2"), Some(&object_input));
+}
+
+/// Fold a whole Pi record sequence through the mapper and the pending-error
+/// memo, returning every event in the order a session would surface them.
+fn fold_pi_records(records: &[Value]) -> Vec<AgentEvent> {
+    let mut pending = None;
+    let mut surfaced = Vec::new();
+    for record in records {
+        let mut mapping = map_record(record, "acp-session-1");
+        fold_pending_error(&mut pending, record, &mut mapping);
+        surfaced.extend(mapping.events);
+    }
+    surfaced
+}
+
+fn assistant_error(message: &str) -> Value {
+    json!({
+        "type": "message_end",
+        "message": { "role": "assistant", "stopReason": "error", "errorMessage": message },
+    })
+}
+
+fn assistant_stop(text: &str) -> Value {
+    json!({
+        "type": "message_end",
+        "message": { "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": text }] },
+    })
+}
+
+fn error_texts(events: &[AgentEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Native(NativeEvent::Error(text)) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn unretried_assistant_error_flushes_once_before_settle_1335() {
+    let events = fold_pi_records(&[
+        assistant_error("401 invalid api key"),
+        json!({ "type": "agent_settled", "aborted": false }),
+    ]);
+
+    assert_eq!(error_texts(&events), vec!["401 invalid api key"]);
+    // The flushed error is the last event of the run, ahead of the finish.
+    assert!(matches!(
+        events.last(),
+        Some(AgentEvent::Native(NativeEvent::Error(_)))
+    ));
+}
+
+#[test]
+fn retried_assistant_error_that_succeeds_is_silent_1335() {
+    let events = fold_pi_records(&[
+        assistant_error("529 overloaded"),
+        json!({ "type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 2000, "errorMessage": "529 overloaded" }),
+        assistant_stop("ok"),
+        json!({ "type": "auto_retry_end", "success": true, "attempt": 1 }),
+        json!({ "type": "agent_settled", "aborted": false }),
+    ]);
+
+    assert!(error_texts(&events).is_empty(), "{events:?}");
+}
+
+#[test]
+fn overflow_compaction_retry_that_succeeds_is_silent_1335() {
+    let events = fold_pi_records(&[
+        assistant_error("prompt is too long"),
+        json!({ "type": "compaction_start", "reason": "overflow" }),
+        json!({ "type": "compaction_end", "reason": "overflow", "aborted": false, "willRetry": true }),
+        assistant_stop("ok"),
+        json!({ "type": "agent_settled", "aborted": false }),
+    ]);
+
+    assert!(error_texts(&events).is_empty(), "{events:?}");
+}
+
+#[test]
+fn exhausted_auto_retry_emits_only_final_error_1335() {
+    let events = fold_pi_records(&[
+        assistant_error("529 overloaded"),
+        json!({ "type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 2000, "errorMessage": "529 overloaded" }),
+        assistant_error("529 overloaded"),
+        json!({ "type": "auto_retry_start", "attempt": 2, "maxAttempts": 3, "delayMs": 4000, "errorMessage": "529 overloaded" }),
+        assistant_error("529 overloaded"),
+        json!({ "type": "auto_retry_end", "success": false, "attempt": 3, "finalError": "529 overloaded after 3 attempts" }),
+        json!({ "type": "agent_settled", "aborted": false }),
+    ]);
+
+    assert_eq!(
+        error_texts(&events),
+        vec!["529 overloaded after 3 attempts"]
+    );
+}
+
+#[test]
+fn aborted_run_with_no_error_emits_no_error_1335() {
+    let events = fold_pi_records(&[
+        json!({
+            "type": "message_end",
+            "message": { "role": "assistant", "stopReason": "aborted", "content": [] },
+        }),
+        json!({ "type": "agent_settled", "aborted": true }),
+    ]);
+
+    assert!(error_texts(&events).is_empty(), "{events:?}");
+}
+
+#[test]
+fn extension_error_does_not_cancel_pending_assistant_error_1335() {
+    let events = fold_pi_records(&[
+        assistant_error("500 internal"),
+        json!({ "type": "extension_error", "extensionPath": "/p/ext.ts", "event": "tool_call", "error": "boom" }),
+        json!({ "type": "agent_settled", "aborted": false }),
+    ]);
+    let texts = error_texts(&events);
+
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert!(texts[0].contains("boom") && texts[0].contains("/p/ext.ts"));
+    assert_eq!(texts[1], "500 internal");
 }

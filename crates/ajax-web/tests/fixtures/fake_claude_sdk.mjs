@@ -17,7 +17,8 @@
 //   - otherwise: system/init (first turn only), stream_event, assistant,
 //     result success.
 // Every control-method call is also pushed as {type:'fake_call', method,
-// args} so tests can observe the sidecar's dispatch.
+// args} so tests can observe the sidecar's dispatch. The initial `query()`
+// call is recorded as fake_call 'queryOptions' with its options.
 
 const SLOW_TICK_MS = 40;
 const MODELS = [
@@ -64,6 +65,7 @@ export function query({ prompt, options = {} }) {
   const sessionId = options.resume || options.sessionId || "fake-session";
   const model = options.model || "haiku";
   let systemEmitted = false;
+  fakeCall("queryOptions", [options]);
   let interrupted = false;
   let closed = false;
 

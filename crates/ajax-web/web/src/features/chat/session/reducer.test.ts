@@ -725,6 +725,12 @@ describe("explainAcpError", () => {
     expect(explainAcpError("acp request timed out")).toMatch(/did not answer in time/i);
   });
 
+  it("maps the native agent exit message to the same copy", () => {
+    expect(explainAcpError("Agent process exited")).toMatch(
+      /restart when you reconnect/i,
+    );
+  });
+
   it("passes through already-human messages", () => {
     const message = "Lost the session connection. Reopen the task to try again.";
     expect(explainAcpError(message)).toBe(message);

@@ -550,8 +550,37 @@ fn native_error_matches_acp_error() {
 fn native_exit_matches_acp_exit() {
     let native = drain_one(AgentEvent::Native(NativeEvent::Exited));
     let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Exited));
-    assert_outcomes_match(native.clone(), acp);
+    assert_eq!(native.host_exited, acp.host_exited);
     assert!(native.host_exited);
+}
+
+#[test]
+fn native_exit_reports_agent_process_exited_1336() {
+    let native = drain_one(AgentEvent::Native(NativeEvent::Exited));
+    assert!(
+        native.host_exited,
+        "native exit must mark the host as exited"
+    );
+    assert_eq!(
+        native.events,
+        vec![SessionServerEvent::Error {
+            message: "Agent process exited".to_string()
+        }],
+        "a native harness exit must be reported as an agent exit, not an ACP one"
+    );
+
+    let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Exited));
+    assert!(
+        acp.host_exited,
+        "an ACP host exit must mark the host as exited"
+    );
+    assert_eq!(
+        acp.events,
+        vec![SessionServerEvent::Error {
+            message: "ACP process exited".to_string()
+        }],
+        "the ACP host exit text is unchanged"
+    );
 }
 
 /// A source whose handshake advertised one slash command, yielded on the
