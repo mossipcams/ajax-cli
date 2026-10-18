@@ -132,6 +132,7 @@ pub fn status_response(runner: &dyn TrainingCommandRunner) -> Response {
                 "state": status.state,
                 "runtime_up": status.runtime_up,
                 "active_profile": status.active_profile,
+                "profiles": status.profiles,
                 "run": status.run,
                 "generation": status.generation,
                 "profile_details": status.profile_details,

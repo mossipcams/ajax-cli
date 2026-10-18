@@ -67,11 +67,9 @@ function busyText(action: PendingAction): string {
 
 export default function TrainingModal({ open, onOpenChange }: Props) {
   const { status, error, refresh } = useTrainingStatus(open);
-  const [models, setModels] = useState<trainingApi.TrainingModels | null>(null);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [active, setActive] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [profilesError, setProfilesError] = useState<string | null>(null);
   // Mirrors `open` for event handlers: a POST that rejects after the user
   // closed the dialog must not surface a stale error banner on next open.
   const openRef = useRef(open);
@@ -80,28 +78,10 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void trainingApi
-      .fetchTrainingModels()
-      .then((result) => {
-        if (cancelled) return;
-        setModels(result);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setProfilesError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  useEffect(() => {
     if (!open) {
       setPending(null);
       setActive(null);
       setActionError(null);
-      setProfilesError(null);
     }
   }, [open]);
 
@@ -111,8 +91,9 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
     ? status.state.slice("train:".length).split(" ")[0]
     : null;
   const details = status?.profile_details ?? null;
-  const activeProfile = models?.active_profile ?? status?.active_profile ?? null;
-  const runtimeUp = models?.running ?? status?.runtime_up === true;
+  const profiles = status?.profiles ?? [];
+  const activeProfile = status?.active_profile ?? null;
+  const runtimeUp = status?.runtime_up === true;
   const busy = active !== null;
   const runRunning = Boolean(run?.running);
   const genRunning = Boolean(generation && generation.running);
@@ -213,7 +194,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
             </button>
           </div>
 
-          {error ? (
+          {error && !status ? (
             <p
               role="alert"
               className="training-banner"
@@ -287,9 +268,9 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 switchBlocked={switchBlocked}
                 switchingKind={active?.kind === "switch" ? "switch" : null}
                 switchingProfile={active?.kind === "switch" ? active.profile : null}
-                profiles={models?.profiles ?? []}
+                profiles={profiles}
                 details={details}
-                profilesError={profilesError}
+                profilesError={error}
                 onServe={armServe}
                 onServeStop={armServeStop}
                 onSwitch={armSwitch}

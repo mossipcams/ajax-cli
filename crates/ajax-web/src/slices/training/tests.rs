@@ -152,6 +152,7 @@ fn status_parses_null_run_and_generation() {
     assert!(value["run"].is_null());
     assert!(value["generation"].is_null());
     assert!(value["active_profile"].is_null());
+    assert_eq!(value["profiles"][0], "qwen3-4b");
     assert!(value["profile_details"].is_null());
 }
 

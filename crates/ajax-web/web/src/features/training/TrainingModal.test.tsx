@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import TrainingModal from "./TrainingModal";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
-const modelsRoute: { body: unknown; status?: number } = { body: {} };
 let postResponse: { body: unknown; status?: number } = { body: {} };
 const postCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
 
@@ -22,9 +21,6 @@ vi.stubGlobal(
     if (url.includes("/api/training/status")) {
       return jsonResponse(statusRoute.body, statusRoute.status);
     }
-    if (url.includes("/api/training/models")) {
-      return jsonResponse(modelsRoute.body, modelsRoute.status);
-    }
     throw new Error(`unmocked route ${url}`);
   }),
 );
@@ -39,21 +35,15 @@ function jsonResponse(body: unknown, status?: number): Response {
 const idleStatus = {
   ok: true,
   state: "idle",
-  runtime_up: true,
+  runtime_up: false,
   active_profile: null,
+  profiles: ["atomic", "swift-1.5"],
   run: null,
   generation: null,
   profile_details: {
     atomic: { label: "Atomic", model: "qwen3-8b", serving: "ctx 122880, 2 slots" },
     "swift-1.5": { label: "Swift 1.5", model: "qwen3-4b", serving: "" },
   },
-};
-
-const defaultModels = {
-  ok: true,
-  profiles: ["atomic", "swift-1.5"],
-  active_profile: null,
-  running: false,
 };
 
 const onOpenChange = vi.fn();
@@ -68,8 +58,6 @@ beforeEach(() => {
   postCalls.length = 0;
   statusRoute.body = idleStatus;
   statusRoute.status = undefined;
-  modelsRoute.body = defaultModels;
-  modelsRoute.status = undefined;
   postResponse = { body: { ok: true } };
 });
 
@@ -148,13 +136,7 @@ describe("TrainingModal", () => {
   });
 
   it("renders the serving profile with a stop action", async () => {
-    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
-    modelsRoute.body = {
-      ok: true,
-      profiles: ["atomic", "swift-1.5"],
-      active_profile: "atomic",
-      running: true,
-    };
+    statusRoute.body = { ...idleStatus, active_profile: "atomic", runtime_up: true };
     openModal();
     expect(await screen.findByTestId("training-hero")).toHaveTextContent("Runtime ready");
     expect(screen.getByText("serving")).toBeTruthy();
@@ -241,8 +223,7 @@ describe("TrainingModal", () => {
   });
 
   it("sends no mutating request without the confirm bar step", async () => {
-    statusRoute.body = { ...idleStatus, active_profile: "llama" };
-    modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
+    statusRoute.body = { ...idleStatus, active_profile: "llama", profiles: ["llama", "unsloth"] };
     openModal();
 
     // Profile switch is two-step through the shared confirm bar.
@@ -270,8 +251,12 @@ describe("TrainingModal", () => {
   });
 
   it("disables profile switching while busy and says why", async () => {
-    statusRoute.body = { ...idleStatus, state: "train:lfm-train" };
-    modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
+    statusRoute.body = {
+      ...idleStatus,
+      state: "train:lfm-train",
+      active_profile: "llama",
+      profiles: ["llama", "unsloth"],
+    };
     openModal();
     expect(await screen.findByRole("button", { name: /unsloth/ })).toBeDisabled();
     expect(
@@ -324,8 +309,7 @@ describe("TrainingModal", () => {
   });
 
   it("cancelling an armed profile switch sends no request", async () => {
-    statusRoute.body = { ...idleStatus, active_profile: "llama" };
-    modelsRoute.body = { ok: true, profiles: ["llama", "unsloth"], active_profile: "llama", running: false };
+    statusRoute.body = { ...idleStatus, active_profile: "llama", profiles: ["llama", "unsloth"] };
     openModal();
 
     fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
@@ -340,8 +324,7 @@ describe("TrainingModal", () => {
   });
 
   it("does not surface a stale action error when the dialog closes while a request fails", async () => {
-    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
-    modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
+    statusRoute.body = { ...idleStatus, active_profile: "atomic", profiles: ["atomic"] };
 
     const routeMock = globalThis.fetch as unknown as FetchMock;
     let settlePost: (response: Response) => void = () => undefined;
@@ -391,8 +374,7 @@ describe("TrainingModal", () => {
   });
 
   it("does not refetch status when the dialog closes while an in-flight action completes", async () => {
-    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
-    modelsRoute.body = { ok: true, profiles: ["atomic"], active_profile: "atomic", running: false };
+    statusRoute.body = { ...idleStatus, active_profile: "atomic", profiles: ["atomic"] };
 
     const routeMock = globalThis.fetch as unknown as FetchMock;
     let settlePost: (response: Response) => void = () => undefined;
@@ -443,6 +425,18 @@ const calls = (routeMock as unknown as {
     }
   });
 
+  it("loads profiles from the single status fetch and never requests the models endpoint", async () => {
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockClear();
+    statusRoute.body = { ...idleStatus, active_profile: "atomic", runtime_up: true };
+    openModal();
+    await screen.findByTestId("training-state");
+
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("/api/training/status"))).toBe(true);
+    expect(urls.some((url) => url.includes("/api/training/models"))).toBe(false);
+  });
+
   it("shows a compact error banner for host-unreachable responses", async () => {
     statusRoute.body = { ok: false, error: "host unreachable" };
     statusRoute.status = 502;
@@ -450,6 +444,31 @@ const calls = (routeMock as unknown as {
     expect(await screen.findByTestId("training-status-error")).toHaveTextContent(
       "host unreachable",
     );
+  });
+
+  it("shows the status fetch error in the model list banner after a later poll fails, then clears it", async () => {
+    openModal();
+    await screen.findByTestId("training-state");
+    expect(screen.getByRole("heading", { name: "llama.cpp & profiles" })).toBeTruthy();
+    expect(screen.queryByTestId("training-profiles-error")).toBeNull();
+
+    statusRoute.body = { ok: false, error: "training host command failed" };
+    statusRoute.status = 502;
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+    const banner = await screen.findByTestId("training-profiles-error");
+    expect(banner.textContent?.startsWith("Model list unavailable:")).toBe(true);
+    expect(banner.textContent).toContain("training host command failed");
+    expect(banner.textContent).not.toContain("<");
+    expect(screen.queryByTestId("training-status-error")).toBeNull();
+
+    statusRoute.body = idleStatus;
+    statusRoute.status = undefined;
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+    await waitFor(() => expect(screen.queryByTestId("training-profiles-error")).toBeNull());
   });
 
   it("shows an action error banner when a confirmed request fails with 409", async () => {

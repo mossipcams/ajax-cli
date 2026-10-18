@@ -1,4 +1,6 @@
+use std::io::{self, Read};
 use std::process::{Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub const SSH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -41,31 +43,60 @@ impl TrainingCommandRunner for SshTrainingRunner {
         for arg in args {
             command.arg(arg);
         }
-        command.stdout(Stdio::piped()).stderr(Stdio::null());
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = command.spawn().map_err(|_| TrainingRunError::Failed)?;
+        // Drain both pipes while waiting so a large stdout cannot block the child.
+        let stdout_reader = drain(child.stdout.take());
+        let stderr_reader = drain(child.stderr.take());
         let deadline = Instant::now() + SSH_TIMEOUT;
-        loop {
+        let status = loop {
             match child.try_wait().map_err(|_| TrainingRunError::Failed)? {
-                Some(_) => break,
+                Some(status) => break status,
                 None => {
                     if Instant::now() >= deadline {
                         let _ = child.kill();
+                        let _ = child.wait();
                         return Err(TrainingRunError::Timeout);
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
-        }
+        };
 
-        let output = child
-            .wait_with_output()
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| TrainingRunError::Failed)?
             .map_err(|_| TrainingRunError::Failed)?;
-        if !output.status.success() {
+        let stderr = stderr_reader
+            .join()
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
+            if let Some(line) = stderr.lines().rev().find(|line| !line.trim().is_empty()) {
+                tracing::warn!(
+                    host = %self.host,
+                    status = %status,
+                    stderr = %line.trim(),
+                    "training host command failed"
+                );
+            }
             return Err(TrainingRunError::Failed);
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
+}
+
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> JoinHandle<io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(mut pipe) = pipe {
+            pipe.read_to_end(&mut buffer)?;
+        }
+        Ok(buffer)
+    })
 }
 
 #[cfg(test)]
