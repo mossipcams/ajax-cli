@@ -54,6 +54,27 @@ pub(super) fn judge(recorded: &str, live: Option<&str>) -> Verdict {
     }
 }
 
+/// Returns the pid of a foreign host's child that is still the same live process
+/// recorded on the run row, or `None` when acquire must not be blocked.
+pub(super) fn foreign_live_child(
+    child: Option<(i64, i64)>,
+    child_started: Option<&str>,
+    owner_boot_id: Option<&str>,
+    host_boot_id: &str,
+) -> Option<i64> {
+    let (pid, _) = child?;
+    let owner = owner_boot_id?;
+    if owner == host_boot_id {
+        return None;
+    }
+    let recorded = child_started?;
+    if judge(recorded, start_token(pid).as_deref()) == Verdict::Same {
+        Some(pid)
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(super) enum Termination {

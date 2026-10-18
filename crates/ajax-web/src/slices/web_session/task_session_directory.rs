@@ -25,7 +25,7 @@ async fn send_command<T>(
 use crate::adapters::web_session_store::{self, prompt_ledger::PromptPhase};
 use ajax_core::models::AgentClient;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex},
     time::Instant,
@@ -43,17 +43,20 @@ pub(crate) struct TaskSessionDirectory {
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
     headless_scanned: std::sync::atomic::AtomicBool,
+    headless_handed_out: Mutex<HashSet<String>>,
 }
 
 impl TaskSessionDirectory {
     pub fn new(storage: SessionStorage) -> Arc<Self> {
-        let ownership = std::sync::Arc::new(ExecutionOwnership::new(storage.clone()));
+        let ownership = std::sync::Arc::new(ExecutionOwnership::new(storage));
+        let storage = ownership.storage().clone();
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             ownership,
             storage,
             report_activity: Mutex::new(None),
             headless_scanned: std::sync::atomic::AtomicBool::new(false),
+            headless_handed_out: Mutex::new(HashSet::new()),
         })
     }
 
@@ -61,21 +64,38 @@ impl TaskSessionDirectory {
         *self.report_activity.lock().unwrap() = Some(report);
     }
 
-    /// Claims the execution lease (running the one-time orphan sweep and startup recovery) and returns, once per process, the handles whose queued prompts should be dispatched without a browser attached. Later calls return an empty list. Fails like `ensure_owner` when a live foreign host holds the lease.
+    /// Claims the execution lease (running the one-time orphan sweep and startup recovery) and returns, once per process, the handles whose queued prompts should be dispatched without a browser attached. An incomplete scan leaves the directory rescannable: previously handed-out handles are filtered out of every later result, and after a complete scan every later call returns an empty list. Fails like `ensure_owner` when a live foreign host holds the lease.
     pub(crate) fn startup_dispatch_handles(&self) -> Result<Vec<String>, String> {
         self.ownership.ensure_owner()?;
         self.report_recovered_turns();
         if self
             .headless_scanned
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
+            .load(std::sync::atomic::Ordering::SeqCst)
         {
             return Ok(Vec::new());
         }
-        Ok(super::startup_recovery::queued_prompt_handles(
+        let scan = super::startup_recovery::queued_prompt_handles(
             &self.storage.registry_store(),
             &self.storage.state_dir,
             self.ownership.boot_id(),
-        ))
+        );
+        let mut handed_out = self.headless_handed_out.lock().unwrap();
+        let fresh: Vec<String> = scan
+            .handles
+            .into_iter()
+            .filter(|handle| handed_out.insert(handle.clone()))
+            .collect();
+        if scan.complete {
+            self.headless_scanned
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(fresh)
+    }
+
+    /// True once a complete startup dispatch scan has run; the headless runtime checks this to stop rescan attempts.
+    pub(crate) fn headless_scan_complete(&self) -> bool {
+        self.headless_scanned
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
     /// Counts the chat's prompts that are not yet done (ledger entries in the
     /// Queued or Dispatching phase). A ledger load error reports 1 so a headless
@@ -110,15 +130,30 @@ impl TaskSessionDirectory {
         self.ownership.boot_id().to_owned()
     }
 
+    #[cfg(test)]
+    pub(crate) fn execution_storages_for_test(&self) -> [&SessionStorage; 2] {
+        [&self.storage, self.ownership.storage()]
+    }
+
+    /// Test seed: put recovered handles back so heartbeat reporting can be exercised.
+    #[cfg(test)]
+    pub(crate) fn requeue_recovered_handles_for_test(&self, handles: Vec<String>) {
+        self.ownership.requeue_recovered_handles(handles);
+    }
+
     /// Report the turns that startup recovery interrupted as failed, so a restart never leaves a task on "Agent working" (#1176).
-    /// Handles stay pending until an activity reporter is wired.
+    /// A handle whose report returns false is requeued and retried on the next heartbeat.
     fn report_recovered_turns(&self) {
         let Some(report) = self.report_activity_for_spawn() else {
             return;
         };
+        let mut failed = Vec::new();
         for handle in self.ownership.take_recovered_handles() {
-            let _ = report(&handle, super::SessionActivity::TurnFailed);
+            if !report(&handle, super::SessionActivity::TurnFailed) {
+                failed.push(handle);
+            }
         }
+        self.ownership.requeue_recovered_handles(failed);
     }
 
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {

@@ -11,7 +11,9 @@ impl TaskSessionState {
         let mut next = self.prompts.prompt_ledger.clone();
         update(&mut next);
 
-        let filtered = self.filter_events_for_log(events);
+        // Retried events have already been filtered; keep them ahead of this commit's events.
+        let mut filtered = self.unpersisted.clone();
+        filtered.extend(self.filter_events_for_log(events));
 
         crate::adapters::web_session_store::prompt_ledger::try_persist_with_events(
             &self.storage.registry_store(),
@@ -25,6 +27,8 @@ impl TaskSessionState {
         })?;
 
         self.prompts.prompt_ledger = next;
+        self.unpersisted.clear();
+        self.report_committed_events(&filtered);
         self.log.append(filtered);
 
         Ok(())

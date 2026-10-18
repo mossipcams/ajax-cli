@@ -18,8 +18,10 @@ pub(crate) const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
 const STALE_AFTER_MS: i64 = 30_000;
 
 impl ExecutionOwnership {
-    pub(crate) fn new(storage: SessionStorage) -> Self {
+    pub(crate) fn new(mut storage: SessionStorage) -> Self {
         let boot_id = random_boot_id();
+        // Each host arms its own shared fence only after a successful claim.
+        storage.owner_fence = Default::default();
         Self {
             storage,
             boot_id,
@@ -33,9 +35,19 @@ impl ExecutionOwnership {
         &self.boot_id
     }
 
+    pub(crate) fn storage(&self) -> &SessionStorage {
+        &self.storage
+    }
+
     /// Takes the handles whose turns startup recovery interrupted, for activity reporting.
     pub(crate) fn take_recovered_handles(&self) -> Vec<String> {
         std::mem::take(&mut *self.recovered_handles.lock().unwrap())
+    }
+
+    /// Puts recovered handles back for the next activity-reporting pass, so a
+    /// turn whose report failed is retried on the next heartbeat.
+    pub(crate) fn requeue_recovered_handles(&self, handles: Vec<String>) {
+        self.recovered_handles.lock().unwrap().extend(handles);
     }
 
     #[cfg(test)]
@@ -53,7 +65,7 @@ impl ExecutionOwnership {
 
     /// Attempts to claim (or re-claim) the execution owner lease for this
     /// registry. Fails only when a live foreign process holds it. The first
-    /// successful claim in this process also runs the one-time orphan sweep
+    /// successful claim in this process also runs the orphan sweep until complete
     /// (`orphan_sweep::sweep_once`), terminating harness children left behind
     /// by previous hosts, and then the startup recovery that interrupts prompts
     /// left `Dispatching` by dead hosts. On success
@@ -65,17 +77,18 @@ impl ExecutionOwnership {
         let pid = std::process::id() as i64;
         match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), STALE_AFTER_MS) {
             Ok(OwnerClaim::Acquired { .. }) => {
+                let _ = self.storage.owner_fence.set(self.boot_id.clone());
                 self.lost.store(false, Ordering::SeqCst);
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
-                self.recovered_handles
-                    .lock()
-                    .unwrap()
-                    .extend(super::orphan_sweep::sweep_once(
-                        &store,
+                self.recovered_handles.lock().unwrap().extend(
+                    super::orphan_sweep::sweep_once(
+                        &self.storage.registry_store(),
                         &self.storage.state_dir,
                         &self.boot_id,
-                    ));
+                    )
+                    .recovered_handles,
+                );
                 Ok(())
             }
             Ok(OwnerClaim::HeldBy {
@@ -87,15 +100,17 @@ impl ExecutionOwnership {
                 // check always passes and the takeover does not wait STALE_AFTER_MS.
                 match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), -1) {
                     Ok(OwnerClaim::Acquired { .. }) => {
+                        let _ = self.storage.owner_fence.set(self.boot_id.clone());
                         self.lost.store(false, Ordering::SeqCst);
                         self.consecutive_heartbeat_failures
                             .store(0, Ordering::SeqCst);
                         self.recovered_handles.lock().unwrap().extend(
                             super::orphan_sweep::sweep_once(
-                                &store,
+                                &self.storage.registry_store(),
                                 &self.storage.state_dir,
                                 &self.boot_id,
-                            ),
+                            )
+                            .recovered_handles,
                         );
                         Ok(())
                     }
@@ -119,10 +134,13 @@ impl ExecutionOwnership {
             Ok(())
         }
     }
-    /// Renews the lease. If ownership was already lost, each tick attempts a
-    /// re-claim instead of doing nothing: recovery happens here (or on the next
-    /// acquire) as soon as the lease is free, stale, or held by a process that
-    /// is gone; while a live foreign host holds it, `lost` stays set.
+    /// Renews the lease. A healthy heartbeat also retries the orphan sweep in
+    /// case the startup sweep was incomplete; completed sweeps are no-ops.
+    ///
+    /// If ownership was already lost, each tick attempts a re-claim instead of
+    /// doing nothing: recovery happens here (or on the next acquire) as soon as
+    /// the lease is free, stale, or held by a process that is gone; while a
+    /// live foreign host holds it, `lost` stays set.
     pub(crate) fn heartbeat(&self) {
         if self.lost.load(Ordering::SeqCst) {
             match self.try_claim() {
@@ -141,6 +159,17 @@ impl ExecutionOwnership {
             Ok(true) => {
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
+                // A sweep that failed at startup (or during an earlier
+                // re-claim) is retried here; once complete in this process
+                // this is a cheap no-op.
+                self.recovered_handles.lock().unwrap().extend(
+                    super::orphan_sweep::sweep_once(
+                        &self.storage.registry_store(),
+                        &self.storage.state_dir,
+                        &self.boot_id,
+                    )
+                    .recovered_handles,
+                );
             }
             Ok(false) => {
                 // Another boot owns the lease now.

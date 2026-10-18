@@ -154,6 +154,8 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
+    // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
+    pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
@@ -179,30 +181,48 @@ impl TaskSessionState {
         self.holders.reset_to_one();
     }
 
-    /// Flushes pending activity and drops duplicate spawn errors; reports the
-    /// rest as evidence the ACP client is alive.
+    /// Drops duplicate spawn errors without changing evidence or reporting activity.
     pub(super) fn filter_events_for_log(
-        &mut self,
+        &self,
         events: Vec<SessionServerEvent>,
     ) -> Vec<SessionServerEvent> {
+        let spawn_error_id = |event: &SessionServerEvent| match event {
+            SessionServerEvent::Error { message } => {
+                SessionError::spawn_error_id(self.generation, message)
+            }
+            _ => None,
+        };
+        let mut last_spawn_error_id = self
+            .unpersisted
+            .iter()
+            .rev()
+            .find_map(spawn_error_id)
+            .or_else(|| self.evidence.last_logged_spawn_error_id.clone());
+        events
+            .into_iter()
+            .filter(|event| {
+                let Some(id) = spawn_error_id(event) else {
+                    return true;
+                };
+                if last_spawn_error_id.as_ref() == Some(&id) {
+                    return false;
+                }
+                last_spawn_error_id = Some(id);
+                true
+            })
+            .collect()
+    }
+
+    pub(super) fn report_committed_events(&mut self, events: &[SessionServerEvent]) {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
-
-        let mut filtered = Vec::with_capacity(events.len());
         for event in events {
-            if self
-                .evidence
-                .should_skip_duplicate_spawn_error(self.generation, &event)
-            {
-                continue;
-            }
-
+            // Advance the dedupe checkpoint only for durable events.
             self.evidence
-                .report_activity_for_event(&self.qualified_handle, &event);
-            filtered.push(event);
+                .should_skip_duplicate_spawn_error(self.generation, event);
+            self.evidence
+                .report_activity_for_event(&self.qualified_handle, event);
         }
-
-        filtered
     }
 
     pub(super) fn append_to_log(
@@ -213,7 +233,9 @@ impl TaskSessionState {
             return Ok(());
         }
 
-        let filtered = self.filter_events_for_log(events);
+        let events = self.filter_events_for_log(events);
+        let mut filtered = std::mem::take(&mut self.unpersisted);
+        filtered.extend(events);
         if filtered.is_empty() {
             return Ok(());
         }
@@ -225,11 +247,13 @@ impl TaskSessionState {
             agent_client_name(self.agent),
             &filtered,
         ) {
+            self.unpersisted = filtered;
             let reason = format!("transcript could not be saved: {error}");
             self.evidence
                 .note_transcript_durability_fault(reason.clone());
             return Err(SessionError::persist(reason));
         }
+        self.report_committed_events(&filtered);
         self.log.append(filtered);
         Ok(())
     }
@@ -278,7 +302,9 @@ impl TaskSessionState {
         }
         if !events.is_empty() {
             let normalized = normalize_session_events(&mut self.stream_normalizer, events);
-            let _ = self.append_to_log(normalized);
+            if let Err(error) = self.append_to_log(normalized) {
+                tracing::warn!(%error, handle = %self.qualified_handle, "transcript events retained for retry");
+            }
         }
         if host_gone && !self.prompts.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);
@@ -361,6 +387,7 @@ pub(crate) fn spawn_task_session(
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
+            unpersisted: Vec::new(),
             stream_normalizer: StreamNormalizer::default(),
             last_released: None,
             agent: AgentClient::Cursor,

@@ -95,6 +95,8 @@ pub struct RunUpdate {
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionCommit {
     pub run_id: String,
+    /// Required lease boot ID; overrides the store's default fence when set.
+    pub owner_fence: Option<String>,
     pub new_tasks: Vec<NewExecutionTask>,
     pub prompts: Vec<NewPrompt>,
     pub transitions: Vec<TaskTransition>,
@@ -122,6 +124,7 @@ pub struct CommitReceipt {
 /// whole commit back.
 #[derive(Debug)]
 pub enum ExecutionCommitError {
+    Fenced,
     UnknownRun(String),
     UnknownTask(String),
     InvalidTransition {
@@ -144,6 +147,10 @@ pub enum ExecutionCommitError {
 impl fmt::Display for ExecutionCommitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Fenced => write!(
+                formatter,
+                "execution fenced: this host no longer owns the execution lease"
+            ),
             Self::UnknownRun(run_id) => write!(formatter, "unknown agent run: {run_id}"),
             Self::UnknownTask(task_exec_id) => {
                 write!(formatter, "unknown execution task: {task_exec_id}")
@@ -258,6 +265,20 @@ impl SqliteRegistryStore {
         let mut connection = self.open()?;
         migrations::migrate(&connection)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let fence = commit.owner_fence.as_ref().or(self.owner_fence.as_ref());
+        if let Some(fence) = fence {
+            let owner: Option<String> = transaction
+                .query_row(
+                    "SELECT boot_id FROM execution_owner WHERE id = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if owner.as_ref() != Some(fence) {
+                return Err(ExecutionCommitError::Fenced);
+            }
+        }
 
         let start_seq: i64 = transaction
             .query_row(

@@ -569,7 +569,10 @@ fn assert_failed_context_reset_preserves_live_queue(operation: &str) {
                 .cancel(handle, true)
                 .expect("cancel old active prompt");
             pump_until(&directory, handle, Duration::from_secs(5), |_| {
-                ledger_phase(&dir, handle, "queued-1324") == Some(PromptPhase::Dispatching)
+                matches!(
+                    ledger_phase(&dir, handle, "queued-1324"),
+                    Some(PromptPhase::Dispatching) | Some(PromptPhase::Completed)
+                )
             });
             assert_eq!(directory.child_id(handle), Some(old_pid));
             directory.detach_session(handle);
@@ -712,4 +715,121 @@ fn issue_1324_idle_switch_discards_queued_prompts() {
 
     let reloaded = prompt_ledger::try_load(&store, &dir, handle).expect("reload ledger");
     assert_eq!(reloaded.queued_count(), 0);
+}
+
+fn fake_acp_exclusive_lock_pid(dir: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(dir.join(".fake-acp-exclusive-lock"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+}
+
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn assert_no_live_fake_acp_fixture(dir: &std::path::Path) {
+    if let Some(pid) = fake_acp_exclusive_lock_pid(dir) {
+        assert!(
+            !pid_alive(pid),
+            "discarded ACP child pid {pid} must not keep running"
+        );
+    }
+}
+
+#[test]
+fn issue_1327_cold_acquire_fails_when_child_identity_cannot_be_recorded() {
+    use crate::adapters::web_session_store::set_force_child_identity_write_fail;
+
+    let dir = scratch_dir("child-identity-acquire-fail-1327");
+    let handle = "web/child-identity-acquire-fail-1327";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--exclusive-session-new"], || {
+            set_force_child_identity_write_fail(true);
+            let error = directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect_err("child identity persist failure must fail cold acquire")
+                .to_string();
+            set_force_child_identity_write_fail(false);
+            assert!(
+                error.contains("child identity could not be recorded"),
+                "{error}"
+            );
+            assert!(
+                directory.child_id(handle).is_none(),
+                "failed acquire must not leave a live client"
+            );
+            assert_no_live_fake_acp_fixture(&dir);
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire succeeds once child identity can be recorded");
+            let run = super::SessionStorage::under(dir.clone())
+                .registry_store()
+                .latest_run_for_task(handle)
+                .unwrap()
+                .unwrap();
+            let pid = directory.child_id(handle).expect("child after success");
+            assert_eq!(run.child, Some((pid as i64, pid as i64)));
+            assert_eq!(
+                run.child_started,
+                super::process_identity::start_token(pid as i64)
+            );
+        });
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1327_replacement_acquire_fails_when_child_identity_cannot_be_recorded() {
+    use crate::adapters::web_session_store::set_force_child_identity_write_fail;
+
+    let dir = scratch_dir("child-identity-replace-fail-1327");
+    let handle = "web/child-identity-replace-fail-1327";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--exclusive-session-new"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("initial acquire");
+            directory.kill_host_for_test(handle);
+            pump_until(&directory, handle, Duration::from_secs(5), |events| {
+                exit_error_count(events) == 1
+            });
+
+            set_force_child_identity_write_fail(true);
+            let error = directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect_err("child identity persist failure must fail replacement acquire")
+                .to_string();
+            set_force_child_identity_write_fail(false);
+            assert!(
+                error.contains("child identity could not be recorded"),
+                "{error}"
+            );
+            assert!(
+                directory.child_id(handle).is_none(),
+                "failed replacement must not leave a live client"
+            );
+            assert_no_live_fake_acp_fixture(&dir);
+
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("replacement acquire after hook disabled");
+            assert!(directory.child_id(handle).is_some());
+        });
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
 }

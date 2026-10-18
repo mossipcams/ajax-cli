@@ -31,11 +31,21 @@ pub(crate) use enums::{
 
 pub struct SqliteRegistryStore {
     path: PathBuf,
+    owner_fence: Option<String>,
 }
 
 impl SqliteRegistryStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            owner_fence: None,
+        }
+    }
+
+    /// Requires this lease boot ID for execution commits without an explicit fence.
+    pub fn with_owner_fence(mut self, boot_id: impl Into<String>) -> Self {
+        self.owner_fence = Some(boot_id.into());
+        self
     }
 
     pub fn load_tasks_only(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {

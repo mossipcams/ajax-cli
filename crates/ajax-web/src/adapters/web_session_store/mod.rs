@@ -185,6 +185,10 @@ pub fn record_child_identity(
     child: Option<(i64, String)>,
     owner_boot_id: &str,
 ) -> io::Result<()> {
+    #[cfg(test)]
+    if force_child_identity_write_fail() {
+        return Err(io::Error::other("forced child identity write failure"));
+    }
     let run_id = ensure_run(store, state_dir, handle, harness)?;
     store
         .commit_execution(&ExecutionCommit {
@@ -449,11 +453,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static FORCE_META_WRITE_FAIL: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
+static FORCE_CHILD_IDENTITY_WRITE_FAIL: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
 pub fn set_force_meta_write_fail(enabled: bool) {
     FORCE_META_WRITE_FAIL.store(enabled, Ordering::SeqCst);
 }
 
 #[cfg(test)]
+pub fn set_force_child_identity_write_fail(enabled: bool) {
+    FORCE_CHILD_IDENTITY_WRITE_FAIL.store(enabled, Ordering::SeqCst);
+}
+
+#[cfg(test)]
 fn force_meta_write_fail() -> bool {
     FORCE_META_WRITE_FAIL.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+fn force_child_identity_write_fail() -> bool {
+    FORCE_CHILD_IDENTITY_WRITE_FAIL.load(Ordering::SeqCst)
 }

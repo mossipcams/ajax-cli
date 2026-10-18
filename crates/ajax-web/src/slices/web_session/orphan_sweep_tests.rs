@@ -77,6 +77,151 @@ fn cleanup(dir: &Path) {
 }
 
 #[test]
+fn term_ignoring_child_is_killed_before_identity_is_cleared_issue_1327() {
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::time::Instant;
+
+    // Keep failure paths (including the red run) from leaving a child behind.
+    struct ChildGuard {
+        pid: i64,
+        reaper: Option<std::thread::JoinHandle<std::process::ExitStatus>>,
+    }
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            if let Some(reaper) = self.reaper.take() {
+                let _ = Command::new("kill")
+                    .args(["-KILL", "--", &format!("-{}", self.pid)])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                kill_and_reap(self.pid, reaper);
+            }
+        }
+    }
+
+    let (dir, store) = scratch_store("term-ignoring-1327");
+    let ready = dir.join("ready");
+    // Use shell builtins so the fixture has no grandchildren to orphan.
+    let child = Command::new("sh")
+        .args([
+            "-c",
+            r#"trap '' TERM; echo ready > "$1"; while :; do :; done"#,
+            "sh",
+        ])
+        .arg(&ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .expect("spawn TERM-ignoring process-group leader");
+    let pid = child.id() as i64;
+    let mut child = ChildGuard {
+        pid,
+        reaper: Some(std::thread::spawn(move || reap(child))),
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        ready.exists(),
+        "child must install its TERM trap before sweep"
+    );
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+    let run_id = row_id_for(&store, "handle");
+    let alive = || {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("probe child")
+            .success()
+    };
+
+    let (result, cleared_while_alive) = std::thread::scope(|scope| {
+        let sweep = scope.spawn(|| {
+            super::orphan_sweep::sweep_with_grace(&store, "this-boot", Duration::from_millis(200))
+        });
+        let mut cleared_while_alive = false;
+        while !sweep.is_finished() {
+            if listed_row(&store, &run_id).is_none() && alive() {
+                cleared_while_alive = true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        (sweep.join().expect("join sweep"), cleared_while_alive)
+    });
+
+    assert!(
+        !alive(),
+        "sweep must observe the child gone before returning"
+    );
+    assert!(
+        !cleared_while_alive,
+        "identity must remain while the child lives"
+    );
+    assert!(result.complete);
+    assert_eq!(result.handled, 1);
+    assert!(listed_row(&store, &run_id).is_none());
+    let status = child
+        .reaper
+        .take()
+        .unwrap()
+        .join()
+        .expect("join child reaper");
+    assert_eq!(
+        status.signal(),
+        Some(9),
+        "SIGKILL escalation must end the child"
+    );
+    cleanup(&dir);
+}
+
+#[test]
+fn zombie_child_is_treated_as_gone_before_term_grace_issue_1327() {
+    use std::time::Instant;
+
+    let (dir, store) = scratch_store("zombie-1327");
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("spawn sleep helper");
+    let pid = child.id() as i64;
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+    let run_id = row_id_for(&store, "handle");
+
+    Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("SIGKILL sleep helper without wait so it remains a zombie");
+
+    let start = Instant::now();
+    let result = super::orphan_sweep::sweep_with_grace(&store, "this-boot", Duration::from_secs(5));
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "sweep must not wait out TERM/KILL grace on a zombie (took {:?})",
+        elapsed
+    );
+    assert!(result.complete, "zombie orphan sweep must complete");
+    assert!(
+        listed_row(&store, &run_id).is_none(),
+        "zombie child's run row must be cleared"
+    );
+
+    child.wait().expect("reap zombie child");
+    cleanup(&dir);
+}
+
+#[test]
 fn matching_token_terminates_child_and_clears_row() {
     let (dir, store) = scratch_store("matching");
     let (pid, reaper) = spawn_sleep_child();
@@ -89,7 +234,9 @@ fn matching_token_terminates_child_and_clears_row() {
         "foreign-boot",
     );
 
-    let handled = sweep(&store, "this-boot");
+    let result = sweep(&store, "this-boot");
+    assert!(result.complete);
+    let handled = result.handled;
 
     assert_eq!(handled, 1, "the matching orphan must be handled");
     assert!(
@@ -116,7 +263,9 @@ fn mismatching_token_leaves_child_and_row_untouched() {
         "foreign-boot",
     );
 
-    let handled = sweep(&store, "this-boot");
+    let result = sweep(&store, "this-boot");
+    assert!(result.complete);
+    let handled = result.handled;
 
     assert_eq!(handled, 0, "a mismatched token must never be signalled");
     std::thread::sleep(Duration::from_millis(300));
@@ -144,7 +293,9 @@ fn same_boot_id_is_never_touched() {
         "this-boot",
     );
 
-    let handled = sweep(&store, "this-boot");
+    let result = sweep(&store, "this-boot");
+    assert!(result.complete);
+    let handled = result.handled;
 
     assert_eq!(handled, 0, "a run owned by this host must be skipped");
     std::thread::sleep(Duration::from_millis(300));
@@ -178,7 +329,9 @@ fn dead_pid_clears_row_without_signalling() {
         "foreign-boot",
     );
 
-    let handled = sweep(&store, "this-boot");
+    let result = sweep(&store, "this-boot");
+    assert!(result.complete);
+    let handled = result.handled;
 
     assert_eq!(handled, 1, "a dead orphan must be cleared");
     assert!(
@@ -225,7 +378,9 @@ fn matching_token_terminates_the_whole_process_group_issue_1298() {
     let token = super::process_identity::start_token(pid).expect("live child token");
     record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
 
-    let handled = sweep(&store, "this-boot");
+    let result = sweep(&store, "this-boot");
+    assert!(result.complete);
+    let handled = result.handled;
     assert_eq!(handled, 1, "the matching orphan must be handled");
 
     // The grandchild shares the child's process group and must die too (issue #1298).
@@ -289,10 +444,89 @@ fn sweep_once_interrupts_dispatching_prompts_of_dead_hosts() {
     prompt_ledger::try_persist(&store, &dir, "handle", &ledger).expect("persist ledger");
 
     let recovered_handles = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
-    assert_eq!(recovered_handles, vec!["handle".to_string()]);
+    assert!(recovered_handles.complete);
+    assert_eq!(
+        recovered_handles.recovered_handles,
+        vec!["handle".to_string()]
+    );
 
     let recovered = prompt_ledger::try_load(&store, &dir, "handle").expect("load ledger");
     let entry = recovered.entry("p1").expect("p1 must exist in the ledger");
     assert_eq!(entry.phase, PromptPhase::Interrupted);
+    cleanup(&dir);
+}
+
+#[test]
+fn sweep_once_retries_listing_failure_issue_1326() {
+    let (dir, store) = scratch_store("listing-retry");
+    let (pid, reaper) = spawn_sleep_child();
+    record_row(
+        &store,
+        &dir,
+        "handle",
+        Some((pid, super::process_identity::start_token(pid).unwrap())),
+        "foreign-boot",
+    );
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued("p1".into(), "text".into(), "prompt".into(), Vec::new());
+    assert!(ledger.mark_dispatching("p1"));
+    prompt_ledger::try_persist(&store, &dir, "handle", &ledger).unwrap();
+
+    let database = dir.join("registry.db");
+    let saved = dir.join("registry.saved");
+    std::fs::rename(&database, &saved).unwrap();
+    std::fs::create_dir(&database).unwrap();
+    assert!(store.runs_with_children().is_err());
+    let first = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    std::fs::remove_dir(&database).unwrap();
+    std::fs::rename(&saved, &database).unwrap();
+    assert!(
+        !reaper.is_finished(),
+        "failed listing must leave the child alive"
+    );
+    let second = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+
+    for _ in 0..100 {
+        if reaper.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let signalled = reaper.is_finished();
+    if signalled {
+        assert!(!reaper.join().unwrap().success());
+    } else {
+        kill_and_reap(pid, reaper);
+    }
+    assert!(signalled, "retry must signal the orphan child");
+    assert!(!first.complete);
+    assert!(first.recovered_handles.is_empty());
+    assert!(second.complete);
+    assert_eq!(second.recovered_handles, vec!["handle".to_string()]);
+    assert!(listed_row(&store, &row_id_for(&store, "handle")).is_none());
+    let recovered = prompt_ledger::try_load(&store, &dir, "handle").unwrap();
+    assert_eq!(
+        recovered.entry("p1").unwrap().phase,
+        PromptPhase::Interrupted
+    );
+
+    // A new foreign row after completion must not be scanned or recovered.
+    record_row(
+        &store,
+        &dir,
+        "later",
+        Some((-1, "gone".into())),
+        "foreign-boot",
+    );
+    prompt_ledger::try_persist(&store, &dir, "later", &ledger).unwrap();
+    let third = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    assert!(third.complete);
+    assert!(third.recovered_handles.is_empty());
+    assert!(listed_row(&store, &row_id_for(&store, "later")).is_some());
+    let untouched = prompt_ledger::try_load(&store, &dir, "later").unwrap();
+    assert_eq!(
+        untouched.entry("p1").unwrap().phase,
+        PromptPhase::Dispatching
+    );
     cleanup(&dir);
 }

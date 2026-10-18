@@ -1,13 +1,14 @@
 //! Records the live agent child's identity on the run row when a new client is installed.
 
 use super::task_session::{agent_client_name, TaskSessionState};
+use super::SessionError;
 use crate::adapters::web_session_store;
 
 impl TaskSessionState {
-    /// Best-effort: write this host's boot id and the live child's pid plus
-    /// start-time token to the run row so a later host can find orphans.
-    /// Recording must never fail an attach or respawn; any error is only logged.
-    pub(super) fn record_child_identity(&self) {
+    /// Write this host's boot id and the live child's pid plus start-time token
+    /// to the run row so a later host can find orphans. A live child whose
+    /// identity cannot be recorded must fail the attach.
+    pub(super) fn record_child_identity(&self) -> Result<(), SessionError> {
         let child = match self
             .acp
             .client
@@ -18,30 +19,22 @@ impl TaskSessionState {
             Some(pid) => match super::process_identity::start_token(i64::from(pid)) {
                 Some(token) => Some((i64::from(pid), token)),
                 None => {
-                    tracing::warn!(
-                        target: "ajax_web",
-                        handle = %self.qualified_handle,
-                        pid,
-                        "child start-time token unreadable; not recording child identity"
-                    );
-                    None
+                    return Err(SessionError::persist(format!(
+                        "child identity could not be recorded: start-time token unreadable for pid {pid}"
+                    )));
                 }
             },
         };
-        if let Err(error) = web_session_store::record_child_identity(
+        web_session_store::record_child_identity(
             &self.storage.registry_store(),
             &self.storage.state_dir,
             &self.qualified_handle,
             agent_client_name(self.agent),
             child,
             self.ownership.boot_id(),
-        ) {
-            tracing::warn!(
-                target: "ajax_web",
-                handle = %self.qualified_handle,
-                %error,
-                "failed to record chat child identity on the run row"
-            );
-        }
+        )
+        .map_err(|error| {
+            SessionError::persist(format!("child identity could not be recorded: {error}"))
+        })
     }
 }

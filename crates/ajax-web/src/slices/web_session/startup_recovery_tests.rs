@@ -91,7 +91,8 @@ fn foreign_boot_dispatching_prompt_is_interrupted_with_note() {
     persist_ledger(&store, &dir, handle, &["p1"], &["p2"]);
 
     let recovered = recover_interrupted_prompts(&store, &dir, "this-boot");
-    assert_eq!(recovered, vec![handle.to_string()]);
+    assert!(recovered.complete);
+    assert_eq!(recovered.recovered_handles, vec![handle.to_string()]);
 
     let ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load ledger");
     assert_eq!(ledger.entry("p1").unwrap().phase, PromptPhase::Interrupted);
@@ -120,11 +121,11 @@ fn recover_is_idempotent() {
     persist_ledger(&store, &dir, handle, &["p1"], &["p2"]);
 
     assert_eq!(
-        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        recover_interrupted_prompts(&store, &dir, "this-boot").recovered_handles,
         vec![handle.to_string()]
     );
     assert_eq!(
-        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        recover_interrupted_prompts(&store, &dir, "this-boot").recovered_handles,
         Vec::<String>::new()
     );
     assert_eq!(interruption_note_count(&store, &dir, handle), 1);
@@ -140,7 +141,7 @@ fn current_boot_run_is_untouched() {
     persist_ledger(&store, &dir, handle, &["p1"], &[]);
 
     assert_eq!(
-        recover_interrupted_prompts(&store, &dir, "this-boot"),
+        recover_interrupted_prompts(&store, &dir, "this-boot").recovered_handles,
         Vec::<String>::new()
     );
 
@@ -159,7 +160,7 @@ fn foreign_boot_queued_prompt_is_listed() {
     persist_ledger(&store, &dir, handle, &[], &["p1"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         vec![handle.to_string()]
     );
 
@@ -183,7 +184,7 @@ fn foreign_boot_completed_only_is_not_listed() {
     prompt_ledger::try_persist(&store, &dir, handle, &ledger).expect("persist ledger");
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         Vec::<String>::new()
     );
 
@@ -198,7 +199,7 @@ fn own_boot_queued_prompt_is_not_listed() {
     persist_ledger(&store, &dir, handle, &[], &["p1"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         Vec::<String>::new()
     );
 
@@ -214,9 +215,83 @@ fn queued_prompt_handles_are_sorted() {
     persist_ledger(&store, &dir, "chat-a", &[], &["pa"]);
 
     assert_eq!(
-        queued_prompt_handles(&store, &dir, "this-boot"),
+        queued_prompt_handles(&store, &dir, "this-boot").handles,
         vec!["chat-a".to_string(), "chat-z".to_string()]
     );
+
+    cleanup(&dir);
+}
+
+#[test]
+fn sweep_once_retries_ledger_load_failure_issue_1326() {
+    recovery_retries_failure(false);
+}
+
+#[test]
+fn sweep_once_retries_ledger_persist_failure_issue_1326() {
+    recovery_retries_failure(true);
+}
+
+fn recovery_retries_failure(persist_failure: bool) {
+    let (dir, store) = scratch_store("recovery-retry");
+    for handle in ["chat-a", "chat-b"] {
+        record_owner(&store, &dir, handle, "other-boot");
+        persist_ledger(&store, &dir, handle, &["p1"], &["p2"]);
+    }
+    let broken_ledger = prompt_ledger::ledger_path(&dir, "chat-b");
+    let failure = if persist_failure {
+        Some(prompt_ledger::ForcePersistFailGuard::enable())
+    } else {
+        std::fs::create_dir_all(broken_ledger.parent().unwrap()).unwrap();
+        std::fs::write(&broken_ledger, "malformed ledger").unwrap();
+        assert!(prompt_ledger::try_load(&store, &dir, "chat-b").is_err());
+        None
+    };
+    let first = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    drop(failure);
+    assert!(!first.complete);
+    if !persist_failure {
+        std::fs::remove_file(broken_ledger).unwrap();
+        assert_eq!(first.recovered_handles, vec!["chat-a".to_string()]);
+    } else {
+        assert!(first.recovered_handles.is_empty());
+    }
+    let pending = prompt_ledger::try_load(&store, &dir, "chat-b").unwrap();
+    assert_eq!(pending.entry("p1").unwrap().phase, PromptPhase::Dispatching);
+    assert_eq!(interruption_note_count(&store, &dir, "chat-b"), 0);
+
+    let second = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    assert!(second.complete);
+    let mut recovered = first.recovered_handles;
+    recovered.extend(second.recovered_handles);
+    assert_eq!(recovered, vec!["chat-a".to_string(), "chat-b".to_string()]);
+    for handle in ["chat-a", "chat-b"] {
+        let ledger = prompt_ledger::try_load(&store, &dir, handle).unwrap();
+        assert_eq!(ledger.entry("p1").unwrap().phase, PromptPhase::Interrupted);
+        assert_eq!(ledger.entry("p2").unwrap().phase, PromptPhase::Queued);
+        assert_eq!(interruption_note_count(&store, &dir, handle), 1);
+    }
+    let third = super::orphan_sweep::sweep_once(&store, &dir, "this-boot");
+    assert!(third.complete);
+    assert!(third.recovered_handles.is_empty());
+    cleanup(&dir);
+}
+
+#[test]
+fn queued_scan_reports_incomplete_on_ledger_load_failure_issue_1326() {
+    let (dir, store) = scratch_store("queued-scan-failure");
+    for handle in ["chat-a", "chat-b"] {
+        record_owner(&store, &dir, handle, "other-boot");
+        persist_ledger(&store, &dir, handle, &[], &["p1"]);
+    }
+
+    let broken_ledger = prompt_ledger::ledger_path(&dir, "chat-b");
+    std::fs::create_dir_all(broken_ledger.parent().unwrap()).unwrap();
+    std::fs::write(&broken_ledger, "malformed ledger").unwrap();
+
+    let scan = queued_prompt_handles(&store, &dir, "this-boot");
+    assert!(!scan.complete);
+    assert_eq!(scan.handles, vec!["chat-a".to_string()]);
 
     cleanup(&dir);
 }
