@@ -624,9 +624,12 @@ whole transcript inside `session/load` before responding.
   turn_usage, and status-like updates have explicit mappings; unsupported
   capability announcements are ignored by the chat projection.
 - v1 `sessionUpdate: "status"` and raw `state_update` both map to head-only
-  `status` wire events. ACP `status.state` (`running` / `waiting` / `idle` /
-  `requires_action`) drives the live-head primary label (Working / Needs you /
-  Ready); human `detail` is stored but not shown as a quiet line.
+  `status` wire events. The browser stores them in `view.status.acpState`, but
+  nothing reads it: status events do not drive the live-head primary label. That
+  label comes from `headState` in
+  `crates/ajax-web/web/src/features/chat/status/headView.ts`, derived from turn
+  busy state, pending decisions/elicitations, and task attention. Human `detail`
+  is stored but not shown as a quiet line.
   Typed `CurrentModeUpdate` is ignored like capability announcements.
 - Tool calls carry their ACP `content` array to the browser as `text` and `diff`
   entries. Dropping it left the browser able to say only that an unnamed edit
@@ -736,6 +739,10 @@ so a cancelled turn does not reset the meter.
   and Pi titles are `<tool>: <command|pattern|path>` with Pi kinds mapping read =>
   read, edit/write => edit, grep/find/ls => search, bash => execute, else other
   ([#1339](https://github.com/mossipcams/ajax-cli/issues/1339)).
+- Claude Task sub-agent tool calls and results are shown as flat tool rows beside
+  the parent Task row (tool ids are unique, so no parent link is needed), while
+  sub-agent text and thinking stay hidden and sub-agent `result` messages never
+  finish the run ([#1342](https://github.com/mossipcams/ajax-cli/issues/1342)).
 
 ## Permission persistence
 
