@@ -92,10 +92,10 @@ Branch `fix/web/execution-fencing`. Open one issue.
 - [x] **T4.1** Add `owner_fence: Option<String>` to `ExecutionCommit`. When it is set, `commit_execution` checks `SELECT boot_id FROM execution_owner WHERE id = 1` inside the IMMEDIATE transaction and returns `ExecutionCommitError::Fenced` on mismatch. The web host's `web_session_store` writes pass `ownership.boot_id()`. The sweep and recovery pass it too, because they run after the claim.
 - [x] **T4.2** Orphan sweep: after `kill -TERM`, poll `pid_alive` for up to 5 s, then `kill -KILL` the group. Clear the identity only once the process is observed gone; otherwise leave the row so the PR 3 retry picks it up. Block `acquire` for that handle while its row still holds a foreign live child.
   - (done: sweep verifies exit then clears identity; zombies count as gone; acquire/respawn/reset refuse while a foreign live child is recorded)
-- [ ] **T4.3** `record_child_identity` returns `Result`. Spawn and replace paths discard the staged client and fail the attach on error. Without this, the sweep cannot find the child later.
+- [x] **T4.3** `record_child_identity` returns `Result`. Spawn and replace paths discard the staged client and fail the attach on error. Without this, the sweep cannot find the child later.
 - ~~T4.4 Stop local children on lease loss~~ **Dropped (D2).** durable-execution.md §6 stays: agents running at lease loss are not stopped by their own host. The new owner still ends them: its first-claim orphan sweep targets every run whose `owner_boot_id` is foreign and whose child token matches, which includes a live-but-stale previous owner's children. T4.2 makes that termination verified. The old host's late writes are rejected by T4.1 and land in PR 2's `unpersisted` backlog as a durability fault, not in history.
-- [ ] **Tests:** two `ExecutionOwnership` instances on one DB; force takeover; assert the old instance's commit returns `Fenced`; assert the new owner's sweep terminates the old instance's recorded child; assert the sweep does not clear identity for a process that ignores SIGTERM until SIGKILL.
-- [ ] Doc: durable-execution.md §6 documents the owner fence, the verified sweep, and that a displaced host's agents are ended by the new owner's sweep (not by the displaced host).
+- [x] **Tests:** two `ExecutionOwnership` instances on one DB; force takeover; assert the old instance's commit returns `Fenced`; assert the new owner's sweep terminates the old instance's recorded child; assert the sweep does not clear identity for a process that ignores SIGTERM until SIGKILL.
+- [x] Doc: durable-execution.md §6 documents the owner fence, the verified sweep, and that a displaced host's agents are ended by the new owner's sweep (not by the displaced host).
 
 ## Decisions (Matt, 2026-10-16)
 
@@ -126,6 +126,7 @@ touched, so web:smoke is not required.
 - PR 4 packet H3: the KILL escalation re-verifies the start-time token before signalling so a reused pid is never killed; the Codex delegate hit its quota mid-run but its edits were reviewed and gated by the orchestrator.
 - PR 4 packets H3b/H3c/H3d: a zombie fooled the first verified-sweep draft (`kill -0` succeeds on unreaped zombies), which made two tests take 21 s and 7 s and likely contributed to the intermittent ~5 s ledger-failure test flake; `pid_alive` now consults `ps -o stat=`.
 - PR 4 packets H3b/H3c/H3d: the acquire-block test pre-runs `sweep_once` because a normal first acquire's startup sweep correctly kills the foreign child; the block covers a foreign child recorded after the sweep completed.
+- The intermittent ~5 s failure of the issue_1324_* ledger-failure tests was a race in the PR 1 test helper (`assert_failed_context_reset_preserves_live_queue` waited for the transient Dispatching phase, but the queued turn could complete between pumps); H4b changed the predicate to 'left Queued' (Dispatching or Completed); no production change.
 
 ## Validation
 
@@ -160,3 +161,7 @@ PR 4 packets H1/H2 (T4.1: ExecutionCommit.owner_fence and SqliteRegistryStore::w
 PR 4 packet H3 (verified sweep termination in orphan_sweep.rs, grace injectable via sweep_with_grace) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2269/2269.
 
 PR 4 packets H3b/H3c/H3d (acquire refuses while a foreign host's live child is recorded; pid_alive treats zombies as gone; reworked acquire-block test) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2272/2272 in ~18 s.
+
+PR 4 packets H4/H4b/H5 (T4.3: record_child_identity returns a Result and an unreadable start token for a live child is an error; acquire, replacement, reset and clear-context discard the staged client and fail on error; durable-execution.md section 6 documents the owner fence, verified sweep, spawn refusal and mandatory identity recording) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2274/2274, three consecutive full runs of ~18 s.
+
+PR 1-4 complete; remaining non-code follow-ups: branch naming/PR split, and commit 0166d8e0 carries an unwanted 'Co-authored-by: Cursor' trailer (pending the owner's decision on amend + force-with-lease).

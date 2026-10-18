@@ -84,7 +84,13 @@ pub(super) async fn acquire(
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id).await?;
 
     state.acp.client = Some(client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
@@ -274,7 +280,13 @@ pub(super) async fn reset_harness_context(
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     state.acp.client = Some(new_client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
@@ -334,7 +346,13 @@ pub(super) async fn clear_session_context(
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
     state.acp.client = Some(new_client);
-    state.record_child_identity();
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.client.take() {
+            discard_staged_client(client);
+        }
+        state.acp.acp_alive = false;
+        return Err(error);
+    }
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
