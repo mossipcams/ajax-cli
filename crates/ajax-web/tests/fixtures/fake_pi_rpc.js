@@ -65,6 +65,7 @@ const surviveStdinClose = flags.has('--survive-stdin-eof');
 const exitAfterState = flags.has('--exit-after-state'); // child exits right after answering get_state
 const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
 const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
+const chatterState = flags.has('--chatter-state'); // get_state is never answered; unrelated records flood stdout instead
 
 // Scripted stdout output. Emitted before any command handling; libuv preserves
 // write order on the pipe, so these lines precede every later record.
@@ -109,6 +110,22 @@ rl.on('line', (raw) => {
 
   switch (command.type) {
     case 'get_state':
+      if (chatterState) {
+        // Never answer get_state, but keep the stream busy with unrelated
+        // records so the handshake never sees an empty channel. Self-terminates
+        // after a bound so a failing test cannot leave an orphan behind.
+        const chatterUntil = Date.now() + 15_000;
+        let seq = 0;
+        const chatter = () => {
+          if (Date.now() > chatterUntil) process.exit(0);
+          for (let i = 0; i < 200; i++) {
+            emit({ type: 'extension_ui_request', action: 'notify', payload: { seq: seq++ } });
+          }
+          setImmediate(chatter);
+        };
+        chatter();
+        break;
+      }
       if (silentState) {
         // Never answer: handshake tests expect the overall deadline to fire.
         break;
