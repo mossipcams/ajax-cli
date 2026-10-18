@@ -2,7 +2,7 @@
 
 ## Status
 
-- Approval: **APPROVED with decisions D1–D3** (Matt, 2026-10-16). PR 1 slice A (T1.1–T1.4 and tests a–c) complete; T1.5, test d, and documentation remain pending.
+- Approval: **APPROVED with decisions D1–D3** (Matt, 2026-10-16). Implementation complete 2026-10-17: PR 1-4 (T1.1-T1.5, T2.1-T2.3, T3.1-T3.4, T4.1-T4.3) implemented and pushed as stacked PRs #1328, #1329, #1330, #1331 (issues #1324-#1327); T4.4 dropped per D2. Awaiting CI and review.
 - Source: external "Deep Architectural Review" (post v0.60.0), verified against
   `main` @ 3fdd0ddd on 2026-10-16. Verdicts below are from reading source, not
   from repro. Each confirmed defect still needs an issue + a failing regression
@@ -62,7 +62,7 @@ Tests (red first; reuse the existing `force_meta_write_fail`-style hooks):
 - [x] **(b)** A live slot plus a registry agent change, followed by `acquire(new_agent)`, does not reuse the old client.
 - [x] **(c)** A run with harness=claude and a stored id, cold-acquired as codex, does not resume.
 - [x] **(d)** An idle switch with queued SQLite prompts leaves `queued_count() == 0`.
-- [ ] **Doc:** Update web-session-behavior.md:207-226 so both live and idle switch paths say "discard the queue".
+- [x] **Doc:** Update web-session-behavior.md:207-226 so both live and idle switch paths say "discard the queue".
 
 ## PR 2: no observed event is dropped or reported early (2B + 2A)
 
@@ -164,4 +164,4 @@ PR 4 packets H3b/H3c/H3d (acquire refuses while a foreign host's live child is r
 
 PR 4 packets H4/H4b/H5 (T4.3: record_child_identity returns a Result and an unreadable start token for a live child is an error; acquire, replacement, reset and clear-context discard the staged client and fail on error; durable-execution.md section 6 documents the owner fence, verified sweep, spawn refusal and mandatory identity recording) passed cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2274/2274, three consecutive full runs of ~18 s.
 
-PR 1-4 complete; remaining non-code follow-ups: branch naming/PR split, and commit 0166d8e0 carries an unwanted 'Co-authored-by: Cursor' trailer (pending the owner's decision on amend + force-with-lease).
+PR 1-4 complete. History was rewritten once to strip an unwanted Cursor co-author trailer from three commits (tree unchanged), then split into four stacked branches/PRs: fix/web/harness-switch-convergence (#1328), fix/web/event-commit-order (#1329), fix/web/recovery-retry (#1330), fix/web/execution-fencing (#1331). Final gate on the stack tip: cargo fmt --check, clippy --all-targets --all-features -D warnings, nextest -p ajax-core -p ajax-web 2274/2274, RUSTDOCFLAGS=-D warnings cargo doc --no-deps --all-features, check-file-loc (0 errors, 3 size warnings).
