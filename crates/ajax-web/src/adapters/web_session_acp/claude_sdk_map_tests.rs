@@ -109,18 +109,22 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
-    // A later assistant tool_use update carries the complete raw input.
-    let _raw_input_position: usize = events[tool_call_position + 1..]
+    // #1339: the later assistant tool_use message re-emits a ToolCall carrying
+    // the complete raw input and a descriptive title, upgrading the opened row.
+    let _assistant_tool_call_position: usize = events[tool_call_position + 1..]
         .iter()
         .position(|event| match native_event(event) {
-            NativeEvent::ToolCallUpdate { raw_input, .. } => matches!(
-                raw_input,
-                Some(Value::Object(object)) if object.contains_key("file_path")
-            ),
+            NativeEvent::ToolCall {
+                title, raw_input, ..
+            } => {
+                matches!(raw_input,
+                    Some(Value::Object(object)) if object.contains_key("file_path"))
+                    && title.starts_with("Write: ")
+            }
             _ => false,
         })
         .map(|offset| tool_call_position + 1 + offset)
-        .expect("expected a later ToolCallUpdate with a file_path raw_input");
+        .expect("expected a later ToolCall with a file_path raw_input");
 
     // The tool_result settles the call as completed with non-empty text.
     let completed_position = events[tool_call_position + 1..]
@@ -501,4 +505,129 @@ fn result_with_summed_usage_emits_no_usage_event_1334() {
         "a summed-usage result must not emit a Usage event: {:?}",
         mapping.events
     );
+}
+
+#[test]
+fn todo_write_assistant_message_emits_plan_1338() {
+    let message = serde_json::json!({
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "toolu_todo_1", "name": "TodoWrite",
+             "input": {"todos": [
+                 {"content": "first step",  "status": "completed",   "activeForm": "Finishing first step"},
+                 {"content": "second step", "status": "in_progress", "activeForm": "Doing second step"},
+                 {"content": "third step",  "status": "pending",     "activeForm": "Doing third step"}
+             ]}}
+        ]}
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert_eq!(
+        mapping.events.len(),
+        2,
+        "expected the tool row plus a plan: {:?}",
+        mapping.events
+    );
+
+    // The TodoWrite row itself keeps today's behavior: an in-progress call with
+    // the complete raw input (bare name title — no detail field for it).
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCall {
+            id,
+            title,
+            kind,
+            status,
+            raw_input,
+        } => {
+            assert_eq!(id, "toolu_todo_1");
+            assert_eq!(title, "TodoWrite");
+            assert_eq!(*kind, "think");
+            assert_eq!(*status, "in_progress");
+            let todos = raw_input
+                .as_ref()
+                .and_then(Value::as_object)
+                .and_then(|object| object.get("todos"))
+                .cloned();
+            assert!(matches!(todos, Some(Value::Array(items)) if items.len() == 3));
+        }
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
+
+    // #1338: additionally emits a Plan with one (content, status) pair per todo,
+    // in order.
+    match native_event(&mapping.events[1]) {
+        NativeEvent::Plan(entries) => assert_eq!(
+            entries,
+            &vec![
+                ("first step".to_string(), "completed".to_string()),
+                ("second step".to_string(), "in_progress".to_string()),
+                ("third step".to_string(), "pending".to_string())
+            ]
+        ),
+        other => panic!("expected a Plan event, got {other:?}"),
+    }
+}
+
+#[test]
+fn assistant_tool_calls_carry_descriptive_titles_1339() {
+    let message = serde_json::json!({
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t-bash",  "name": "Bash",     "input": {"command": "ls -la /work"}},
+            {"type": "tool_use", "id": "t-read",  "name": "Read",     "input": {"file_path": "/work/src/main.rs"}},
+            {"type": "tool_use", "id": "t-grep",  "name": "Grep",     "input": {"pattern": "fn main"}},
+            {"type": "tool_use", "id": "t-fetch", "name": "WebFetch", "input": {"url": "https://example.com/docs"}},
+            {"type": "tool_use", "id": "t-task",  "name": "Task",
+             "input": {"description": "Explore layout", "prompt": "list the crates"}}
+        ]}
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+
+    // Each tool_use block emits exactly one ToolCall; the titles are descriptive
+    // and the kinds match today's mapping.
+    assert_eq!(
+        mapping.events.len(),
+        5,
+        "expected one ToolCall per block: {:?}",
+        mapping.events
+    );
+    let expected = [
+        ("t-bash", "Bash: ls -la /work", "execute"),
+        ("t-read", "Read: /work/src/main.rs", "read"),
+        ("t-grep", "Grep: fn main", "search"),
+        ("t-fetch", "WebFetch: https://example.com/docs", "fetch"),
+        ("t-task", "Task: Explore layout", "other"),
+    ];
+    for (event, (id, title, kind)) in mapping.events.iter().zip(expected) {
+        match native_event(event) {
+            NativeEvent::ToolCall {
+                id: row_id,
+                title: row_title,
+                kind: row_kind,
+                status,
+                raw_input,
+            } => {
+                assert_eq!(row_id, id);
+                assert_eq!(row_title, title);
+                assert_eq!(row_kind, kind);
+                assert_eq!(*status, "in_progress");
+                assert!(raw_input.is_some(), "raw input must be carried: {event:?}");
+            }
+            other => panic!("expected a ToolCall event, got {other:?}"),
+        }
+    }
+
+    // Bare name when the input carries no mapped detail field (e.g. Task with
+    // no description).
+    let bare = serde_json::json!({
+        "type": "assistant",
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t-bare", "name": "Task", "input": {"prompt": "go"}}
+        ]}
+    });
+    let bare_mapping = map_sdk_message(&bare, SESSION_ID);
+    assert_eq!(bare_mapping.events.len(), 1);
+    match native_event(&bare_mapping.events[0]) {
+        NativeEvent::ToolCall { title, .. } => assert_eq!(title, "Task"),
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
 }

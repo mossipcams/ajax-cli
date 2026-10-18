@@ -101,7 +101,7 @@ fn toolcall_transcript_yields_tool_call_and_updates() {
         panic!("expected a ToolCall event, got {:?}", events[4]);
     };
     assert_eq!(id.as_str(), "chatcmpl-tool-be93830d9b11882f");
-    assert_eq!(title.as_str(), "echo hi");
+    assert_eq!(title.as_str(), "bash: echo hi");
     assert_eq!(kind.as_str(), "execute");
     assert_eq!(status.as_str(), "in_progress");
     assert_eq!(
@@ -497,4 +497,121 @@ fn extension_error_names_extension_and_error_1335() {
     assert!(text.contains("boom"), "{text}");
     assert!(text.contains("/p/ext.ts"), "{text}");
     assert!(!mapping.finished);
+}
+
+/// The `NativeEvent::ToolCall` of the single event in `events`, failing on
+/// any other count or shape.
+fn sole_tool_call(events: &[AgentEvent]) -> &NativeEvent {
+    let [event] = events else {
+        panic!("expected exactly one event, got {events:?}");
+    };
+    native_event(event)
+}
+
+#[test]
+fn tool_kind_and_title_map_by_tool_name_1339() {
+    // (toolName, args) -> expected (kind, title).
+    for (name, args, kind, title) in [
+        (
+            "read",
+            serde_json::json!({ "path": "/tmp/a.txt" }),
+            "read",
+            "read: /tmp/a.txt",
+        ),
+        (
+            "edit",
+            serde_json::json!({ "path": "/tmp/b.rs", "oldText": "x", "newText": "y" }),
+            "edit",
+            "edit: /tmp/b.rs",
+        ),
+        (
+            "write",
+            serde_json::json!({ "path": "/tmp/c.md", "content": "hello" }),
+            "edit",
+            "write: /tmp/c.md",
+        ),
+        (
+            "grep",
+            // `pattern` outranks `path`; the with-path case has its own test.
+            serde_json::json!({ "pattern": "foo" }),
+            "search",
+            "grep: foo",
+        ),
+        (
+            "find",
+            serde_json::json!({ "pattern": "*.rs" }),
+            "search",
+            "find: *.rs",
+        ),
+        ("ls", serde_json::json!({ "path": "." }), "search", "ls: ."),
+        (
+            "bash",
+            serde_json::json!({ "command": "echo hi" }),
+            "execute",
+            "bash: echo hi",
+        ),
+        (
+            "mystery_tool",
+            serde_json::json!({}),
+            "other",
+            "mystery_tool",
+        ),
+    ] {
+        let record = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "call-1",
+            "toolName": name,
+            "args": args
+        });
+        let mapping = map_record(&record, SESSION_ID);
+        assert_eq!(mapping.events.len(), 1, "{name}");
+        let NativeEvent::ToolCall {
+            title: got_title,
+            kind: got_kind,
+            status,
+            ..
+        } = sole_tool_call(&mapping.events)
+        else {
+            panic!(
+                "expected a ToolCall event for {name}, got {:?}",
+                mapping.events[0]
+            );
+        };
+        assert_eq!(got_title.as_str(), title, "{name}");
+        assert_eq!(got_kind.as_str(), kind, "{name}");
+        assert_eq!(status.as_str(), "in_progress");
+    }
+}
+
+#[test]
+fn tool_call_without_detail_args_keeps_bare_name_1339() {
+    let record = serde_json::json!({
+        "type": "tool_execution_start",
+        "toolCallId": "call-2",
+        "toolName": "bash"
+    });
+    let mapping = map_record(&record, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1);
+    let NativeEvent::ToolCall { title, kind, .. } = sole_tool_call(&mapping.events) else {
+        panic!("expected a ToolCall event, got {:?}", mapping.events[0]);
+    };
+    assert_eq!(title.as_str(), "bash");
+    assert_eq!(kind.as_str(), "execute");
+}
+
+#[test]
+fn grep_title_prefers_pattern_over_path_1339() {
+    let record = serde_json::json!({
+        "type": "tool_execution_start",
+        "toolCallId": "call-3",
+        "toolName": "grep",
+        "args": { "pattern": "TODO", "path": "src" }
+    });
+    let mapping = map_record(&record, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1);
+    let NativeEvent::ToolCall { title, kind, .. } = sole_tool_call(&mapping.events) else {
+        panic!("expected a ToolCall event, got {:?}", mapping.events[0]);
+    };
+    assert_eq!(title.as_str(), "grep: TODO");
+    assert_eq!(kind.as_str(), "search");
 }
