@@ -1,6 +1,10 @@
 use super::execution_ownership::ExecutionOwnership;
 use super::{test_support, SessionStorage};
 use ajax_core::registry::OwnerClaim;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ms() -> i64 {
@@ -328,5 +332,127 @@ fn lost_ownership_refuses_prompts_and_leaves_the_transcript_unchanged() {
         );
     });
     drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovered_turns_that_fail_to_report_are_retried_on_the_next_heartbeat() {
+    use super::{SessionActivity, TaskSessionDirectory};
+
+    let dir = test_support::scratch_dir("exec-ownership-requeue");
+    let directory = TaskSessionDirectory::new(SessionStorage::under(dir.clone()));
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    directory.set_report_session_activity(Arc::new(move |_: &str, _: SessionActivity| {
+        // The first report fails; later reports succeed.
+        count.fetch_add(1, Ordering::SeqCst) > 0
+    }));
+
+    directory.requeue_recovered_handles_for_test(vec!["web/requeue".to_string()]);
+
+    directory.heartbeat_execution_ownership();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the first heartbeat must report the recovered turn once"
+    );
+
+    directory.heartbeat_execution_ownership();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "a handle whose report failed must be retried on the next heartbeat"
+    );
+
+    directory.heartbeat_execution_ownership();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "a handle whose report succeeded must not be reported again"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+#[test]
+fn healthy_heartbeat_retries_an_incomplete_startup_sweep_issue_1326() {
+    use super::process_identity;
+    use crate::adapters::web_session_store::{
+        prompt_ledger,
+        prompt_ledger::{PromptLedger, PromptPhase},
+        record_child_identity,
+    };
+    use ajax_core::registry::SqliteRegistryStore;
+
+    let dir = test_support::scratch_dir("exec-ownership-sweep-retry");
+
+    // Seed an orphan run row and a Dispatching prompt, exactly as a dead host
+    // would leave them, reusing the setup of
+    // `sweep_once_retries_listing_failure_issue_1326`.
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    let mut child = std::process::Command::new("sleep")
+        .arg("60")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep helper");
+    let pid = child.id() as i64;
+    record_child_identity(
+        &store,
+        &dir,
+        "handle",
+        "acp",
+        Some((
+            pid,
+            process_identity::start_token(pid).expect("live child token"),
+        )),
+        "foreign-boot",
+    )
+    .expect("record child identity");
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued("p1".into(), "text".into(), "prompt".into(), Vec::new());
+    assert!(ledger.mark_dispatching("p1"));
+    prompt_ledger::try_persist(&store, &dir, "handle", &ledger).expect("persist ledger");
+
+    // Make the startup sweep's recovery persist fail, so the first sweep is
+    // INCOMPLETE and recovers nothing.
+    let guard = prompt_ledger::ForcePersistFailGuard::enable();
+
+    let ownership = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
+    assert!(
+        ownership.ensure_owner().is_ok(),
+        "the claim itself must succeed"
+    );
+    assert!(
+        ownership.take_recovered_handles().is_empty(),
+        "an incomplete startup sweep must not report recovered turns"
+    );
+
+    // Fix the failure: clear the injection, then one healthy heartbeat tick
+    // must retry the sweep and complete it.
+    drop(guard);
+    ownership.heartbeat();
+
+    assert_eq!(
+        ownership.take_recovered_handles(),
+        vec!["handle".to_string()],
+        "the heartbeat must signal the orphan and recover the turn exactly once"
+    );
+
+    // The Dispatching prompt must be interrupted on disk.
+    let recovered = prompt_ledger::try_load(&store, &dir, "handle").expect("load ledger");
+    assert_eq!(
+        recovered.entry("p1").expect("p1 must exist").phase,
+        PromptPhase::Interrupted
+    );
+
+    // A second healthy heartbeat is a no-op: the sweep already completed.
+    ownership.heartbeat();
+    assert!(
+        ownership.take_recovered_handles().is_empty(),
+        "a completed sweep must not recover the same turn again"
+    );
+
+    child.kill().expect("kill sleep helper");
+    child.wait().expect("wait on sleep helper");
     let _ = std::fs::remove_dir_all(dir);
 }
