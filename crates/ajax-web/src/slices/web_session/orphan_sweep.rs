@@ -194,17 +194,35 @@ fn clear_child_identity(store: &SqliteRegistryStore, run_id: &str, pid: i64) -> 
     }
 }
 
-/// `kill -0` succeeds only for an existing process we may signal.
+/// `kill -0` succeeds for zombies too; consult `ps` so unreaped exits read as gone.
 fn pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    Command::new("kill")
+    let exists = Command::new("kill")
         .args(["-0", &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !exists {
+        return false;
+    }
+    Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let stat = String::from_utf8(output.stdout)
+                .ok()
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())?;
+            Some(!stat.starts_with('Z'))
+        })
         .unwrap_or(false)
 }
 

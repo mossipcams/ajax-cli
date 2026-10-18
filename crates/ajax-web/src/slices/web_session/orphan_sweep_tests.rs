@@ -181,6 +181,47 @@ fn term_ignoring_child_is_killed_before_identity_is_cleared_issue_1327() {
 }
 
 #[test]
+fn zombie_child_is_treated_as_gone_before_term_grace_issue_1327() {
+    use std::time::Instant;
+
+    let (dir, store) = scratch_store("zombie-1327");
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .stdin(Stdio::null())
+        .spawn()
+        .expect("spawn sleep helper");
+    let pid = child.id() as i64;
+    let token = super::process_identity::start_token(pid).expect("live child token");
+    record_row(&store, &dir, "handle", Some((pid, token)), "foreign-boot");
+    let run_id = row_id_for(&store, "handle");
+
+    Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("SIGKILL sleep helper without wait so it remains a zombie");
+
+    let start = Instant::now();
+    let result = super::orphan_sweep::sweep_with_grace(&store, "this-boot", Duration::from_secs(5));
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "sweep must not wait out TERM/KILL grace on a zombie (took {:?})",
+        elapsed
+    );
+    assert!(result.complete, "zombie orphan sweep must complete");
+    assert!(
+        listed_row(&store, &run_id).is_none(),
+        "zombie child's run row must be cleared"
+    );
+
+    child.wait().expect("reap zombie child");
+    cleanup(&dir);
+}
+
+#[test]
 fn matching_token_terminates_child_and_clears_row() {
     let (dir, store) = scratch_store("matching");
     let (pid, reaper) = spawn_sleep_child();
