@@ -8,11 +8,13 @@ use super::{
 use crate::adapters::web_session_store::prompt_ledger::{PromptLedger, PromptPhase};
 
 pub(super) const ACP_PROCESS_EXITED: &str = "ACP process exited";
+pub(super) const AGENT_PROCESS_EXITED: &str = "Agent process exited";
 
 pub(super) fn is_acp_exit_error(event: &SessionServerEvent) -> bool {
     matches!(
         event,
-        SessionServerEvent::Error { message } if message == ACP_PROCESS_EXITED
+        SessionServerEvent::Error { message }
+            if message == ACP_PROCESS_EXITED || message == AGENT_PROCESS_EXITED
     )
 }
 
@@ -696,4 +698,21 @@ pub(super) fn ledger_phase(
         .ok()?
         .entry(id)
         .map(|entry| entry.phase)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_acp_exit_error_matches_native_exit_1336() {
+        let acp = SessionServerEvent::Error {
+            message: ACP_PROCESS_EXITED.to_string(),
+        };
+        let native = SessionServerEvent::Error {
+            message: AGENT_PROCESS_EXITED.to_string(),
+        };
+        assert!(is_acp_exit_error(&acp));
+        assert!(is_acp_exit_error(&native));
+    }
 }

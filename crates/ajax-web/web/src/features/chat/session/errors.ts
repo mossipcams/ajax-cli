@@ -10,7 +10,7 @@ export function explainAcpError(message: string): string {
   if (/internal error/i.test(message)) {
     return "The agent rejected that request. Try sending again, or reopen the session.";
   }
-  if (/ACP process exited/i.test(message)) {
+  if (/(ACP|Agent) process exited/i.test(message)) {
     return "The agent stopped. It will restart when you reconnect.";
   }
   if (/acp request timed out/i.test(message)) {

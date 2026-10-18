@@ -186,10 +186,16 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     message: map_operator_visible_acp_error(&message),
                 });
             }
-            AgentEvent::Acp(AcpClientEvent::Exited) | AgentEvent::Native(NativeEvent::Exited) => {
+            AgentEvent::Acp(AcpClientEvent::Exited) => {
                 host_exited = true;
                 events.push(SessionServerEvent::Error {
                     message: "ACP process exited".to_string(),
+                });
+            }
+            AgentEvent::Native(NativeEvent::Exited) => {
+                host_exited = true;
+                events.push(SessionServerEvent::Error {
+                    message: "Agent process exited".to_string(),
                 });
             }
             AgentEvent::Native(native) => {

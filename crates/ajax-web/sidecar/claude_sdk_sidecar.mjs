@@ -23,6 +23,8 @@
 // `elicitation_request` events answered by `elicitation_response` commands;
 // url-mode and secret-looking elicitations are declined, and any elicitation
 // still pending on abort/shutdown resolves as cancelled.
+// Claude runs with the `claude_code` system prompt preset (systemPrompt
+// {type:'preset', preset:'claude_code'}).
 
 import { randomUUID } from "node:crypto";
 import { argv, exit, stderr, stdin, stdout } from "node:process";
@@ -254,6 +256,7 @@ async function handleInit(cmd) {
   const sessionId = cmd.resume || cmd.sessionId || randomUUID();
   const options = {
     cwd: cmd.cwd,
+    systemPrompt: { type: "preset", preset: "claude_code" },
     includePartialMessages: true,
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,

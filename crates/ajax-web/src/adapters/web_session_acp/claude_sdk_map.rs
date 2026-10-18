@@ -236,14 +236,15 @@ fn tool_result_text(block: &Value) -> String {
     }
 }
 
-/// `result` message: settles the run. Emits a usage event when token counts and
-/// a model context window are available, then marks the run finished (aborted
-/// for `error_during_execution` / `aborted_streaming`). A non-aborted error
-/// result additionally emits an [`NativeEvent::Error`] after the usage
-/// event. API errors can use subtype `success` with `is_error: true`; their
-/// `result` text carries the provider's explanation (including quota resets).
+/// `result` message: settles the run. Marks the run finished (aborted for
+/// `error_during_execution` / `aborted_streaming`). A non-aborted error result
+/// additionally emits an [`NativeEvent::Error`]. API errors can use subtype
+/// `success` with `is_error: true`; their `result` text carries the provider's
+/// explanation (including quota resets). Context fill is not taken from here:
+/// the `usage` field sums the whole turn and `modelUsage` is cumulative, so
+/// both are wrong for the live meter; it comes from the client's
+/// run-finished hook instead.
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
-    push_usage_update(message, events);
     let subtype = message
         .get("subtype")
         .and_then(Value::as_str)
@@ -266,35 +267,4 @@ fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
         ))));
     }
     (true, ended_aborted)
-}
-
-/// Usage event for a `result` message: used tokens from `usage` and the context
-/// window of the first `modelUsage` entry. Skipped when either is missing or
-/// non-numeric (missing token parts count as 0).
-fn push_usage_update(message: &Value, events: &mut Vec<AgentEvent>) {
-    let usage = match message.get("usage") {
-        Some(usage @ Value::Object(_)) => usage,
-        _ => return,
-    };
-    let used = [
-        "input_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-        "output_tokens",
-    ]
-    .iter()
-    .map(|key| usage.get(*key).and_then(Value::as_u64).unwrap_or(0))
-    .sum::<u64>();
-    let size = message
-        .get("modelUsage")
-        .and_then(Value::as_object)
-        .and_then(|models| models.values().next())
-        .and_then(|m| m.get("contextWindow"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    // A zero-usage result (e.g. an aborted turn) must not reset the live context meter to 0%.
-    if used == 0 || size == 0 {
-        return;
-    }
-    events.push(AgentEvent::Native(NativeEvent::Usage { used, size }));
 }

@@ -75,50 +75,13 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
         "expected exactly one 'ok' text chunk, got {message_text:?}"
     );
 
-    // Exactly one usage event (25875 / 200000), placed before the events of the
-    // finishing mapping.
-    let usage_positions: Vec<usize> = events
-        .iter()
-        .enumerate()
-        .filter(|(_, event)| matches!(native_event(event), NativeEvent::Usage { .. }))
-        .map(|(position, _)| position)
-        .collect();
-    assert_eq!(usage_positions.len(), 1, "expected exactly one Usage event");
-    let usage = match native_event(events[usage_positions[0]]) {
-        NativeEvent::Usage { used, size } => (*used, *size),
-        other => panic!("expected a Usage event, got {other:?}"),
-    };
-    assert_eq!(usage.0, 25875);
-    assert_eq!(usage.1, 200000);
-
-    let finished_positions: Vec<usize> = mappings
-        .iter()
-        .enumerate()
-        .filter(|(_, mapping)| mapping.finished)
-        .map(|(position, _)| position)
-        .collect();
-    assert_eq!(
-        finished_positions.len(),
-        1,
-        "expected exactly one finished mapping"
-    );
-    let finished_index = finished_positions[0];
-    // The usage event arrives with the finishing message (nothing is emitted
-    // after it).
-    let finish_mapping = &mappings[finished_index];
-    let usage_in_finish = finish_mapping
-        .events
-        .iter()
-        .filter(|event| matches!(native_event(event), NativeEvent::Usage { .. }))
-        .count();
-    assert_eq!(
-        usage_in_finish, 1,
-        "usage event must be part of the finishing message"
-    );
-    assert_eq!(
-        finish_mapping.events.len(),
-        1,
-        "no events may follow the usage event"
+    // #1334: the result message's `usage` is a whole-turn sum and must not
+    // become the context meter; no mapping in the transcript emits a Usage event.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(native_event(event), NativeEvent::Usage { .. })),
+        "no Usage event may come from SDK messages: {events:?}"
     );
 
     assert!(
@@ -173,22 +136,21 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
         } if !content.is_empty()
     ));
 
-    let usage = events
-        .iter()
-        .find_map(|event| match native_event(event) {
-            NativeEvent::Usage { used, size } => Some((*used, *size)),
-            _ => None,
-        })
-        .expect("expected a Usage event");
-    assert_eq!(usage.0, 55672);
-    assert_eq!(usage.1, 200000);
+    // #1334: no Usage event comes from the transcript (the meter is fed by the
+    // client's run-finished hook, not the result message).
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(native_event(event), NativeEvent::Usage { .. })),
+        "no Usage event may come from SDK messages: {events:?}"
+    );
 
     let finished_count = mappings.iter().filter(|mapping| mapping.finished).count();
     assert_eq!(finished_count, 1, "expected exactly one finished mapping");
 }
 
 #[test]
-fn interrupt_transcript_aborts_then_restarts_with_usage() {
+fn interrupt_transcript_aborts_then_restarts() {
     let records = fixture("interrupt.jsonl");
     let mappings = replay(&records);
     let finished: Vec<&RpcMapping> = mappings.iter().filter(|mapping| mapping.finished).collect();
@@ -204,18 +166,16 @@ fn interrupt_transcript_aborts_then_restarts_with_usage() {
         "aborted zero-usage run must not emit a Usage event"
     );
 
-    // The restarted run finishes cleanly with real usage.
+    // The restarted run finishes cleanly; no Usage event comes from either
+    // result message (context fill is fetched by the client's hook, #1334).
     assert!(!finished[1].ended_aborted, "second run must not be aborted");
-    let usage = finished[1]
-        .events
-        .iter()
-        .find_map(|event| match native_event(event) {
-            NativeEvent::Usage { used, size } => Some((*used, *size)),
-            _ => None,
-        })
-        .expect("expected a Usage event in the second run");
-    assert_eq!(usage.0, 26781);
-    assert_eq!(usage.1, 200000);
+    assert!(
+        !finished[1]
+            .events
+            .iter()
+            .any(|event| matches!(native_event(event), NativeEvent::Usage { .. })),
+        "the restarted run's result must not emit a Usage event"
+    );
 
     // The '[Request interrupted by user]' user message produces no events.
     let interrupt_records: Vec<&Value> = records
@@ -440,19 +400,16 @@ fn rate_limited_turn_displays_claude_session_limit_text() {
     let mapping = map_sdk_message(&result, SESSION_ID);
 
     // Existing turn-end behavior is preserved: the result finishes the turn,
-    // not aborted, with the usage event before the single error event.
+    // not aborted, emitting exactly the error event. Its summed `usage` must
+    // not become a Usage meter event (#1334).
     assert!(mapping.finished);
     assert!(!mapping.ended_aborted);
     assert_eq!(
         mapping.events.len(),
-        2,
-        "expected one usage event and one error event"
+        1,
+        "expected exactly the error event, no usage event"
     );
     match native_event(&mapping.events[0]) {
-        NativeEvent::Usage { used, size } => assert_eq!((*used, *size), (459832, 1000000)),
-        other => panic!("expected a Usage event, got {other:?}"),
-    }
-    match native_event(&mapping.events[1]) {
         NativeEvent::Error(text) => {
             assert_eq!(
                 text,
@@ -512,4 +469,36 @@ fn result_text_does_not_emit_an_error_on_success_or_cancellation() {
         assert_eq!(mapping.ended_aborted, aborted);
         assert!(mapping.events.is_empty());
     }
+}
+
+#[test]
+fn result_with_summed_usage_emits_no_usage_event_1334() {
+    // #1334: a `result` message whose whole-turn summed `usage` is large and
+    // whose cumulative `modelUsage` window is present must not emit a Usage
+    // event; the live context meter comes from the client's run-finished hook.
+    let message = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 3,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 459829,
+            "output_tokens": 1200
+        },
+        "modelUsage": {"claude-sonnet-4-6": {"contextWindow": 1000000}}
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+
+    assert!(mapping.finished);
+    assert!(!mapping.ended_aborted);
+    assert!(
+        !mapping
+            .events
+            .iter()
+            .any(|event| matches!(native_event(event), NativeEvent::Usage { .. })),
+        "a summed-usage result must not emit a Usage event: {:?}",
+        mapping.events
+    );
 }

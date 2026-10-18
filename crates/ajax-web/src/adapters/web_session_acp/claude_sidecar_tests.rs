@@ -645,3 +645,29 @@ fn elicitation_response_with_unknown_id_fails() {
         "error: {error}"
     );
 }
+
+#[test]
+fn init_uses_claude_code_system_prompt_preset_1333() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    sidecar.wait_until("queryOptions fake_call", |records| {
+        fake_call_present(records, "queryOptions")
+    });
+    let call = fake_call(&sidecar.records, "queryOptions");
+    let options = call
+        .get("args")
+        .and_then(Value::as_array)
+        .expect("queryOptions args")
+        .first()
+        .expect("options object");
+    assert_eq!(
+        options.get("systemPrompt"),
+        Some(&json!({ "type": "preset", "preset": "claude_code" })),
+        "init must pass the claude_code system prompt preset (issue #1333)"
+    );
+}
+
+fn fake_call_present(records: &[Value], method: &str) -> bool {
+    events(records, "fake_call")
+        .any(|record| record.get("method").and_then(Value::as_str) == Some(method))
+}

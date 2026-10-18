@@ -231,6 +231,37 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 }
 
 #[test]
+fn finished_turn_emits_context_usage_from_sidecar_1334() {
+    // #1334: the context meter comes from the sidecar's getContextUsage()
+    // snapshot fetched by the run-finished hook, not from the result message.
+    let client = spawn_client(None, None);
+    client
+        .begin_prompt(&text_blocks("hello"))
+        .expect("begin_prompt");
+
+    let events = collect_until_finished(&client);
+
+    // The fake SDK fixture reports { totalTokens: 25730, maxTokens: 200000 }.
+    let usage_index = events
+        .iter()
+        .position(|event| usage_update(event).is_some())
+        .expect("a UsageUpdate must arrive before the finish: {events:?}");
+    assert!(events
+        .iter()
+        .skip(usage_index + 1)
+        .all(|event| usage_update(event).is_none()));
+    let (used, size) = usage_update(&events[usage_index]).unwrap();
+    assert_eq!((used, size), (25730, 200000));
+
+    // The Usage event must precede the turn-finished event.
+    let finish_index = events
+        .iter()
+        .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
+        .expect("RequestFinished must arrive");
+    assert!(usage_index < finish_index);
+}
+
+#[test]
 fn abort_flow_cancels_and_reuses_the_same_host() {
     let client = spawn_client(None, None);
     let id = client
