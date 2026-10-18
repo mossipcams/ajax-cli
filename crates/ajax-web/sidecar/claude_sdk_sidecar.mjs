@@ -156,6 +156,7 @@ const state = {
   query: null,
   pump: null,
   shuttingDown: false,
+  inflightPrompts: 0,
   pendingElicitations: new Map(),
 };
 
@@ -215,12 +216,36 @@ async function optional(fn, fallback) {
   }
 }
 
+// Issue #1274: a pump that throws — or an iterator that ends/exhausts — while
+// a prompt is in flight must NOT leave the session busy and healthy-looking.
+// Every lost turn is ended with a synthesized error `result` so the host
+// surfaces it; the sidecar itself stays alive for subsequent prompts.
+function reportLostTurn(message) {
+  if (state.inflightPrompts === 0) return;
+  state.inflightPrompts = 0;
+  log(`turn lost: ${message}`);
+  writeLine({
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    duration_ms: 0,
+    num_turns: 1,
+    result: message,
+    session_id: state.sessionId,
+  });
+}
+
 function startPump(query) {
   return (async () => {
     try {
-      for await (const message of query) writeLine(message);
+      for await (const message of query) {
+        if (message?.type === "result") state.inflightPrompts = Math.max(0, state.inflightPrompts - 1);
+        writeLine(message);
+      }
+      if (!state.shuttingDown) reportLostTurn("Claude SDK message stream ended before the in-flight prompt completed");
     } catch (error) {
       log(`message pump failed: ${error?.stack ?? error}`);
+      if (!state.shuttingDown) reportLostTurn(`Claude SDK message stream failed: ${error?.message ?? String(error)}`);
     }
   })();
 }
@@ -315,6 +340,7 @@ function handlePrompt(cmd) {
     parent_tool_use_id: null,
     session_id: state.sessionId,
   });
+  state.inflightPrompts += 1;
   respond("prompt", cmd.id, true, { disposition: "started" });
 }
 
