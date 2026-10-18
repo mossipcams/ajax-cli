@@ -41,6 +41,8 @@ const fakeModel = {
   contextWindow: 131072,
   maxTokens: 8192,
 };
+// Same model id as fakeModel under a different provider (--shared-model-ids).
+const sharedOtherModel = { ...fakeModel, provider: 'other-provider' };
 
 function emit(record) {
   process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -66,6 +68,7 @@ const exitAfterState = flags.has('--exit-after-state'); // child exits right aft
 const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
 const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
 const chatterState = flags.has('--chatter-state'); // get_state is never answered; unrelated records flood stdout instead
+const sharedModelIds = flags.has('--shared-model-ids'); // a second provider exposes the same model id; get_state selects it
 
 // Scripted stdout output. Emitted before any command handling; libuv preserves
 // write order on the pipe, so these lines precede every later record.
@@ -142,7 +145,7 @@ rl.on('line', (raw) => {
       }
       const stateData = {
         sessionFile,
-        model: fakeModel,
+        model: sharedModelIds ? sharedOtherModel : fakeModel,
         thinkingLevel: 'medium',
         isStreaming: false,
         messageCount: 0,
@@ -182,7 +185,9 @@ rl.on('line', (raw) => {
         command: 'get_available_models',
         success: true,
         data: {
-          models: [fakeModel, { id: 'fake-nonreasoning', name: 'Fake Non-reasoning', api: 'anthropic-messages', provider: 'fake-provider', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 }],
+          models: sharedModelIds
+            ? [fakeModel, sharedOtherModel]
+            : [fakeModel, { id: 'fake-nonreasoning', name: 'Fake Non-reasoning', api: 'anthropic-messages', provider: 'fake-provider', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 }],
         },
       });
       break;
