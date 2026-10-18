@@ -212,6 +212,250 @@ fn sub_agent_messages_map_to_empty() {
     assert!(!mapping.ended_aborted);
 }
 
+/// A sub-agent (Task) assistant message carrying one `tool_use` block.
+fn sub_agent_tool_use_1342(parent: &str, id: &str, name: &str, input: Value) -> Value {
+    serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": parent,
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": id, "name": name, "input": input}
+        ]}
+    })
+}
+
+/// A sub-agent user message carrying one `tool_result` block.
+fn sub_agent_tool_result_1342(parent: &str, id: &str, text: &str) -> Value {
+    serde_json::json!({
+        "type": "user",
+        "parent_tool_use_id": parent,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": id, "content": text}
+        ]}
+    })
+}
+
+#[test]
+fn sub_agent_tool_use_opens_a_tool_call_1342() {
+    let message = sub_agent_tool_use_1342(
+        "toolu_task",
+        "t-sub-read",
+        "Read",
+        serde_json::json!({"file_path": "/work/a.rs"}),
+    );
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCall {
+            id,
+            title,
+            status,
+            raw_input,
+            ..
+        } => {
+            assert_eq!(id, "t-sub-read");
+            assert_eq!(title, "Read: /work/a.rs");
+            assert_eq!(*status, "in_progress");
+            assert!(raw_input.is_some(), "raw input must be carried");
+        }
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+}
+
+#[test]
+fn sub_agent_tool_result_completes_its_tool_call_1342() {
+    let message = sub_agent_tool_result_1342("toolu_task", "t-sub-read", "fn main() {}");
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCallUpdate {
+            id,
+            status,
+            content,
+            ..
+        } => {
+            assert_eq!(id, "t-sub-read");
+            assert_eq!(*status, "completed");
+            assert_eq!(content.as_deref(), Some("fn main() {}"));
+        }
+        other => panic!("expected a ToolCallUpdate event, got {other:?}"),
+    }
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+}
+
+#[test]
+fn sub_agent_text_stream_event_maps_to_empty_1342() {
+    let message = serde_json::json!({
+        "type": "stream_event",
+        "parent_tool_use_id": "toolu_task",
+        "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "sub-agent prose"}
+        }
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+}
+
+#[test]
+fn sub_agent_result_maps_to_empty_and_never_finishes_1342() {
+    let message = serde_json::json!({
+        "type": "result",
+        "parent_tool_use_id": "toolu_task",
+        "subtype": "error_during_execution",
+        "is_error": true,
+        "result": "sub-agent failed"
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+}
+
+#[test]
+fn interleaved_sub_agent_tool_calls_map_independently_1342() {
+    let mappings: Vec<RpcMapping> = [
+        sub_agent_tool_use_1342(
+            "toolu_task",
+            "t-a",
+            "Grep",
+            serde_json::json!({"pattern": "alpha"}),
+        ),
+        sub_agent_tool_use_1342(
+            "toolu_task",
+            "t-b",
+            "Bash",
+            serde_json::json!({"command": "ls"}),
+        ),
+        sub_agent_tool_result_1342("toolu_task", "t-b", "listing"),
+        sub_agent_tool_result_1342("toolu_task", "t-a", "match"),
+    ]
+    .iter()
+    .map(|message| map_sdk_message(message, SESSION_ID))
+    .collect();
+    let events = all_events(&mappings);
+    let ids: Vec<(&str, &str)> = events
+        .iter()
+        .map(|event| match native_event(event) {
+            NativeEvent::ToolCall { id, status, .. } => (id.as_str(), status.as_str()),
+            NativeEvent::ToolCallUpdate { id, status, .. } => (id.as_str(), status.as_str()),
+            other => panic!("unexpected event: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            ("t-a", "in_progress"),
+            ("t-b", "in_progress"),
+            ("t-b", "completed"),
+            ("t-a", "completed"),
+        ]
+    );
+    assert!(mappings.iter().all(|mapping| !mapping.finished));
+}
+
+#[test]
+fn sub_agent_todowrite_does_not_replace_the_plan_1342() {
+    let sub_agent_todo = sub_agent_tool_use_1342(
+        "toolu_task",
+        "t-sub-todo",
+        "TodoWrite",
+        serde_json::json!({"todos": [
+            {"content": "sub step", "status": "in_progress", "activeForm": "Doing sub step"}
+        ]}),
+    );
+    let mapping = map_sdk_message(&sub_agent_todo, SESSION_ID);
+    assert!(
+        !mapping
+            .events
+            .iter()
+            .any(|event| matches!(native_event(event), NativeEvent::Plan(_))),
+        "a sub-agent TodoWrite must not emit a Plan event: {:?}",
+        mapping.events
+    );
+    // The tool row itself still shows, like any other sub-agent tool call.
+    assert_eq!(mapping.events.len(), 1);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCall { id, title, .. } => {
+            assert_eq!(id, "t-sub-todo");
+            assert_eq!(title, "TodoWrite");
+        }
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
+
+    // The main loop's TodoWrite still replaces the plan (#1338 unchanged).
+    let main_todo = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t-main-todo", "name": "TodoWrite",
+             "input": {"todos": [
+                 {"content": "main step", "status": "pending", "activeForm": "Doing main step"}
+             ]}}
+        ]}
+    });
+    let mapping = map_sdk_message(&main_todo, SESSION_ID);
+    assert!(
+        mapping.events.iter().any(|event| matches!(
+            native_event(event),
+            NativeEvent::Plan(entries)
+                if entries == &vec![("main step".to_string(), "pending".to_string())]
+        )),
+        "a main-loop TodoWrite must still emit its Plan event: {:?}",
+        mapping.events
+    );
+}
+
+#[test]
+fn main_loop_messages_map_unchanged_1342() {
+    let tool_use = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t-main", "name": "Bash", "input": {"command": "ls"}}
+        ]}
+    });
+    let mapping = map_sdk_message(&tool_use, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCall { id, title, .. } => {
+            assert_eq!(id, "t-main");
+            assert_eq!(title, "Bash: ls");
+        }
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
+
+    let text_delta = serde_json::json!({
+        "type": "stream_event",
+        "parent_tool_use_id": null,
+        "event": {
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "main prose"}
+        }
+    });
+    let mapping = map_sdk_message(&text_delta, SESSION_ID);
+    assert!(matches!(
+        mapping.events.as_slice(),
+        [AgentEvent::Native(NativeEvent::AgentText(text))] if text == "main prose"
+    ));
+
+    let result = serde_json::json!({
+        "type": "result",
+        "parent_tool_use_id": null,
+        "subtype": "success",
+        "is_error": false,
+        "stop_reason": "end_turn"
+    });
+    let mapping = map_sdk_message(&result, SESSION_ID);
+    assert!(mapping.finished);
+    assert!(!mapping.ended_aborted);
+    assert!(mapping.events.is_empty());
+}
+
 #[test]
 fn elicitation_request_maps_to_a_native_elicitation_event() {
     let expected_schema = serde_json::json!({"questions": [{"id": "q1"}]});

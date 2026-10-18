@@ -1,6 +1,6 @@
 # Native harness parity and defects
 
-Status: **approved** 2026-10-18. P0 and P3 done; P5 deferred (Codex still uses ACP).
+Status: **approved** 2026-10-18. P0, P1, P2, P3, P4 done (PRs #1343-#1349, stacked on #1337); P5 deferred (Codex still uses ACP).
 
 The web chat moved from ACP (claude-agent-acp, pi-acp, cursor ACP) to native
 transports: Claude Agent SDK sidecar, Pi RPC, Cursor SDK sidecar. Codex stays on
@@ -25,7 +25,8 @@ ACP. This plan covers what is still missing or broken after that move.
       stacked on #1337 because both touch `claude_sdk_map.rs`. Body: `Closes #1338`,
       `Closes #1339`.
 
-### P1. Triage the older native-harness defect issues
+### P1. Triage the older native-harness defect issues — DONE
+Outcome: #1272, #1273, #1298, #1306 already fixed (closed, tests exist). #1274 PR #1344, #1275 PR #1345, #1276 PR #1346, #1279 PR #1348 fixed real defects. #1277 passes on current code (test-only PR #1347).
 All have a title and an empty body, and none is linked from a commit. For each
 one: the delegate writes a focused regression test for the symptom in the title,
 run against current code.
@@ -48,7 +49,7 @@ run against current code.
 Routing: Qwen, one issue per packet. A packet that has to touch more than 4
 files goes to Haiku.
 
-### P2. #1342 Claude sub-agent (Task) activity
+### P2. #1342 Claude sub-agent (Task) activity — DONE (PR #1349; sub-agent TodoWrite keeps its tool row but never emits a Plan)
 - [ ] In `claude_sdk_map.rs`, stop dropping messages with a non-null
       `parent_tool_use_id` wholesale. Map sub-agent `assistant` tool_use blocks
       and `user` tool_result blocks to normal tool rows (tool ids are unique, so
@@ -80,7 +81,7 @@ files goes to Haiku.
     `supportedCommands` and Pi `get_commands` do not include a built-in `/model`.
     If neither does, close as not planned; otherwise, rescope to that command.
 
-### P4. Docs correction
+### P4. Docs correction — DONE (in PR #1349)
 - [ ] `web-session-behavior.md` says ACP `status.state` drives the live-head
       label (Working / Needs you / Ready). The code derives it from turn and
       attention state instead. Correct the bullet. This can ship with P2.
