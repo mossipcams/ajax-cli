@@ -37,6 +37,31 @@ fn round_trip_events_and_meta() {
 }
 
 #[test]
+fn save_meta_updates_harness_on_existing_run() {
+    let dir = scratch_dir("save-harness");
+    let handle = "web/save-harness";
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    try_save_meta(
+        &store,
+        &dir,
+        handle,
+        "claude",
+        Some("claude-session"),
+        "auto",
+    )
+    .unwrap();
+    let original = store.latest_run_for_task(handle).unwrap().unwrap();
+
+    try_save_meta(&store, &dir, handle, "codex", Some("codex-session"), "auto").unwrap();
+
+    let updated = store.latest_run_for_task(handle).unwrap().unwrap();
+    assert_eq!(updated.run_id, original.run_id);
+    assert_eq!(updated.harness, "codex");
+    assert_eq!(updated.native_session_id.as_deref(), Some("codex-session"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn missing_file_is_empty() {
     let dir = scratch_dir("missing");
     let loaded: StoredSession<serde_json::Value> = load(&dir, "web/none");
@@ -199,7 +224,7 @@ fn issue_1228_unreadable_file_is_an_error_not_an_empty_session() {
     std::fs::create_dir_all(&path).unwrap();
     assert!(try_load::<serde_json::Value>(&store, &dir, handle, "unknown").is_err());
     assert!(try_save_meta(&store, &dir, handle, "unknown", Some("sess-new"), "auto").is_err());
-    assert!(clear_acp_session_id(&store, &dir, handle).is_err());
+    assert!(clear_acp_session_id(&store, &dir, handle, "unknown").is_err());
     assert!(
         !path.with_extension("jsonl.tmp").exists(),
         "a failed load must not start a rewrite"
@@ -256,7 +281,7 @@ fn forced_meta_write_failure_leaves_the_stored_session_id_unchanged() {
     set_force_meta_write_fail(true);
     let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
     assert!(try_save_meta(&store, &dir, handle, "unknown", Some("sess-new"), "auto").is_err());
-    assert!(clear_acp_session_id(&store, &dir, handle).is_err());
+    assert!(clear_acp_session_id(&store, &dir, handle, "unknown").is_err());
     set_force_meta_write_fail(false);
 
     assert_eq!(

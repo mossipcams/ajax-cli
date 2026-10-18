@@ -451,3 +451,265 @@ fn child_exit_after_terminal_captured_does_not_mark_interrupted() {
     });
     let _ = std::fs::remove_dir_all(dir);
 }
+#[test]
+fn cross_harness_cold_acquire_does_not_resume_a_foreign_session_id() {
+    let dir = scratch_dir("cross-harness-resume");
+    let handle = "web/cross-harness-resume";
+    let same_dir = scratch_dir("cross-harness-resume-same");
+    let same_handle = "web/cross-harness-resume-same";
+
+    // A Claude run must not resume under Codex; a Codex run may resume.
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    crate::adapters::web_session_store::try_save_meta(
+        &store,
+        &dir,
+        handle,
+        "claude",
+        Some("foreign-session-id"),
+        "auto",
+    )
+    .expect("seed stored meta");
+    let script = fake_acp_fixture();
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Codex)
+            .expect("cold acquire as codex");
+        let stored = crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert_ne!(
+            stored.acp_session_id.as_deref(),
+            Some("foreign-session-id"),
+            "a claude session id must never be resumed under codex"
+        );
+
+        // Seed a real fixture session so a same-harness cold acquire can resume it.
+        let initial_directory = BlockingSessionDirectory::new(same_dir.clone());
+        initial_directory
+            .acquire(same_handle, &same_dir, "auto", AgentClient::Codex)
+            .expect("seed codex session");
+        let own_session_id =
+            crate::adapters::web_session_store::load::<SessionServerEvent>(&same_dir, same_handle)
+                .acp_session_id
+                .expect("saved codex session id");
+        initial_directory.detach_session(same_handle);
+        let same_directory = BlockingSessionDirectory::new(same_dir.clone());
+        same_directory
+            .acquire(same_handle, &same_dir, "auto", AgentClient::Codex)
+            .expect("cold acquire as codex");
+        let same_stored =
+            crate::adapters::web_session_store::load::<SessionServerEvent>(&same_dir, same_handle);
+        assert_eq!(same_stored.acp_session_id, Some(own_session_id));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(same_dir);
+}
+
+fn assert_failed_context_reset_preserves_live_queue(operation: &str) {
+    let dir = scratch_dir(operation);
+    let handle = "web/reset-ledger-failure-1324";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire old harness");
+            // An untracked active prompt isolates queue-discard persistence from terminal persistence.
+            directory
+                .submit_prompt_with_id(handle, String::new(), "hold".into())
+                .expect("active prompt");
+            directory
+                .submit_prompt_with_id(handle, "queued-1324".into(), "queued".into())
+                .expect("queue prompt");
+            let old_pid = directory.child_id(handle).expect("old child");
+            let old_generation = directory.generation(handle);
+            let old_session =
+                crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                    .acp_session_id;
+            let fail = ForcePersistFailGuard::enable();
+            let result =
+                match operation {
+                    "switch" => directory.runtime_handle().block_on(
+                        directory.inner().reset_harness_context(
+                            handle,
+                            &dir,
+                            AgentClient::Codex,
+                            "auto",
+                        ),
+                    ),
+                    "clear" => directory.start_fresh(handle, &dir),
+                    "acquire" => directory.acquire(handle, &dir, "auto", AgentClient::Codex),
+                    _ => unreachable!(),
+                };
+            let error = result.expect_err("failed queue discard must fail the reset");
+            assert!(
+                error.contains("forced prompt ledger persist failure"),
+                "{error}"
+            );
+            assert_eq!(directory.child_id(handle), Some(old_pid));
+            assert_eq!(directory.generation(handle), old_generation);
+            assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 1);
+            assert_eq!(
+                ledger_phase(&dir, handle, "queued-1324"),
+                Some(PromptPhase::Queued),
+            );
+            assert_eq!(
+                crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                    .acp_session_id,
+                old_session,
+            );
+            drop(fail);
+            directory.pump(handle);
+            assert_eq!(
+                ledger_phase(&dir, handle, "queued-1324"),
+                Some(PromptPhase::Queued),
+                "failed reset must not cancel the old client's active prompt",
+            );
+            directory
+                .cancel(handle, true)
+                .expect("cancel old active prompt");
+            pump_until(&directory, handle, Duration::from_secs(5), |_| {
+                ledger_phase(&dir, handle, "queued-1324") == Some(PromptPhase::Dispatching)
+            });
+            assert_eq!(directory.child_id(handle), Some(old_pid));
+            directory.detach_session(handle);
+        });
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1324_harness_switch_ledger_failure_preserves_queue_and_client() {
+    assert_failed_context_reset_preserves_live_queue("switch");
+}
+
+#[test]
+fn issue_1324_clear_context_ledger_failure_preserves_queue_and_client() {
+    assert_failed_context_reset_preserves_live_queue("clear");
+}
+
+#[test]
+fn issue_1324_warm_acquire_propagates_reset_failure() {
+    assert_failed_context_reset_preserves_live_queue("acquire");
+}
+
+#[test]
+fn issue_1324_warm_acquire_converges_to_registry_agent() {
+    use ajax_core::registry::{Registry, SqliteRegistryStore};
+
+    let dir = scratch_dir("warm-harness-switch-1324");
+    let handle = "web/fix-login";
+    let mut task = crate::test_support::fix_login_task();
+    task.selected_agent = AgentClient::Cursor;
+    task.worktree_path = dir.clone();
+    task.set_skip_interactive_agent(true);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    store.save(&context.registry).expect("save original agent");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    // Distinct fresh IDs let this test detect an accidental resume across clients.
+    let script = dir.join("unique-session.js");
+    let source = std::fs::read_to_string(fake_acp_fixture()).expect("fixture");
+    let session_id = "const sessionId = 'fake-sess-1';";
+    assert!(source.contains(session_id));
+    std::fs::write(
+        &script,
+        source.replace(session_id, "const sessionId = `fake-sess-${process.pid}`;"),
+    )
+    .expect("fixture with unique session IDs");
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire old harness");
+        let old_pid = directory.child_id(handle).expect("old child");
+        let old_generation = directory.generation(handle);
+        let old_session =
+            crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle)
+                .acp_session_id;
+        let task_id = ajax_core::models::TaskId::new(handle);
+        context
+            .registry
+            .get_task_mut(&task_id)
+            .unwrap()
+            .selected_agent = AgentClient::Codex;
+        store
+            .save(&context.registry)
+            .expect("persist switch intent");
+        let registry = store.load().expect("reload registry");
+        let new_agent = registry.get_task(&task_id).unwrap().selected_agent;
+
+        directory
+            .acquire(handle, &dir, "auto", new_agent)
+            .expect("warm acquire must converge");
+        let new_pid = directory.child_id(handle).expect("new child");
+        assert_ne!(new_pid, old_pid, "must replace the old harness client");
+        assert_eq!(directory.generation(handle), old_generation + 1);
+        assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 2);
+        let stored = crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert_eq!(stored.harness, "codex");
+        assert_ne!(stored.acp_session_id, old_session);
+        assert_eq!(
+            stored
+                .events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    SessionServerEvent::Message { text, .. }
+                        if text == "Client switched harness. Context reset."
+                ))
+                .count(),
+            1
+        );
+
+        directory
+            .acquire(handle, &dir, "auto", new_agent)
+            .expect("same-harness acquire");
+        assert_eq!(directory.child_id(handle), Some(new_pid));
+        assert_eq!(directory.generation(handle), old_generation + 1);
+        directory.detach_session(handle);
+    });
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1324_idle_switch_discards_queued_prompts() {
+    use crate::adapters::web_session_store::prompt_ledger;
+    use ajax_core::registry::SqliteRegistryStore;
+
+    let dir = scratch_dir("idle-switch-queue-1324");
+    let handle = "web/idle-switch-queue-1324";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    assert!(!directory.inner().has_live_entry(handle));
+
+    // No live session: seed the SQLite ledger with queued prompts directly.
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    let mut ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load empty ledger");
+    ledger.upsert_queued(
+        "queued-a-1324".into(),
+        "queued a".into(),
+        "queued a".into(),
+        Vec::new(),
+    );
+    ledger.upsert_queued(
+        "queued-b-1324".into(),
+        "queued b".into(),
+        "queued b".into(),
+        Vec::new(),
+    );
+    prompt_ledger::try_persist(&store, &dir, handle, &ledger).expect("persist queued prompts");
+
+    directory
+        .runtime_handle()
+        .block_on(
+            directory
+                .inner()
+                .reset_harness_context(handle, &dir, AgentClient::Codex, "auto"),
+        )
+        .expect("idle harness switch");
+
+    let reloaded = prompt_ledger::try_load(&store, &dir, handle).expect("reload ledger");
+    assert_eq!(reloaded.queued_count(), 0);
+}

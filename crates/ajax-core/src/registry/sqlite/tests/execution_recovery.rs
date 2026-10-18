@@ -147,6 +147,7 @@ fn latest_run_uses_insertion_order_and_reads_all_fields() {
         .commit_execution(&ExecutionCommit {
             run_id: "newest".into(),
             run_update: Some(RunUpdate {
+                harness: None,
                 native_session_id: Some(Some("session".into())),
                 capabilities_json: Some("[]".into()),
                 model: Some("updated".into()),

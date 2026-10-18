@@ -37,6 +37,11 @@ pub(super) async fn acquire(
         return Err(SessionError::operator(message));
     }
     state.worktree_path = Some(worktree_path.to_path_buf());
+    if state.acp.client.is_some() && state.agent != agent {
+        reset_harness_context(state, worktree_path, model, agent).await?;
+        state.acquire_holder();
+        return Ok(());
+    }
     state.agent = agent;
 
     if let Some(client) = state.acp.client.as_mut() {
@@ -69,8 +74,11 @@ pub(super) async fn acquire(
     .map_err(unreadable_session)?;
     state.evidence.transcript_corruption =
         web_session_store::corruption_warning(stored.corrupt_lines);
-    let resume_id = stored.acp_session_id.clone();
-    let (client, report) = spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
+    let resume_id = stored
+        .acp_session_id
+        .as_deref()
+        .filter(|_| stored.harness == agent_client_name(agent));
+    let (client, report) = spawn_acp(agent, worktree_path, model, resume_id).await?;
 
     state.acp.client = Some(client);
     state.record_child_identity();
@@ -227,20 +235,15 @@ pub(super) async fn reset_harness_context(
 ) -> Result<u64, SessionError> {
     // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
-    release_live_client(state, true, "harness switch")?;
+    state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
-    state.prompts.prompt_ledger.remove_queued();
-    let _ = web_session_store::prompt_ledger::try_persist(
-        &state.storage.registry_store(),
-        &state.storage.state_dir,
-        &state.qualified_handle,
-        &state.prompts.prompt_ledger,
-    );
+    release_live_client(state, true, "harness switch")?;
 
     web_session_store::clear_acp_session_id(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
+        agent_client_name(agent),
     )
     .map_err(|error| {
         SessionError::persist(format!("stored session id could not be cleared: {error}"))
@@ -252,7 +255,7 @@ pub(super) async fn reset_harness_context(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
-        "unknown",
+        agent_client_name(agent),
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, model),
     ) {
@@ -291,20 +294,15 @@ pub(super) async fn clear_session_context(
     let agent = state.agent;
     // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
-    release_live_client(state, true, "clear context")?;
+    state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
-    state.prompts.prompt_ledger.remove_queued();
-    let _ = web_session_store::prompt_ledger::try_persist(
-        &state.storage.registry_store(),
-        &state.storage.state_dir,
-        &state.qualified_handle,
-        &state.prompts.prompt_ledger,
-    );
+    release_live_client(state, true, "clear context")?;
 
     web_session_store::clear_acp_session_id(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
+        agent_client_name(agent),
     )
     .map_err(|error| {
         SessionError::persist(format!("stored session id could not be cleared: {error}"))
@@ -316,7 +314,7 @@ pub(super) async fn clear_session_context(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
-        "unknown",
+        agent_client_name(agent),
         Some(new_client.session_id()),
         &meta_model_for_persist(&report, &model),
     ) {
@@ -445,7 +443,7 @@ fn replace_resume_id(
         handle,
         harness,
     )
-    .map(|stored| stored.acp_session_id)
+    .map(|stored| stored.acp_session_id.filter(|_| stored.harness == harness))
     .map_err(unreadable_session)
 }
 

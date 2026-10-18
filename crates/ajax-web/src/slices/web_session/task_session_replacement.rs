@@ -1,4 +1,4 @@
-use super::task_session::TaskSessionState;
+use super::task_session::{agent_client_name, TaskSessionState};
 use super::task_session_exit::{
     has_healthy_client, recover_prompt_ledger, try_dispatch_next_if_idle,
 };
@@ -60,7 +60,7 @@ pub(super) fn finalize_client_metadata(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
-        "unknown",
+        agent_client_name(state.agent),
         Some(session_id),
         &meta_model_for_persist(report, model),
     )

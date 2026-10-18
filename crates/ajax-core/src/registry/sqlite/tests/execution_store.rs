@@ -420,6 +420,7 @@ fn run_updates_preserve_unset_fields_and_clear_nullable_fields() {
     let apply = |change| store.commit_execution(&change).unwrap();
     apply(ExecutionCommit {
         run_update: Some(RunUpdate {
+            harness: None,
             native_session_id: Some(Some("session".into())),
             capabilities_json: Some("{\"resume\":true}".into()),
             model: Some("new-model".into()),
@@ -458,6 +459,35 @@ fn run_updates_preserve_unset_fields_and_clear_nullable_fields() {
         cleared[0][column] = Value::Null;
     }
     assert_eq!(rows(&store.open().unwrap(), sql), cleared);
+}
+#[test]
+fn run_update_commits_harness_when_provided() {
+    let store = store();
+    assert_eq!(
+        rows(&store.open().unwrap(), "SELECT harness FROM agent_runs"),
+        vec![vec![Value::Text("codex".into())]]
+    );
+
+    store
+        .commit_execution(&ExecutionCommit {
+            run_update: Some(RunUpdate {
+                harness: Some("claude".into()),
+                ..Default::default()
+            }),
+            ..commit()
+        })
+        .unwrap();
+    assert_eq!(
+        rows(&store.open().unwrap(), "SELECT harness FROM agent_runs"),
+        vec![vec![Value::Text("claude".into())]]
+    );
+
+    // An absent `harness` leaves the stored value unchanged.
+    store.commit_execution(&commit()).unwrap();
+    assert_eq!(
+        rows(&store.open().unwrap(), "SELECT harness FROM agent_runs"),
+        vec![vec![Value::Text("claude".into())]]
+    );
 }
 
 #[test]

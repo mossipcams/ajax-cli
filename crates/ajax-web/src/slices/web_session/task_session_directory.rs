@@ -329,6 +329,7 @@ impl TaskSessionDirectory {
             &self.storage.registry_store(),
             &self.storage.state_dir,
             handle,
+            "unknown",
         ) {
             tracing::warn!(%error, handle, "failed to clear stored ACP session id on drop");
         }
@@ -463,6 +464,7 @@ impl TaskSessionDirectory {
             .await??;
             Ok(())
         } else {
+            discard_queued_prompts(&self.storage, handle)?;
             clear_stored_session_id(&self.storage, handle)
         }
     }
@@ -743,8 +745,33 @@ pub(crate) async fn apply_client_message(
 }
 
 fn clear_stored_session_id(storage: &SessionStorage, handle: &str) -> Result<(), String> {
-    web_session_store::clear_acp_session_id(&storage.registry_store(), &storage.state_dir, handle)
-        .map_err(|error| format!("stored session id could not be cleared: {error}"))
+    web_session_store::clear_acp_session_id(
+        &storage.registry_store(),
+        &storage.state_dir,
+        handle,
+        "unknown",
+    )
+    .map_err(|error| format!("stored session id could not be cleared: {error}"))
+}
+
+/// Discard the chat's SQLite-queued prompts on an idle harness switch (#1324),
+/// so headless startup dispatch never runs them under the new harness. Fails
+/// closed: a ledger load or persist error is returned to the caller.
+fn discard_queued_prompts(storage: &SessionStorage, handle: &str) -> Result<(), String> {
+    let mut ledger = web_session_store::prompt_ledger::try_load(
+        &storage.registry_store(),
+        &storage.state_dir,
+        handle,
+    )
+    .map_err(|error| format!("stored prompt ledger could not be loaded: {error}"))?;
+    ledger.remove_queued();
+    web_session_store::prompt_ledger::try_persist(
+        &storage.registry_store(),
+        &storage.state_dir,
+        handle,
+        &ledger,
+    )
+    .map_err(|error| format!("queued prompts could not be discarded: {error}"))
 }
 
 /// Stored transcript for a handle with no live slot, plus what to tell the

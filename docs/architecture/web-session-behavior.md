@@ -209,7 +209,8 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   stored resume id, spawn the new harness with `session/new` (no resume/load, no
   transcript replay), append a host note (`Client switched harness. Context
   reset.`), and keep the TaskSession slot, stored transcript, and WebSocket
-  identity. With no live slot, persist only and clear the stored resume id so the
+  identity. With no live slot, discard the queue from the persisted ledger and
+  clear the stored resume id (failing closed if the ledger cannot be persisted) so the
   next attach uses empty context. Switch sends only `{ agent }`; a model field is
   refused. Persist `None` for Auto/unspecified; never store the literal string
   `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
@@ -221,8 +222,9 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   success. Refusal leaves confirmed browser state unchanged and does not persist.
   Post-apply persistence failure keeps the live change and emits a warning.
 - Moving a task to another harness is refused unless it was launched over ACP.
-  Cross-harness Switch resets backend context on the live slot when present, or
-  clears the stored resume id when idle, so the next attach spawns the new harness
+  Cross-harness Switch discards the queue on both paths: it resets backend
+  context on the live slot when present, and with no live slot it discards the
+  persisted ledger queue and clears the stored resume id, so the next attach spawns the new harness
   with empty context.
 - Ajax orchestration sessions are trusted local automation, and the Settings
   toggle discloses that supported agents run with full tool access and without
