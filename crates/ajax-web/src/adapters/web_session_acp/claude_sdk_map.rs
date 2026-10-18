@@ -148,6 +148,7 @@ fn tool_kind_for_name(name: &str) -> String {
         "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => "edit",
         "Glob" | "Grep" => "search",
         "WebFetch" | "WebSearch" => "fetch",
+        "TodoWrite" => "think",
         _ => "other",
     };
     kind.to_string()
@@ -156,7 +157,11 @@ fn tool_kind_for_name(name: &str) -> String {
 /// Assistant message content blocks: with `includePartialMessages` the text and
 /// thinking were already streamed as deltas (re-emitting them would duplicate
 /// the output), so only `tool_use` blocks matter — they carry the complete
-/// input. Text/thinking/unknown blocks produce no events.
+/// input. Each block emits a [`NativeEvent::ToolCall`] with a descriptive
+/// title, kind, and the complete raw input, upgrading the row opened at
+/// `content_block_start`. A `TodoWrite` block additionally emits a
+/// [`NativeEvent::Plan`] carrying one (content, status) pair per todo.
+/// Text/thinking/unknown blocks produce no events.
 fn map_assistant_tool_calls(message: &Value, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
@@ -172,12 +177,72 @@ fn map_assistant_tool_calls(message: &Value, events: &mut Vec<AgentEvent>) {
         let Some(id) = block.get("id").and_then(Value::as_str) else {
             continue;
         };
-        events.push(AgentEvent::Native(NativeEvent::ToolCallUpdate {
+        let name = block
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let input = block.get("input");
+        events.push(AgentEvent::Native(NativeEvent::ToolCall {
             id: id.to_string(),
+            title: tool_title(name, input),
+            kind: tool_kind_for_name(name),
             status: "in_progress".to_string(),
-            content: None,
-            raw_input: block.get("input").cloned(),
+            raw_input: input.cloned(),
         }));
+        if name == "TodoWrite" {
+            if let Some(plan) = todo_write_plan(input) {
+                events.push(AgentEvent::Native(NativeEvent::Plan(plan)));
+            }
+        }
+    }
+}
+
+/// The (content, status) pairs of a `TodoWrite` block's input `todos` array,
+/// in order. Missing or non-array todos yield no plan; each todo contributes
+/// one pair, passing its `content` and `status` strings through.
+fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
+    let todos = input?.get("todos")?.as_array()?;
+    Some(
+        todos
+            .iter()
+            .map(|todo| {
+                (
+                    todo.get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    todo.get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The descriptive tool-call title for one assistant `tool_use` block: the bare
+/// name, suffixed with `: detail` when the input carries a recognizable target
+/// (e.g. `Bash: ls -la`). Tools without a mapped detail field keep the bare
+/// name.
+fn tool_title(name: &str, input: Option<&Value>) -> String {
+    let key = match name {
+        "Bash" => "command",
+        "Read" | "Write" | "Edit" | "MultiEdit" => "file_path",
+        "NotebookEdit" => "notebook_path",
+        "Glob" | "Grep" => "pattern",
+        "WebFetch" => "url",
+        "WebSearch" => "query",
+        "Task" => "description",
+        _ => "",
+    };
+    let detail = input
+        .and_then(|input| input.get(key))
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty());
+    match detail {
+        Some(detail) => format!("{name}: {detail}"),
+        None => name.to_string(),
     }
 }
 

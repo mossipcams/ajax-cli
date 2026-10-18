@@ -726,6 +726,16 @@ so a cancelled turn does not reset the meter.
   process exited"; both are deduped by the pump and explained in the browser as
   'The agent stopped. It will restart when you reconnect.'
   ([#1336](https://github.com/mossipcams/ajax-cli/issues/1336)).
+- Claude `TodoWrite` tool_use input `todos` map to plan entries (`content`,
+  `status`) like Cursor's `updateTodos`, while the TodoWrite tool row stays
+  ([#1338](https://github.com/mossipcams/ajax-cli/issues/1338)).
+- Native tool titles name their target: Claude re-sends each tool call from the
+  assistant message with the complete input and a title like `Bash: ls -la` /
+  `Read: <file_path>` (the row opened at `content_block_start` has the bare
+  name; the browser keeps the old title only when an incoming one is empty),
+  and Pi titles are `<tool>: <command|pattern|path>` with Pi kinds mapping read =>
+  read, edit/write => edit, grep/find/ls => search, bash => execute, else other
+  ([#1339](https://github.com/mossipcams/ajax-cli/issues/1339)).
 
 ## Permission persistence
 
