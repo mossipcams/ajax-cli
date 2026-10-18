@@ -137,6 +137,32 @@ fn set_thinking_level_updates_current_value() {
 }
 
 #[test]
+fn pi_current_model_keeps_provider_when_providers_share_model_ids_1279() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let client = PiRpcClient::spawn(
+        &fixture_path(),
+        &["--shared-model-ids".to_string()],
+        cwd,
+        None,
+        TIMEOUT,
+    )
+    .expect("fake pi rpc fixture must spawn (is node installed?)");
+
+    // get_state selects the second provider's copy of `fake-model`.
+    assert_eq!(client.applied_model(), "other-provider/fake-model");
+
+    let options = client.config_options();
+    let model = select_view(&options, "model");
+    assert_eq!(model.current_value, "other-provider/fake-model");
+    assert!(model
+        .values
+        .contains(&"fake-provider/fake-model".to_string()));
+    assert!(model
+        .values
+        .contains(&"other-provider/fake-model".to_string()));
+}
+
+#[test]
 fn set_model_and_thinking_level_fail_after_shutdown() {
     let client = spawn_client();
     client.shutdown();

@@ -46,6 +46,16 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// responses have arrived or `timeout` (measured from the first send) elapses.
 /// See the module docs for the correlation and failure policy.
 pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHandshake, String> {
+    handshake_with_model_provider(process, timeout).map(|(handshake, _)| handshake)
+}
+
+/// [`handshake`], also returning `get_state.data.model.provider` for the
+/// current model. The provider sits beside [`RpcHandshake`] rather than in it
+/// so the shared type keeps its shape for the other session clients (#1279).
+pub fn handshake_with_model_provider(
+    process: &mut JsonlProcess,
+    timeout: Duration,
+) -> Result<(RpcHandshake, Option<String>), String> {
     let state_id = process.send("get_state", json!({}))?;
     let models_id = process.send("get_available_models", json!({}))?;
     let levels_id = process.send("get_available_thinking_levels", json!({}))?;
@@ -171,7 +181,11 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
         .ok_or_else(|| "get_state response is missing data.sessionId".to_owned())?;
 
     let model = data.and_then(|d| d.get("model"));
-    Ok(RpcHandshake {
+    let model_provider = model
+        .and_then(|m| m.get("provider"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let handshake = RpcHandshake {
         session_id: session_id.to_owned(),
         session_file: string_field(data, "sessionFile"),
         model_id: model
@@ -186,7 +200,8 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
             .and_then(|m| m.get("contextWindow"))
             .and_then(Value::as_u64),
         pending,
-    })
+    };
+    Ok((handshake, model_provider))
 }
 
 /// Read a string field from `get_state`'s data object.
