@@ -192,3 +192,30 @@ fn handshake_degrades_failed_optional_commands_to_empty_lists() {
         handshake.commands
     );
 }
+
+/// GitHub #1277: a child that keeps emitting unrelated records but never
+/// answers get_state must still fail at the handshake deadline. The deadline
+/// was only checked when the record channel was empty, so a busy stream could
+/// keep the handshake running indefinitely. The handshake runs on a worker
+/// thread with a bounded wait so a regression fails fast instead of hanging.
+#[test]
+fn pi_handshake_deadline_enforced_while_records_keep_arriving_1277() {
+    let mut process = spawn_fake_pi(&["--chatter-state"]);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let result = handshake(&mut process, DEADLINE_TEST_TIMEOUT);
+        let _ = result_tx.send((result, started.elapsed()));
+    });
+
+    let (result, elapsed) = result_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("handshake must return instead of hanging while records keep arriving");
+
+    let error = result.expect_err("must time out while get_state is never answered");
+    assert!(error.contains("timed out"), "timeout message: {error}");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "deadline overshot: {elapsed:?}"
+    );
+}
