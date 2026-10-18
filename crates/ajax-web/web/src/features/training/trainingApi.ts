@@ -35,6 +35,7 @@ export interface TrainingStatus {
   state: string;
   runtime_up: boolean | null;
   active_profile: string | null;
+  profiles: string[];
   run: TrainingRun | null;
   generation: TrainingGeneration | null;
   profile_details: TrainingProfileDetails | null;
@@ -84,6 +85,7 @@ function parseStatus(payload: unknown): TrainingStatus {
     runtime_up: typeof payload.runtime_up === "boolean" ? payload.runtime_up : null,
     active_profile:
       typeof payload.active_profile === "string" ? payload.active_profile : null,
+    profiles: optionalStringArray(payload.profiles),
     run: run
       ? {
           kind: typeof run.kind === "string" ? run.kind : "",
@@ -156,7 +158,8 @@ async function getTraining(path: string): Promise<unknown> {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    payload = { error: text };
+    // Non-JSON bodies (e.g. a proxy's HTML 502 page) are never surfaced as the message.
+    payload = undefined;
   }
   if (!response.ok) {
     const message =
@@ -181,7 +184,8 @@ async function postTraining(path: string, body: unknown): Promise<void> {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    payload = { error: text };
+    // Non-JSON bodies (e.g. a proxy's HTML 502 page) are never surfaced as the message.
+    payload = undefined;
   }
   if (!response.ok) {
     const message =
