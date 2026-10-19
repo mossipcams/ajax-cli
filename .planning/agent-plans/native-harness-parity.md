@@ -86,11 +86,25 @@ files goes to Haiku.
       label (Working / Needs you / Ready). The code derives it from turn and
       attention state instead. Correct the bullet. This can ship with P2.
 
-### P5. Optional: delete the dead plumbing (needs a separate yes)
-- [ ] Remove `sessionTitle`, `acp_status`/`acpState` and `turn_usage` end to end
-      (Rust drain/slot/protocol plus the TS parse/model/reducer), for all
-      harnesses. Deleting it is less code than wiring native equivalents nobody
-      sees. Needs its own plan: it changes the wire contract.
+### P5. Optional: delete the dead browser plumbing (needs a separate yes)
+Re-checked against the code on 2026-10-18; the original "end to end" scope was wrong for `status`.
+
+| Item | Browser | Server | Verdict |
+|---|---|---|---|
+| `status` event | stored in `view.status.acpState`, never read (`statusProjection.ts`, `model.ts`, `projectWireInput.ts`, `turnProjection.ts`) | **used**: `acp_execution_map.rs` maps it to execution state and `session_activity.rs` reports it | delete the browser store only; keep the Rust event |
+| `sessionTitle` | parsed into `useChatSession`, never rendered (`parse.ts`, `contracts.ts`, `model.ts`, `useChatSession.ts`, `useSessionConnection.ts`) | produced only by ACP `SessionInfoUpdated` (`sdk_connection.rs`), so Codex only; carried in the snapshot (`protocol.rs`, `task_session_outbound.rs`, `acp_slot.rs`, `acp_drain.rs`) | browser delete is safe; Rust delete touches the Codex ACP path |
+| `turn_usage` | `usageProjection.ts`, `UsageIndicators.tsx` `formatTurnUsage` has no caller | produced by `acp_usage.rs` (Codex ACP), ignored by `transcript.rs`/`normalize.rs` | browser delete is safe; Rust delete touches the Codex ACP path |
+
+- [ ] **P5a (browser only, no wire change):** delete the unused `acpState`,
+      `sessionTitle` and per-turn usage parsing/projection/formatting and their
+      tests in `crates/ajax-web/web/src`. The server keeps sending the fields;
+      the browser already ignores unknown ones, so old and new bundles both work.
+      Rebuild the vendored `web/dist/app.js` (easy to forget) and run
+      `npm run verify`. Web smoke is not needed: nothing rendered changes.
+- [ ] **P5b (Rust, changes the Codex ACP path and the wire):** remove
+      `turn_usage` and `sessionTitle` production and the snapshot field.
+      Skipped unless you want it: the browser deletion already removes the
+      "dead code that looks live" cost, and P5b only saves server lines.
 
 ## Non-goals
 - Codex ACP path changes.
