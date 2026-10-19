@@ -1,7 +1,6 @@
 import { parseLiveConfigOptions } from "@/shared/lib/liveSessionConfig";
 import { parseLiveAvailableCommands } from "@/shared/lib/liveSessionCommands";
 import { parseLivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
-import { parseLiveSessionTitle } from "@/shared/lib/liveSessionTitle";
 import {
   parseOutputContentBlocks,
   parseToolContentList,
@@ -16,14 +15,6 @@ import type { TranscriptPage } from "./fetchEarlier";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
-}
-
-function optionalTokenField(
-  payload: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const value = payload[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent | null {
@@ -103,34 +94,6 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
     case "usage":
       if (typeof payload.used !== "number" || typeof payload.size !== "number") return null;
       return { type: "usage", used: payload.used, size: payload.size };
-    case "turn_usage": {
-      const requestId =
-        typeof payload.requestId === "string" ? payload.requestId : undefined;
-      const inputTokens = optionalTokenField(payload, "inputTokens");
-      const outputTokens = optionalTokenField(payload, "outputTokens");
-      const cacheReadTokens = optionalTokenField(payload, "cacheReadTokens");
-      const cacheWriteTokens = optionalTokenField(payload, "cacheWriteTokens");
-      const totalTokens = optionalTokenField(payload, "totalTokens");
-      if (
-        requestId === undefined &&
-        inputTokens === undefined &&
-        outputTokens === undefined &&
-        cacheReadTokens === undefined &&
-        cacheWriteTokens === undefined &&
-        totalTokens === undefined
-      ) {
-        return null;
-      }
-      return {
-        type: "turn_usage",
-        ...(requestId !== undefined ? { requestId } : {}),
-        ...(inputTokens !== undefined ? { inputTokens } : {}),
-        ...(outputTokens !== undefined ? { outputTokens } : {}),
-        ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-        ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
-        ...(totalTokens !== undefined ? { totalTokens } : {}),
-      };
-    }
     case "permission_request":
       if (typeof payload.requestId !== "string") return null;
       return {
@@ -170,15 +133,6 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
         type: "elicitation_resolved",
         requestId: payload.requestId,
         action: payload.action,
-      };
-    case "status":
-      if (typeof payload.state !== "string") return null;
-      return {
-        type: "status",
-        state: payload.state,
-        ...(payload.detail === null || typeof payload.detail === "string"
-          ? { detail: payload.detail as string | null }
-          : {}),
       };
     case "turn_end":
       return {
@@ -307,7 +261,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const sessionConfigOptions = parseLiveConfigOptions(payload.sessionConfigOptions);
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
-      const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
       const transcript = parseSnapshotTranscript(payload, payload.cursor);
       if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
       let transcriptFrom: number | undefined;
@@ -353,7 +306,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
           ...(availableCommands !== undefined ? { availableCommands } : {}),
           ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),
-          ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
           ...(transcript !== undefined ? { transcript } : {}),

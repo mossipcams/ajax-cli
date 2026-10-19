@@ -23,23 +23,26 @@ use super::rpc_session::RpcMapping;
 /// types — returns an empty result instead of panicking.
 pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
-    // ponytail: sub-agent traffic (non-null `parent_tool_use_id`) is a known
-    // gap; drop it wholesale until sub-agent sessions are supported.
-    if message
+    let kind = message.get("type").and_then(Value::as_str).unwrap_or("");
+    // Sub-agent (Task) messages carry a non-null `parent_tool_use_id`. Their
+    // tool calls and tool results map like main-loop ones, so the rows sit flat
+    // under the parent Task row (tool ids are unique; no parent field is needed).
+    // Their stream deltas would interleave into the parent's message and their
+    // `result` must not settle the run, so every other type is dropped.
+    let sub_agent = message
         .get("parent_tool_use_id")
-        .is_some_and(|id| !id.is_null())
-    {
+        .is_some_and(|id| !id.is_null());
+    if sub_agent && !matches!(kind, "assistant" | "user") {
         return RpcMapping {
             events,
             finished: false,
             ended_aborted: false,
         };
     }
-    let (finished, ended_aborted) = match message.get("type").and_then(Value::as_str).unwrap_or("")
-    {
+    let (finished, ended_aborted) = match kind {
         "stream_event" => map_stream_event(message, &mut events),
         "assistant" => {
-            map_assistant_tool_calls(message, &mut events);
+            map_assistant_tool_calls(message, sub_agent, &mut events);
             (false, false)
         }
         "user" => {
@@ -148,6 +151,7 @@ fn tool_kind_for_name(name: &str) -> String {
         "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => "edit",
         "Glob" | "Grep" => "search",
         "WebFetch" | "WebSearch" => "fetch",
+        "TodoWrite" => "think",
         _ => "other",
     };
     kind.to_string()
@@ -156,8 +160,14 @@ fn tool_kind_for_name(name: &str) -> String {
 /// Assistant message content blocks: with `includePartialMessages` the text and
 /// thinking were already streamed as deltas (re-emitting them would duplicate
 /// the output), so only `tool_use` blocks matter — they carry the complete
-/// input. Text/thinking/unknown blocks produce no events.
-fn map_assistant_tool_calls(message: &Value, events: &mut Vec<AgentEvent>) {
+/// input. Each block emits a [`NativeEvent::ToolCall`] with a descriptive
+/// title, kind, and the complete raw input, upgrading the row opened at
+/// `content_block_start`. A main-loop `TodoWrite` block additionally emits a
+/// [`NativeEvent::Plan`] carrying one (content, status) pair per todo. A
+/// sub-agent `TodoWrite` keeps its tool row but emits no Plan: it must not
+/// replace the parent turn's plan (#1342).
+/// Text/thinking/unknown blocks produce no events.
+fn map_assistant_tool_calls(message: &Value, sub_agent: bool, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
         .and_then(|m| m.get("content"))
@@ -172,12 +182,72 @@ fn map_assistant_tool_calls(message: &Value, events: &mut Vec<AgentEvent>) {
         let Some(id) = block.get("id").and_then(Value::as_str) else {
             continue;
         };
-        events.push(AgentEvent::Native(NativeEvent::ToolCallUpdate {
+        let name = block
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let input = block.get("input");
+        events.push(AgentEvent::Native(NativeEvent::ToolCall {
             id: id.to_string(),
+            title: tool_title(name, input),
+            kind: tool_kind_for_name(name),
             status: "in_progress".to_string(),
-            content: None,
-            raw_input: block.get("input").cloned(),
+            raw_input: input.cloned(),
         }));
+        if name == "TodoWrite" && !sub_agent {
+            if let Some(plan) = todo_write_plan(input) {
+                events.push(AgentEvent::Native(NativeEvent::Plan(plan)));
+            }
+        }
+    }
+}
+
+/// The (content, status) pairs of a `TodoWrite` block's input `todos` array,
+/// in order. Missing or non-array todos yield no plan; each todo contributes
+/// one pair, passing its `content` and `status` strings through.
+fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
+    let todos = input?.get("todos")?.as_array()?;
+    Some(
+        todos
+            .iter()
+            .map(|todo| {
+                (
+                    todo.get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    todo.get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The descriptive tool-call title for one assistant `tool_use` block: the bare
+/// name, suffixed with `: detail` when the input carries a recognizable target
+/// (e.g. `Bash: ls -la`). Tools without a mapped detail field keep the bare
+/// name.
+fn tool_title(name: &str, input: Option<&Value>) -> String {
+    let key = match name {
+        "Bash" => "command",
+        "Read" | "Write" | "Edit" | "MultiEdit" => "file_path",
+        "NotebookEdit" => "notebook_path",
+        "Glob" | "Grep" => "pattern",
+        "WebFetch" => "url",
+        "WebSearch" => "query",
+        "Task" => "description",
+        _ => "",
+    };
+    let detail = input
+        .and_then(|input| input.get(key))
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty());
+    match detail {
+        Some(detail) => format!("{name}: {detail}"),
+        None => name.to_string(),
     }
 }
 

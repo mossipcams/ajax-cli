@@ -5,7 +5,6 @@ export type {
   ChatSessionAction,
   ChatSessionEvent,
   ChatSessionView,
-  ChatStatusState,
   ChatTurnState,
   ChatUsageState,
   ConversationItem,
@@ -15,7 +14,6 @@ export type {
   ToolCall,
   ToolContent,
   ToolStatus,
-  TurnUsage,
   Usage,
 } from "./model";
 

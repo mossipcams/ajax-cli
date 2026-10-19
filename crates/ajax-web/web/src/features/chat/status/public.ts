@@ -1,6 +1,6 @@
 export { default as LiveHead } from "./LiveHead";
 export { default as ChatLiveHead } from "./ChatLiveHead";
-export { ContextUsageMeter, formatTurnUsage } from "./UsageIndicators";
+export { ContextUsageMeter } from "./UsageIndicators";
 export {
   buildHeadView,
   headState,

@@ -36,12 +36,6 @@ describe("LiveHead integration", () => {
     expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
   });
 
-  it("stores per-turn token usage without showing it in the head", () => {
-    mountChat();
-    send({ type: "turn_usage", inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
-    expect(screen.queryByTestId("session-turn-usage")).not.toBeInTheDocument();
-  });
-
   it("surfaces a permission request in the head with Approve and Reject", () => {
     mountChat();
     send({

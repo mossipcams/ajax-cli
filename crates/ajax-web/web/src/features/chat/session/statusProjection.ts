@@ -13,17 +13,6 @@ export function applyStatusEvent(
   event: ChatSessionEvent,
 ): ChatSessionReducerState {
   switch (event.type) {
-    case "acp_status":
-      return bumpRevision({
-        ...state,
-        view: {
-          ...state.view,
-          status: {
-            acpState: event.state.trim() || null,
-            detail: event.detail?.trim() || null,
-          },
-        },
-      });
     case "session_ready": {
       const base = event.reset ? initialChatSessionReducerState : state;
       if (event.busy === undefined) return event.reset ? initialChatSessionReducerState : state;
@@ -41,5 +30,5 @@ export function applyStatusEvent(
 }
 
 export function isStatusEvent(event: ChatSessionEvent): boolean {
-  return event.type === "acp_status" || event.type === "session_ready";
+  return event.type === "session_ready";
 }

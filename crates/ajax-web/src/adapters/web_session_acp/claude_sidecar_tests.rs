@@ -262,6 +262,50 @@ fn prompt_yields_started_disposition_and_full_turn() {
     assert_eq!(subtype(result), "success");
 }
 
+/// Issue #1274: when the Claude SDK message pump throws, or the query iterator
+/// ends/exhausts while a prompt is in flight, the session must not stay busy
+/// and healthy-looking. The in-flight turn has to finish with an error `result`
+/// that the Rust client can surface; a silent dead sidecar is the defect.
+#[test]
+fn claude_pump_failure_ends_the_turn_and_reports_error_1274() {
+    fn assert_lost_turn(sidecar: &mut Sidecar, label: &str, message: &str) {
+        let prompt_id = sidecar.command("prompt", json!({ "message": message }));
+        assert_eq!(
+            sidecar.response(&prompt_id).get("success"),
+            Some(&Value::Bool(true)),
+            "prompt accepted: {label}"
+        );
+        // The in-flight turn must finish with an error result; if the pump
+        // silently died the sidecar would stay busy and this times out.
+        sidecar.wait_until(label, |records| {
+            events(records, "result")
+                .any(|record| record.get("is_error").and_then(Value::as_bool) == Some(true))
+        });
+        let result = events(&sidecar.records, "result")
+            .find(|record| record.get("is_error").and_then(Value::as_bool) == Some(true))
+            .expect("error result recorded");
+        assert_eq!(subtype(result), "error_during_execution");
+        let text = result
+            .get("result")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(!text.is_empty(), "error result carries a message: {label}");
+    }
+
+    // Scenario 1: the SDK query iterator throws mid-turn (pump failure).
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        assert_lost_turn(&mut sidecar, "pump failure result", "PUMP_FAIL now");
+    }
+
+    // Scenario 2: the iterator ends/exhausts mid-turn without a result.
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        assert_lost_turn(&mut sidecar, "exhausted stream result", "EXHAUST now");
+    }
+}
 #[test]
 fn prompt_with_images_completes_turn_with_image_reply() {
     let mut sidecar = Sidecar::spawn();

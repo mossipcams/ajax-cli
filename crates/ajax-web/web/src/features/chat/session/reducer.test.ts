@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { WebSessionServerEvent } from "./transport/contracts";
+import { parseServerEvent } from "./transport/parse";
+import { SESSION_PROTOCOL_VERSION } from "./transport/contracts";
 import { initialChatSessionReducerState, type ChatSessionView } from "./model";
 import { projectWireEvent } from "./projectWireInput";
 import { reduceChatSession, type ChatSessionReducerState } from "./reducer";
@@ -288,18 +290,13 @@ describe("reduceChatSession", () => {
     expect(answered.view.conversation.map((item) => item.kind)).toEqual(["thought", "prose"]);
   });
 
-  it("replaces run status in the head rather than appending it to the conversation", () => {
-    const state = run([{ type: "status", state: "running" }, { type: "status", state: "waiting" }]);
-    expect(state.conversation).toHaveLength(0);
-    expect(state.status.acpState).toBe("waiting");
-    expect(state.status.detail).toBeNull();
-  });
-
-  it("stores human status detail without appending transcript rows", () => {
-    const state = run([{ type: "status", state: "running", detail: "Indexing workspace" }]);
-    expect(state.conversation).toHaveLength(0);
-    expect(state.status.acpState).toBe("running");
-    expect(state.status.detail).toBe("Indexing workspace");
+  it("status_frames_are_ignored_like_unknown_events", () => {
+    const frame = (payload: object) =>
+      JSON.stringify({ type: "event", protocolVersion: SESSION_PROTOCOL_VERSION, cursor: 1, payload });
+    const statusFrame = frame({ type: "status", state: "running", detail: "Indexing workspace" });
+    const unknownFrame = frame({ type: "not_a_real_event", state: "running", detail: "Indexing workspace" });
+    expect(parseServerEvent(statusFrame)).toBeNull();
+    expect(parseServerEvent(statusFrame)).toEqual(parseServerEvent(unknownFrame));
   });
 
   it("revises the plan in place instead of stacking a copy per update", () => {
@@ -694,27 +691,14 @@ describe("reduceChatSession", () => {
   });
 });
 
-describe("turn usage stays separate from context usage", () => {
-  it("stores turnUsage without writing context usage or zero-filled fields", () => {
+describe("context usage", () => {
+  it("stores context usage as used and size", () => {
     const afterContext = reduceWire(initialChatSessionReducerState, {
       type: "usage",
       used: 50_000,
       size: 200_000,
     });
     expect(afterContext.view.usage.context).toEqual({ used: 50_000, size: 200_000 });
-    expect(afterContext.view.usage.turn).toBeNull();
-
-    const afterTurn = reduceWire(afterContext, {
-      type: "turn_usage",
-      inputTokens: 1200,
-      totalTokens: 1200,
-    });
-
-    expect(afterTurn.view.usage.context).toEqual({ used: 50_000, size: 200_000 });
-    expect(afterTurn.view.usage.turn).toEqual({ inputTokens: 1200, totalTokens: 1200 });
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("outputTokens", 0);
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("cacheReadTokens", 0);
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("cacheWriteTokens", 0);
   });
 });
 

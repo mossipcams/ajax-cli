@@ -15,7 +15,6 @@ export interface ChatHeadView {
   decision: Decision | null;
   hasActivity: boolean;
   usage: ChatSessionView["usage"]["context"];
-  turnUsage: ChatSessionView["usage"]["turn"];
   taskAttention: ChatTaskAttention | null;
   attentionText: string | null;
   showHeadLine: boolean;
@@ -94,7 +93,6 @@ export function buildHeadView(input: {
     decision,
     hasActivity,
     usage: session.usage.context,
-    turnUsage: session.usage.turn,
     taskAttention: taskLevel ? taskAttention : null,
     attentionText: taskLevel && taskAttention ? attentionText(taskAttention) : null,
     showHeadLine: !taskLevel || !connected,

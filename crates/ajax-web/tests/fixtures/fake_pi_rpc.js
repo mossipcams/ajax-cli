@@ -41,6 +41,8 @@ const fakeModel = {
   contextWindow: 131072,
   maxTokens: 8192,
 };
+// Same model id as fakeModel under a different provider (--shared-model-ids).
+const sharedOtherModel = { ...fakeModel, provider: 'other-provider' };
 
 function emit(record) {
   process.stdout.write(`${JSON.stringify(record)}\n`);
@@ -62,8 +64,11 @@ const uiConfirm = flags.has('--ui-confirm'); // prompt emits a confirm dialog, t
 // is a live orphan. With this flag the fixture survives that close so the
 // restart sweep has an orphan to reap; default behavior is unchanged.
 const surviveStdinClose = flags.has('--survive-stdin-eof');
+const exitAfterState = flags.has('--exit-after-state'); // child exits right after answering get_state
 const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
 const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
+const chatterState = flags.has('--chatter-state'); // get_state is never answered; unrelated records flood stdout instead
+const sharedModelIds = flags.has('--shared-model-ids'); // a second provider exposes the same model id; get_state selects it
 
 // Scripted stdout output. Emitted before any command handling; libuv preserves
 // write order on the pipe, so these lines precede every later record.
@@ -91,7 +96,12 @@ if (flags.has('--emit-stderr-noise')) {
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
+// Set once --exit-after-state has answered get_state: the child is dying, so
+// the commands already buffered on stdin must not be answered.
+let exiting = false;
+
 rl.on('line', (raw) => {
+  if (exiting) return;
   const text = raw.replace(/\r$/, '');
   let command;
   try {
@@ -103,6 +113,22 @@ rl.on('line', (raw) => {
 
   switch (command.type) {
     case 'get_state':
+      if (chatterState) {
+        // Never answer get_state, but keep the stream busy with unrelated
+        // records so the handshake never sees an empty channel. Self-terminates
+        // after a bound so a failing test cannot leave an orphan behind.
+        const chatterUntil = Date.now() + 15_000;
+        let seq = 0;
+        const chatter = () => {
+          if (Date.now() > chatterUntil) process.exit(0);
+          for (let i = 0; i < 200; i++) {
+            emit({ type: 'extension_ui_request', action: 'notify', payload: { seq: seq++ } });
+          }
+          setImmediate(chatter);
+        };
+        chatter();
+        break;
+      }
       if (silentState) {
         // Never answer: handshake tests expect the overall deadline to fire.
         break;
@@ -119,7 +145,7 @@ rl.on('line', (raw) => {
       }
       const stateData = {
         sessionFile,
-        model: fakeModel,
+        model: sharedModelIds ? sharedOtherModel : fakeModel,
         thinkingLevel: 'medium',
         isStreaming: false,
         messageCount: 0,
@@ -128,6 +154,13 @@ rl.on('line', (raw) => {
       // A --session <id> argv pair overrides the fixed id (resume path).
       if (!noSessionId) stateData.sessionId = overriddenSessionId ?? sessionId;
       emit({ id: command.id, type: 'response', command: 'get_state', success: true, data: stateData });
+      if (exitAfterState) {
+        // Exit once the get_state line is flushed; the three discovery
+        // responses are never sent.
+        exiting = true;
+        process.stdout.write('', () => process.exit(1));
+        break;
+      }
       if (interleaveEvent) {
         // A non-response record between the four handshake responses; the
         // handshake must collect it into pending, not drop it.
@@ -152,7 +185,9 @@ rl.on('line', (raw) => {
         command: 'get_available_models',
         success: true,
         data: {
-          models: [fakeModel, { id: 'fake-nonreasoning', name: 'Fake Non-reasoning', api: 'anthropic-messages', provider: 'fake-provider', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 }],
+          models: sharedModelIds
+            ? [fakeModel, sharedOtherModel]
+            : [fakeModel, { id: 'fake-nonreasoning', name: 'Fake Non-reasoning', api: 'anthropic-messages', provider: 'fake-provider', reasoning: false, input: ['text', 'image'], contextWindow: 262144, maxTokens: 8192 }],
         },
       });
       break;

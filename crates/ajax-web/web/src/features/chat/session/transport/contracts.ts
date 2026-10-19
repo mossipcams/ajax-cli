@@ -58,15 +58,6 @@ export type WebSessionServerEvent =
   | { type: "usage"; used: number; size: number }
   | { type: "usage_reset" }
   | {
-      type: "turn_usage";
-      requestId?: string;
-      inputTokens?: number;
-      outputTokens?: number;
-      cacheReadTokens?: number;
-      cacheWriteTokens?: number;
-      totalTokens?: number;
-    }
-  | {
       type: "permission_request";
       requestId: string;
       title?: string | null;
@@ -80,7 +71,6 @@ export type WebSessionServerEvent =
       schema: unknown;
     }
   | { type: "elicitation_resolved"; requestId: string; action: string }
-  | { type: "status"; state: string; detail?: string | null }
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
 
@@ -92,7 +82,6 @@ export interface SessionSnapshot {
   sessionConfigOptions?: LiveSessionConfigOption[];
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
-  sessionTitle?: string;
   turnState: "idle" | "busy";
   reset: boolean;
   pendingPermission?: {

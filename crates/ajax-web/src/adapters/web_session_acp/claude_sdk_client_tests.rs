@@ -426,3 +426,59 @@ fn spawn_exposes_the_advertised_command_list_once() {
         "the second take must not re-deliver the handshake commands"
     );
 }
+
+/// Inline fake sidecar for #1275: acknowledges `init` and `prompt`, then ends
+/// the turn with an API error result (`subtype: success`, `is_error: true`).
+const ERROR_RESULT_SIDECAR: &str = r#"
+const readline = require("node:readline");
+const send = (record) => process.stdout.write(JSON.stringify(record) + "\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const cmd = JSON.parse(line);
+  if (cmd.type === "init") {
+    send({ type: "response", id: cmd.id, success: true,
+      data: { sessionId: "error-session", models: [], commands: [], initialization: {} } });
+  } else if (cmd.type === "prompt") {
+    send({ type: "response", id: cmd.id, success: true, data: { disposition: "started" } });
+    send({ type: "result", subtype: "success", is_error: true,
+      result: "API Error: overloaded", stop_reason: null });
+  } else {
+    send({ type: "response", id: cmd.id, success: true, data: null });
+  }
+});
+"#;
+
+#[test]
+fn claude_error_result_finishes_prompt_as_failed_1275() {
+    // #1275: a turn ended by an `is_error` result must settle the prompt as a
+    // failure, not as a successful `end_turn`.
+    let args = vec!["-e".to_string(), ERROR_RESULT_SIDECAR.to_string()];
+    let client = ClaudeSdkClient::spawn(
+        Path::new("node"),
+        &args,
+        manifest_dir(),
+        None,
+        None,
+        TIMEOUT,
+    )
+    .expect("inline fake sidecar must spawn (is node installed?)");
+
+    let id = client.begin_prompt("hello").expect("begin_prompt");
+
+    let events = collect_until_finished(&client);
+    let finished = events.last().expect("a turn-finished event");
+    match finished {
+        AgentEvent::Native(NativeEvent::TurnFinished {
+            request_id,
+            result: Err(message),
+        }) => {
+            assert_eq!(*request_id, id);
+            assert!(
+                message.contains("API Error: overloaded"),
+                "failure must carry the provider text: {message}"
+            );
+        }
+        other => panic!("error result must finish the prompt as failed, got {other:?}"),
+    }
+
+    assert!(!client.prompt_in_flight());
+}

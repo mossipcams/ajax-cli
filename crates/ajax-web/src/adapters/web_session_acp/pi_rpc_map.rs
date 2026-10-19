@@ -233,18 +233,43 @@ fn tool_call_started(record: &Value) -> Option<NativeEvent> {
     let id = record.get("toolCallId").and_then(Value::as_str)?;
     let name = record.get("toolName").and_then(Value::as_str)?;
     let args = record.get("args").filter(|args| args.is_object());
-    let title = args
-        .and_then(|args| args.get("command"))
-        .and_then(Value::as_str)
-        .unwrap_or(name)
-        .to_string();
+    let title = match args.and_then(tool_call_detail) {
+        Some(detail) => format!("{name}: {detail}"),
+        None => name.to_string(),
+    };
     Some(NativeEvent::ToolCall {
         id: id.to_string(),
         title,
-        kind: "execute".to_string(),
+        kind: tool_kind(name),
         status: "in_progress".to_string(),
         raw_input: Some(args.cloned().unwrap_or(Value::Null)),
     })
+}
+
+/// The native tool kind for one Pi tool name (compared case-insensitively).
+fn tool_kind(tool_name: &str) -> String {
+    match tool_name.to_ascii_lowercase().as_str() {
+        "read" => "read",
+        "edit" | "write" => "edit",
+        "grep" | "find" | "ls" => "search",
+        "bash" => "execute",
+        _ => "other",
+    }
+    .to_string()
+}
+
+/// The first non-empty string among `args.command`, `args.pattern`, and
+/// `args.path`, if any. The search pattern outranks the path so `grep`/`find`
+/// titles show what was searched even when a path is also given.
+fn tool_call_detail(args: &Value) -> Option<String> {
+    for key in ["command", "pattern", "path"] {
+        if let Some(detail) = args.get(key).and_then(Value::as_str) {
+            if !detail.trim().is_empty() {
+                return Some(detail.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn tool_call_progress(record: &Value) -> Option<NativeEvent> {

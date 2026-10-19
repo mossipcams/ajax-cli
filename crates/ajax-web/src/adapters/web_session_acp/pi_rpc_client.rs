@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::jsonl_process::JsonlProcess;
-use super::pi_rpc_handshake::handshake;
+use super::pi_rpc_handshake::handshake_with_model_provider;
 use super::pi_rpc_map::map_record;
 use super::rpc_client::RpcClientCore;
 use super::rpc_session::RpcSession;
@@ -47,12 +47,20 @@ struct ModelEntry {
     provider: String,
 }
 
-/// The "provider/id" value of the entry matching `current_model_id`,
-/// falling back to the first entry when nothing matches.
-fn current_model_value(models: &[ModelEntry], current_model_id: Option<&str>) -> String {
+/// The "provider/id" value of the entry matching `current_model_id` (and
+/// `current_model_provider` when known), falling back to the first entry when
+/// nothing matches.
+fn current_model_value(
+    models: &[ModelEntry],
+    current_model_id: Option<&str>,
+    current_model_provider: Option<&str>,
+) -> String {
     let current = models
         .iter()
-        .find(|m| current_model_id == Some(m.id.as_str()))
+        .find(|m| {
+            current_model_id == Some(m.id.as_str())
+                && current_model_provider.is_none_or(|p| p == m.provider)
+        })
         .or_else(|| models.first())
         .expect("models was checked non-empty");
     format!("{}/{}", current.provider, current.id)
@@ -107,8 +115,9 @@ impl PiRpcClient {
         let mut process = JsonlProcess::spawn(program, &args, cwd)
             .map_err(|e| format!("failed to spawn pi rpc process: {e}"))?;
 
-        let hs = handshake(&mut process, handshake_timeout)
-            .map_err(|e| format!("pi rpc handshake failed: {e}"))?;
+        let (hs, state_model_provider) =
+            handshake_with_model_provider(&mut process, handshake_timeout)
+                .map_err(|e| format!("pi rpc handshake failed: {e}"))?;
 
         // `RpcSession::new` consumes the handshake record, so copy out the
         // model / thinking-level state before handing it over.
@@ -123,10 +132,14 @@ impl PiRpcClient {
             .collect();
         let thinking_levels = hs.thinking_levels.clone();
         let current_model_id = hs.model_id.clone();
-        let current_model_provider = models
-            .iter()
-            .find(|m| current_model_id.as_deref() == Some(m.id.as_str()))
-            .map(|m| m.provider.clone());
+        // get_state names the provider; the id-only lookup is a fallback for
+        // when it is absent, since several providers may share one model id.
+        let current_model_provider = state_model_provider.or_else(|| {
+            models
+                .iter()
+                .find(|m| current_model_id.as_deref() == Some(m.id.as_str()))
+                .map(|m| m.provider.clone())
+        });
         let current_thinking_level = hs.thinking_level.clone();
 
         // The handshake's advertised commands are exposed through
@@ -212,7 +225,11 @@ impl PiRpcClient {
                 description: None,
                 category: Some(super::NeutralConfigCategory::Model),
                 kind: super::NeutralConfigKind::Select {
-                    current_value: current_model_value(&c.models, c.current_model_id.as_deref()),
+                    current_value: current_model_value(
+                        &c.models,
+                        c.current_model_id.as_deref(),
+                        c.current_model_provider.as_deref(),
+                    ),
                     choices,
                 },
             });

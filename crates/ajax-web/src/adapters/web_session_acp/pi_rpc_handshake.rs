@@ -19,7 +19,10 @@
 //! commands degrade to empty lists so a partial discovery state still yields a
 //! usable [`RpcHandshake`]. A timeout, non-JSON stdout line, or child exit
 //! *before* `get_state` completes returns an error that carries the process
-//! stderr tail for diagnostics.
+//! stderr tail for diagnostics. A child exit (or closed stdout) *after*
+//! `get_state` but before the other discovery responses also fails: a dead
+//! child cannot answer the rest, so it must not look like a healthy session
+//! (#1276). Only a live child that stays silent past the deadline degrades.
 
 // Not yet reachable from the crate surface: nothing wires this in until the
 // connection-loop task lands, so every public item is dead code for now.
@@ -43,6 +46,16 @@ const POLL_INTERVAL: Duration = Duration::from_millis(5);
 /// responses have arrived or `timeout` (measured from the first send) elapses.
 /// See the module docs for the correlation and failure policy.
 pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHandshake, String> {
+    handshake_with_model_provider(process, timeout).map(|(handshake, _)| handshake)
+}
+
+/// [`handshake`], also returning `get_state.data.model.provider` for the
+/// current model. The provider sits beside [`RpcHandshake`] rather than in it
+/// so the shared type keeps its shape for the other session clients (#1279).
+pub fn handshake_with_model_provider(
+    process: &mut JsonlProcess,
+    timeout: Duration,
+) -> Result<(RpcHandshake, Option<String>), String> {
     let state_id = process.send("get_state", json!({}))?;
     let models_id = process.send("get_available_models", json!({}))?;
     let levels_id = process.send("get_available_thinking_levels", json!({}))?;
@@ -110,15 +123,14 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
                     pending.push(Value::String(text));
                 }
                 JsonlRecord::Exited => {
-                    if state.is_none() {
-                        return Err(format!(
-                            "pi child exited before get_state completed (stderr tail: {})",
-                            process.stderr_tail()
-                        ));
-                    }
-                    // No more records can arrive; the remaining discovery lists
-                    // degrade to empty below.
-                    break;
+                    // No more records can arrive. Before get_state this is a
+                    // dead child; after it, the missing discovery responses
+                    // would never arrive, so the child is dead either way (#1276).
+                    return Err(format!(
+                        "pi child exited before the handshake completed (get_state received: {}, stderr tail: {})",
+                        state.is_some(),
+                        process.stderr_tail()
+                    ));
                 }
             },
             Err(mpsc::TryRecvError::Empty) => {
@@ -137,15 +149,15 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 // The reader thread only disconnects after delivering Exited,
-                // which the arm above has already handled (or exited on).
-                if state.is_none() {
-                    return Err(format!(
-                        "pi child stdout closed before get_state completed \
-                         (stderr tail: {})",
-                        process.stderr_tail()
-                    ));
-                }
-                break;
+                // which the arm above has already handled (or exited on). A
+                // closed stream ends the handshake whether or not get_state
+                // has arrived (#1276).
+                return Err(format!(
+                    "pi child stdout closed before the handshake completed \
+                     (get_state received: {}, stderr tail: {})",
+                    state.is_some(),
+                    process.stderr_tail()
+                ));
             }
         }
     }
@@ -169,7 +181,11 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
         .ok_or_else(|| "get_state response is missing data.sessionId".to_owned())?;
 
     let model = data.and_then(|d| d.get("model"));
-    Ok(RpcHandshake {
+    let model_provider = model
+        .and_then(|m| m.get("provider"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let handshake = RpcHandshake {
         session_id: session_id.to_owned(),
         session_file: string_field(data, "sessionFile"),
         model_id: model
@@ -184,7 +200,8 @@ pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHan
             .and_then(|m| m.get("contextWindow"))
             .and_then(Value::as_u64),
         pending,
-    })
+    };
+    Ok((handshake, model_provider))
 }
 
 /// Read a string field from `get_state`'s data object.

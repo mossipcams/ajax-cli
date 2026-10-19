@@ -8,7 +8,6 @@ const baseView: ChatHeadView = {
   decision: null,
   hasActivity: false,
   usage: null,
-  turnUsage: null,
   taskAttention: null,
   attentionText: null,
   showHeadLine: true,

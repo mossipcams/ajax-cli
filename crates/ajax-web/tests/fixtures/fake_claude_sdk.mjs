@@ -12,6 +12,10 @@
 //   - contains "SLOW": stream text_delta every 40ms until interrupt(),
 //     then a user "[Request interrupted by user]" message and a result with
 //     subtype error_during_execution / terminal_reason aborted_streaming;
+//   - contains "PUMP_FAIL": emits one stream_event, then makes the iterator
+//     THROW (no result is emitted) to simulate an SDK message-pump failure;
+//   - contains "EXHAUST": emits one stream_event, then ends the iterator
+//     early with no result to simulate stream exhaustion mid-turn;
 //   - contains "TOOL": calls options.canUseTool, then assistant tool_use /
 //     user tool_result / result success;
 //   - otherwise: system/init (first turn only), stream_event, assistant,
@@ -67,6 +71,7 @@ export function query({ prompt, options = {} }) {
   let systemEmitted = false;
   fakeCall("queryOptions", [options]);
   let interrupted = false;
+  let throwing = false;
   let closed = false;
 
   function fakeCall(method, args) {
@@ -161,6 +166,19 @@ export function query({ prompt, options = {} }) {
       result("success", { result: reply });
       return;
     }
+
+    if (text.includes("PUMP_FAIL")) {
+      systemInit();
+      streamEvent("pre-crash");
+      throwing = true;
+      return;
+    }
+    if (text.includes("EXHAUST")) {
+      systemInit();
+      streamEvent("dying");
+      queue.end();
+      return;
+    }
     if (text.includes("SLOW")) {
       systemInit();
       let ticks = 0;
@@ -227,7 +245,7 @@ export function query({ prompt, options = {} }) {
 
   return {
     [Symbol.asyncIterator]() {
-      return { next: () => queue.next() };
+      return { next: () => (throwing ? Promise.reject(new Error("fake SDK stream exploded")) : queue.next()) };
     },
     async interrupt() {
       fakeCall("interrupt", []);
