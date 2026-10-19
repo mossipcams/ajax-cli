@@ -3,8 +3,8 @@ use crate::execution::{
     ExecutionState as State, Operation, ReplayPolicy, CHECKPOINT_SCHEMA_VERSION,
 };
 use crate::registry::{
-    CheckpointIntent, CheckpointResult, ExecutionCommit, ExecutionCommitError, NewExecutionTask,
-    NewPrompt, NewRun, RunUpdate, SqliteRegistryStore, TaskTransition,
+    CheckpointIntent, CheckpointResult, EventRewrite, ExecutionCommit, ExecutionCommitError,
+    NewExecutionTask, NewPrompt, NewRun, RunUpdate, SqliteRegistryStore, TaskTransition,
 };
 use rusqlite::{types::Value, Connection};
 
@@ -628,4 +628,92 @@ fn registry_save_preserves_execution_rows() {
             "{table}"
         );
     }
+}
+
+#[test]
+fn event_rewrites_replace_existing_event_payloads_in_the_same_commit() {
+    let store = store();
+    let apply = |change| store.commit_execution(&change).unwrap();
+    apply(ExecutionCommit {
+        events: vec!["1".into(), "2".into()],
+        ..commit()
+    });
+    let receipt = apply(ExecutionCommit {
+        events: vec!["3".into()],
+        event_rewrites: vec![EventRewrite {
+            seq: 1,
+            payload: "1-replaced".into(),
+        }],
+        ..commit()
+    });
+    assert_eq!(receipt.event_seqs, vec![3]);
+    assert_eq!(
+        store.execution_events_since("run", 0).unwrap(),
+        vec![(1, "1-replaced".into()), (2, "2".into()), (3, "3".into())]
+    );
+    assert_eq!(number(&store, "SELECT next_event_seq FROM agent_runs"), 4);
+}
+
+#[test]
+fn event_rewrite_for_a_missing_seq_is_a_no_op() {
+    let store = store();
+    let receipt = store
+        .commit_execution(&ExecutionCommit {
+            events: vec!["1".into()],
+            event_rewrites: vec![EventRewrite {
+                seq: 99,
+                payload: "gone".into(),
+            }],
+            ..commit()
+        })
+        .unwrap();
+    assert_eq!(receipt.event_seqs, vec![1]);
+    assert_eq!(
+        store.execution_events_since("run", 0).unwrap(),
+        vec![(1, "1".into())]
+    );
+    assert_eq!(number(&store, "SELECT next_event_seq FROM agent_runs"), 2);
+}
+
+#[test]
+fn fenced_and_duplicate_commits_do_not_apply_event_rewrites() {
+    let store = store();
+    let apply = |change| store.commit_execution(&change).unwrap();
+    apply(ExecutionCommit {
+        new_tasks: vec![new_task("task", None)],
+        prompts: vec![prompt("task")],
+        events: vec!["{}".into()],
+        ..commit()
+    });
+
+    // A fenced commit fails before any section runs, so nothing is rewritten.
+    assert!(matches!(
+        store.commit_execution(&ExecutionCommit {
+            owner_fence: Some("other-boot".into()),
+            event_rewrites: vec![EventRewrite {
+                seq: 1,
+                payload: "rewritten".into()
+            }],
+            ..commit()
+        }),
+        Err(ExecutionCommitError::Fenced)
+    ));
+
+    // A duplicate prompt makes the whole commit a no-op, rewrites included.
+    let retry = apply(ExecutionCommit {
+        prompts: vec![prompt("task")],
+        events: vec!["{}".into()],
+        event_rewrites: vec![EventRewrite {
+            seq: 1,
+            payload: "rewritten".into(),
+        }],
+        ..commit()
+    });
+    assert_eq!(retry.duplicate_prompts, vec!["key"]);
+    assert!(retry.event_seqs.is_empty());
+    assert_eq!(
+        store.execution_events_since("run", 0).unwrap(),
+        vec![(1, "{}".into())]
+    );
+    assert_eq!(number(&store, "SELECT next_event_seq FROM agent_runs"), 2);
 }

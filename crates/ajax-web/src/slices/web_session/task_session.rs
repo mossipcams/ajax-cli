@@ -240,12 +240,18 @@ impl TaskSessionState {
             return Ok(());
         }
 
-        if let Err(error) = web_session_store::try_append_events(
+        let cursors = self.log.superseded_cursors_for(&filtered);
+        let rewrites: Vec<(usize, SessionServerEvent)> = cursors
+            .iter()
+            .filter_map(|&c| self.log.marker_for(c).map(|m| (c, m)))
+            .collect();
+        if let Err(error) = web_session_store::try_append_events_with_rewrites(
             &self.storage.registry_store(),
             &self.storage.state_dir,
             &self.qualified_handle,
             agent_client_name(self.agent),
             &filtered,
+            &rewrites,
         ) {
             self.unpersisted = filtered;
             let reason = format!("transcript could not be saved: {error}");
@@ -254,6 +260,7 @@ impl TaskSessionState {
             return Err(SessionError::persist(reason));
         }
         self.report_committed_events(&filtered);
+        self.log.mark_superseded(&cursors);
         self.log.append(filtered);
         Ok(())
     }

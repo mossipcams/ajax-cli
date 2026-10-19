@@ -442,3 +442,146 @@ fn migrated_transcript_copy_is_owner_only() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn append_rewrites_preserve_cursors_before_and_after_pruning() {
+    for padding in [0, MAX_LOG_EVENTS + 5] {
+        let dir = scratch_dir("rewrite-cursors");
+        let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+        let handle = "web/rewrite-cursors";
+        let v1 = serde_json::json!({"type":"message", "role":"agent", "itemId":"i1", "text":"v1"});
+        let v2 = serde_json::json!({"type":"message", "role":"agent", "itemId":"i1", "text":"v2"});
+        let marker = serde_json::json!({"type":"message", "role":"agent", "itemId":"i1", "text":"", "contentBlocks":[]});
+        let mut initial = vec![note("padding"); padding];
+        initial.push(v1.clone());
+        try_append_events(&store, &dir, handle, "unknown", &initial).unwrap();
+        let before = try_load::<serde_json::Value>(&store, &dir, handle, "unknown").unwrap();
+        assert_eq!(before.dropped, (padding + 1).saturating_sub(MAX_LOG_EVENTS));
+        assert_eq!(before.events.last(), Some(&v1));
+
+        try_append_events_with_rewrites(
+            &store,
+            &dir,
+            handle,
+            "unknown",
+            std::slice::from_ref(&v2),
+            &[(padding, marker.clone())],
+        )
+        .unwrap();
+        let loaded = try_load::<serde_json::Value>(&store, &dir, handle, "unknown").unwrap();
+        assert_eq!(loaded.events.len(), (padding + 2).min(MAX_LOG_EVENTS));
+        assert_eq!(loaded.dropped, (padding + 2).saturating_sub(MAX_LOG_EVENTS));
+        assert_eq!(loaded.events[padding - loaded.dropped], marker);
+        assert_eq!(loaded.events.last(), Some(&v2));
+        assert_eq!(loaded.corrupt_lines, 0);
+        let run = store.latest_run_for_task(handle).unwrap().unwrap();
+        let rows = store
+            .execution_events_since(&run.run_id, padding as u64)
+            .unwrap();
+        assert_eq!(
+            rows.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+            vec![padding as u64 + 1, padding as u64 + 2]
+        );
+
+        // Rewrites without appended events must also reach the transaction.
+        try_append_events_with_rewrites(
+            &store,
+            &dir,
+            handle,
+            "unknown",
+            &[],
+            &[(padding + 1, marker.clone())],
+        )
+        .unwrap();
+        let rewritten = try_load::<serde_json::Value>(&store, &dir, handle, "unknown").unwrap();
+        assert_eq!(rewritten.events.len(), loaded.events.len());
+        assert_eq!(rewritten.dropped, loaded.dropped);
+        assert_eq!(rewritten.events.last(), Some(&marker));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn ledger_rewrites_commit_with_changed_and_unchanged_ledgers() {
+    let dir = scratch_dir("ledger-rewrites");
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    let handle = "web/ledger-rewrites";
+    let mut ledger = prompt_ledger::PromptLedger::default();
+    try_append_events(&store, &dir, handle, "unknown", &[note("v1")]).unwrap();
+    ledger.upsert_queued("p1".into(), "prompt".into(), "prompt".into(), vec![]);
+    for cursor in 0..2 {
+        prompt_ledger::try_persist_with_events_and_rewrites(
+            &store,
+            &dir,
+            handle,
+            &ledger,
+            &[note("new version")],
+            &[(cursor, note(""))],
+        )
+        .unwrap();
+        let loaded = try_load::<serde_json::Value>(&store, &dir, handle, "unknown").unwrap();
+        assert_eq!(loaded.events[cursor], note(""));
+        assert_eq!(loaded.events.last(), Some(&note("new version")));
+        assert_eq!(loaded.events.len(), cursor + 2);
+    }
+    prompt_ledger::try_persist_with_events_and_rewrites(
+        &store,
+        &dir,
+        handle,
+        &ledger,
+        &[],
+        &[(2, note(""))],
+    )
+    .unwrap();
+    assert_eq!(
+        load::<serde_json::Value>(&dir, handle).events,
+        vec![note(""); 3]
+    );
+    assert_eq!(
+        prompt_ledger::try_load(&store, &dir, handle).unwrap(),
+        ledger
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fenced_append_and_ledger_commits_leave_old_versions_intact() {
+    let dir = scratch_dir("fenced-rewrites");
+    let store = SqliteRegistryStore::new(dir.join("ajax.db"));
+    let handle = "web/fenced-rewrites";
+    try_append_events(&store, &dir, handle, "unknown", &[note("v1")]).unwrap();
+    let fenced = SqliteRegistryStore::new(dir.join("ajax.db")).with_owner_fence("stale-owner");
+    assert!(try_append_events_with_rewrites(
+        &fenced,
+        &dir,
+        handle,
+        "unknown",
+        &[note("v2")],
+        &[(0, note(""))],
+    )
+    .is_err());
+    let mut ledger = prompt_ledger::PromptLedger::default();
+    for changed in [false, true] {
+        if changed {
+            ledger.upsert_queued("p1".into(), "prompt".into(), "prompt".into(), vec![]);
+        }
+        assert!(prompt_ledger::try_persist_with_events_and_rewrites(
+            &fenced,
+            &dir,
+            handle,
+            &ledger,
+            &[note("v2")],
+            &[(0, note(""))],
+        )
+        .is_err());
+        assert_eq!(
+            load::<serde_json::Value>(&dir, handle).events,
+            vec![note("v1")]
+        );
+        assert_eq!(
+            prompt_ledger::try_load(&store, &dir, handle).unwrap(),
+            prompt_ledger::PromptLedger::default()
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

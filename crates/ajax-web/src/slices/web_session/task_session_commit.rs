@@ -15,12 +15,18 @@ impl TaskSessionState {
         let mut filtered = self.unpersisted.clone();
         filtered.extend(self.filter_events_for_log(events));
 
-        crate::adapters::web_session_store::prompt_ledger::try_persist_with_events(
+        let cursors = self.log.superseded_cursors_for(&filtered);
+        let rewrites: Vec<(usize, SessionServerEvent)> = cursors
+            .iter()
+            .filter_map(|&c| self.log.marker_for(c).map(|m| (c, m)))
+            .collect();
+        crate::adapters::web_session_store::prompt_ledger::try_persist_with_events_and_rewrites(
             &self.storage.registry_store(),
             &self.storage.state_dir,
             &self.qualified_handle,
             &next,
             &filtered,
+            &rewrites,
         )
         .map_err(|error| {
             SessionError::persist(format!("failed to persist prompt ownership: {error}"))
@@ -29,6 +35,7 @@ impl TaskSessionState {
         self.prompts.prompt_ledger = next;
         self.unpersisted.clear();
         self.report_committed_events(&filtered);
+        self.log.mark_superseded(&cursors);
         self.log.append(filtered);
 
         Ok(())
