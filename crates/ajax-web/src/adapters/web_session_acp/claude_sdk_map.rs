@@ -68,6 +68,12 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
             }
             (false, false)
         }
+        "ajax_plan" => {
+            if let Some(entries) = ajax_plan_entries(message) {
+                events.push(AgentEvent::Native(NativeEvent::Plan(entries)));
+            }
+            (false, false)
+        }
         // `system` (init/status/hook/thinking_tokens records),
         // `rate_limit_event`, malformed `elicitation_request` records, and
         // unknown message types produce no events.
@@ -261,6 +267,23 @@ fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
                         .unwrap_or("")
                         .to_string(),
                 )
+            })
+            .collect(),
+    )
+}
+/// The (content, status) pairs of one Claude sidecar `ajax_plan` line's
+/// `entries` array, in order. Missing or non-array entries yield no plan; each
+/// entry must carry string `content` and `status` fields, otherwise it is
+/// skipped (#1357). An empty entries array clears the panel.
+fn ajax_plan_entries(message: &Value) -> Option<Vec<(String, String)>> {
+    let entries = message.get("entries")?.as_array()?;
+    Some(
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let content = entry.get("content")?.as_str()?;
+                let status = entry.get("status")?.as_str()?;
+                Some((content.to_string(), status.to_string()))
             })
             .collect(),
     )
