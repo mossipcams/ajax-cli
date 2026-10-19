@@ -41,6 +41,21 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
             events.push(AgentEvent::Native(tool_call_finished(record)));
             false
         }
+        "compaction_end" => {
+            // A successful `/compact` is otherwise invisible (the assistant
+            // message it interrupts never ends), so confirm it. Failed manual
+            // compactions surface no text here: the compact command's own
+            // failure response already rejects the turn with that error.
+            if record.get("reason").and_then(Value::as_str) == Some("manual")
+                && record.get("aborted").and_then(Value::as_bool) != Some(true)
+                && string_field(record, "errorMessage").is_none()
+            {
+                events.push(AgentEvent::Native(NativeEvent::AgentText(
+                    manual_compaction_text(record),
+                )));
+            }
+            false
+        }
         "agent_settled" => true,
         // Dialogs (`confirm`, `select`, `input`, `editor`) become elicitation
         // requests; `notify` is surfaced as agent text (or an error when its
@@ -113,7 +128,9 @@ pub(super) fn run_error(record: &Value) -> Option<PiRunError> {
         "compaction_start" => (record.get("reason").and_then(Value::as_str) == Some("overflow"))
             .then_some(PiRunError::Clear),
         "compaction_end" => {
-            if record.get("aborted").and_then(Value::as_bool) == Some(true) {
+            if record.get("aborted").and_then(Value::as_bool) == Some(true)
+                || record.get("reason").and_then(Value::as_str) == Some("manual")
+            {
                 return None;
             }
             string_field(record, "errorMessage").map(PiRunError::Failed)
@@ -345,6 +362,24 @@ fn record_reports_aborted(record: &Value) -> bool {
             .and_then(Value::as_str),
         Some("aborted")
     )
+}
+
+/// A short confirmation for a successful manual compaction (`/compact`), with
+/// the token counts when the record carries them.
+fn manual_compaction_text(record: &Value) -> String {
+    let result = record.get("result");
+    let before = result
+        .and_then(|r| r.get("tokensBefore"))
+        .and_then(Value::as_u64);
+    let after = result
+        .and_then(|r| r.get("estimatedTokensAfter"))
+        .and_then(Value::as_u64);
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            format!("Context compacted: {before} \u{2192} {after} tokens.\n")
+        }
+        _ => "Context compacted.\n".to_string(),
+    }
 }
 
 /// The `text` values of Pi content blocks, in order. Blocks without a string

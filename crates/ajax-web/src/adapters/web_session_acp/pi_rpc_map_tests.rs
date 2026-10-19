@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
-use super::pi_rpc_map::map_record;
+use super::pi_rpc_map::{map_record, run_error};
 
 const SESSION_ID: &str = "acp-session-1";
 
@@ -528,6 +528,103 @@ fn aborted_compaction_emits_nothing_1335() {
     });
 
     assert!(map_record(&record, SESSION_ID).events.is_empty());
+}
+
+#[test]
+fn manual_compaction_end_failure_emits_nothing_1360() {
+    // The compact command's own failure response already rejects the turn
+    // with this error; emitting it here would show it twice.
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "manual",
+        "aborted": false,
+        "willRetry": false,
+        "errorMessage": "Compaction failed: Nothing to compact (session too small)",
+    });
+
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert!(mapping.events.is_empty());
+    assert!(!mapping.finished);
+    assert_eq!(run_error(&record), None);
+}
+
+#[test]
+fn threshold_compaction_end_failure_still_emits_error_1360() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "threshold",
+        "aborted": false,
+        "willRetry": false,
+        "errorMessage": "compaction model unavailable",
+    });
+
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert_eq!(sole_error(&mapping.events), "compaction model unavailable");
+    assert!(!mapping.finished);
+}
+
+#[test]
+fn manual_compaction_success_confirms_token_counts_1360() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "manual",
+        "result": { "summary": "...", "tokensBefore": 150000, "estimatedTokensAfter": 32000 },
+        "aborted": false,
+        "willRetry": false,
+    });
+
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert_eq!(
+        sole_agent_text(&mapping.events),
+        "Context compacted: 150000 \u{2192} 32000 tokens.\n"
+    );
+    assert!(!mapping.finished);
+}
+
+#[test]
+fn manual_compaction_success_without_counts_confirms_1360() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "manual",
+        "aborted": false,
+        "willRetry": false,
+    });
+
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert_eq!(sole_agent_text(&mapping.events), "Context compacted.\n");
+    assert!(!mapping.finished);
+}
+
+#[test]
+fn non_manual_compaction_success_emits_nothing_1360() {
+    let record = serde_json::json!({
+        "type": "compaction_end",
+        "reason": "threshold",
+        "result": { "tokensBefore": 150000, "estimatedTokensAfter": 32000 },
+        "aborted": false,
+        "willRetry": false,
+    });
+
+    let mapping = map_record(&record, SESSION_ID);
+
+    assert!(mapping.events.is_empty());
+    assert!(!mapping.finished);
+}
+
+/// The text of the single `NativeEvent::AgentText` in `events`, failing on
+/// any other event count or shape.
+fn sole_agent_text(events: &[AgentEvent]) -> &str {
+    let [event] = events else {
+        panic!("expected exactly one event, got {events:?}");
+    };
+    match native_event(event) {
+        NativeEvent::AgentText(text) => text.as_str(),
+        other => panic!("expected an AgentText event, got {other:?}"),
+    }
 }
 
 #[test]

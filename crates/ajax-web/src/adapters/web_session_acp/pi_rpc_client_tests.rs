@@ -369,10 +369,19 @@ fn issue_1360_compact_routes_to_the_native_command() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
-    // The fixture's `prompt` arm always emits an "ok" text delta; no AgentText
-    // means the message never reached the model as a prompt.
-    assert!(
-        events.iter().all(|event| !is_agent_text(event)),
+    // The fixture's `prompt` arm always emits an "ok" text delta. The only
+    // agent text allowed is the compaction confirmation from the native
+    // compaction_end record, so an "ok" reply would fail this exact match.
+    let agent_texts: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        agent_texts,
+        vec!["Context compacted: 100 → 40 tokens.\n"],
         "/compact must not reach the prompt path: {events:?}"
     );
     assert!(!client.prompt_in_flight());
