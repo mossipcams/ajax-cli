@@ -158,6 +158,8 @@ const state = {
   shuttingDown: false,
   inflightPrompts: 0,
   pendingElicitations: new Map(),
+  planTasks: [],
+  pendingTaskCreates: new Map(),
 };
 
 async function canUseTool(_toolName, input) {
@@ -235,12 +237,83 @@ function reportLostTurn(message) {
   });
 }
 
+// Issue #1357 (slice A): the Claude Agent SDK hides its todo tools unless
+// CLAUDE_CODE_ENABLE_TODO_TOOLS=1, and with them enabled Claude manages tasks
+// via TaskCreate/TaskUpdate. The task ids only appear in the TaskCreate tool
+// result, so track main-loop tasks here and mirror every change of the
+// ordered list as an `ajax_plan` line AFTER forwarding the SDK message that
+// caused it (slice B maps ajax_plan to the plan panel).
+function emitPlan() {
+  writeLine({
+    type: "ajax_plan",
+    entries: state.planTasks.map((task) => ({ content: task.subject, status: task.status })),
+  });
+}
+
+function applyTaskUpdate(input) {
+  const taskId = input?.taskId;
+  if (typeof taskId !== "string") return;
+  if (input.status === "deleted") {
+    const next = state.planTasks.filter((task) => task.id !== taskId);
+    if (next.length !== state.planTasks.length) {
+      state.planTasks = next;
+      emitPlan();
+    }
+    return;
+  }
+  const task = state.planTasks.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  let changed = false;
+  if (typeof input.status === "string" && input.status !== task.status) {
+    task.status = input.status;
+    changed = true;
+  }
+  if (typeof input.subject === "string" && input.subject !== task.subject) {
+    task.subject = input.subject;
+    changed = true;
+  }
+  if (changed) emitPlan();
+}
+
+function trackPlanMessage(message) {
+  // Main loop only: ignore sub-agent messages (parent_tool_use_id set).
+  if (!message || message.parent_tool_use_id != null) return;
+  const content = Array.isArray(message?.message?.content) ? message.message.content : [];
+  if (message.type === "assistant") {
+    for (const block of content) {
+      if (block?.type !== "tool_use") continue;
+      if (block.name === "TaskCreate" && typeof block.id === "string") {
+        state.pendingTaskCreates.set(
+          block.id,
+          typeof block.input?.subject === "string" ? block.input.subject : "",
+        );
+      } else if (block.name === "TaskUpdate") {
+        applyTaskUpdate(block.input);
+      }
+    }
+  } else if (message.type === "user") {
+    for (const block of content) {
+      if (block?.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+      const subject = state.pendingTaskCreates.get(block.tool_use_id);
+      if (subject === undefined) continue;
+      state.pendingTaskCreates.delete(block.tool_use_id);
+      const taskResult = message.tool_use_result?.task;
+      const id = typeof taskResult?.id === "string" ? taskResult.id : null;
+      if (id !== null && !state.planTasks.some((task) => task.id === id)) {
+        state.planTasks.push({ id, subject, status: "pending" });
+        emitPlan();
+      }
+    }
+  }
+}
+
 function startPump(query) {
   return (async () => {
     try {
       for await (const message of query) {
         if (message?.type === "result") state.inflightPrompts = Math.max(0, state.inflightPrompts - 1);
         writeLine(message);
+        trackPlanMessage(message);
       }
       if (!state.shuttingDown) reportLostTurn("Claude SDK message stream ended before the in-flight prompt completed");
     } catch (error) {
@@ -284,6 +357,7 @@ async function handleInit(cmd) {
     systemPrompt: { type: "preset", preset: "claude_code" },
     includePartialMessages: true,
     permissionMode: "bypassPermissions",
+    env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
     allowDangerouslySkipPermissions: true,
     canUseTool,
     onElicitation,

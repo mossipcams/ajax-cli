@@ -715,3 +715,113 @@ fn fake_call_present(records: &[Value], method: &str) -> bool {
     events(records, "fake_call")
         .any(|record| record.get("method").and_then(Value::as_str) == Some(method))
 }
+
+/// Issue #1357 (slice A): with CLAUDE_CODE_ENABLE_TODO_TOOLS=1 the Claude
+/// Agent SDK exposes TaskCreate/TaskUpdate, and task ids only appear in the
+/// TaskCreate tool result. The sidecar must mirror every change of the main-
+/// loop ordered task list as an `ajax_plan` line, emitted AFTER forwarding
+/// the SDK message that caused it.
+#[test]
+fn claude_task_tools_track_plan_as_ajax_plan_1357() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    // The init query must enable the Claude Agent SDK's todo tools.
+    sidecar.wait_until("queryOptions fake_call", |records| {
+        fake_call_present(records, "queryOptions")
+    });
+    let options = fake_call(&sidecar.records, "queryOptions")
+        .get("args")
+        .and_then(Value::as_array)
+        .expect("queryOptions args")
+        .first()
+        .expect("options object");
+    assert_eq!(
+        options
+            .get("env")
+            .and_then(|env| env.get("CLAUDE_CODE_ENABLE_TODO_TOOLS")),
+        Some(&json!("1")),
+        "init must pass CLAUDE_CODE_ENABLE_TODO_TOOLS=1 (issue #1357)"
+    );
+
+    let prompt_id = sidecar.command("prompt", json!({ "message": "TASKS now" }));
+    assert_eq!(
+        sidecar.response(&prompt_id).get("success"),
+        Some(&Value::Bool(true)),
+        "prompt accepted"
+    );
+    sidecar.wait_until("task turn result", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+
+    let plans: Vec<Value> = events(&sidecar.records, "ajax_plan").cloned().collect();
+    assert_eq!(
+        plans.len(),
+        4,
+        "one ajax_plan per task-list change: {plans:?}"
+    );
+    assert_eq!(
+        plans[0].get("entries"),
+        Some(&json!([{ "content": "alpha", "status": "pending" }])),
+        "create alpha"
+    );
+    assert_eq!(
+        plans[1].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "pending" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "create beta"
+    );
+    assert_eq!(
+        plans[2].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "in_progress" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "update alpha in_progress"
+    );
+    assert_eq!(
+        plans[3].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "completed" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "update alpha completed"
+    );
+
+    // Each ajax_plan line is emitted AFTER the SDK message that caused it, and
+    // all of them arrive inside the forwarded turn (before its result).
+    let plan_positions: Vec<usize> = sidecar
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| event_kind(record) == Some("ajax_plan"))
+        .map(|(index, _)| index)
+        .collect();
+    let task_result_index = |needle: &str| {
+        sidecar
+            .records
+            .iter()
+            .position(|record| {
+                event_kind(record) == Some("user") && record.to_string().contains(needle)
+            })
+            .unwrap_or_else(|| panic!("task result for {needle} forwarded"))
+    };
+    assert!(
+        plan_positions[0] > task_result_index("Task #1"),
+        "plan 1 follows the alpha create result"
+    );
+    assert!(
+        plan_positions[1] > task_result_index("Task #2"),
+        "plan 2 follows the beta create result"
+    );
+    let result_index = sidecar
+        .records
+        .iter()
+        .position(|record| event_kind(record) == Some("result"))
+        .expect("turn result forwarded");
+    assert!(
+        plan_positions[3] < result_index,
+        "plans arrive before the turn result"
+    );
+}

@@ -16,6 +16,9 @@
 //     THROW (no result is emitted) to simulate an SDK message-pump failure;
 //   - contains "EXHAUST": emits one stream_event, then ends the iterator
 //     early with no result to simulate stream exhaustion mid-turn;
+//   - contains "TASKS": TaskCreate alpha / TaskCreate beta (task ids arrive
+//     via the user messages' top-level tool_use_result.task), then TaskUpdate
+//     alpha in_progress and completed, then a result success;
 //   - contains "TOOL": calls options.canUseTool, then assistant tool_use /
 //     user tool_result / result success;
 //   - otherwise: system/init (first turn only), stream_event, assistant,
@@ -194,6 +197,47 @@ export function query({ prompt, options = {} }) {
         message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] },
       });
       result("error_during_execution", { terminal_reason: "aborted_streaming", is_error: true });
+      return;
+    }
+    if (text.includes("TASKS")) {
+      systemInit();
+      assistant(
+        [{ type: "tool_use", id: "toolu_fake_task_a", name: "TaskCreate", input: { subject: "alpha", description: "Task alpha" } }],
+        "tool_use",
+      );
+      queue.push({
+        type: "user",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_fake_task_a", content: "Task #1 created successfully: alpha" }],
+        },
+        tool_use_result: { task: { id: "1", subject: "alpha" } },
+      });
+      assistant(
+        [{ type: "tool_use", id: "toolu_fake_task_b", name: "TaskCreate", input: { subject: "beta", description: "Task beta" } }],
+        "tool_use",
+      );
+      queue.push({
+        type: "user",
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "toolu_fake_task_b", content: "Task #2 created successfully: beta" }],
+        },
+        tool_use_result: { task: { id: "2", subject: "beta" } },
+      });
+      assistant(
+        [{ type: "tool_use", id: "toolu_fake_upd_1", name: "TaskUpdate", input: { taskId: "1", status: "in_progress" } }],
+        "tool_use",
+      );
+      assistant(
+        [{ type: "tool_use", id: "toolu_fake_upd_2", name: "TaskUpdate", input: { taskId: "1", status: "completed" } }],
+        "tool_use",
+      );
+      result("success", { result: "tasks done" });
       return;
     }
     if (text.includes("TOOL")) {
