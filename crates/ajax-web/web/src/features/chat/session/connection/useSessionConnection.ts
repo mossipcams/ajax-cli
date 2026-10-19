@@ -181,6 +181,7 @@ export function useSessionConnection({
             onRestoreResolved?.();
             setState("connected");
           },
+          onAgentPending: () => setState("starting"),
           onEvent: (event) => {
             buffer?.push(normalizeEvent(event));
           },

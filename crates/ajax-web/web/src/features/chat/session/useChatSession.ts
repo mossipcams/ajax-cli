@@ -66,6 +66,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   onConfigErrorRef.current = onConfigError;
 
   const connected = connectionStateAllowsSend(connectionState);
+  const agentStarting = connectionState === "starting";
 
   useEffect(() => {
     setModelState({ confirmedModel: DEFAULT_SESSION_MODEL });
@@ -217,6 +218,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     view,
     dispatch,
     connected,
+    agentStarting,
     connectionState,
     everOpened,
     activityAgeMs,

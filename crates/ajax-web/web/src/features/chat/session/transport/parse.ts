@@ -303,6 +303,7 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           model: payload.model,
           turnState: payload.turnState,
           reset: payload.reset,
+          ...(payload.agentPending === true ? { agentPending: true } : {}),
           ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
           ...(availableCommands !== undefined ? { availableCommands } : {}),
           ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),

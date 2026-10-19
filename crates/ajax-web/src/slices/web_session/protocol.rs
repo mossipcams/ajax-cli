@@ -67,6 +67,12 @@ pub struct SessionSnapshot {
     #[serde(rename = "turnState")]
     pub turn_state: String,
     pub reset: bool,
+    #[serde(
+        default,
+        rename = "agentPending",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub agent_pending: bool,
     #[serde(rename = "pendingPermission", skip_serializing_if = "Option::is_none")]
     pub pending_permission: Option<PendingPermission>,
     #[serde(rename = "pendingElicitation", skip_serializing_if = "Option::is_none")]
@@ -118,6 +124,7 @@ impl SessionSnapshot {
             session_title: chrome.session_title,
             turn_state: if busy { "busy" } else { "idle" }.to_string(),
             reset,
+            agent_pending: false,
             pending_permission,
             pending_elicitation,
             transcript_error: None,
@@ -144,6 +151,11 @@ impl SessionSnapshot {
 
     pub fn with_transcript_floor(mut self, floor: usize) -> Self {
         self.transcript_floor = Some(floor);
+        self
+    }
+
+    pub fn with_agent_pending(mut self, pending: bool) -> Self {
+        self.agent_pending = pending;
         self
     }
 }
@@ -192,4 +204,29 @@ pub fn parse_tail_snapshot_flag(query: Option<&str>) -> bool {
             .split('&')
             .any(|pair| pair.split_once('=') == Some(("snapshotTail", "1")))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionChrome, SessionSnapshot};
+
+    #[test]
+    fn snapshot_agent_pending_serializes_only_when_true() {
+        let snapshot = |pending| {
+            SessionSnapshot::new(
+                5,
+                "auto".to_string(),
+                false,
+                true,
+                None,
+                None,
+                SessionChrome::default(),
+            )
+            .with_agent_pending(pending)
+        };
+        let off = serde_json::to_value(snapshot(false)).expect("serialize snapshot");
+        assert!(off.get("agentPending").is_none(), "{off}");
+        let on = serde_json::to_value(snapshot(true)).expect("serialize snapshot");
+        assert_eq!(on.get("agentPending"), Some(&serde_json::json!(true)));
+    }
 }

@@ -8,6 +8,7 @@ interface Props {
   taskAttention: ChatTaskAttention | null;
   activityAgeMs: number;
   connected: boolean;
+  starting?: boolean;
   permission?: ReactNode;
   actions?: ReactNode;
   onStop: () => void;
@@ -18,6 +19,7 @@ export default function ChatLiveHead({
   taskAttention,
   activityAgeMs,
   connected,
+  starting = false,
   permission = null,
   actions = null,
   onStop,
@@ -36,6 +38,7 @@ export default function ChatLiveHead({
     hasActivity,
     activityAgeMs,
     connected,
+    starting,
   });
 
   return (
