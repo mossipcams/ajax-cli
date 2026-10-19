@@ -84,6 +84,7 @@ export interface SessionSnapshot {
   promptCapabilities?: LivePromptCapabilities;
   turnState: "idle" | "busy";
   reset: boolean;
+  agentPending?: boolean;
   pendingPermission?: {
     requestId: string;
     title?: string | null;
@@ -122,6 +123,7 @@ export interface WebSessionTransportCallbacks {
   onReady: (model: string) => void;
   onEvent: (event: WebSessionServerEvent) => void;
   onSnapshot?: (snapshot: SessionSnapshot) => void;
+  onAgentPending?: () => void;
   onCursorAdvance?: (nextToRead: number) => void;
   onClosed: () => void;
 }

@@ -11,6 +11,7 @@ export interface ChatHeadView {
   state: HeadState;
   tone: string;
   connected: boolean;
+  starting?: boolean;
   activityAgeMs: number;
   decision: Decision | null;
   hasActivity: boolean;
@@ -73,8 +74,9 @@ export function buildHeadView(input: {
   hasActivity: boolean;
   activityAgeMs: number;
   connected: boolean;
+  starting?: boolean;
 }): ChatHeadView {
-  const { session, taskAttention, hasActivity, activityAgeMs, connected } = input;
+  const { session, taskAttention, hasActivity, activityAgeMs, connected, starting = false } = input;
   const decision = session.permission.decision;
   const elicitation = session.elicitation.decision;
   const state = headState(
@@ -89,6 +91,7 @@ export function buildHeadView(input: {
     state,
     tone,
     connected,
+    starting,
     activityAgeMs: state === "working" ? activityAgeMs : 0,
     decision,
     hasActivity,

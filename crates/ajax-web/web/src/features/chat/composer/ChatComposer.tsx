@@ -26,6 +26,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     submitComposer,
     connected,
     everOpened,
+    agentStarting,
     busy,
     slashMatches,
     slashMenuOpen,
@@ -201,9 +202,11 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
         enterKeyHint="send"
         placeholder={
           !connected
-            ? everOpened
-              ? "Reconnecting…"
-              : "Starting…"
+            ? agentStarting
+              ? "Starting agent…"
+              : everOpened
+                ? "Reconnecting…"
+                : "Starting…"
             : queued !== null
               ? "Enter stops this turn and sends…"
               : busy

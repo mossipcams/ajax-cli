@@ -11,6 +11,10 @@ use std::{
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
+/// Before blocking on a (possibly slow) harness restore, give `snapshotTail`
+/// clients an early storage-only snapshot so the browser is not blank while
+/// the session actor is still acquiring.
+const EARLY_SNAPSHOT_AFTER: Duration = Duration::from_millis(150);
 pub(crate) const MAX_SESSION_FRAME_BYTES: usize = super::prompt_content::MAX_PROMPT_FRAME_BYTES;
 pub(crate) const SESSION_PING_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -20,6 +24,21 @@ pub(crate) fn should_send_keepalive(since_last_write: Duration) -> bool {
 
 async fn release_slot(directory: &Arc<TaskSessionDirectory>, handle: &str) {
     directory.release(handle).await;
+}
+
+/// Cursor the live attach resumes from after an early storage-only snapshot.
+/// Only an inline transcript means the browser consumed history up to
+/// `early.cursor`; a non-reset early snapshot replays nothing, so the client's
+/// own cursor must stay put or the events in between would never be sent.
+pub(crate) fn resume_cursor_after_early(
+    early: &SessionSnapshot,
+    client_cursor: Option<usize>,
+) -> Option<usize> {
+    if early.transcript.is_some() {
+        Some(early.cursor)
+    } else {
+        client_cursor
+    }
 }
 
 /// A reset attach inlines the newest transcript into its snapshot. When the
@@ -56,10 +75,40 @@ pub(crate) async fn bridge_task_session_socket(
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
-    if let Err(error) = directory
-        .acquire_typed(&handle, &plan.worktree_path, &model, plan.agent)
-        .await
-    {
+    // Race the (potentially minutes-long) harness restore against a short
+    // timer so tail clients see a storage-only snapshot immediately. Legacy
+    // clients keep the old behavior: just await the acquire.
+    let mut early_cursor: Option<usize> = None;
+    let acquire_result: Result<(), SessionError> = {
+        // One acquire future for the whole race: dropping it on the timer arm
+        // would leave the Acquire command already queued in the actor while a
+        // second Acquire is sent, double-counting the holder.
+        let acquire = directory.acquire_typed(&handle, &plan.worktree_path, &model, plan.agent);
+        tokio::pin!(acquire);
+        if tail_snapshot {
+            tokio::select! {
+                result = &mut acquire => result,
+                _ = sleep(EARLY_SNAPSHOT_AFTER) => {
+                    let early =
+                        directory.detached_attach_snapshot(&handle, model.clone(), client_cursor);
+                    early_cursor = resume_cursor_after_early(&early.snapshot, client_cursor);
+                    if !send_snapshot(&mut socket, &early.snapshot.with_agent_pending(true)).await {
+                        // The acquire is still in flight and may have succeeded:
+                        // wait for it so the holder taken by it is released.
+                        if acquire.await.is_ok() {
+                            release_slot(&directory, &handle).await;
+                        }
+                        return;
+                    }
+                    acquire.await
+                }
+            }
+        } else {
+            acquire.await
+        }
+    };
+
+    if let Err(error) = acquire_result {
         if !error.is_restore_unavailable() {
             let _ = send_error(&mut socket, &error.to_string()).await;
             return;
@@ -117,7 +166,7 @@ pub(crate) async fn bridge_task_session_socket(
     }
 
     let attach = directory
-        .attach_snapshot(&handle, model, client_cursor)
+        .attach_snapshot(&handle, model, early_cursor.or(client_cursor))
         .await;
     let mut generation = attach.generation;
     let mut cursor = attach.snapshot.cursor;
@@ -331,4 +380,42 @@ async fn send_error(socket: &mut WebSocket, message: &str) -> bool {
         },
     );
     send_envelope(socket, &envelope).await
+}
+
+#[cfg(test)]
+mod early_cursor_tests {
+    use super::resume_cursor_after_early;
+    use crate::slices::web_session::protocol::SessionChrome;
+    use crate::slices::web_session::SessionSnapshot;
+
+    fn snapshot(cursor: usize, reset: bool) -> SessionSnapshot {
+        SessionSnapshot::new(
+            cursor,
+            "auto".to_string(),
+            false,
+            reset,
+            None,
+            None,
+            SessionChrome::default(),
+        )
+    }
+
+    #[test]
+    fn reset_snapshot_with_transcript_advances_to_snapshot_cursor() {
+        let early = snapshot(9, true).with_transcript(Vec::new(), None);
+        assert_eq!(resume_cursor_after_early(&early, Some(3)), Some(9));
+        assert_eq!(resume_cursor_after_early(&early, None), Some(9));
+    }
+
+    #[test]
+    fn non_reset_snapshot_without_transcript_keeps_client_cursor() {
+        let early = snapshot(9, false);
+        assert_eq!(resume_cursor_after_early(&early, Some(3)), Some(3));
+    }
+
+    #[test]
+    fn no_transcript_and_no_client_cursor_stays_none() {
+        let early = snapshot(9, false);
+        assert_eq!(resume_cursor_after_early(&early, None), None);
+    }
 }

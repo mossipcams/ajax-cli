@@ -77,6 +77,7 @@ export type ComposerProviderProps = ComposerCommands & {
   connected: boolean;
   busy: boolean;
   everOpened: boolean;
+  agentStarting: boolean;
   conversation: ConversationItem[];
   conversationRevision: number;
   availableCommands?: LiveAvailableCommand[];
@@ -103,6 +104,7 @@ type ComposerContextValue = {
   removeQueued: () => void;
   connected: boolean;
   everOpened: boolean;
+  agentStarting: boolean;
   busy: boolean;
   slashMatches: LiveAvailableCommand[];
   slashMenuOpen: boolean;
@@ -132,6 +134,7 @@ export function ComposerProvider({
   connected,
   busy,
   everOpened,
+  agentStarting,
   conversation,
   conversationRevision,
   availableCommands,
@@ -590,6 +593,7 @@ export function ComposerProvider({
     removeQueued,
     connected,
     everOpened,
+    agentStarting,
     busy,
     slashMatches,
     slashMenuOpen,

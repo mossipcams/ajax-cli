@@ -2,6 +2,7 @@ use super::protocol::{PendingPermission, SessionChrome, SessionSnapshot};
 use super::replay::{attach_inline_tail, build_attach, plan_replay, read_before, TAIL_EVENT_LIMIT};
 use super::transcript::TranscriptLog;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
+use crate::slices::web_session::output_content::OutputContentBlockWire;
 use crate::slices::web_session::SessionServerEvent;
 
 fn note(text: &str) -> SessionServerEvent {
@@ -666,4 +667,195 @@ fn attach_inline_tail_empty_events_gives_empty_transcript_and_next_cursor() {
     assert_eq!(snapshot.transcript, Some(Vec::new()));
     assert_eq!(snapshot.transcript_from, Some(7));
     assert_eq!(snapshot.transcript_floor, Some(2));
+}
+
+/// A streamed message version with a controlled `item_id` and content blocks.
+fn stream_msg(
+    text: &str,
+    item_id: &str,
+    blocks: Vec<OutputContentBlockWire>,
+) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "agent".to_string(),
+        text: text.to_string(),
+        content_blocks: blocks,
+        item_id: item_id.to_string(),
+        message_id: None,
+    }
+}
+
+fn resource_block(uri: &str) -> OutputContentBlockWire {
+    OutputContentBlockWire::Resource {
+        uri: uri.to_string(),
+        mime_type: None,
+        text: Some("body".to_string()),
+        blob: None,
+    }
+}
+
+fn tool_call(call_id: &str) -> SessionServerEvent {
+    SessionServerEvent::ToolCall {
+        call_id: call_id.to_string(),
+        title: "ls".to_string(),
+        kind: "read".to_string(),
+        status: "in_progress".to_string(),
+        locations: Vec::new(),
+        content: Vec::new(),
+    }
+}
+
+#[test]
+fn attach_compacts_streamed_message_versions_issue_1352() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        user_note("go"),                                      // cursor 0
+        stream_msg("he", "i1", Vec::new()),                   // cursor 1 (first occurrence)
+        stream_msg("hel", "i1", vec![resource_block("a")]),   // cursor 2
+        stream_msg("hello", "i1", vec![resource_block("b")]), // cursor 3 (last)
+    ]);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    // Three i1 versions collapse to one envelope at the first cursor.
+    assert_eq!(transcript.len(), 2);
+    assert_eq!(transcript[0].cursor, 0);
+    assert_eq!(transcript[1].cursor, 1);
+    match &transcript[1].payload {
+        SessionServerEvent::Message {
+            text,
+            content_blocks,
+            item_id,
+            ..
+        } => {
+            // Final payload of the stream.
+            assert_eq!(text, "hello");
+            assert_eq!(*content_blocks, vec![resource_block("b")]);
+            assert_eq!(item_id, "i1");
+        }
+        other => panic!("expected Message payload, got {other:?}"),
+    }
+    // Window selection and cursors are unchanged by compaction.
+    assert_eq!(snapshot.cursor, 4);
+    assert_eq!(snapshot.transcript_from, Some(0));
+    assert_eq!(snapshot.transcript_floor, Some(0));
+}
+
+#[test]
+fn attach_compaction_keeps_first_seen_item_order() {
+    // Interleaved streams: thought i1 v1, agent i2 v1, thought i1 v2, agent i2 v2.
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        stream_msg("t1", "i1", Vec::new()),                // cursor 0
+        stream_msg("a1", "i2", Vec::new()),                // cursor 1
+        stream_msg("t2", "i1", vec![resource_block("x")]), // cursor 2
+        stream_msg("a2", "i2", vec![resource_block("y")]), // cursor 3
+    ]);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    // First-seen order: i1 then i2, each with its last payload.
+    assert_eq!(transcript.len(), 2);
+    assert_eq!(transcript[0].cursor, 0);
+    assert_eq!(transcript[1].cursor, 1);
+    let texts: Vec<&str> = transcript
+        .iter()
+        .map(|env| match &env.payload {
+            SessionServerEvent::Message {
+                text,
+                item_id,
+                content_blocks,
+                ..
+            } => {
+                if item_id == "i1" {
+                    assert_eq!(content_blocks, &[resource_block("x")]);
+                } else {
+                    assert_eq!(item_id.as_str(), "i2");
+                    assert_eq!(content_blocks, &[resource_block("y")]);
+                }
+                text.as_str()
+            }
+            other => panic!("expected Message payload, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(texts, vec!["t2", "a2"]);
+}
+
+#[test]
+fn attach_compaction_leaves_tool_calls_and_empty_item_ids_alone() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        stream_msg("same", "", Vec::new()), // cursor 0: empty item_id
+        stream_msg("same", "", Vec::new()), // cursor 1: identical, still kept
+        tool_call("c1"),                    // cursor 2: repeated call_id is not an item_id
+        tool_call("c1"),                    // cursor 3: both kept, in order
+    ]);
+    let (snapshot, _) = build_attach(
+        &log,
+        "auto".to_string(),
+        false,
+        None,
+        SessionChrome::default(),
+    );
+    let transcript = snapshot
+        .transcript
+        .expect("reset snapshot carries transcript");
+    assert_eq!(transcript.len(), 4);
+    let cursors: Vec<usize> = transcript.iter().map(|env| env.cursor).collect();
+    assert_eq!(cursors, vec![0, 1, 2, 3]);
+    for (idx, env) in transcript.iter().enumerate() {
+        match &env.payload {
+            SessionServerEvent::Message { text, item_id, .. } => {
+                assert_eq!(text, "same");
+                assert!(item_id.is_empty());
+            }
+            SessionServerEvent::ToolCall { call_id, .. } => {
+                assert!(idx == 2 || idx == 3);
+                assert_eq!(call_id, "c1");
+            }
+            other => panic!("unexpected payload at {idx}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn read_before_compacts_streamed_versions_and_keeps_from() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        user_note("go"),                    // cursor 0: page start (no earlier user boundary)
+        stream_msg("he", "i1", Vec::new()), // cursor 1 (first occurrence)
+        stream_msg("hello", "i1", vec![resource_block("z")]), // cursor 2 (last)
+    ]);
+    let page = read_before(&log, 3, 3);
+    assert_eq!(page.from, 0);
+    assert_eq!(page.floor, 0);
+    assert_eq!(page.events.len(), 2);
+    let cursors: Vec<usize> = page.events.iter().map(|env| env.cursor).collect();
+    assert_eq!(cursors, vec![0, 1]);
+    match &page.events[1].payload {
+        SessionServerEvent::Message {
+            text,
+            content_blocks,
+            item_id,
+            ..
+        } => {
+            assert_eq!(text, "hello");
+            assert_eq!(*content_blocks, vec![resource_block("z")]);
+            assert_eq!(item_id, "i1");
+        }
+        other => panic!("expected Message payload, got {other:?}"),
+    }
 }

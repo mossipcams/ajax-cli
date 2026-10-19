@@ -8,7 +8,11 @@ use crate::adapters::web_session_acp::{
     with_test_acp_extra_args, with_test_acp_program, SessionConfigValue,
 };
 use ajax_core::models::AgentClient;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub(super) fn scratch_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("ajax-web-bridge-{label}-{}", std::process::id()));
@@ -917,6 +921,70 @@ fn apply_client_message_clear_resets_context_and_keeps_transcript() {
             &after_prompt,
             &format!("{nonce}-after-clear")
         ));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn detached_attach_snapshot_serves_stored_transcript_while_restore_pending_issue_1356() {
+    let dir = scratch_dir("early-snapshot-1356");
+    let handle = "web/early-snapshot-1356";
+    with_test_acp_program(&fake_acp_fixture(), || {
+        let seed = BlockingSessionDirectory::new(dir.clone());
+        seed.acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        seed.record(
+            handle,
+            SessionServerEvent::Message {
+                role: "user".into(),
+                text: "seed".into(),
+                content_blocks: Vec::new(),
+                item_id: "seed-user".into(),
+                message_id: None,
+            },
+        );
+        seed.kill_host_for_test(handle);
+
+        // `--resume` advertises resume; both delays stay under the 500 ms test
+        // restore budget.
+        let args = ["--resume", "--resume-delay=250", "--load-delay=250"];
+        with_test_acp_extra_args(&args, || {
+            let directory = BlockingSessionDirectory::new(dir.clone());
+            let inner = Arc::clone(directory.inner());
+            let runtime = directory.runtime_handle();
+            let worktree = dir.clone();
+            let restore = runtime.spawn(async move {
+                inner
+                    .acquire_typed(handle, &worktree, "auto", AgentClient::Cursor)
+                    .await
+            });
+
+            let started = Instant::now();
+            let attached = directory
+                .inner()
+                .detached_attach_snapshot(handle, "auto".into(), None);
+            assert!(started.elapsed() < Duration::from_millis(300));
+            assert!(!restore.is_finished(), "restore must still be pending");
+            let transcript = attached
+                .snapshot
+                .transcript
+                .expect("inline transcript tail");
+            assert!(attached.snapshot.reset);
+            assert!(transcript.iter().any(|envelope| matches!(
+                &envelope.payload,
+                SessionServerEvent::Message { text, .. } if text == "seed"
+            )));
+
+            runtime
+                .block_on(restore)
+                .expect("restore task")
+                .expect("delayed restore must succeed");
+            // One acquire holds one slot; release drops the count back to zero.
+            assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 1);
+            directory.release(handle);
+            assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 0);
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);

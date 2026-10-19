@@ -70,6 +70,13 @@ export function connectWebSessionTransport(
         }
       }
       callbacks.onSnapshot?.(frame.snapshot);
+      if (frame.snapshot.agentPending === true) {
+        // Early snapshot while the harness is still spawning/restoring: keep
+        // inline-transcript bookkeeping, but do not mark ready, emit a
+        // synthetic ready event, or flush queued prompts.
+        callbacks.onAgentPending?.();
+        return;
+      }
       if (!ready) {
         ready = true;
         const readyEvent: WebSessionServerEvent = {

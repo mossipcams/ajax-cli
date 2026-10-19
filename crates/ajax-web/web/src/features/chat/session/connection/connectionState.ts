@@ -1,6 +1,7 @@
 export type ConnectionState =
   | "connecting"
   | "connected"
+  | "starting"
   | "waiting"
   | "failed"
   | "disposed";
@@ -10,7 +11,12 @@ export function initialConnectionState(): ConnectionState {
 }
 
 export function connectionStateIsActive(state: ConnectionState): boolean {
-  return state === "connecting" || state === "connected" || state === "waiting";
+  return (
+    state === "connecting" ||
+    state === "connected" ||
+    state === "starting" ||
+    state === "waiting"
+  );
 }
 
 export function connectionStateAllowsSend(state: ConnectionState): boolean {
@@ -20,6 +26,7 @@ export function connectionStateAllowsSend(state: ConnectionState): boolean {
 const ALL_CONNECTION_STATES: ConnectionState[] = [
   "connecting",
   "connected",
+  "starting",
   "waiting",
   "failed",
   "disposed",
