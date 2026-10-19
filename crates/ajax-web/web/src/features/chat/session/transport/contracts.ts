@@ -58,15 +58,6 @@ export type WebSessionServerEvent =
   | { type: "usage"; used: number; size: number }
   | { type: "usage_reset" }
   | {
-      type: "turn_usage";
-      requestId?: string;
-      inputTokens?: number;
-      outputTokens?: number;
-      cacheReadTokens?: number;
-      cacheWriteTokens?: number;
-      totalTokens?: number;
-    }
-  | {
       type: "permission_request";
       requestId: string;
       title?: string | null;

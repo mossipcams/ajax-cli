@@ -694,27 +694,14 @@ describe("reduceChatSession", () => {
   });
 });
 
-describe("turn usage stays separate from context usage", () => {
-  it("stores turnUsage without writing context usage or zero-filled fields", () => {
+describe("context usage", () => {
+  it("stores context usage as used and size", () => {
     const afterContext = reduceWire(initialChatSessionReducerState, {
       type: "usage",
       used: 50_000,
       size: 200_000,
     });
     expect(afterContext.view.usage.context).toEqual({ used: 50_000, size: 200_000 });
-    expect(afterContext.view.usage.turn).toBeNull();
-
-    const afterTurn = reduceWire(afterContext, {
-      type: "turn_usage",
-      inputTokens: 1200,
-      totalTokens: 1200,
-    });
-
-    expect(afterTurn.view.usage.context).toEqual({ used: 50_000, size: 200_000 });
-    expect(afterTurn.view.usage.turn).toEqual({ inputTokens: 1200, totalTokens: 1200 });
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("outputTokens", 0);
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("cacheReadTokens", 0);
-    expect(afterTurn.view.usage.turn).not.toHaveProperty("cacheWriteTokens", 0);
   });
 });
 
