@@ -116,7 +116,7 @@ describe("LiveHead context usage", () => {
     }))).toEqual({ kind: "event", cursor: 7, event: { type: "usage_reset" } });
   });
 
-  it("clears context and turn usage through the wire projection until new usage arrives", () => {
+  it("clears context usage through the wire projection until new usage arrives", () => {
     let state = reduceChatSession(initialChatSessionReducerState, { type: "prompt", text: "hello" });
     const applyWire = (payload: object) => {
       const frame = parseServerFrame(JSON.stringify({
@@ -133,8 +133,7 @@ describe("LiveHead context usage", () => {
     });
 
     applyWire({ type: "usage", used: 90, size: 100 });
-    applyWire({ type: "turn_usage", inputTokens: 7 });
-    expect(state.view.usage).toEqual({ context: { used: 90, size: 100 }, turn: { inputTokens: 7 } });
+    expect(state.view.usage).toEqual({ context: { used: 90, size: 100 }, turn: null });
     const { rerender } = render(<LiveHead view={headView()} permission={null} onStop={noop} />);
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 90% full");
     const beforeReset = state;
@@ -147,8 +146,7 @@ describe("LiveHead context usage", () => {
     expect(screen.queryByTestId("session-usage")).not.toBeInTheDocument();
 
     applyWire({ type: "usage", used: 5, size: 100 });
-    applyWire({ type: "turn_usage", inputTokens: 2 });
-    expect(state.view.usage).toEqual({ context: { used: 5, size: 100 }, turn: { inputTokens: 2 } });
+    expect(state.view.usage).toEqual({ context: { used: 5, size: 100 }, turn: null });
     rerender(<LiveHead view={headView()} permission={null} onStop={noop} />);
     expect(screen.getByTestId("session-usage")).toHaveTextContent("Context 5% full");
   });
