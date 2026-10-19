@@ -547,6 +547,37 @@ fn native_error_matches_acp_error() {
 }
 
 #[test]
+fn claude_error_result_shows_one_error_and_failed_terminal_1275() {
+    // The error text is folded into the failed TurnFinished (#1275), so the drain
+    // must show it once and settle the prompt as Failed, not as a success.
+    let outcome = drain_one(AgentEvent::Native(NativeEvent::TurnFinished {
+        request_id: 7,
+        result: Err("Claude run failed: API Error: overloaded".to_string()),
+    }));
+
+    let error_count = |events: &[SessionServerEvent]| {
+        events
+            .iter()
+            .filter(|event| matches!(event, SessionServerEvent::Error { .. }))
+            .count()
+    };
+    assert_eq!(outcome.prompt_terminals.len(), 1);
+    let terminal = &outcome.prompt_terminals[0];
+    assert_eq!(terminal.outcome, PromptTerminalOutcome::Failed);
+    assert_eq!(
+        error_count(&outcome.events) + error_count(&terminal.events),
+        1,
+        "the error must surface exactly once: {outcome:?}"
+    );
+    assert_eq!(
+        terminal.events,
+        vec![SessionServerEvent::Error {
+            message: "Claude run failed: API Error: overloaded".to_string()
+        }]
+    );
+}
+
+#[test]
 fn native_exit_matches_acp_exit() {
     let native = drain_one(AgentEvent::Native(NativeEvent::Exited));
     let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Exited));
