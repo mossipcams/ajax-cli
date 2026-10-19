@@ -82,7 +82,6 @@ export interface SessionSnapshot {
   sessionConfigOptions?: LiveSessionConfigOption[];
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
-  sessionTitle?: string;
   turnState: "idle" | "busy";
   reset: boolean;
   pendingPermission?: {

@@ -88,7 +88,6 @@ export interface ChatModelState {
   configOptions?: LiveSessionConfigOption[];
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
-  sessionTitle?: string;
 }
 
 export interface ChatSessionView {

@@ -1,7 +1,6 @@
 import { parseLiveConfigOptions } from "@/shared/lib/liveSessionConfig";
 import { parseLiveAvailableCommands } from "@/shared/lib/liveSessionCommands";
 import { parseLivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapabilities";
-import { parseLiveSessionTitle } from "@/shared/lib/liveSessionTitle";
 import {
   parseOutputContentBlocks,
   parseToolContentList,
@@ -262,7 +261,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const sessionConfigOptions = parseLiveConfigOptions(payload.sessionConfigOptions);
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
-      const sessionTitle = parseLiveSessionTitle(payload.sessionTitle);
       const transcript = parseSnapshotTranscript(payload, payload.cursor);
       if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
       let transcriptFrom: number | undefined;
@@ -308,7 +306,6 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(sessionConfigOptions ? { sessionConfigOptions } : {}),
           ...(availableCommands !== undefined ? { availableCommands } : {}),
           ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),
-          ...(sessionTitle ? { sessionTitle } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
           ...(transcript !== undefined ? { transcript } : {}),
