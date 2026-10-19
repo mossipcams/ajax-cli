@@ -172,6 +172,92 @@ fn rejected_prompt_surfaces_pi_error_text() {
     );
 }
 
+// The fake fixture ignores unknown commands, so the command's response is
+// fed straight to `prompt_response_step` with the id the session tracked.
+#[test]
+fn issue_1360_command_run_success_response_finishes_the_run() {
+    let (process, handshake) = handshaken(&[]);
+    let mut session = RpcSession::new(process, handshake, map_record);
+
+    session
+        .begin_command("compact", json!({}))
+        .expect("command must be sent");
+    assert!(
+        session.run_active(),
+        "run is active right after begin_command"
+    );
+    let id = session.prompt_id.clone().expect("command must be tracked");
+
+    let response =
+        json!({ "id": id, "type": "response", "command": "compact", "success": true, "data": {} });
+    let step = session.prompt_response_step(&response);
+    assert!(
+        matches!(step, Some(RpcStep::RunFinished { aborted: false })),
+        "success response to a command run must finish the run: {step:?}"
+    );
+    assert!(
+        !session.run_active(),
+        "run is inactive after the command settles"
+    );
+    assert!(session.prompt_id.is_none());
+}
+
+#[test]
+fn issue_1360_command_run_failure_response_rejects_with_error_text() {
+    let (process, handshake) = handshaken(&[]);
+    let mut session = RpcSession::new(process, handshake, map_record);
+
+    session
+        .begin_command("compact", json!({}))
+        .expect("command must be sent");
+    let id = session.prompt_id.clone().expect("command must be tracked");
+
+    let response = json!({
+        "id": id,
+        "type": "response",
+        "command": "compact",
+        "success": false,
+        "error": "Nothing to compact (session too small)",
+    });
+    let step = session.prompt_response_step(&response);
+    assert!(
+        matches!(step, Some(RpcStep::PromptRejected(ref detail)) if detail == "Nothing to compact (session too small)"),
+        "failure response must reject with pi's text: {step:?}"
+    );
+    assert!(
+        !session.run_active(),
+        "rejected command leaves no active run"
+    );
+}
+
+#[test]
+fn issue_1360_prompt_started_acknowledgement_does_not_finish_the_run() {
+    let (process, handshake) = handshaken(&[]);
+    let mut session = RpcSession::new(process, handshake, map_record);
+
+    session
+        .begin_prompt("hello fake pi")
+        .expect("prompt must be sent");
+    let id = session.prompt_id.clone().expect("prompt must be tracked");
+
+    let response = json!({
+        "id": id,
+        "type": "response",
+        "command": "prompt",
+        "success": true,
+        "data": { "disposition": "started" },
+    });
+    let step = session.prompt_response_step(&response);
+    assert!(
+        step.is_none(),
+        "a started acknowledgement must not settle the run: {step:?}"
+    );
+    assert!(
+        session.run_active(),
+        "run keeps going after a started acknowledgement"
+    );
+}
+
 #[test]
 fn handshake_pending_records_are_processed_first() {
     let (process, handshake) = handshaken(&["--interleave-text"]);

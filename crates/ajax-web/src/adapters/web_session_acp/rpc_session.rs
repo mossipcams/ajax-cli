@@ -5,7 +5,8 @@
 //! for the caller. It keeps only run state — no usage stats, no restore.
 //!
 //! Step rules: a `response` record whose id matches the active prompt decides
-//! that run (`success:false` rejects it with the response's error text,
+//! that run (`success:false` rejects it with the response's error text, a
+//! success response to a command run (`command` other than `"prompt"`) or
 //! `data.disposition == "handled"` finishes it). Every other record is folded
 //! through the injected record mapper — events are surfaced in order, and a
 //! mapper-reported finish ends the run with the remembered aborted flag.
@@ -66,8 +67,8 @@ pub struct RpcSession {
     session_id: String,
     /// Handshake pending records, replayed before any live stdout record.
     queued: VecDeque<Value>,
-    /// The id allocated by the last `begin_prompt`; `None` until one is sent.
-    prompt_id: Option<String>,
+    /// The id allocated by the last `begin_prompt` or `begin_command`; `None` until one is sent.
+    pub(super) prompt_id: Option<String>,
     run_active: bool,
     /// Set when a record in the current run reports an aborted stop reason;
     /// folded into the next [`RpcStep::RunFinished`] and reset on every run end.
@@ -148,9 +149,6 @@ impl RpcSession {
         text: &str,
         images: &[NativeImage],
     ) -> Result<(), String> {
-        if self.run_active {
-            return Err("a prompt run is already active".to_owned());
-        }
         let mut fields = json!({ "message": text });
         if !images.is_empty() {
             let images: Vec<Value> = images
@@ -165,7 +163,24 @@ impl RpcSession {
                 .collect();
             fields["images"] = Value::Array(images);
         }
-        let id = self.process.send("prompt", fields)?;
+        self.begin_run("prompt", fields)
+    }
+
+    /// Send a built-in Pi command (e.g. `compact`, `set_session_name`) in place
+    /// of a prompt, tracked by the same request id. Its success response ends
+    /// the run; a failure response rejects it. Same guards as
+    /// [`Self::begin_prompt_with_images`].
+    #[allow(dead_code)] // Called by the Pi client's /compact and /name paths (slice B of #1360).
+    pub fn begin_command(&mut self, command: &str, fields: Value) -> Result<(), String> {
+        self.begin_run(command, fields)
+    }
+
+    /// Send `record_type` as the tracked run record and mark the run active.
+    fn begin_run(&mut self, record_type: &str, fields: Value) -> Result<(), String> {
+        if self.run_active {
+            return Err("a prompt run is already active".to_owned());
+        }
+        let id = self.process.send(record_type, fields)?;
         self.prompt_id = Some(id);
         self.run_active = true;
         self.ended_aborted = false;
@@ -359,7 +374,7 @@ impl RpcSession {
     /// The outcome of the active prompt's `response` record, when this is one.
     /// Responses to other commands (handshake leftovers, `abort`) pass through
     /// to the injected record mapper.
-    fn prompt_response_step(&mut self, value: &Value) -> Option<RpcStep> {
+    pub(super) fn prompt_response_step(&mut self, value: &Value) -> Option<RpcStep> {
         if value.get("type").and_then(Value::as_str) != Some("response") {
             return None;
         }
@@ -383,8 +398,16 @@ impl RpcSession {
                 Some(RpcStep::PromptRejected(detail))
             }
             _ => {
-                if value.pointer("/data/disposition").and_then(Value::as_str) == Some("handled") {
-                    // The response reports the prompt fully handled: the run is over.
+                let handled =
+                    value.pointer("/data/disposition").and_then(Value::as_str) == Some("handled");
+                // A command run (`compact`, `set_session_name`, ...) is settled by its own
+                // success response; a prompt's response carries `command: "prompt"`.
+                let command_run = value
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| command != "prompt");
+                if handled || command_run {
+                    // The response reports the prompt or command fully handled: the run is over.
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
