@@ -875,3 +875,97 @@ fn assistant_tool_calls_carry_descriptive_titles_1339() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 }
+
+#[test]
+fn synthetic_assistant_text_maps_to_agent_text_1359() {
+    // #1359: local slash-command output (e.g. `/context`) arrives as one full
+    // assistant message whose `message.model` is `"<synthetic>"`, with text
+    // blocks and no preceding stream deltas; the blocks join into exactly one
+    // AgentText event.
+    let message = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "## Context Usage"},
+                {"type": "text", "text": "| Section | Tokens |"}
+            ]
+        }
+    });
+    let mapping = map_sdk_message(&message, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::AgentText(text) => {
+            assert_eq!(text, "## Context Usage\n| Section | Tokens |");
+        }
+        other => panic!("expected an AgentText event, got {other:?}"),
+    }
+    assert!(!mapping.finished);
+    assert!(!mapping.ended_aborted);
+
+    // A real-model assistant message must not re-emit its text: it already
+    // arrived via stream_event deltas, and a second copy would duplicate it.
+    let real_model = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+            "model": "claude-sonnet-4-6",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "already streamed"}]
+        }
+    });
+    let mapping = map_sdk_message(&real_model, SESSION_ID);
+    assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
+
+    // A sub-agent assistant message emits no AgentText.
+    let sub_agent = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": "toolu_task",
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "sub-agent output"}]
+        }
+    });
+    let mapping = map_sdk_message(&sub_agent, SESSION_ID);
+    assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
+
+    // A synthetic message carrying only a tool_use block emits no AgentText;
+    // the tool_use mapping itself is unchanged.
+    let tool_only = serde_json::json!({
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t-syn", "name": "Bash", "input": {"command": "ls"}}]
+        }
+    });
+    let mapping = map_sdk_message(&tool_only, SESSION_ID);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::ToolCall { id, title, .. } => {
+            assert_eq!(id, "t-syn");
+            assert_eq!(title, "Bash: ls");
+        }
+        other => panic!("expected a ToolCall event, got {other:?}"),
+    }
+
+    // A synthetic message with a top-level `error` (e.g. rate-limit) emits no
+    // AgentText: the following `result` message already surfaces it as an
+    // Error, and re-emitting its text would duplicate it.
+    let errored = serde_json::json!({
+        "type": "assistant",
+        "error": "rate_limit",
+        "parent_tool_use_id": null,
+        "message": {
+            "model": "<synthetic>",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "You've hit your session limit"}]
+        }
+    });
+    let mapping = map_sdk_message(&errored, SESSION_ID);
+    assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
+}
