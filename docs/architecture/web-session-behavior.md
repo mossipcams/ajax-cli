@@ -711,6 +711,12 @@ so a cancelled turn does not reset the meter.
 - The guard test `native_harness_code_never_names_the_acp_protocol` keeps
   `agent_client_protocol` and `AcpClientEvent` out of the Claude, Pi and shared
   RPC files.
+- The opt-in `live_harness_tests::live_harness_parity` test (`#[ignore]`) runs
+  the session contract against the real installed Claude SDK, Pi, Cursor SDK
+  and Codex (`AJAX_LIVE_HARNESS=claude,pi,cursor,codex cargo test -p ajax-web
+  --lib live_harness_parity -- --ignored --nocapture`), because under
+  `cfg(test)` the native transports are otherwise only exercised against fake
+  fixtures. Parity audits must run it.
 - The remaining limit: the slice still builds prompt payloads as ACP content
   blocks before `SessionClient`.
 - The adapter layer must not name slice wire types; the guard test
@@ -722,15 +728,21 @@ so a cancelled turn does not reset the meter.
 - Pi run errors: an assistant message ending with stopReason `"error"` is held by
   `RpcSession` and surfaced as one error before the run finishes, unless Pi retries
   it (`auto_retry_start`, or an overflow compaction). `auto_retry_end` with
-  `success: false`, a failed `compaction_end`, and `extension_error` each surface
-  one operator-visible error
+  `success: false`, a failed non-manual `compaction_end`, and
+  `extension_error` each surface one operator-visible error
   ([#1335](https://github.com/mossipcams/ajax-cli/issues/1335)).
 - A native harness exit reports "Agent process exited"; ACP exits keep "ACP
   process exited"; both are deduped by the pump and explained in the browser as
   'The agent stopped. It will restart when you reconnect.'
   ([#1336](https://github.com/mossipcams/ajax-cli/issues/1336)).
-- Claude `TodoWrite` tool_use input `todos` map to plan entries (`content`,
-  `status`) like Cursor's `updateTodos`, while the TodoWrite tool row stays
+- The Claude Agent SDK exposes its task tools (`TaskCreate`, `TaskGet`,
+  `TaskList`, `TaskUpdate`) only when `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which
+  the sidecar sets; task ids appear only in the TaskCreate result
+  (`tool_use_result.task.id`), so the sidecar tracks main-loop tasks and writes
+  an `ajax_plan` line with the full ordered list (`content`, `status`;
+  `deleted` removes) whenever it changes, which maps to the plan panel
+  ([#1357](https://github.com/mossipcams/ajax-cli/issues/1357)). The TodoWrite
+  mapping stays for SDKs that still offer it
   ([#1338](https://github.com/mossipcams/ajax-cli/issues/1338)).
 - Native tool titles name their target: Claude re-sends each tool call from the
   assistant message with the complete input and a title like `Bash: ls -la` /
@@ -743,6 +755,19 @@ so a cancelled turn does not reset the meter.
   the parent Task row (tool ids are unique, so no parent link is needed), while
   sub-agent text and thinking stay hidden and sub-agent `result` messages never
   finish the run ([#1342](https://github.com/mossipcams/ajax-cli/issues/1342)).
+- Claude local slash-command output (e.g. `/context`) arrives as one `assistant`
+  message with model `<synthetic>` and no stream deltas; its text blocks map to
+  agent text, except messages carrying a top-level `error` (e.g. rate limits),
+  whose text the result already surfaces
+  ([#1359](https://github.com/mossipcams/ajax-cli/issues/1359)).
+- Pi RPC `prompt` only runs extension commands, prompt templates and skills,
+  so the Pi client routes the built-ins `/compact [instructions]` to the
+  `compact` command (`customInstructions`) and `/name <name>` to
+  `set_session_name`; `RpcSession::begin_command` tracks such a command like a
+  prompt and its success response (a `command` other than `prompt`) ends the
+  turn. A failed manual compaction surfaces once, from the command response;
+  a successful one shows `Context compacted: <before> → <after> tokens.`
+  ([#1360](https://github.com/mossipcams/ajax-cli/issues/1360)).
 
 ## Permission persistence
 
@@ -775,8 +800,16 @@ so a cancelled turn does not reset the meter.
 - ACP `elicitation/create` in form mode is held on the host until the browser
   operator answers. Accept sends schema-shaped `content`; Decline and Cancel
   send the standard non-accept outcomes and do not include content.
-- Pi RPC extension dialogs (`extension_ui_request` with method `select`, `confirm`, `input` or `editor`) are published as elicitation requests (form schema with a boolean `confirmed` or string `value` property) and answered with `extension_ui_response`; accept sends the chosen `confirmed`/`value`, decline or cancel sends `cancelled`. Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, ...) are ignored ([#1306](https://github.com/mossipcams/ajax-cli/issues/1306)).
+- Pi RPC extension dialogs (`extension_ui_request` with method `select`, `confirm`, `input` or `editor`) are published as elicitation requests (form schema with a boolean `confirmed` or string `value` property) and answered with `extension_ui_response`; accept sends the chosen `confirmed`/`value`, decline or cancel sends `cancelled`. `notify` is shown in chat (an `error` notifyType as an error, anything else as agent text) ([#1361](https://github.com/mossipcams/ajax-cli/issues/1361)); the other fire-and-forget methods (`setStatus`, `setWidget`, ...) are ignored ([#1306](https://github.com/mossipcams/ajax-cli/issues/1306)).
 - Claude MCP form elicitations (SDK `onElicitation`) are forwarded by the sidecar as `elicitation_request` records, published as elicitation requests, and answered with an `elicitation_response` command carrying `accept` (with the form content), `decline` or `cancel`. URL-mode requests and schemas with secret-looking property names (password, secret, token, apiKey, authCode, otp) are declined without asking, and anything still pending when the turn is aborted or the sidecar shuts down resolves as `cancel`.
+- Claude `AskUserQuestion` is answered through a sidecar `PreToolUse` hook,
+  because under `bypassPermissions` the SDK never consults `canUseTool`; the
+  hook forwards the questions as an `elicitation_request` (per question
+  `question_N`: single-select `oneOf` of option labels, or a free-text field
+  for multi-select, plus an optional `question_N_other` text field) on the same
+  pending-elicitation path, injects the answers as `updatedInput.answers` on
+  accept, and denies the tool on decline or cancel
+  ([#1358](https://github.com/mossipcams/ajax-cli/issues/1358)).
 - Form schemas must not collect secrets, passwords, or tokens. The host rejects
   secret-like field names before surfacing a prompt to the browser.
 - Live Chat treats elicitation as an agent request in the session head (not task
