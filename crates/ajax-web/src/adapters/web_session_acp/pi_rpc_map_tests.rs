@@ -371,12 +371,13 @@ fn select_dialog_carries_enum_options() {
 
 #[test]
 fn fire_and_forget_methods_map_to_nothing() {
-    for method in ["notify", "setStatus", "setWidget", "setTitle"] {
+    for method in ["setStatus", "setWidget", "setTitle"] {
         let mapping = map_record(
             &serde_json::json!({
                 "type": "extension_ui_request",
                 "id": "ui-3",
-                "method": method
+                "method": method,
+                "message": "hello"
             }),
             SESSION_ID,
         );
@@ -385,6 +386,52 @@ fn fire_and_forget_methods_map_to_nothing() {
             "{method} should produce no events"
         );
     }
+}
+
+#[test]
+fn extension_notify_is_surfaced_1361() {
+    // Issue #1361: Pi extension `notify` records were dropped, so commands
+    // like `/extensions` showed nothing in the native chat. Absent and
+    // non-`error` `notifyType` values surface as agent text with a trailing
+    // newline; `"error"` surfaces as an Error event.
+    let record = |notify_type: Option<&str>| {
+        let mut record = serde_json::json!({
+            "type": "extension_ui_request",
+            "id": "u5",
+            "method": "notify",
+            "message": "3 extensions loaded"
+        });
+        if let Some(notify_type) = notify_type {
+            record["notifyType"] = serde_json::json!(notify_type);
+        }
+        record
+    };
+
+    for notify_type in [None, Some("info"), Some("warning")] {
+        let mapping = map_record(&record(notify_type), SESSION_ID);
+        assert_eq!(
+            mapping.events.len(),
+            1,
+            "notify (notifyType {notify_type:?}) must surface exactly one event"
+        );
+        match native_event(&mapping.events[0]) {
+            NativeEvent::AgentText(text) => assert_eq!(text, "3 extensions loaded\n"),
+            other => panic!("expected an AgentText event, got {other:?}"),
+        }
+        assert!(!mapping.finished, "notify must not finish the run");
+    }
+
+    let mapping = map_record(&record(Some("error")), SESSION_ID);
+    assert_eq!(mapping.events.len(), 1);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::Error(text) => assert_eq!(text, "3 extensions loaded"),
+        other => panic!("expected an Error event, got {other:?}"),
+    }
+
+    // A notify without a non-empty string message surfaces nothing.
+    let mut silent = record(None);
+    silent["message"] = serde_json::json!("");
+    assert!(map_record(&silent, SESSION_ID).events.is_empty());
 }
 
 #[test]

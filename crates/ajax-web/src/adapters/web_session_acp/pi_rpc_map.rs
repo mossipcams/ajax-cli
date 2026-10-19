@@ -5,9 +5,9 @@
 //! [`map_record`] once per parsed record and folds the returned
 //! [`RpcMapping`] values: each emitted event is forwarded to the session in
 //! order, and `finished` / `ended_aborted` track whether the run settled and
-//! whether it ended aborted. Records that carry no adapter meaning (`response`,
-//! `extension_ui_request` methods that are fire-and-forget, and unknown
-//! types) map to an empty result and never panic on missing or malformed fields.
+//! whether it ended aborted. Records that carry no adapter meaning
+//! (`response`, the `extension_ui_request` methods other than dialogs and
+//! `notify`, and unknown types) map to an empty result and never panic on missing or malformed fields.
 
 use serde_json::{json, Value};
 
@@ -43,11 +43,12 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
         }
         "agent_settled" => true,
         // Dialogs (`confirm`, `select`, `input`, `editor`) become elicitation
-        // requests; fire-and-forget methods (`notify`, `setStatus`,
-        // `setWidget`), lifecycle records without adapter output, and unknown
-        // record types produce no events.
+        // requests; `notify` is surfaced as agent text (or an error when its
+        // `notifyType` is `"error"`); the other fire-and-forget methods
+        // (`setStatus`, `setWidget`), lifecycle records without adapter
+        // output, and unknown record types produce no events.
         "extension_ui_request" => {
-            if let Some(event) = dialog_request(record) {
+            if let Some(event) = dialog_request(record).or_else(|| notify_event(record)) {
                 events.push(AgentEvent::Native(event));
             }
             false
@@ -133,9 +134,10 @@ pub(super) fn run_error(record: &Value) -> Option<PiRunError> {
 }
 
 /// Build an elicitation request from one `extension_ui_request` record that
-/// opens a dialog (`confirm`, `select`, `input`, `editor`). Fire-and-forget
-/// methods (`notify`, `setStatus`, `setWidget`, and anything else) return
-/// `None`, as do records without a string `id`.
+/// opens a dialog (`confirm`, `select`, `input`, `editor`). The other
+/// fire-and-forget methods (`setStatus`, `setWidget`, and anything else)
+/// return `None` (`notify` is surfaced separately by [`notify_event`]), as do
+/// records without a string `id`.
 fn dialog_request(record: &Value) -> Option<NativeEvent> {
     let request_id = record.get("id")?.as_str()?.to_string();
     match record.get("method")?.as_str()? {
@@ -203,6 +205,28 @@ fn dialog_request(record: &Value) -> Option<NativeEvent> {
         }
         _ => None,
     }
+}
+
+/// Surface one fire-and-forget `notify` from an `extension_ui_request`
+/// record (issue #1361): `"error"` notifies become [`NativeEvent::Error`],
+/// everything else becomes agent text with a trailing newline so chat renders
+/// it on its own line. Returns `None` for other methods and for records
+/// without a non-empty string `message`.
+fn notify_event(record: &Value) -> Option<NativeEvent> {
+    if record.get("method")?.as_str()? != "notify" {
+        return None;
+    }
+    let message = string_field(record, "message")?;
+    if message.trim().is_empty() {
+        return None;
+    }
+    Some(
+        if record.get("notifyType").and_then(Value::as_str) == Some("error") {
+            NativeEvent::Error(message)
+        } else {
+            NativeEvent::AgentText(format!("{message}\n"))
+        },
+    )
 }
 
 /// One string field of an `extension_ui_request` record, if present.
