@@ -107,7 +107,6 @@ describe("server history bounds and older-page prepend", () => {
       { type: "agent_message", text: "partial", itemId: "a-live" },
       { type: "permission_request", requestId: "p9", title: "Run tests?", detail: "cargo test" },
       { type: "context_usage", used: 40, size: 100 },
-      { type: "turn_usage", usage: { inputTokens: 12, outputTokens: 7, totalTokens: 19 } },
       { type: "acp_status", state: "connected", detail: "current connection" },
     ]);
     prior.elicitation = {
@@ -126,7 +125,6 @@ describe("server history bounds and older-page prepend", () => {
       events: [
         { type: "agent_message", text: "older answer", itemId: "a-old" },
         { type: "context_usage", used: 1, size: 10 },
-        { type: "turn_usage", usage: { totalTokens: 1 } },
         { type: "acp_status", state: "disconnected", detail: "old connection" },
         { type: "turn_end" },
       ],

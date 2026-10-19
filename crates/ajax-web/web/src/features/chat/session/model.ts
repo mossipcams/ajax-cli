@@ -60,15 +60,6 @@ export interface Usage {
   size: number;
 }
 
-export interface TurnUsage {
-  requestId?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  cacheReadTokens?: number;
-  cacheWriteTokens?: number;
-  totalTokens?: number;
-}
-
 export interface ChatTurnState {
   busy: boolean;
   proseOpen: boolean;
@@ -91,7 +82,6 @@ export interface ChatStatusState {
 
 export interface ChatUsageState {
   context: Usage | null;
-  turn: TurnUsage | null;
 }
 
 import type { LiveSessionConfigOption } from "@/shared/lib/liveSessionConfig";
@@ -147,7 +137,6 @@ export type ChatSessionEvent =
   | { type: "plan_update"; entries: PlanEntry[] }
   | { type: "context_usage"; used: number; size: number }
   | { type: "usage_reset" }
-  | { type: "turn_usage"; usage: TurnUsage }
   | { type: "permission_request"; requestId: string; title: string; detail: string }
   | { type: "permission_resolved"; requestId: string }
   | { type: "elicitation_request"; requestId: string; message: string; schema: unknown }
@@ -179,7 +168,7 @@ export const initialChatSessionView: ChatSessionView = {
   permission: { decision: null, resolvedIds: [] },
   elicitation: { decision: null, resolvedIds: [] },
   status: { acpState: null, detail: null },
-  usage: { context: null, turn: null },
+  usage: { context: null },
   model: { confirmedModel: "" },
   revision: 0,
 };
