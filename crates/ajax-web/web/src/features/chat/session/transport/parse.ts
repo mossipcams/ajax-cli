@@ -135,15 +135,6 @@ function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent |
         requestId: payload.requestId,
         action: payload.action,
       };
-    case "status":
-      if (typeof payload.state !== "string") return null;
-      return {
-        type: "status",
-        state: payload.state,
-        ...(payload.detail === null || typeof payload.detail === "string"
-          ? { detail: payload.detail as string | null }
-          : {}),
-      };
     case "turn_end":
       return {
         type: "turn_end",

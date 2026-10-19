@@ -87,12 +87,6 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
         requestId: event.requestId,
         action: event.action,
       };
-    case "status":
-      return {
-        type: "acp_status",
-        state: event.state.trim(),
-        detail: event.detail?.trim() || undefined,
-      };
     case "turn_end":
       return {
         type: "turn_end",

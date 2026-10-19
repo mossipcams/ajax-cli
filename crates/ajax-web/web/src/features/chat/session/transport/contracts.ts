@@ -71,7 +71,6 @@ export type WebSessionServerEvent =
       schema: unknown;
     }
   | { type: "elicitation_resolved"; requestId: string; action: string }
-  | { type: "status"; state: string; detail?: string | null }
   | { type: "turn_end"; stopReason?: string | null }
   | { type: "error"; message: string };
 

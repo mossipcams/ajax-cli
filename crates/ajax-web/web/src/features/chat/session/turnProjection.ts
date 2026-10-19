@@ -291,7 +291,6 @@ export function settleTurn(state: ChatSessionReducerState): ChatSessionReducerSt
     view: {
       ...state.view,
       turn: { busy: false, proseOpen: false },
-      status: { acpState: null, detail: null },
     },
   });
 }

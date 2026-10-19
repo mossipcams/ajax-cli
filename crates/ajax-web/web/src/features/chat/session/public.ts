@@ -5,7 +5,6 @@ export type {
   ChatSessionAction,
   ChatSessionEvent,
   ChatSessionView,
-  ChatStatusState,
   ChatTurnState,
   ChatUsageState,
   ConversationItem,
