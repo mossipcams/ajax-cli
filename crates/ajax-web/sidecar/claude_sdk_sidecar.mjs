@@ -182,6 +182,12 @@ function hasSecretProperty(schema) {
   );
 }
 
+async function forwardElicitation(message, schema) {
+  const id = randomUUID();
+  writeLine({ type: "elicitation_request", id, message, schema });
+  return new Promise((resolve) => state.pendingElicitations.set(id, resolve));
+}
+
 async function onElicitation(request) {
   const serverName = request?.serverName ?? "unknown server";
   const schema = request?.requestedSchema;
@@ -194,10 +200,88 @@ async function onElicitation(request) {
     log(`declining elicitation from ${serverName}`);
     return { action: "decline" };
   }
-  const id = randomUUID();
-  writeLine({ type: "elicitation_request", id, message: request.message ?? "", schema });
-  const answer = new Promise((resolve) => state.pendingElicitations.set(id, resolve));
-  return answer;
+  return forwardElicitation(request.message ?? "", schema);
+}
+
+// Issue #1358: under permissionMode "bypassPermissions" canUseTool is never
+// consulted, so the SDK auto-answers AskUserQuestion ("The user did not
+// answer the questions"). A PreToolUse hook intercepts it instead: it builds
+// an elicitation form from the questions, forwards it through the SAME
+// pendingElicitations path as MCP elicitations (so `elicitation_response`
+// commands and cancelPendingElicitations on abort/shutdown already work),
+// then injects the answers back into the tool input (deny when declined).
+
+async function askUserQuestionHook(input) {
+  const questions = Array.isArray(input?.tool_input?.questions) ? input.tool_input.questions : [];
+  const properties = {};
+  questions.forEach((question, index) => {
+    if (!question || typeof question.question !== "string") return;
+    const title =
+      typeof question.header === "string" && question.header.length > 0 ? question.header : question.question;
+    const options = Array.isArray(question.options) ? question.options : [];
+    if (question.multiSelect) {
+      const labels = options
+        .map((option) => option?.label)
+        .filter((label) => typeof label === "string");
+      properties[`question_${index}`] = {
+        type: "string",
+        title,
+        description: `${question.question} (comma-separated: ${labels.join(", ")})`,
+      };
+    } else {
+      properties[`question_${index}`] = {
+        type: "string",
+        title,
+        description: question.question,
+        oneOf: options.map((option) => ({
+          const: option?.label,
+          title: option?.label,
+          ...(typeof option?.description === "string" && option.description.length > 0
+            ? { description: option.description }
+            : {}),
+        })),
+      };
+    }
+    properties[`question_${index}_other`] = {
+      type: "string",
+      title: "Other",
+      description: "Type your own answer (optional).",
+    };
+  });
+  const single = questions.length === 1 ? questions[0] : null;
+  const message =
+    single && typeof single.question === "string"
+      ? single.question
+      : "Claude has questions for you";
+  const answer = await forwardElicitation(message, { type: "object", properties, required: [] });
+  if (answer?.action !== "accept") {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "The user declined to answer.",
+      },
+    };
+  }
+  const content = answer.content ?? {};
+  const answers = {};
+  questions.forEach((question, index) => {
+    if (!question || typeof question.question !== "string") return;
+    const primary = String(content[`question_${index}`] ?? "").trim();
+    if (primary.length > 0) {
+      answers[question.question] = primary;
+      return;
+    }
+    const other = String(content[`question_${index}_other`] ?? "").trim();
+    if (other.length > 0) answers[question.question] = other;
+  });
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput: { ...input.tool_input, answers },
+    },
+  };
 }
 
 function cancelPendingElicitations() {
@@ -361,6 +445,7 @@ async function handleInit(cmd) {
     allowDangerouslySkipPermissions: true,
     canUseTool,
     onElicitation,
+    hooks: { PreToolUse: [{ matcher: "AskUserQuestion", hooks: [askUserQuestionHook] }] },
   };
   if (cmd.model) options.model = cmd.model;
   if (cmd.resume) options.resume = cmd.resume;

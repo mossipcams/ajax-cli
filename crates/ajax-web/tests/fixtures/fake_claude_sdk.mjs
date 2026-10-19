@@ -22,6 +22,9 @@
 //   - contains "TOOL": calls options.canUseTool, then assistant tool_use /
 //     user tool_result / result success;
 //   - otherwise: system/init (first turn only), stream_event, assistant,
+//   - contains "ASK": calls options.hooks.PreToolUse[0].hooks[0] (the
+//     AskUserQuestion PreToolUse hook) with a fixed Red/Blue question and
+//     reports the hook's return value in the result text;
 //     result success.
 // Every control-method call is also pushed as {type:'fake_call', method,
 // args} so tests can observe the sidecar's dispatch. The initial `query()`
@@ -240,6 +243,35 @@ export function query({ prompt, options = {} }) {
       result("success", { result: "tasks done" });
       return;
     }
+    if (text.includes("ASK")) {
+      systemInit();
+      const hook = options.hooks?.PreToolUse?.[0]?.hooks?.[0];
+      let decision;
+      try {
+        decision = await hook?.({
+          hook_event_name: "PreToolUse",
+          tool_name: "AskUserQuestion",
+          tool_input: {
+            questions: [
+              {
+                question: "Red or blue?",
+                header: "Color",
+                options: [{ label: "Red" }, { label: "Blue" }],
+                multiSelect: false,
+              },
+            ],
+          },
+        });
+      } catch (error) {
+        decision = { error: String(error?.message ?? error) };
+      }
+      const reply = `ask:${JSON.stringify(decision ?? null)}`;
+      streamEvent(reply);
+      assistant([{ type: "text", text: reply }], "end_turn");
+      result("success", { result: reply });
+      return;
+    }
+      systemInit();
     if (text.includes("TOOL")) {
       systemInit();
       const decision = await options.canUseTool?.("Write", { file_path: "x" }, {});

@@ -825,3 +825,119 @@ fn claude_task_tools_track_plan_as_ajax_plan_1357() {
         "plans arrive before the turn result"
     );
 }
+
+/// Issue #1358: under permissionMode "bypassPermissions" the SDK never
+/// consults canUseTool, so AskUserQuestion gets auto-answered. A PreToolUse
+/// hook must forward the questions to the operator as an elicitation form and
+/// inject the answers back into the tool input (deny when declined).
+#[test]
+fn ask_user_question_hook_forwards_elicitation_1358() {
+    fn run_and_decide(sidecar: &mut Sidecar, action: &str) -> Value {
+        let prompt_id = sidecar.command("prompt", json!({ "message": "ASK please" }));
+        assert_eq!(
+            sidecar.response(&prompt_id).get("success"),
+            Some(&Value::Bool(true)),
+            "prompt accepted"
+        );
+        // The hook forwards the question as an elicitation form before any
+        // turn output.
+        sidecar.wait_until("elicitation_request", |records| {
+            events(records, "elicitation_request").next().is_some()
+        });
+        let request = events(&sidecar.records, "elicitation_request")
+            .next()
+            .expect("elicitation request record");
+        assert_eq!(
+            request.get("message").and_then(Value::as_str),
+            Some("Red or blue?")
+        );
+        let properties = request
+            .get("schema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(Value::as_object)
+            .expect("schema properties object");
+        let question_0 = properties.get("question_0").expect("schema has question_0");
+        assert_eq!(
+            question_0.get("title").and_then(Value::as_str),
+            Some("Color")
+        );
+        let one_of = question_0
+            .get("oneOf")
+            .and_then(Value::as_array)
+            .expect("question_0 oneOf");
+        let labels: Vec<&str> = one_of
+            .iter()
+            .filter_map(|option| option.get("const").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["Red", "Blue"],
+            "oneOf consts are the option labels"
+        );
+        assert!(
+            properties.contains_key("question_0_other"),
+            "schema has question_0_other"
+        );
+
+        let request_id = request
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("request id")
+            .to_owned();
+        sidecar
+            .process
+            .send_with_id(
+                "elicitation_response",
+                &request_id,
+                json!({ "action": action, "content": { "question_0": "Blue" } }),
+            )
+            .expect("send elicitation response");
+        assert_eq!(
+            sidecar.response(&request_id).get("success"),
+            Some(&Value::Bool(true))
+        );
+
+        sidecar.wait_until("ask turn result", |records| {
+            events(records, "result").any(|record| subtype(record) == "success")
+        });
+        let text = first_assistant_text(&sidecar.records);
+        let decision: Value = serde_json::from_str(text.trim_start_matches("ask:"))
+            .unwrap_or_else(|error| panic!("parse hook decision from {text:?}: {error}"));
+        decision
+    }
+
+    // Accept: the hook allows the tool with the answers injected.
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        let decision = run_and_decide(&mut sidecar, "accept");
+        let output = decision
+            .get("hookSpecificOutput")
+            .expect("hookSpecificOutput");
+        assert_eq!(
+            output.get("permissionDecision").and_then(Value::as_str),
+            Some("allow")
+        );
+        assert_eq!(
+            output
+                .get("updatedInput")
+                .and_then(|input| input.get("answers")),
+            Some(&json!({ "Red or blue?": "Blue" })),
+            "hook injects the operator's answers into the tool input"
+        );
+    }
+
+    // Decline: the hook denies the tool so no auto-answer is invented.
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        let decision = run_and_decide(&mut sidecar, "decline");
+        let output = decision
+            .get("hookSpecificOutput")
+            .expect("hookSpecificOutput");
+        assert_eq!(
+            output.get("permissionDecision").and_then(Value::as_str),
+            Some("deny")
+        );
+    }
+}
