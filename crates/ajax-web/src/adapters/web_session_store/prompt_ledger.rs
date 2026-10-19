@@ -308,6 +308,18 @@ pub fn try_persist_with_events<T: serde::Serialize>(
     ledger: &PromptLedger,
     events: &[T],
 ) -> Result<(), std::io::Error> {
+    try_persist_with_events_and_rewrites(store, state_dir, handle, ledger, events, &[])
+}
+
+/// Persist the ledger, appended events, and replacements in one transaction.
+pub fn try_persist_with_events_and_rewrites<T: serde::Serialize>(
+    store: &ajax_core::registry::SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    ledger: &PromptLedger,
+    events: &[T],
+    rewrites: &[(usize, T)],
+) -> Result<(), std::io::Error> {
     #[cfg(test)]
     if force_persist_fail() {
         return Err(std::io::Error::other(
@@ -324,9 +336,20 @@ pub fn try_persist_with_events<T: serde::Serialize>(
         .map(serde_json::to_string)
         .collect::<Result<Vec<_>, _>>()
         .map_err(std::io::Error::other)?;
+    let event_rewrites = rewrites
+        .iter()
+        .map(|(cursor, event)| {
+            serde_json::to_string(event).map(|payload| ajax_core::registry::EventRewrite {
+                seq: *cursor as u64 + 1,
+                payload,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(std::io::Error::other)?;
     match kernel::plan_commit(&run_id, &current, ledger).map_err(std::io::Error::other)? {
         Some(mut commit) => {
             commit.events = event_strings;
+            commit.event_rewrites = event_rewrites;
             let receipt = store
                 .commit_execution(&commit)
                 .map_err(std::io::Error::other)?;
@@ -334,11 +357,12 @@ pub fn try_persist_with_events<T: serde::Serialize>(
                 return Err(std::io::Error::other("prompt id already used"));
             }
         }
-        None if !event_strings.is_empty() => {
+        None if !event_strings.is_empty() || !event_rewrites.is_empty() => {
             store
                 .commit_execution(&ajax_core::registry::ExecutionCommit {
                     run_id: run_id.clone(),
                     events: event_strings,
+                    event_rewrites,
                     ..Default::default()
                 })
                 .map_err(std::io::Error::other)?;

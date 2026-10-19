@@ -554,10 +554,12 @@ whole transcript inside `session/load` before responding.
   (`Prompt <id> was interrupted by host restart and was not retried.`) and is
   never resent automatically; queued prompts survive and dispatch in order. See
   `docs/architecture/durable-execution.md`.
-- Transcript events are appended as database rows without rewriting earlier
-  rows; bounded retention (2000 events) never renumbers or reuses a sequence
-  number, so absolute replay cursors stay valid. Streamed agent/thought text is
-  normalized to full-content `message` updates with stable host `itemId` values
+- Transcript events are appended as database rows; the only in-place
+  rewrite is a superseded streamed message version becoming an empty marker
+  (see `docs/architecture/durable-execution.md`). Bounded retention (2000
+  events) never renumbers or reuses a sequence number, so absolute replay
+  cursors stay valid. Streamed agent/thought text is normalized to full-content
+  `message` updates with stable host `itemId` values
   before persistence. Agent/thought stream lanes close when a user prompt is
   recorded, on `turn_end`, or on an event that takes a transcript row of its own
   (tool call, plan, permission/elicitation request, error) so the next reply

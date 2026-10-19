@@ -1,6 +1,8 @@
 //! Chat transcript persistence through the core execution kernel.
 //! Browser cursor n maps to execution sequence n + 1; the prompt ledger stays JSON.
-use ajax_core::registry::{ExecutionCommit, NewRun, RunRecord, RunUpdate, SqliteRegistryStore};
+use ajax_core::registry::{
+    EventRewrite, ExecutionCommit, NewRun, RunRecord, RunUpdate, SqliteRegistryStore,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs, io,
@@ -266,7 +268,18 @@ pub fn try_append_events<T: Serialize + DeserializeOwned>(
     harness: &str,
     new_events: &[T],
 ) -> io::Result<()> {
-    if new_events.is_empty() {
+    try_append_events_with_rewrites(store, state_dir, handle, harness, new_events, &[])
+}
+
+pub fn try_append_events_with_rewrites<T: Serialize + DeserializeOwned>(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    harness: &str,
+    new_events: &[T],
+    rewrites: &[(usize, T)],
+) -> io::Result<()> {
+    if new_events.is_empty() && rewrites.is_empty() {
         return Ok(());
     }
     let events = new_events
@@ -279,6 +292,16 @@ pub fn try_append_events<T: Serialize + DeserializeOwned>(
         .commit_execution(&ExecutionCommit {
             run_id: run_id.clone(),
             events,
+            event_rewrites: rewrites
+                .iter()
+                .map(|(cursor, event)| {
+                    serde_json::to_string(event).map(|payload| EventRewrite {
+                        seq: *cursor as u64 + 1,
+                        payload,
+                    })
+                })
+                .collect::<Result<_, _>>()
+                .map_err(io::Error::other)?,
             ..Default::default()
         })
         .map_err(io::Error::other)?;

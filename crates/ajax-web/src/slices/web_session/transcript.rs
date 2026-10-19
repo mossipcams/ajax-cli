@@ -67,6 +67,71 @@ impl TranscriptLog {
         }
     }
 
+    /// Absolute cursors of the newest earlier real (non-marker) version for
+    /// each streamed item in `batch`, sorted and deduped.
+    pub(crate) fn superseded_cursors_for(&self, batch: &[SessionServerEvent]) -> Vec<usize> {
+        // ponytail: linear reverse scan over <=2000 entries; add an
+        // item_id->cursor map if profiling shows it.
+        let mut cursors = Vec::new();
+        for event in batch {
+            let SessionServerEvent::Message { item_id, .. } = event else {
+                continue;
+            };
+            if item_id.is_empty() || is_superseded_marker(event) {
+                continue;
+            }
+            for (index, stored) in self.events.iter().rev().enumerate() {
+                let SessionServerEvent::Message {
+                    item_id: stored_item,
+                    ..
+                } = stored
+                else {
+                    continue;
+                };
+                if stored_item != item_id {
+                    continue;
+                }
+                if !is_superseded_marker(stored) {
+                    cursors.push(self.dropped + self.events.len() - 1 - index);
+                }
+                break;
+            }
+        }
+        cursors.sort_unstable();
+        cursors.dedup();
+        cursors
+    }
+
+    /// Clone an in-range message as a marker without changing the log.
+    pub(crate) fn marker_for(&self, cursor: usize) -> Option<SessionServerEvent> {
+        let mut marker = self.events.get(cursor.checked_sub(self.dropped)?)?.clone();
+        let SessionServerEvent::Message {
+            text,
+            content_blocks,
+            message_id,
+            ..
+        } = &mut marker
+        else {
+            return None;
+        };
+        text.clear();
+        content_blocks.clear();
+        *message_id = None;
+        Some(marker)
+    }
+
+    /// Rewrite the log entries at `cursors` to markers (same role and
+    /// item_id, cleared text/content_blocks/message_id). Out-of-range or
+    /// non-Message entries are ignored; length, dropped and next cursor do
+    /// not change.
+    pub(crate) fn mark_superseded(&mut self, cursors: &[usize]) {
+        for &cursor in cursors {
+            if let Some(marker) = self.marker_for(cursor) {
+                self.events[cursor - self.dropped] = marker;
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn read_from(&self, cursor: usize) -> (Vec<SessionServerEvent>, usize) {
         let next = self.dropped + self.events.len();
@@ -84,11 +149,12 @@ impl TranscriptLog {
         let events = self.events[start..]
             .iter()
             .filter(|event| {
-                !matches!(
-                    event,
-                    SessionServerEvent::PermissionRequest { request_id, .. }
-                        if resolved.contains(request_id)
-                )
+                !is_superseded_marker(event)
+                    && !matches!(
+                        event,
+                        SessionServerEvent::PermissionRequest { request_id, .. }
+                            if resolved.contains(request_id)
+                    )
             })
             .cloned()
             .collect();
@@ -116,6 +182,9 @@ impl TranscriptLog {
             .iter()
             .enumerate()
             .filter_map(|(index, event)| {
+                if is_superseded_marker(event) {
+                    return None;
+                }
                 if usage_reset.is_some_and(|reset| start + index < reset)
                     && matches!(
                         event,
@@ -137,6 +206,17 @@ impl TranscriptLog {
             .collect();
         (envelopes, next)
     }
+}
+
+/// True only for a superseded-version marker: an empty `Message` that still
+/// carries its non-empty `item_id`. A real empty message without an `item_id`
+/// is not a marker.
+pub(crate) fn is_superseded_marker(event: &SessionServerEvent) -> bool {
+    matches!(
+        event,
+        SessionServerEvent::Message { text, content_blocks, item_id, .. }
+            if text.is_empty() && content_blocks.is_empty() && !item_id.is_empty()
+    )
 }
 
 pub(crate) fn context_reset_note() -> SessionServerEvent {
