@@ -2,6 +2,7 @@
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::rpc_session::{RpcSession, RpcStep};
+use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -101,6 +102,27 @@ impl RpcClientCore {
         session
             .begin_prompt_with_images(message, images)
             .map_err(|e| format!("begin_prompt failed: {e}"))?;
+
+        let id = g.next_request_id;
+        g.next_request_id += 1;
+        g.active_request_id = Some(id);
+
+        Ok(id)
+    }
+
+    /// Begin a built-in command run (e.g. `compact`) in place of a prompt.
+    ///
+    /// Returns the request id for tracking.
+    #[allow(dead_code)] // Called by the Pi client's /compact and /name paths (slice B of #1360).
+    pub fn begin_command(&self, command: &str, fields: Value) -> Result<u64, String> {
+        let mut g = self.inner.lock().expect("rpc_client mutex poisoned");
+        let session = g
+            .session
+            .as_mut()
+            .ok_or_else(|| "session not available (shut down)".to_string())?;
+        session
+            .begin_command(command, fields)
+            .map_err(|e| format!("begin_command failed: {e}"))?;
 
         let id = g.next_request_id;
         g.next_request_id += 1;
