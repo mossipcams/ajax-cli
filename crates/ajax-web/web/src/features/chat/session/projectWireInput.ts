@@ -1,5 +1,5 @@
 import type { SessionSnapshot, WebSessionServerEvent } from "./transport/contracts";
-import type { ChatSessionEvent, PlanEntry, ToolStatus, TurnUsage } from "./model";
+import type { ChatSessionEvent, PlanEntry, ToolStatus } from "./model";
 
 const TOOL_STATUSES: ToolStatus[] = ["pending", "in_progress", "completed", "failed"];
 
@@ -65,17 +65,6 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
       return { type: "context_usage", used: event.used, size: event.size };
     case "usage_reset":
       return { type: "usage_reset" };
-    case "turn_usage": {
-      const usage: TurnUsage = {};
-      if (event.requestId !== undefined) usage.requestId = event.requestId;
-      if (event.inputTokens !== undefined) usage.inputTokens = event.inputTokens;
-      if (event.outputTokens !== undefined) usage.outputTokens = event.outputTokens;
-      if (event.cacheReadTokens !== undefined) usage.cacheReadTokens = event.cacheReadTokens;
-      if (event.cacheWriteTokens !== undefined) usage.cacheWriteTokens = event.cacheWriteTokens;
-      if (event.totalTokens !== undefined) usage.totalTokens = event.totalTokens;
-      if (Object.keys(usage).length === 0) return null;
-      return { type: "turn_usage", usage };
-    }
     case "permission_request":
       return {
         type: "permission_request",
@@ -97,12 +86,6 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
         type: "elicitation_resolved",
         requestId: event.requestId,
         action: event.action,
-      };
-    case "status":
-      return {
-        type: "acp_status",
-        state: event.state.trim(),
-        detail: event.detail?.trim() || undefined,
       };
     case "turn_end":
       return {

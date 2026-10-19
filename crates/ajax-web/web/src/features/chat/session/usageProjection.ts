@@ -15,7 +15,7 @@ export function applyUsageEvent(
     case "usage_reset":
       return bumpRevision({
         ...state,
-        view: { ...state.view, usage: { context: null, turn: null } },
+        view: { ...state.view, usage: { context: null } },
       });
     case "context_usage":
       if (event.size <= 0) return state;
@@ -29,22 +29,11 @@ export function applyUsageEvent(
           },
         },
       });
-    case "turn_usage":
-      return bumpRevision({
-        ...state,
-        view: {
-          ...state.view,
-          usage: {
-            ...state.view.usage,
-            turn: event.usage,
-          },
-        },
-      });
     default:
       return state;
   }
 }
 
 export function isUsageEvent(event: ChatSessionEvent): boolean {
-  return event.type === "context_usage" || event.type === "turn_usage" || event.type === "usage_reset";
+  return event.type === "context_usage" || event.type === "usage_reset";
 }

@@ -71,10 +71,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     setModelState({ confirmedModel: DEFAULT_SESSION_MODEL });
   }, [handle]);
 
-  const applyHostSessionTitle = useCallback((title: string | undefined) => {
-    setModelState((prev) => ({ ...prev, sessionTitle: title }));
-  }, []);
-
   detailRef.current = detail;
   connectionStateRef.current = connectionState;
 
@@ -131,7 +127,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     onSessionConfigOptions: applyHostConfigOptions,
     onSessionAvailableCommands: applyHostAvailableCommands,
     onSessionPromptCapabilities: applyHostPromptCapabilities,
-    onSessionTitle: applyHostSessionTitle,
     onSessionModelRejected: () => {},
     onConfigError: (message) => onConfigErrorRef.current?.(message),
     onRestoreFailure: () => setRestoreUnavailable(true),
@@ -229,7 +224,6 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     sessionConfigOptions: modelState.configOptions,
     sessionAvailableCommands: modelState.availableCommands,
     sessionPromptCapabilities: modelState.promptCapabilities,
-    sessionTitle: modelState.sessionTitle,
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     withdrawQueuedPrompt,

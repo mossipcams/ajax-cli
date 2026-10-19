@@ -932,34 +932,14 @@ describe("parseServerFrame", () => {
       cursor: 0,
       event: { type: "error", message: "nope" },
     });
-    expect(
-      parseServerFrame(
-        eventJson(0, {
-          type: "turn_usage",
-          inputTokens: 12,
-          totalTokens: 12,
-        }),
-      ),
-    ).toEqual({
-      kind: "event",
-      cursor: 0,
-      event: { type: "turn_usage", inputTokens: 12, totalTokens: 12 },
-    });
-    expect(
-      parseServerFrame(
-        eventJson(0, {
-          type: "turn_usage",
-          requestId: "req-1",
-        }),
-      ),
-    ).toEqual({
-      kind: "event",
-      cursor: 0,
-      event: { type: "turn_usage", requestId: "req-1" },
-    });
-    expect(
-      parseServerFrame(eventJson(0, { type: "turn_usage" })),
-    ).toBeNull();
+  });
+
+  it("turn_usage_frames_are_ignored_like_unknown_events", () => {
+    const turnUsage = parseServerFrame(
+      eventJson(0, { type: "turn_usage", inputTokens: 12, totalTokens: 12 }),
+    );
+    expect(turnUsage).toBeNull();
+    expect(turnUsage).toEqual(parseServerFrame(eventJson(0, { type: "unknown", inputTokens: 12 })));
   });
 
   it("drops invalid JSON and variants missing required fields", () => {
