@@ -9,6 +9,12 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
     if has_legacy_payload_schema(connection)? {
         return Err(RegistrySnapshotError::LegacySqlitePayloadSchema);
     }
+    if user_version == SQLITE_SCHEMA_VERSION {
+        // Already at the current schema: keep this a read-only open. Skipping
+        // `create_current_schema` and the `user_version` rewrite avoids a write
+        // transaction on every open (which bumped the file change counter).
+        return ensure_agent_runs_columns(connection);
+    }
     if user_version == 2 {
         migrate_v2_to_v3(connection)?;
     }
@@ -521,4 +527,49 @@ fn table_has_column(
         .map_err(database_error)?;
 
     Ok(columns.iter().any(|existing| existing == column))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::registry::SqliteRegistryStore;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    /// SQLite header field 7 (bytes 24..28, big-endian), bumped by every write transaction.
+    fn file_change_counter(path: &std::path::Path) -> u32 {
+        let bytes = std::fs::read(path).expect("read database file");
+        u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]])
+    }
+
+    #[test]
+    fn open_at_current_schema_does_not_write() {
+        let unique = TEST_SEQ.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "ajax-migrations-read-only-{}-{unique}",
+            std::process::id()
+        ));
+
+        // First open migrates the fresh database up to the current schema.
+        {
+            let store = SqliteRegistryStore::new(path.clone());
+            assert_eq!(store.current_revision().expect("initial revision"), 0);
+            drop(store);
+        }
+
+        let before = file_change_counter(&path);
+        {
+            let store = SqliteRegistryStore::new(path.clone());
+            assert_eq!(store.current_revision().expect("revision"), 0);
+            store.load_tasks_only().expect("load tasks");
+            drop(store);
+        }
+
+        let after = file_change_counter(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            after, before,
+            "opening an up-to-date database must not write"
+        );
+    }
 }

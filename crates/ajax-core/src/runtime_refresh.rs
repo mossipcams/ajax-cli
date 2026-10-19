@@ -245,18 +245,27 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 .map_err(CommandError::Registry)?;
             refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
             if let Some(task) = context.registry.get_task_mut(&task_id) {
+                let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::AgentRunning);
-                if !matches!(
-                    task.lifecycle_status,
-                    LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
-                ) {
+                // Same episode (kind already TmuxMissing with a stored timestamp)
+                // keeps its original observation time; stamp only new episodes.
+                let already_tmux_missing = matches!(
+                    task.live_status.as_ref().map(|status| status.kind),
+                    Some(LiveStatusKind::TmuxMissing)
+                ) && task.live_status_observed_at.is_some();
+                if !already_tmux_missing
+                    && !matches!(
+                        task.lifecycle_status,
+                        LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
+                    )
+                {
                     live::apply_observation(
                         task,
                         LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
                     );
                 }
                 refresh_cached_annotations(task);
-                changed = true;
+                changed |= *task != previous;
             }
             continue;
         }
@@ -437,9 +446,16 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 .live_status
                 .as_ref()
                 .is_some_and(|status| status.kind == observation.kind)
-                && task
-                    .live_status_observed_at
-                    .is_some_and(|current| current >= observed_at);
+                && match projection.selected_observed_at {
+                    Some(selected) => task
+                        .live_status_observed_at
+                        .is_some_and(|current| current >= selected),
+                    // An untimestamped projection (the `now` fallback) cannot be
+                    // newer than a stored observation, so an equal kind is unchanged.
+                    // Without a stored timestamp, stamp it so waiting tasks still
+                    // get acknowledgment timing.
+                    None => task.live_status_observed_at.is_some(),
+                };
             let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                 && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
             if live_status_unchanged && !needs_agent_running_flag {
