@@ -62,6 +62,8 @@ mod claude_sdk_client_tests;
 #[cfg(test)]
 mod claude_sdk_hardening_tests;
 #[cfg(test)]
+mod claude_sdk_map_native_tests;
+#[cfg(test)]
 mod claude_sdk_map_tests;
 #[cfg(test)]
 mod cursor_sdk_client_tests;

@@ -715,3 +715,229 @@ fn fake_call_present(records: &[Value], method: &str) -> bool {
     events(records, "fake_call")
         .any(|record| record.get("method").and_then(Value::as_str) == Some(method))
 }
+
+/// Issue #1357 (slice A): with CLAUDE_CODE_ENABLE_TODO_TOOLS=1 the Claude
+/// Agent SDK exposes TaskCreate/TaskUpdate, and task ids only appear in the
+/// TaskCreate tool result. The sidecar must mirror every change of the main-
+/// loop ordered task list as an `ajax_plan` line, emitted AFTER forwarding
+/// the SDK message that caused it.
+#[test]
+fn claude_task_tools_track_plan_as_ajax_plan_1357() {
+    let mut sidecar = Sidecar::spawn();
+    sidecar.init();
+    // The init query must enable the Claude Agent SDK's todo tools.
+    sidecar.wait_until("queryOptions fake_call", |records| {
+        fake_call_present(records, "queryOptions")
+    });
+    let options = fake_call(&sidecar.records, "queryOptions")
+        .get("args")
+        .and_then(Value::as_array)
+        .expect("queryOptions args")
+        .first()
+        .expect("options object");
+    assert_eq!(
+        options
+            .get("env")
+            .and_then(|env| env.get("CLAUDE_CODE_ENABLE_TODO_TOOLS")),
+        Some(&json!("1")),
+        "init must pass CLAUDE_CODE_ENABLE_TODO_TOOLS=1 (issue #1357)"
+    );
+
+    let prompt_id = sidecar.command("prompt", json!({ "message": "TASKS now" }));
+    assert_eq!(
+        sidecar.response(&prompt_id).get("success"),
+        Some(&Value::Bool(true)),
+        "prompt accepted"
+    );
+    sidecar.wait_until("task turn result", |records| {
+        events(records, "result").any(|record| subtype(record) == "success")
+    });
+
+    let plans: Vec<Value> = events(&sidecar.records, "ajax_plan").cloned().collect();
+    assert_eq!(
+        plans.len(),
+        4,
+        "one ajax_plan per task-list change: {plans:?}"
+    );
+    assert_eq!(
+        plans[0].get("entries"),
+        Some(&json!([{ "content": "alpha", "status": "pending" }])),
+        "create alpha"
+    );
+    assert_eq!(
+        plans[1].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "pending" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "create beta"
+    );
+    assert_eq!(
+        plans[2].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "in_progress" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "update alpha in_progress"
+    );
+    assert_eq!(
+        plans[3].get("entries"),
+        Some(&json!([
+            { "content": "alpha", "status": "completed" },
+            { "content": "beta", "status": "pending" }
+        ])),
+        "update alpha completed"
+    );
+
+    // Each ajax_plan line is emitted AFTER the SDK message that caused it, and
+    // all of them arrive inside the forwarded turn (before its result).
+    let plan_positions: Vec<usize> = sidecar
+        .records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| event_kind(record) == Some("ajax_plan"))
+        .map(|(index, _)| index)
+        .collect();
+    let task_result_index = |needle: &str| {
+        sidecar
+            .records
+            .iter()
+            .position(|record| {
+                event_kind(record) == Some("user") && record.to_string().contains(needle)
+            })
+            .unwrap_or_else(|| panic!("task result for {needle} forwarded"))
+    };
+    assert!(
+        plan_positions[0] > task_result_index("Task #1"),
+        "plan 1 follows the alpha create result"
+    );
+    assert!(
+        plan_positions[1] > task_result_index("Task #2"),
+        "plan 2 follows the beta create result"
+    );
+    let result_index = sidecar
+        .records
+        .iter()
+        .position(|record| event_kind(record) == Some("result"))
+        .expect("turn result forwarded");
+    assert!(
+        plan_positions[3] < result_index,
+        "plans arrive before the turn result"
+    );
+}
+
+/// Issue #1358: under permissionMode "bypassPermissions" the SDK never
+/// consults canUseTool, so AskUserQuestion gets auto-answered. A PreToolUse
+/// hook must forward the questions to the operator as an elicitation form and
+/// inject the answers back into the tool input (deny when declined).
+#[test]
+fn ask_user_question_hook_forwards_elicitation_1358() {
+    fn run_and_decide(sidecar: &mut Sidecar, action: &str) -> Value {
+        let prompt_id = sidecar.command("prompt", json!({ "message": "ASK please" }));
+        assert_eq!(
+            sidecar.response(&prompt_id).get("success"),
+            Some(&Value::Bool(true)),
+            "prompt accepted"
+        );
+        // The hook forwards the question as an elicitation form before any
+        // turn output.
+        sidecar.wait_until("elicitation_request", |records| {
+            events(records, "elicitation_request").next().is_some()
+        });
+        let request = events(&sidecar.records, "elicitation_request")
+            .next()
+            .expect("elicitation request record");
+        assert_eq!(
+            request.get("message").and_then(Value::as_str),
+            Some("Red or blue?")
+        );
+        let properties = request
+            .get("schema")
+            .and_then(|schema| schema.get("properties"))
+            .and_then(Value::as_object)
+            .expect("schema properties object");
+        let question_0 = properties.get("question_0").expect("schema has question_0");
+        assert_eq!(
+            question_0.get("title").and_then(Value::as_str),
+            Some("Color")
+        );
+        let one_of = question_0
+            .get("oneOf")
+            .and_then(Value::as_array)
+            .expect("question_0 oneOf");
+        let labels: Vec<&str> = one_of
+            .iter()
+            .filter_map(|option| option.get("const").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["Red", "Blue"],
+            "oneOf consts are the option labels"
+        );
+        assert!(
+            properties.contains_key("question_0_other"),
+            "schema has question_0_other"
+        );
+
+        let request_id = request
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("request id")
+            .to_owned();
+        sidecar
+            .process
+            .send_with_id(
+                "elicitation_response",
+                &request_id,
+                json!({ "action": action, "content": { "question_0": "Blue" } }),
+            )
+            .expect("send elicitation response");
+        assert_eq!(
+            sidecar.response(&request_id).get("success"),
+            Some(&Value::Bool(true))
+        );
+
+        sidecar.wait_until("ask turn result", |records| {
+            events(records, "result").any(|record| subtype(record) == "success")
+        });
+        let text = first_assistant_text(&sidecar.records);
+        let decision: Value = serde_json::from_str(text.trim_start_matches("ask:"))
+            .unwrap_or_else(|error| panic!("parse hook decision from {text:?}: {error}"));
+        decision
+    }
+
+    // Accept: the hook allows the tool with the answers injected.
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        let decision = run_and_decide(&mut sidecar, "accept");
+        let output = decision
+            .get("hookSpecificOutput")
+            .expect("hookSpecificOutput");
+        assert_eq!(
+            output.get("permissionDecision").and_then(Value::as_str),
+            Some("allow")
+        );
+        assert_eq!(
+            output
+                .get("updatedInput")
+                .and_then(|input| input.get("answers")),
+            Some(&json!({ "Red or blue?": "Blue" })),
+            "hook injects the operator's answers into the tool input"
+        );
+    }
+
+    // Decline: the hook denies the tool so no auto-answer is invented.
+    {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        let decision = run_and_decide(&mut sidecar, "decline");
+        let output = decision
+            .get("hookSpecificOutput")
+            .expect("hookSpecificOutput");
+        assert_eq!(
+            output.get("permissionDecision").and_then(Value::as_str),
+            Some("deny")
+        );
+    }
+}

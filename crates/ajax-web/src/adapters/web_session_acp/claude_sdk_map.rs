@@ -42,6 +42,7 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
     let (finished, ended_aborted) = match kind {
         "stream_event" => map_stream_event(message, &mut events),
         "assistant" => {
+            map_synthetic_assistant_text(message, sub_agent, &mut events);
             map_assistant_tool_calls(message, sub_agent, &mut events);
             (false, false)
         }
@@ -64,6 +65,12 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
                         .to_string(),
                     schema: schema.clone(),
                 }));
+            }
+            (false, false)
+        }
+        "ajax_plan" => {
+            if let Some(entries) = ajax_plan_entries(message) {
+                events.push(AgentEvent::Native(NativeEvent::Plan(entries)));
             }
             (false, false)
         }
@@ -202,6 +209,45 @@ fn map_assistant_tool_calls(message: &Value, sub_agent: bool, events: &mut Vec<A
     }
 }
 
+/// Main-loop assistant messages whose `message.model` is `"<synthetic>"` are
+/// not the output of a real model: the SDK returns local slash-command
+/// responses (e.g. `/context`) as one full message with text blocks and no
+/// preceding stream deltas, so their text must be emitted here (#1359).
+/// Real-model assistant messages already streamed their text as deltas —
+/// re-emitting it would duplicate the output — and sub-agent messages are
+/// dropped, as are messages carrying a top-level `error` (the following
+/// `result` message already surfaces that text as an Error). The text blocks
+/// (in order) join into one `AgentText` event.
+fn map_synthetic_assistant_text(message: &Value, sub_agent: bool, events: &mut Vec<AgentEvent>) {
+    if sub_agent {
+        return;
+    }
+    // A top-level `error` (e.g. "rate_limit") marks a synthetic message whose
+    // text the following `result` message already surfaces as an Error; emit
+    // nothing to avoid duplicating it.
+    if message.get("error").is_some_and(|e| !e.is_null()) {
+        return;
+    }
+    let message = message.get("message");
+    if message.and_then(|m| m.get("model")).and_then(Value::as_str) != Some("<synthetic>") {
+        return;
+    }
+    let Some(blocks) = message
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    let text: String = blocks
+        .iter()
+        .filter_map(|block| block.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !text.is_empty() {
+        events.push(AgentEvent::Native(NativeEvent::AgentText(text)));
+    }
+}
+
 /// The (content, status) pairs of a `TodoWrite` block's input `todos` array,
 /// in order. Missing or non-array todos yield no plan; each todo contributes
 /// one pair, passing its `content` and `status` strings through.
@@ -221,6 +267,23 @@ fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
                         .unwrap_or("")
                         .to_string(),
                 )
+            })
+            .collect(),
+    )
+}
+/// The (content, status) pairs of one Claude sidecar `ajax_plan` line's
+/// `entries` array, in order. Missing or non-array entries yield no plan; each
+/// entry must carry string `content` and `status` fields, otherwise it is
+/// skipped (#1357). An empty entries array clears the panel.
+fn ajax_plan_entries(message: &Value) -> Option<Vec<(String, String)>> {
+    let entries = message.get("entries")?.as_array()?;
+    Some(
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let content = entry.get("content")?.as_str()?;
+                let status = entry.get("status")?.as_str()?;
+                Some((content.to_string(), status.to_string()))
             })
             .collect(),
     )
