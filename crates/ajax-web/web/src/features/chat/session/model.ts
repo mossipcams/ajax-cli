@@ -75,11 +75,6 @@ export interface ChatElicitationState {
   resolvedIds: string[];
 }
 
-export interface ChatStatusState {
-  acpState: string | null;
-  detail: string | null;
-}
-
 export interface ChatUsageState {
   context: Usage | null;
 }
@@ -103,7 +98,6 @@ export interface ChatSessionView {
   turn: ChatTurnState;
   permission: ChatPermissionState;
   elicitation: ChatElicitationState;
-  status: ChatStatusState;
   usage: ChatUsageState;
   model: ChatModelState;
   revision: number;
@@ -141,7 +135,6 @@ export type ChatSessionEvent =
   | { type: "permission_resolved"; requestId: string }
   | { type: "elicitation_request"; requestId: string; message: string; schema: unknown }
   | { type: "elicitation_resolved"; requestId: string; action: string }
-  | { type: "acp_status"; state: string; detail?: string }
   | { type: "turn_end"; stopReason?: string }
   | { type: "session_error"; message: string }
   | { type: "session_ready"; busy?: boolean; reset?: boolean }
@@ -167,7 +160,6 @@ export const initialChatSessionView: ChatSessionView = {
   turn: { busy: false, proseOpen: true },
   permission: { decision: null, resolvedIds: [] },
   elicitation: { decision: null, resolvedIds: [] },
-  status: { acpState: null, detail: null },
   usage: { context: null },
   model: { confirmedModel: "" },
   revision: 0,

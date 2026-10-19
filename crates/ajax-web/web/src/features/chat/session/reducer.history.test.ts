@@ -102,12 +102,11 @@ describe("server history bounds and older-page prepend", () => {
     expect(state.view.conversation).toHaveLength(0);
   });
 
-  it("prepend leaves turn, permission, elicitation, usage, model, and status untouched", () => {
+  it("prepend leaves turn, permission, elicitation, usage, and model untouched", () => {
     const prior = eventsView([
       { type: "agent_message", text: "partial", itemId: "a-live" },
       { type: "permission_request", requestId: "p9", title: "Run tests?", detail: "cargo test" },
       { type: "context_usage", used: 40, size: 100 },
-      { type: "acp_status", state: "connected", detail: "current connection" },
     ]);
     prior.elicitation = {
       decision: { requestId: "e-live", message: "Choose", schema: {}, fields: [] },
@@ -125,7 +124,6 @@ describe("server history bounds and older-page prepend", () => {
       events: [
         { type: "agent_message", text: "older answer", itemId: "a-old" },
         { type: "context_usage", used: 1, size: 10 },
-        { type: "acp_status", state: "disconnected", detail: "old connection" },
         { type: "turn_end" },
       ],
       from: 1,
@@ -136,7 +134,6 @@ describe("server history bounds and older-page prepend", () => {
     expect(state.view.elicitation).toEqual(prior.elicitation);
     expect(state.view.usage).toEqual(prior.usage);
     expect(state.view.model).toEqual(prior.model);
-    expect(state.view.status).toEqual(prior.status);
     const ids = state.view.conversation.map((item) => item.id);
     expect(ids[0]).toBe("a-old");
     expect(ids.slice(1)).toEqual(prior.conversation.map((item) => item.id));
