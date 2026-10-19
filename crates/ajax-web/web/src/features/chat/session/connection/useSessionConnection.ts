@@ -44,7 +44,6 @@ interface Options {
   onSessionConfigOptions?: (options: LiveSessionConfigOption[] | undefined) => void;
   onSessionAvailableCommands?: (commands: LiveAvailableCommand[] | undefined) => void;
   onSessionPromptCapabilities?: (capabilities: LivePromptCapabilities | undefined) => void;
-  onSessionTitle?: (title: string | undefined) => void;
   onSessionModelRejected?: () => void;
   onConfigError?: (message: string) => void;
   onRestoreFailure?: () => void;
@@ -66,7 +65,6 @@ export function useSessionConnection({
   onSessionConfigOptions,
   onSessionAvailableCommands,
   onSessionPromptCapabilities,
-  onSessionTitle,
   onSessionModelRejected,
   onConfigError,
   onRestoreFailure,
@@ -128,7 +126,6 @@ export function useSessionConnection({
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
       onSessionAvailableCommands?.(snapshot.availableCommands);
       onSessionPromptCapabilities?.(snapshot.promptCapabilities);
-      onSessionTitle?.(snapshot.sessionTitle);
       if (snapshot.transcript === undefined) return;
 
       const ready: WebSessionServerEvent = {

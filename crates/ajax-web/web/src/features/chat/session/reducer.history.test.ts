@@ -114,7 +114,6 @@ describe("server history bounds and older-page prepend", () => {
     };
     prior.model = {
       confirmedModel: "current-model",
-      sessionTitle: "Current title",
       configOptions: [],
       availableCommands: [],
     };
