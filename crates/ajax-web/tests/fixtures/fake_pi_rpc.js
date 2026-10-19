@@ -282,6 +282,18 @@ rl.on('line', (raw) => {
       emit({ type: 'agent_settled' })
       break;
 
+    case 'compact':
+      // Real Pi settles the compaction with start/end events and its own
+      // success response, which ends the run (issue #1360).
+      emit({ type: 'compaction_start', reason: 'manual' });
+      emit({ type: 'compaction_end', reason: 'manual', aborted: false, willRetry: false, result: { tokensBefore: 100, estimatedTokensAfter: 40 } });
+      emit({ id: command.id, type: 'response', command: 'compact', success: true, data: { summary: 's', tokensBefore: 100, estimatedTokensAfter: 40 } });
+      break;
+
+    case 'set_session_name':
+      emit({ id: command.id, type: 'response', command: 'set_session_name', success: true });
+      break;
+
     case 'extension_ui_response':
       // Pi's dialog answer carries its own `id`, no command envelope. Answer
       // with a mappable text_delta, then settle the run.

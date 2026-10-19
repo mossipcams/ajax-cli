@@ -6,6 +6,8 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use serde_json::{json, Value};
+
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
 use super::jsonl_process::JsonlProcess;
 use super::pi_rpc_handshake::handshake_with_model_provider;
@@ -88,6 +90,32 @@ fn pi_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
         used: tokens,
         size: window,
     }))
+}
+
+/// The native Pi command a `/compact` or `/name` chat message routes to, with
+/// its request fields. Everything else (including `/compacted`, `/extensions`,
+/// `/skill:x`, and plain text) is left for the `prompt` path (issue #1360).
+pub(super) fn builtin_command(message: &str) -> Option<(&'static str, Value)> {
+    let trimmed = message.trim();
+    if trimmed == "/compact" {
+        return Some(("compact", json!({})));
+    }
+    if let Some(rest) = trimmed.strip_prefix("/compact ") {
+        let instructions = rest.trim();
+        let fields = if instructions.is_empty() {
+            json!({})
+        } else {
+            json!({ "customInstructions": instructions })
+        };
+        return Some(("compact", fields));
+    }
+    if let Some(name) = trimmed.strip_prefix("/name ") {
+        let name = name.trim();
+        if !name.is_empty() {
+            return Some(("set_session_name", json!({ "name": name })));
+        }
+    }
+    None
 }
 
 impl PiRpcClient {
@@ -325,6 +353,14 @@ impl PiRpcClient {
         message: &str,
         images: &[NativeImage],
     ) -> Result<u64, String> {
+        // Pi RPC `prompt` only runs extension commands, templates and skills:
+        // built-in slash commands like `/compact` would reach the model as
+        // plain text (issue #1360). Route them to their native command instead.
+        if images.is_empty() {
+            if let Some((command, fields)) = builtin_command(message) {
+                return self.core.begin_command(command, fields);
+            }
+        }
         self.core.begin_prompt_with_images(message, images)
     }
 

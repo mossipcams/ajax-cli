@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent, NativeImage};
-use super::pi_rpc_client::PiRpcClient;
+use super::pi_rpc_client::{builtin_command, PiRpcClient};
+
+use serde_json::json;
 
 /// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -309,5 +311,91 @@ fn prompt_with_images_reports_the_wire_shape() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
+    assert!(!client.prompt_in_flight());
+}
+
+#[test]
+fn issue_1360_builtin_command_parsing() {
+    assert_eq!(builtin_command("/compact"), Some(("compact", json!({}))));
+    assert_eq!(
+        builtin_command("  /compact focus on tests "),
+        Some(("compact", json!({ "customInstructions": "focus on tests" })))
+    );
+    // Trailing whitespace with no instructions means no instructions.
+    assert_eq!(builtin_command("/compact   "), Some(("compact", json!({}))));
+
+    assert_eq!(
+        builtin_command("/name probe"),
+        Some(("set_session_name", json!({ "name": "probe" })))
+    );
+    assert_eq!(
+        builtin_command("  /name   spaced name  "),
+        Some(("set_session_name", json!({ "name": "spaced name" })))
+    );
+
+    // A bare `/name`, lookalikes, extension/skill commands, and plain text all
+    // stay on the prompt path.
+    let passthrough = [
+        "/name",
+        "/name   ",
+        "/compacted",
+        "/extensions",
+        "/skill:x",
+        "hello world",
+        "run /compact please",
+    ];
+    for message in passthrough {
+        assert_eq!(
+            builtin_command(message),
+            None,
+            "{message} must stay on the prompt path"
+        );
+    }
+}
+
+#[test]
+fn issue_1360_compact_routes_to_the_native_command() {
+    let client = spawn_client(&[]);
+    let id = client
+        .begin_prompt_with_images("/compact focus on tests", &[])
+        .expect("begin /compact");
+    assert!(client.prompt_in_flight());
+
+    let (events, finished) = drain_until_finished(&client, id);
+    match finished {
+        NativeEvent::TurnFinished { request_id, result } => {
+            assert_eq!(request_id, id);
+            result.expect("the compact success response must settle the turn as Ok");
+        }
+        other => panic!("drain returned a non-finished event: {other:?}"),
+    }
+    // The fixture's `prompt` arm always emits an "ok" text delta; no AgentText
+    // means the message never reached the model as a prompt.
+    assert!(
+        events.iter().all(|event| !is_agent_text(event)),
+        "/compact must not reach the prompt path: {events:?}"
+    );
+    assert!(!client.prompt_in_flight());
+}
+
+#[test]
+fn issue_1360_name_routes_to_set_session_name() {
+    let client = spawn_client(&[]);
+    let id = client
+        .begin_prompt_with_images("/name probe", &[])
+        .expect("begin /name");
+
+    let (events, finished) = drain_until_finished(&client, id);
+    match finished {
+        NativeEvent::TurnFinished { request_id, result } => {
+            assert_eq!(request_id, id);
+            result.expect("the set_session_name success response must settle the turn as Ok");
+        }
+        other => panic!("drain returned a non-finished event: {other:?}"),
+    }
+    assert!(
+        events.iter().all(|event| !is_agent_text(event)),
+        "/name must not reach the prompt path: {events:?}"
+    );
     assert!(!client.prompt_in_flight());
 }
