@@ -464,6 +464,9 @@ mod acp_usage_tests;
 mod harness_contract_tests;
 
 #[cfg(test)]
+mod live_harness_tests;
+
+#[cfg(test)]
 mod host_crash_tests;
 
 #[cfg(test)]
