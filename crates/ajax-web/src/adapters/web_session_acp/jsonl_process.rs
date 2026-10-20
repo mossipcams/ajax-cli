@@ -66,6 +66,7 @@ impl JsonlProcess {
             .stderr(Stdio::piped());
         // Run as our own process-group leader so drop can kill the whole tree.
         super::process_group::own_group(&mut command);
+        super::delegate_events::apply_env(&mut command, cwd);
         let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().expect("stdin was piped");

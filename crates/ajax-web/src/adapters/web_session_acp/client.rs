@@ -895,6 +895,7 @@ fn spawn_acp_process(
             continue;
         };
         command.args(&args);
+        super::delegate_events::apply_env(&mut command, worktree_path);
         command
             .current_dir(worktree_path)
             .stdin(Stdio::piped())

@@ -130,6 +130,9 @@ where
     let address = resolve_bind_address(host, port)?;
     log_web_listening(host, port);
 
+    // Tell model-router harness children where to drop their ACP event files.
+    crate::adapters::web_session_acp::delegate_events::set_state_dir(&state.state_dir);
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

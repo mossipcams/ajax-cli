@@ -776,6 +776,7 @@ so a cancelled turn does not reset the meter.
   the parent Task row (tool ids are unique, so no parent link is needed), while
   sub-agent text and thinking stay hidden and sub-agent `result` messages never
   finish the run ([#1342](https://github.com/mossipcams/ajax-cli/issues/1342)).
+- model-router delegate tool calls are shown live as flat tool rows: every web-session harness child is spawned with `AJAX_DELEGATE_EVENTS_DIR=<state_dir>/web-session/delegates/<encoded worktree>` (set by `adapters/web_session_acp/delegate_events.rs`; unset when the web server has not recorded a state dir), `scripts/run-delegate` inherits it through the harness's Bash tool and appends its raw acpx ACP stream to `<dir>/<run_id>.jsonl`, and each task-session pump tails those files (`slices/web_session/delegate_tail.rs`: byte offsets through the last newline, partial lines reread, lines over 1 MiB and malformed lines skipped), keeps only `session/update` tool_call/tool_call_update rows with ids prefixed `<run_id>:` and drops delegate prose, thought, plan, and usage so they never merge into the frontier message or plan.
 - Claude local slash-command output (e.g. `/context`) arrives as one `assistant`
   message with model `<synthetic>` and no stream deltas; its text blocks map to
   agent text, except messages carrying a top-level `error` (e.g. rate limits),

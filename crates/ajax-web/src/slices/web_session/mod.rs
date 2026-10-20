@@ -10,6 +10,7 @@ mod headless_dispatch;
 pub(crate) use headless_dispatch::{run_all as run_headless_dispatch, HeadlessTarget};
 pub(crate) mod model_change;
 
+mod delegate_tail;
 pub mod native_map;
 mod normalize;
 mod orphan_sweep;

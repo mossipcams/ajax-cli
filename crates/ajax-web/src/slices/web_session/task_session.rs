@@ -1,4 +1,5 @@
 use super::acp_slot::AcpSlot;
+use super::delegate_tail::DelegateTail;
 use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
@@ -157,6 +158,7 @@ pub(crate) struct TaskSessionState {
     // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
     pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
+    pub(super) delegate_tail: DelegateTail,
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
     pub(super) worktree_path: Option<PathBuf>,
@@ -313,6 +315,22 @@ impl TaskSessionState {
                 tracing::warn!(%error, handle = %self.qualified_handle, "transcript events retained for retry");
             }
         }
+
+        // Forward live tool calls from the delegate's ACP event file (B2).
+        if let Some(worktree) = self.worktree_path.as_ref() {
+            if let Some(dir) =
+                crate::adapters::web_session_acp::delegate_events::events_dir_for(worktree)
+            {
+                let delegate_events = self.delegate_tail.poll(&dir);
+                if !delegate_events.is_empty() {
+                    let normalized =
+                        normalize_session_events(&mut self.stream_normalizer, delegate_events);
+                    if let Err(error) = self.append_to_log(normalized) {
+                        tracing::warn!(%error, handle = %self.qualified_handle, "transcript events retained for retry");
+                    }
+                }
+            }
+        }
         if host_gone && !self.prompts.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);
         } else {
@@ -396,6 +414,7 @@ pub(crate) fn spawn_task_session(
             log: TranscriptLog::default(),
             unpersisted: Vec::new(),
             stream_normalizer: StreamNormalizer::default(),
+            delegate_tail: DelegateTail::default(),
             last_released: None,
             agent: AgentClient::Cursor,
             worktree_path: None,

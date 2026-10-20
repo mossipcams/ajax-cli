@@ -12,6 +12,7 @@ mod config_options;
 mod cursor_sdk_client;
 mod cursor_sdk_map;
 mod cursor_sdk_spawn;
+pub(crate) mod delegate_events;
 mod jsonl_process;
 mod pi_rpc_client;
 mod pi_rpc_handshake;
