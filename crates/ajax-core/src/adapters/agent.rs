@@ -5,6 +5,11 @@ pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
 pub const CURSOR_DEFAULT_SPAWN_MODEL: &str = "grok-4.6";
 
+/// Default model for the `pi` harness, expressed as the `provider/modelId`
+/// pair that pi's model config option enumerates (custom OpenAI-compatible
+/// provider `local` at 127.0.0.1:18000/v1).
+pub const PI_DEFAULT_MODEL: &str = "local/swift-1.5-qwen-3.8-27b";
+
 const CURSOR_EFFORT_SUFFIXES: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -320,7 +325,7 @@ pub fn acp_launch_for_agent(client: AgentClient) -> Option<AcpLaunch> {
             candidates: &[("pi", &[])],
             native_program: None,
             model_selection: AcpModelSelection::ConfigOption,
-            default_model: None,
+            default_model: Some(PI_DEFAULT_MODEL),
             acp_package: None,
             install_hint: "npm install -g @earendil-works/pi-coding-agent",
             transport: HarnessTransport::PiRpc,
