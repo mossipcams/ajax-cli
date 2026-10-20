@@ -69,6 +69,7 @@ function ChatSessionBody({
   view,
   connected,
   everOpened,
+  agentStarting,
   activityAgeMs,
   sendPrompt,
   withdrawQueuedPrompt,
@@ -96,6 +97,7 @@ function ChatSessionBody({
   view: ReturnType<typeof useChatSession>["view"];
   connected: boolean;
   everOpened: boolean;
+  agentStarting: boolean;
   activityAgeMs: number;
   sendPrompt: ReturnType<typeof useChatSession>["sendPrompt"];
   withdrawQueuedPrompt: ReturnType<typeof useChatSession>["withdrawQueuedPrompt"];
@@ -131,6 +133,7 @@ function ChatSessionBody({
           taskAttention={taskAttention}
           activityAgeMs={activityAgeMs}
           connected={connected}
+          starting={agentStarting}
           permission={
             view.elicitation.decision ? (
               <ElicitationPanel
@@ -168,6 +171,7 @@ function ChatSessionBody({
           connected={connected}
           busy={view.turn.busy}
           everOpened={everOpened}
+          agentStarting={agentStarting}
           conversation={view.conversation}
           conversationRevision={view.revision}
           availableCommands={availableCommands}
@@ -280,6 +284,7 @@ export default function ChatSurface({
     dispatch,
     connected,
     everOpened,
+    agentStarting,
     activityAgeMs,
     sessionModel,
     sessionConfigOptions,
@@ -328,6 +333,7 @@ export default function ChatSurface({
         taskAttention={taskAttention}
         connected={connected}
         everOpened={everOpened}
+        agentStarting={agentStarting}
         activityAgeMs={activityAgeMs}
         sendPrompt={sendPrompt}
         withdrawQueuedPrompt={withdrawQueuedPrompt}

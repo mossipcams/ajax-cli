@@ -485,6 +485,7 @@ impl CommandRunner for OrphanRecoveryRunner {
 mod suite_1;
 mod suite_2;
 mod suite_3;
+mod suite_4;
 
 #[derive(Default)]
 pub(super) struct GitSkippingRunner {

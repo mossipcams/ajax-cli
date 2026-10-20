@@ -2,6 +2,8 @@ use super::protocol::{
     PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
 use super::transcript::TranscriptLog;
+use std::collections::HashMap;
+
 use super::SessionServerEvent;
 
 /// Maximum number of newest transcript events carried in a reset attach
@@ -95,7 +97,10 @@ pub(crate) fn attach_inline_tail(
     );
     let transcript_from = Some(replayed.get(start).map(|env| env.cursor).unwrap_or(next));
     snapshot
-        .with_transcript(replayed[start..].to_vec(), transcript_from)
+        .with_transcript(
+            compact_superseded_messages(replayed[start..].to_vec()),
+            transcript_from,
+        )
         .with_transcript_floor(floor)
 }
 
@@ -173,7 +178,7 @@ pub(crate) fn read_before(log: &TranscriptLog, before: usize, limit: usize) -> T
         .rposition(|env| env.cursor < start)
         .map_or(0, |i| i + 1);
     let i1 = envelopes.partition_point(|env| env.cursor < end);
-    let events = envelopes[i0..i1].to_vec();
+    let events = compact_superseded_messages(envelopes[i0..i1].to_vec());
     // An empty page with `limit > 0` must still make progress: report the
     // computed post-snap lower bound as `from`, never `end`. That guarantees
     // `from < before` whenever `before > log.dropped`, so a caller walking
@@ -211,6 +216,29 @@ fn user_message_boundary(
         }
     }
     None
+}
+
+/// Collapse streamed message versions: for every non-empty `item_id` that
+/// appears more than once, keep a single envelope at the first occurrence's
+/// position and cursor carrying the last occurrence's payload; drop all other
+/// occurrences. Empty `item_id` messages and non-message events pass through
+/// unchanged and in order.
+fn compact_superseded_messages(events: Vec<SessionEventEnvelope>) -> Vec<SessionEventEnvelope> {
+    let mut out: Vec<SessionEventEnvelope> = Vec::with_capacity(events.len());
+    let mut first_seen: HashMap<String, usize> = HashMap::new();
+    for env in events {
+        if let SessionServerEvent::Message { item_id, .. } = &env.payload {
+            if !item_id.is_empty() {
+                if let Some(&pos) = first_seen.get(item_id) {
+                    out[pos].payload = env.payload;
+                    continue;
+                }
+                first_seen.insert(item_id.clone(), out.len());
+            }
+        }
+        out.push(env);
+    }
+    out
 }
 
 pub(crate) fn pending_permission(log: &TranscriptLog) -> Option<PendingPermission> {

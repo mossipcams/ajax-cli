@@ -541,6 +541,19 @@ impl TaskSessionDirectory {
                 return snapshot;
             }
         }
+        self.detached_attach_snapshot(handle, fallback_model, client_cursor)
+    }
+
+    /// Storage-only attach snapshot. Reads the retained transcript without
+    /// sending any command to a live session actor (which may be blocked in
+    /// the middle of a restore), so it is safe to call while `acquire_typed`
+    /// is still in flight.
+    pub fn detached_attach_snapshot(
+        &self,
+        handle: &str,
+        fallback_model: String,
+        client_cursor: Option<usize>,
+    ) -> AttachSnapshot {
         let (stored, transcript_error) = load_detached(&self.storage, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
         let (mut snapshot, replayed) = super::replay::build_attach(

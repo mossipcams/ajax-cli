@@ -33,7 +33,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
               className="session-head-label session-head-offline"
               data-testid="session-head-offline"
             >
-              Reconnecting
+              {view.starting ? "Starting agent" : "Reconnecting"}
             </span>
           )}
           {view.usage ? <ContextUsageMeter usage={view.usage} /> : null}

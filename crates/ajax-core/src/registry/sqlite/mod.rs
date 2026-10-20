@@ -19,8 +19,9 @@ use save::save_registry;
 
 pub use execution_recovery::{OwnerClaim, RunPrompt, RunRecord, UnfinishedExecution};
 pub use execution_store::{
-    CheckpointIntent, CheckpointResult, CommitReceipt, ExecutionCommit, ExecutionCommitError,
-    NewExecutionTask, NewPrompt, NewRun, PromptContentUpdate, RunUpdate, TaskTransition,
+    CheckpointIntent, CheckpointResult, CommitReceipt, EventRewrite, ExecutionCommit,
+    ExecutionCommitError, NewExecutionTask, NewPrompt, NewRun, PromptContentUpdate, RunUpdate,
+    TaskTransition,
 };
 
 #[cfg(test)]

@@ -48,6 +48,15 @@ pub struct PromptContentUpdate {
     pub content_json: String,
 }
 
+/// Replaces the `payload_json` of an existing event row of this run in the
+/// same transaction. Sequence numbers are never changed or reused; a `seq`
+/// that no longer exists (e.g. pruned) is a no-op.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EventRewrite {
+    pub seq: u64,
+    pub payload: String,
+}
+
 /// A state transition applied to an existing execution task.
 #[derive(Clone, Debug)]
 pub struct TaskTransition {
@@ -108,6 +117,8 @@ pub struct ExecutionCommit {
     pub checkpoint_results: Vec<CheckpointResult>,
     /// Event payloads (JSON) appended with consecutive per-run sequence numbers.
     pub events: Vec<String>,
+    /// Existing event rows whose `payload_json` is replaced in this transaction.
+    pub event_rewrites: Vec<EventRewrite>,
     pub run_update: Option<RunUpdate>,
 }
 
@@ -528,6 +539,17 @@ impl SqliteRegistryStore {
             "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1",
             params![commit.run_id, next_seq],
         )?;
+
+        // 8. In-place payload rewrites of existing event rows; seqs never change.
+        for rewrite in &commit.event_rewrites {
+            let Ok(seq) = i64::try_from(rewrite.seq) else {
+                continue;
+            };
+            transaction.execute(
+                "UPDATE execution_events SET payload_json = ?1 WHERE run_id = ?2 AND seq = ?3",
+                params![rewrite.payload, commit.run_id, seq],
+            )?;
+        }
 
         transaction
             .commit()

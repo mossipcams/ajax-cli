@@ -6,7 +6,7 @@ use ajax_core::{
     registry::{InMemoryRegistry, Registry, RegistrySnapshotError, SqliteRegistryStore},
 };
 use clap::ArgMatches;
-use std::{path::PathBuf, time::SystemTime};
+use std::{io::Read, path::PathBuf, time::SystemTime};
 
 use crate::CliError;
 
@@ -150,15 +150,20 @@ fn load_context_with_loader(
 }
 
 fn reject_legacy_json_state(path: &std::path::Path) -> Result<(), CliError> {
-    let bytes = std::fs::read(path).map_err(|error| CliError::ContextLoad(error.to_string()))?;
-    let Some(first) = bytes
-        .iter()
-        .copied()
-        .find(|byte| !byte.is_ascii_whitespace())
-    else {
+    let file =
+        std::fs::File::open(path).map_err(|error| CliError::ContextLoad(error.to_string()))?;
+    let mut first: Option<u8> = None;
+    for byte in std::io::BufReader::new(file).bytes() {
+        let byte = byte.map_err(|error| CliError::ContextLoad(error.to_string()))?;
+        if !byte.is_ascii_whitespace() {
+            first = Some(byte);
+            break;
+        }
+    }
+
+    let Some(first) = first else {
         return Ok(());
     };
-
     if matches!(first, b'{' | b'[') {
         return Err(CliError::ContextLoad(format!(
             "legacy JSON state is unsupported after the SQLite rewrite; remove {} to start with fresh state",
@@ -446,3 +451,35 @@ fn has_persistable_tasks(registry: &InMemoryRegistry) -> bool {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod legacy_json_state_tests {
+    use super::reject_legacy_json_state;
+
+    fn state_file(label: &str, contents: &[u8]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-legacy-json-{}-{label}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.db");
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn whitespace_prefixed_json_state_is_rejected() {
+        let object = state_file("object", b"\n  {}");
+        let err = reject_legacy_json_state(&object).unwrap_err().to_string();
+        assert!(err.contains("legacy JSON state is unsupported"));
+
+        let array = state_file("array", b" \t[\"");
+        let err = reject_legacy_json_state(&array).unwrap_err().to_string();
+        assert!(err.contains("legacy JSON state is unsupported"));
+
+        assert!(reject_legacy_json_state(&state_file("sqlite", b"SQLite format 3")).is_ok());
+
+        let _ = std::fs::remove_dir_all(
+            std::env::temp_dir().join(format!("ajax-context-legacy-json-{}", std::process::id())),
+        );
+    }
+}

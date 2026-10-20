@@ -84,7 +84,7 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   or `session/load` never sends `session/new`.
 - Protocol v2 reset snapshots carry an optional `transcript` array of retained
   event envelopes in chronological cursor order, limited to the newest tail of
-  the retained transcript: `TAIL_EVENT_LIMIT` = 300 events, extended back when a
+  the retained transcript: `TAIL_EVENT_LIMIT` = 1000 events, extended back when a
   permission or elicitation request is still open so it stays addressable, then
   snapped back to the nearest preceding user message within one more limit. The
   snapshot `cursor` remains the next cursor after that tail projection. An empty
@@ -97,7 +97,15 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   The browser applies a present transcript and the snapshot ready state in one
   reducer action, advances directly to the snapshot cursor, and discards the
   matching replay envelopes that follow. Resumable `reset: false` reconnects
-  omit `transcript` and keep incremental replay semantics.
+  omit `transcript` and keep incremental replay semantics. The reset-snapshot
+  transcript and older-history pages (`read_before`) compact superseded streamed
+  message versions: for each non-empty `itemId` only one `message` event remains,
+  at the first occurrence's position and cursor, carrying the last occurrence's
+  payload (full final text and cumulative content blocks); tool calls and other
+  events are not compacted; window selection, `transcriptFrom`, `transcriptFloor`,
+  and `cursor` are unchanged; legacy per-envelope replay for clients without
+  `snapshotTail=1` is not compacted
+  ([#1352](https://github.com/mossipcams/ajax-cli/issues/1352)).
 - A client opts into tail-only attach with `snapshotTail=1` on the session
   WebSocket URL. When set and the snapshot carries a transcript, the host sends
   no per-event compatibility envelopes — neither on a cold attach nor on a
@@ -106,6 +114,17 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   a cursor below `transcriptFrom` (still acknowledging its `prompt_accepted`
   for the unacknowledged-prompt outbox), dedupes exact transcript cursors, and
   never discards socket-local `error` events at cursor 0.
+- Agent-pending attach (for `snapshotTail=1` clients only): when acquiring the
+  harness has not finished within ~150 ms, the host first sends a storage-only
+  snapshot with `agentPending: true`. On a cold attach it is a reset snapshot
+  with the inline transcript; on an in-page reconnect it is `reset: false`, has
+  no transcript, and keeps the client's cursor. The host then sends the live
+  snapshot without `agentPending`, with `reset: false`, incremental from that
+  cursor. Legacy clients (no `snapshotTail=1`) get no early snapshot. The
+  browser renders the transcript from the pending snapshot but keeps send
+  disabled (connection state `starting`) and shows `Starting agent…` in the
+  composer and `Starting agent` in the head until the live snapshot arrives
+  ([#1356](https://github.com/mossipcams/ajax-cli/issues/1356)).
 - Restore fallback is limited to explicit RPC rejection: a rejected
   `session/resume` may try `session/load`, but a resume timeout or transport
   loss kills that ACP child and reports a typed
@@ -554,10 +573,12 @@ whole transcript inside `session/load` before responding.
   (`Prompt <id> was interrupted by host restart and was not retried.`) and is
   never resent automatically; queued prompts survive and dispatch in order. See
   `docs/architecture/durable-execution.md`.
-- Transcript events are appended as database rows without rewriting earlier
-  rows; bounded retention (2000 events) never renumbers or reuses a sequence
-  number, so absolute replay cursors stay valid. Streamed agent/thought text is
-  normalized to full-content `message` updates with stable host `itemId` values
+- Transcript events are appended as database rows; the only in-place
+  rewrite is a superseded streamed message version becoming an empty marker
+  (see `docs/architecture/durable-execution.md`). Bounded retention (2000
+  events) never renumbers or reuses a sequence number, so absolute replay
+  cursors stay valid. Streamed agent/thought text is normalized to full-content
+  `message` updates with stable host `itemId` values
   before persistence. Agent/thought stream lanes close when a user prompt is
   recorded, on `turn_end`, or on an event that takes a transcript row of its own
   (tool call, plan, permission/elicitation request, error) so the next reply
