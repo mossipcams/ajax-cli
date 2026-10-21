@@ -82,6 +82,39 @@ describe("desiredModel", () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain("agent=codex");
   });
 
+  it("marks the models request as AJAX and renews the session after a 401", async () => {
+    let modelCalls = 0;
+    const fetchMock = vi.fn((path: string) => {
+      if (path === "/api/session") {
+        return Promise.resolve({ ok: true, status: 200, text: async () => '{"ok":true}' });
+      }
+      modelCalls += 1;
+      return Promise.resolve(
+        modelCalls === 1
+          ? { ok: false, status: 401 }
+          : {
+              ok: true,
+              status: 200,
+              json: async () => ({ models: [{ id: "composer-2.5", label: "Composer 2.5" }] }),
+            },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchSessionModels("cursor")).resolves.toEqual({
+      models: [{ id: "composer-2.5", label: "Composer 2.5" }],
+      default: "",
+    });
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      "/api/session/models?agent=cursor",
+      "/api/session",
+      "/api/session/models?agent=cursor",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+  });
+
   it("normalizes harness ids for catalog lookup", () => {
     expect(normalizeSessionAgent("Cursor")).toBe("cursor");
     expect(normalizeSessionAgent("  ")).toBe("cursor");

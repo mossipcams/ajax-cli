@@ -92,10 +92,15 @@ describe("GET transport options", () => {
     await checkHealth();
     await fetchDetail("web/x");
 
-    const getInit = { cache: "no-store", credentials: "same-origin", signal: expect.any(AbortSignal) };
+    const getInit = {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      signal: expect.any(AbortSignal),
+    };
     expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
       ...getInit,
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
     });
     expect(fetch).toHaveBeenCalledWith("/api/version", getInit);
     expect(fetch).toHaveBeenCalledWith("/api/health", getInit);
@@ -187,19 +192,20 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
   });
@@ -216,6 +222,7 @@ describe("browser session renewal", () => {
       expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
         cache: "no-store",
         credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
         signal: expect.any(AbortSignal),
       });
     } finally {
@@ -252,7 +259,7 @@ describe("browser session renewal", () => {
     expect(result.ok).toBe(true);
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
@@ -261,11 +268,12 @@ describe("browser session renewal", () => {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
@@ -377,6 +385,7 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenCalledWith("/api/health", {
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
   });
@@ -531,28 +540,28 @@ describe("POST transport options", () => {
 
     expect(fetch).toHaveBeenCalledWith("/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/tasks", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(startRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/restart", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
@@ -611,7 +620,7 @@ describe("startTestInStable", () => {
     expect(response.ok).toBe(true);
     expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
@@ -787,4 +796,5 @@ describe("task terminal socket helpers", () => {
 
     expect(taskTerminalWebSocketUrl("web/fix-login")).not.toContain("client=");
   });
+
 });

@@ -1,3 +1,5 @@
+import { AJAX_PROTECTED_HEADERS, fetchProtectedWithSessionRenewal } from "@/shared/lib/api";
+
 export interface DiagnosticCheck {
   ok: boolean;
   status: number | null;
@@ -5,9 +7,17 @@ export interface DiagnosticCheck {
   body: string | null;
 }
 
+const PUBLIC_DIAGNOSTIC_PATHS = new Set(["/api/health"]);
+
 export async function diagnosticFetch(path: string): Promise<DiagnosticCheck> {
   try {
-    const response = await fetch(path, { cache: "no-store", credentials: "same-origin" });
+    const response = PUBLIC_DIAGNOSTIC_PATHS.has(path)
+      ? await fetch(path, { cache: "no-store", credentials: "same-origin" })
+      : await fetchProtectedWithSessionRenewal(path, {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { ...AJAX_PROTECTED_HEADERS },
+        });
     const text = await response.text();
     let body = text.slice(0, 600);
     try {

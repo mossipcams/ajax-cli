@@ -59,11 +59,18 @@ function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS, querySignal?: Ab
   return {
     cache: "no-store",
     credentials: "same-origin",
+    headers: { ...AJAX_PROTECTED_HEADERS },
     signal,
   };
 }
 
 export const AJAX_FOREGROUND_HEADER = "X-Ajax-Foreground";
+
+/**
+ * Marks protected API requests as AJAX so Cloudflare Access fails an expired
+ * session with a direct 401/4xx response instead of an HTML login redirect.
+ */
+export const AJAX_PROTECTED_HEADERS = { "X-Requested-With": "XMLHttpRequest" };
 
 function documentIsForeground(): boolean {
   return typeof document !== "undefined" && document.visibilityState === "visible";
@@ -75,6 +82,7 @@ function cockpitGetOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestI
   return {
     ...options,
     headers: {
+      ...AJAX_PROTECTED_HEADERS,
       [AJAX_FOREGROUND_HEADER]: "1",
     },
   };
@@ -85,11 +93,55 @@ function sessionRenewOptions(): RequestInit {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
+    headers: { ...AJAX_PROTECTED_HEADERS },
     signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
   };
 }
 
 let browserSessionRenewal: Promise<void> | null = null;
+
+const SESSION_RECOVERY_GUARD_KEY = "ajax.pwa.session-expiry-recovered";
+let sessionExpiryNavigationStarted = false;
+
+/**
+ * Clears the one-shot recovery guard after a protected request succeeds
+ * (successful reauthentication): the expiry episode is over, so a later
+ * expiry may navigate once again in the same tab session.
+ */
+function clearSessionRecoveryGuard(): void {
+  sessionExpiryNavigationStarted = false;
+  try {
+    if (sessionStorage.getItem(SESSION_RECOVERY_GUARD_KEY)) {
+      sessionStorage.removeItem(SESSION_RECOVERY_GUARD_KEY);
+    }
+  } catch {
+    // Ignore; the in-memory guard resets on page load.
+  }
+}
+
+/**
+ * One-shot top-level navigation when the browser session has unrecoverably
+ * expired (e.g. Cloudflare Access re-auth on a deployed PWA). A sessionStorage
+ * guard plus an in-memory flag ensure concurrent stale requests trigger at most
+ * one navigation per page load / tab session. Returns true only when navigation
+ * was initiated; callers must still surface the stale-session error.
+ */
+export function attemptSessionExpiryNavigation(): boolean {
+  if (sessionExpiryNavigationStarted) return false;
+  try {
+    if (sessionStorage.getItem(SESSION_RECOVERY_GUARD_KEY)) return false;
+    sessionStorage.setItem(SESSION_RECOVERY_GUARD_KEY, "1");
+  } catch {
+    // Storage unavailable: fall back to the in-memory guard only.
+  }
+  sessionExpiryNavigationStarted = true;
+  try {
+    window.location.replace(window.location.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
@@ -134,25 +186,44 @@ export async function renewBrowserSession(): Promise<void> {
   return browserSessionRenewal;
 }
 
-async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
+function rejectedProtectedFetch(error: unknown): ApiError {
+  // A rejected protected fetch is a plain network failure (outage, offline,
+  // WebKit transient drop). It is retryable and must NOT trigger session
+  // expiry navigation; only 401s with failed renewal navigate (see
+  // fetchProtectedWithSessionRenewal) under the one-shot recovery guard.
+  return new ApiError("network", error instanceof Error ? error.message : String(error));
+}
+
+export async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(path, init);
   } catch (error) {
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
+    throw rejectedProtectedFetch(error);
   }
-  if (response.status !== 401) return response;
+  if (response.status !== 401 && !response.redirected) {
+    if (response.ok) clearSessionRecoveryGuard();
+    return response;
+  }
 
-  await renewBrowserSession();
+  try {
+    await renewBrowserSession();
+  } catch (error) {
+    // Every renewal failure is an unrecoverable session expiry here.
+    attemptSessionExpiryNavigation();
+    throw error;
+  }
   try {
     const retryResponse = await fetch(path, init);
-    if (retryResponse.status === 401) {
+    if (retryResponse.status === 401 || retryResponse.redirected) {
+      attemptSessionExpiryNavigation();
       throw new ApiError("stale-session", "HTTP 401", 401);
     }
+    if (retryResponse.ok) clearSessionRecoveryGuard();
     return retryResponse;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
+    throw rejectedProtectedFetch(error);
   }
 }
 
@@ -271,7 +342,7 @@ export async function sendPushUnsubscribe(
       : { all: true };
   const response = await fetchProtectedWithSessionRenewal("/api/push/subscribe", {
     method: "DELETE",
-    headers: { "content-type": "application/json" },
+    headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     cache: "no-store",
     credentials: "same-origin",
     body: JSON.stringify(body),
@@ -300,7 +371,7 @@ export async function sendPushTest(subscription: PushTestSubscription): Promise<
 async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {
   const response = await fetchProtectedWithSessionRenewal(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     cache: "no-store",
     credentials: "same-origin",
     body: JSON.stringify(body),
@@ -390,7 +461,7 @@ export async function waitForServerOnline(
 
 async function peekVersion(): Promise<string | null> {
   try {
-    const response = await fetch("/api/version", getOptions());
+    const response = await fetchProtectedWithSessionRenewal("/api/version", getOptions());
     if (!response.ok) return null;
     const value = await readJson(response);
     if (

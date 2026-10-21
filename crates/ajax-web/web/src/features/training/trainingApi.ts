@@ -1,4 +1,8 @@
-import { ApiError, renewBrowserSession } from "@/shared/lib/api";
+import {
+  AJAX_PROTECTED_HEADERS,
+  ApiError,
+  fetchProtectedWithSessionRenewal as protectedFetch,
+} from "@/shared/lib/api";
 import { GET_REQUEST_TIMEOUT_MS } from "@/shared/lib/polling";
 
 export type TrainingJobKind = "generate" | "lfm-train" | "lfm-eval" | "wake-train";
@@ -127,30 +131,11 @@ function parseModels(payload: unknown): TrainingModels {
   };
 }
 
-async function protectedFetch(path: string, init: RequestInit): Promise<Response> {
-  let response: Response;
-  try {
-    response = await fetch(path, init);
-  } catch (error) {
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
-  }
-  if (response.status !== 401) return response;
-
-  await renewBrowserSession();
-  try {
-    const retry = await fetch(path, init);
-    if (retry.status === 401) throw new ApiError("stale-session", "HTTP 401", 401);
-    return retry;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
-  }
-}
-
 async function getTraining(path: string): Promise<unknown> {
   const response = await protectedFetch(path, {
     cache: "no-store",
     credentials: "same-origin",
+    headers: { ...AJAX_PROTECTED_HEADERS },
     signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
@@ -174,7 +159,7 @@ async function getTraining(path: string): Promise<unknown> {
 async function postTraining(path: string, body: unknown): Promise<void> {
   const response = await protectedFetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     cache: "no-store",
     credentials: "same-origin",
     body: JSON.stringify(body),
