@@ -80,12 +80,12 @@ when wanted); sign-out (a new sign-in overwrites); auto-renew; terminal-mode
   2s poll target), `POST /api/cursor/auth/login` → `start()` phase
   (immediate), `POST /api/cursor/auth/login/cancel` → `cancel()` phase.
   Verify: inline tests for the access policy and the JSON shapes.
-- [ ] **4. Settings card**. "Cursor" row shows status (`email · expires
+- [x] **4. Settings card**. "Cursor" row shows status (`email · expires
   <date>` / `Key rejected` / `Not signed in`). The sign-in button POSTs, then
   polls status every 2s while Waiting/Verifying. Waiting renders the URL as a
   normal link (`target=_blank`); success or failure stops polling. Verify:
   vitest for each phase, plus mobile-webkit `web:smoke`.
-- [ ] **5. Spawn hint + docs**. Replace `LOGIN_HINT` with "Cursor rejected the
+- [x] **5. Spawn hint + docs**. Replace `LOGIN_HINT` with "Cursor rejected the
   SDK credential, sign in again from Settings → Cursor"; update
   `docs/architecture/web-cockpit.md` §Cursor auth. Verify: the existing
   spawn-error test asserts the new hint.
@@ -99,7 +99,7 @@ verify:arch`. Live: sign in from the phone, start Cursor chat, get a turn.
 
 ## Approval
 
-Approved by Matt 2026-10-20 ("Delegate until finished"). Security-relevant:
+Approved by Matt 2026-10-20; implemented 2026-10-20 as a 3-PR stack ("Delegate until finished"). Security-relevant:
 adds a credential-writing path (SDK store only).
 
 Host unblocked manually 2026-10-20 with the same in-memory → `Cursor.me()` →
@@ -114,3 +114,18 @@ the rejected file is kept as `~/.cursor/sdk/auth.json.rejected-2026-10-20`.
   unresponsive-sidecar deadline regression, negative-controlled);
   `nextest cursor_sdk` 45/45.
 - 2026-10-20 slice 3: fmt/clippy clean; `nextest cursor_ runtime::tests` 206/206.
+- 2026-10-20 security fix (folded into slices 1-2): all console methods and
+  uncaught errors redacted in the login sidecar; sidecar stderr never reaches
+  the UI. JS 9/9 + 13/13, nextest 207/207.
+- 2026-10-20 slice 4: web:check, web:lint clean; settings vitest 47/47;
+  `CI=1 npm run web:smoke` 158 passed, 1 flaky unrelated (#850 reload), 2 skipped.
+- 2026-10-21 gate fixes (folded into their commits): rustdoc private link;
+  `cursor_auth` added to the architecture guard SLICES list and its
+  access-policy test moved into runtime (slices may not reference runtime);
+  CursorSignIn polls only after start succeeds (a stale idle poll could hide
+  a start failure). Final gate on login-flow and sign-in-ui branches: fmt,
+  clippy, rustdoc -D warnings, doctests, `nextest --all-features
+  --no-fail-fast` 3077/3077, sidecar node 22/22; sign-in-ui: web:check,
+  web:lint, vitest 1659/1659 (4 consecutive full runs), `CI=1 web:smoke` 159
+  passed, 2 skipped.
+- Not yet run: live sign-in from the phone against a deployed ajax-web.

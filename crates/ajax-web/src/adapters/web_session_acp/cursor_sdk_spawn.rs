@@ -12,7 +12,7 @@ use super::cursor_sdk_client::CursorSdkClient;
 use super::PromptCapabilityDescriptor;
 
 const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
-const LOGIN_HINT: &str = "log in with the Cursor SDK as the ajax-web host user: run Cursor.auth.login() from @cursor/sdk (credentials in ~/.cursor/sdk/auth.json; renew every 90 days)";
+const LOGIN_HINT: &str = "Cursor rejected the SDK credential - sign in again from Settings > Cursor in Ajax Web, or set CURSOR_API_KEY for the ajax-web host";
 /// `@cursor/sdk` requires Node.js 22.13; Claude's Node 20 floor is unaffected.
 const MIN_NODE: (u32, u32) = (22, 13);
 
