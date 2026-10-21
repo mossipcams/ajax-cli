@@ -61,7 +61,7 @@ fn agent_send_keys_line(plan: &crate::commands::CommandPlan) -> &str {
 }
 
 #[test]
-fn skip_interactive_agent_plan_skips_send_keys_for_every_acp_harness() {
+fn skip_interactive_agent_plan_skips_tmux_and_send_keys_for_every_acp_harness() {
     for agent in ["codex", "claude", "cursor", "pi"] {
         let context = context();
         let request = NewTaskRequest {
@@ -78,6 +78,13 @@ fn skip_interactive_agent_plan_skips_send_keys_for_every_acp_harness() {
                     && command.args.first() == Some(&"send-keys".to_string()))
             }),
             "{agent} should not send keys when provisioned"
+        );
+        assert!(
+            plan.commands.iter().all(|command| {
+                !(command.program == "tmux"
+                    && command.args.first() == Some(&"new-session".to_string()))
+            }),
+            "{agent} should not create tmux session when skip_interactive_agent"
         );
     }
 }
@@ -495,12 +502,12 @@ fn new_task_plan_seeds_router_links_when_skip_interactive_agent() {
         "/repo/web__worktrees/ajax-fix-login"
     );
     assert!(
-        plan.commands.iter().all(|command| {
-            !(command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string()))
-        }),
-        "ACP start should still skip send-keys"
+        plan.commands
+            .iter()
+            .all(|command| command.program != "tmux"),
+        "ACP skip_interactive_agent should have no tmux commands"
     );
-    assert_eq!(plan.commands.len(), 4);
+    assert_eq!(plan.commands.len(), 3);
 }
 
 #[test]

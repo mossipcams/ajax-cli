@@ -101,7 +101,7 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
         };
     let mut outputs = external_outputs;
 
-    if request.skip_interactive_agent && request.agent.eq_ignore_ascii_case("cursor") {
+    if task.skip_interactive_agent() {
         let agent_sent = context
             .registry
             .step_receipts_for_task(&task.id)

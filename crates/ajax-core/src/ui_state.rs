@@ -216,6 +216,9 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
         LifecycleStatus::Active | LifecycleStatus::Waiting
     ) && has_no_status_evidence(task)
     {
+        if task.skip_interactive_agent() {
+            return idle();
+        }
         return unknown();
     }
 
@@ -312,17 +315,19 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
     if task.has_side_flag(SideFlag::BranchMissing) {
         return Some("branch missing");
     }
-    if task.has_side_flag(SideFlag::TmuxMissing)
-        || task.runtime_projection.health == crate::models::RuntimeHealth::MissingSession
+    let skip_ia = task.skip_interactive_agent();
+    if !skip_ia
+        && (task.has_side_flag(SideFlag::TmuxMissing)
+            || task.runtime_projection.health == crate::models::RuntimeHealth::MissingSession)
     {
         return Some("tmux session missing");
     }
-    if task.has_side_flag(SideFlag::TaskWindowMissing)
-        || matches!(
-            task.runtime_projection.health,
-            crate::models::RuntimeHealth::MissingTaskWindow
-                | crate::models::RuntimeHealth::WrongTaskWindowPath
-        )
+    if task.runtime_projection.health == crate::models::RuntimeHealth::WrongTaskWindowPath {
+        return Some("task window missing");
+    }
+    if !skip_ia
+        && (task.has_side_flag(SideFlag::TaskWindowMissing)
+            || task.runtime_projection.health == crate::models::RuntimeHealth::MissingTaskWindow)
     {
         return Some("task window missing");
     }

@@ -27,6 +27,7 @@ pub fn prepare_task_terminal<R: Registry>(
         qualified_handle: qualified_handle.to_string(),
         tmux_session: task.tmux_session.clone(),
         task_window: task.task_window.clone(),
+        worktree_path: task.worktree_path.clone(),
     })
 }
 

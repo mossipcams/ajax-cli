@@ -119,6 +119,7 @@ fn refresh_task(
     }
     let mut state = load_state(task);
     let open_pr = discover_open_pr(task, runner, github, now, &mut state);
+    reconcile_lifecycle_from_prs(task);
     let Some(pr) = open_pr else {
         retire_attempt(task, &mut state);
         store_state(task, &state);
@@ -344,6 +345,47 @@ fn apply_healthy(task: &mut Task, state: &mut CiMonitorState) {
         CiAttemptStatus::Passed,
         CiChecksObservation::Healthy,
     );
+    if task.lifecycle_status == crate::models::LifecycleStatus::Reviewable
+        && !task.has_side_flag(crate::models::SideFlag::Dirty)
+        && !task.has_side_flag(crate::models::SideFlag::Conflicted)
+        && !task.has_side_flag(crate::models::SideFlag::TestsFailed)
+    {
+        let _ = crate::lifecycle::mark_mergeable(task);
+    }
+}
+
+fn reconcile_lifecycle_from_prs(task: &mut Task) {
+    use crate::diff_review::{stored_pull_requests, PullRequestState};
+    use crate::models::LifecycleStatus;
+
+    let prs = stored_pull_requests(task);
+    let has_merged = prs.iter().any(|pr| pr.state == PullRequestState::Merged);
+    let has_open = prs.iter().any(|pr| pr.state == PullRequestState::Open);
+
+    if has_merged
+        && !has_open
+        && matches!(
+            task.lifecycle_status,
+            LifecycleStatus::Active | LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
+        )
+    {
+        let _ = crate::lifecycle::mark_merged(task);
+        task.annotations = crate::attention::annotate(task);
+        return;
+    }
+
+    if has_open
+        && task.lifecycle_status == LifecycleStatus::Active
+        && matches!(
+            task.agent_status,
+            crate::models::AgentRuntimeStatus::Done | crate::models::AgentRuntimeStatus::NotStarted
+        )
+        && !task.has_side_flag(crate::models::SideFlag::AgentRunning)
+        && !task.has_side_flag(crate::models::SideFlag::NeedsInput)
+    {
+        let _ = crate::lifecycle::mark_reviewable(task);
+        task.annotations = crate::attention::annotate(task);
+    }
 }
 
 fn apply_observation(

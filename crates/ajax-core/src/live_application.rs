@@ -28,7 +28,21 @@ pub fn apply_authoritative_observation_at(
     observation: LiveObservation,
     observed_at: SystemTime,
 ) {
+    let kind = observation.kind;
     apply_reduced_observation(task, observation, observed_at);
+
+    if matches!(
+        kind,
+        LiveStatusKind::AgentRunning
+            | LiveStatusKind::CommandRunning
+            | LiveStatusKind::TestsRunning
+    ) {
+        let _ = transition_lifecycle(
+            task,
+            LifecycleStatus::Active,
+            LifecycleTransitionReason::OperationResult,
+        );
+    }
 }
 
 pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) {

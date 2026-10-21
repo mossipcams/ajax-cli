@@ -343,7 +343,7 @@ async fn axum_operation_preserves_branch_adoption_confirmation() {
             &app,
             &cookie,
             "/api/operations",
-            r#"{"task_handle":"web/fix-login","action":"repair","confirmed":true,"branch_adoption":{"expected_branch":"ajax/fix-login","observed_branch":"fix/pane-stuck"}}"#,
+            r#"{"task_handle":"web/fix-login","action":"review","confirmed":true,"branch_adoption":{"expected_branch":"ajax/fix-login","observed_branch":"fix/pane-stuck"}}"#,
         )
         .await;
 
@@ -352,7 +352,7 @@ async fn axum_operation_preserves_branch_adoption_confirmation() {
         state.shared().bridge.operate,
         Some(OperateRequest {
             task_handle: "web/fix-login".to_string(),
-            action: "repair".to_string(),
+            action: "review".to_string(),
             confirmed: true,
             branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
                 expected_branch: "ajax/fix-login".to_string(),

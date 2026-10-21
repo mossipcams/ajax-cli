@@ -11,6 +11,7 @@ fn attach_plan(handle: &str) -> TerminalAttachPlan {
         qualified_handle: handle.to_string(),
         tmux_session: "ajax-web-fix-login".to_string(),
         task_window: "task".to_string(),
+        worktree_path: std::path::PathBuf::new(),
     }
 }
 

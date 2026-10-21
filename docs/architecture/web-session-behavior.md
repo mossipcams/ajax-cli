@@ -47,7 +47,7 @@ existing paths.
 
 ## Launch
 
-- Provisioned starts skip tmux send-keys but still create the task tmux session.
+- Provisioned (`skip_interactive_agent`) starts for ACP harnesses skip both `tmux new-session` and `tmux send-keys` on creation; the task tmux session is created lazily on first Terminal attach or `ajax open`.
 Every harness with an orchestration-chat transport (Codex via its ACP bridge, plus
 Pi's RPC transport, the Claude Agent SDK sidecar, and the Cursor `@cursor/sdk` Node sidecar) may use that launch mode; a harness
 without one cannot.
