@@ -143,14 +143,15 @@ describe("TaskList", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
-  it("exposes the first non-resume action after a left swipe", () => {
+  it("exposes Drop after a left swipe even when non-drop actions precede it", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");
     const row = screen.getByRole("button", { name: /web\/a/ });
     swipeRowLeft(row);
     expect(wrap).toHaveClass("is-revealed-wrap");
     expect(row).toHaveClass("is-revealed");
-    expect(within(wrap).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
+    expect(within(wrap).getByRole("button", { name: "Drop" })).toBeInTheDocument();
+    expect(within(wrap).queryByRole("button", { name: "Fix CI" })).toBeNull();
   });
 
   it("closes a revealed row on swipe right", () => {
@@ -175,10 +176,10 @@ describe("TaskList", () => {
           ...cockpit.cards[1],
           actions: [
             {
-              action: "review",
-              label: "Review",
-              destructive: false,
-              confirmation_required: false,
+              action: "drop",
+              label: "Drop",
+              destructive: true,
+              confirmation_required: true,
             },
           ],
         },

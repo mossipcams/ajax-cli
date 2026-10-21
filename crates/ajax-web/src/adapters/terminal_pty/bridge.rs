@@ -249,6 +249,25 @@ pub async fn bridge_task_terminal_socket(
     })
     .await;
 
+    if !plan.worktree_path.as_os_str().is_empty() && plan.worktree_path.exists() {
+        let has_base = TmuxCommand::new(["has-session", "-t", &plan.tmux_session]);
+        let base_exists =
+            matches!(run_tmux_command(&has_base).await, Ok(out) if out.status.success());
+        if !base_exists {
+            let create_base = TmuxCommand::new([
+                "new-session",
+                "-d",
+                "-s",
+                &plan.tmux_session,
+                "-n",
+                &plan.task_window,
+                "-c",
+                &plan.worktree_path.display().to_string(),
+            ]);
+            let _ = run_tmux_command(&create_base).await;
+        }
+    }
+
     for command in &isolated.setup {
         let failure = match run_tmux_command(command).await {
             Ok(output) if output.status.success() => continue,

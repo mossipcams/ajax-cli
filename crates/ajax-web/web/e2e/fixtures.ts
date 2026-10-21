@@ -26,6 +26,7 @@ export const COCKPIT_FIXTURE = {
       status_explanation: null,
       actions: [
         { action: "review", label: "Review", destructive: false, confirmation_required: false },
+        { action: "drop",   label: "Drop",   destructive: true,  confirmation_required: true  },
       ],
     },
   ],

@@ -163,14 +163,14 @@ pub fn new_task_plan_with_observation<R: Registry>(
         plan.commands
             .push(router_symlinks_seed_command(&worktree_path_string));
     }
-    plan.commands.push(tmux.new_detached_task_session(
-        &tmux_session,
-        DEFAULT_TASK_WINDOW_NAME,
-        &worktree_path_string,
-    ));
-    let skip_agent_send_keys =
+    let skip_tmux_and_agent =
         request.skip_interactive_agent && acp_launch_for_agent(selected_agent).is_some();
-    if !skip_agent_send_keys {
+    if !skip_tmux_and_agent {
+        plan.commands.push(tmux.new_detached_task_session(
+            &tmux_session,
+            DEFAULT_TASK_WINDOW_NAME,
+            &worktree_path_string,
+        ));
         let agent_launch_line =
             fold_setup_into_agent_launch(repo.bootstrap.as_deref(), &command_line(&launch));
         plan.commands.push(tmux.send_agent_command(
@@ -390,7 +390,11 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
                 task.selected_agent,
                 task.worktree_path.display().to_string(),
             ));
-            if !task.skip_interactive_agent() {
+            if task.skip_interactive_agent() {
+                task.refresh_runtime_projection_from_source(
+                    RuntimeObservationSource::CommandResult,
+                );
+            } else {
                 task.add_side_flag(SideFlag::AgentRunning);
             }
             sync_open_attempts(task, std::time::SystemTime::now());

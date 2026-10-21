@@ -149,6 +149,11 @@ impl Task {
         if skip {
             self.metadata
                 .insert(SKIP_INTERACTIVE_AGENT_KEY.to_string(), "1".to_string());
+            self.remove_side_flag(SideFlag::TmuxMissing);
+            self.remove_side_flag(SideFlag::TaskWindowMissing);
+            self.clear_live_status_if(LiveStatusKind::TmuxMissing);
+            self.clear_live_status_if(LiveStatusKind::TaskWindowMissing);
+            self.refresh_runtime_projection();
         } else {
             self.metadata.remove(SKIP_INTERACTIVE_AGENT_KEY);
         }
@@ -183,10 +188,25 @@ impl Task {
     }
 
     pub fn has_missing_substrate(&self) -> bool {
+        let ignores_tmux = self.skip_interactive_agent();
         self.has_missing_git_substrate()
-            || self.side_flags().any(SideFlag::is_missing_substrate)
-            || self.runtime_projection.health.is_missing_substrate()
-            || self.live_reports_unrefuted_missing_substrate()
+            || self.side_flags().any(|flag| {
+                flag.is_missing_substrate()
+                    && !(ignores_tmux
+                        && matches!(flag, SideFlag::TmuxMissing | SideFlag::TaskWindowMissing))
+            })
+            || self.runtime_health_missing_substrate(ignores_tmux)
+            || self.live_reports_unrefuted_missing_substrate(ignores_tmux)
+    }
+
+    fn runtime_health_missing_substrate(&self, ignores_tmux: bool) -> bool {
+        let health = self.runtime_projection.health;
+        health.is_missing_substrate()
+            && !(ignores_tmux
+                && matches!(
+                    health,
+                    RuntimeHealth::MissingSession | RuntimeHealth::MissingTaskWindow
+                ))
     }
 
     pub fn has_missing_worktree(&self) -> bool {
@@ -275,7 +295,14 @@ impl Task {
                 self.remove_side_flag(SideFlag::TmuxMissing);
                 self.clear_live_status_if(LiveStatusKind::TmuxMissing);
             }
-            Some(_) | None => self.mark_resource_missing(SideFlag::TmuxMissing),
+            Some(_) | None => {
+                if self.skip_interactive_agent() {
+                    self.remove_side_flag(SideFlag::TmuxMissing);
+                    self.clear_live_status_if(LiveStatusKind::TmuxMissing);
+                } else {
+                    self.mark_resource_missing(SideFlag::TmuxMissing);
+                }
+            }
         }
 
         self.tmux_status = status;
@@ -288,17 +315,32 @@ impl Task {
                 self.remove_side_flag(SideFlag::TaskWindowMissing);
                 self.clear_live_status_if(LiveStatusKind::TaskWindowMissing);
             }
-            Some(_) | None => self.mark_resource_missing(SideFlag::TaskWindowMissing),
+            Some(_) | None => {
+                if self.skip_interactive_agent() {
+                    self.remove_side_flag(SideFlag::TaskWindowMissing);
+                    self.clear_live_status_if(LiveStatusKind::TaskWindowMissing);
+                } else {
+                    self.mark_resource_missing(SideFlag::TaskWindowMissing);
+                }
+            }
         }
 
         self.task_window_status = status;
         self.refresh_runtime_projection();
     }
 
-    fn live_reports_unrefuted_missing_substrate(&self) -> bool {
+    fn live_reports_unrefuted_missing_substrate(&self, ignores_tmux: bool) -> bool {
         let Some(live) = self.live_status.as_ref() else {
             return false;
         };
+        if ignores_tmux
+            && matches!(
+                live.kind,
+                LiveStatusKind::TmuxMissing | LiveStatusKind::TaskWindowMissing
+            )
+        {
+            return false;
+        }
         match live.kind {
             LiveStatusKind::TmuxMissing => !self.durable_tmux_present(),
             LiveStatusKind::TaskWindowMissing => !self.durable_task_window_present(),
@@ -332,7 +374,7 @@ impl Task {
             .is_some_and(|status| status.worktree_exists)
     }
 
-    fn clear_live_status_if(&mut self, kind: LiveStatusKind) {
+    pub(crate) fn clear_live_status_if(&mut self, kind: LiveStatusKind) {
         if self
             .live_status
             .as_ref()
@@ -348,13 +390,14 @@ impl Task {
     }
 
     pub fn refresh_runtime_projection_from_source(&mut self, source: RuntimeObservationSource) {
-        self.runtime_projection = crate::runtime::reconcile_runtime(
+        self.runtime_projection = crate::runtime::reconcile_runtime_for_task(
             &crate::runtime::ObservedTaskRuntime {
                 git_status: self.git_status.clone(),
                 tmux_status: self.tmux_status.clone(),
                 task_window_status: self.task_window_status.clone(),
             },
             &self.branch,
+            self.skip_interactive_agent(),
             SystemTime::now(),
             source,
         );

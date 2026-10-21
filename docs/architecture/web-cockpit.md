@@ -1328,8 +1328,8 @@ values may remain detail diagnostics, but browser JavaScript must not derive or
 override headline status from them. The browser may style the first returned
 action as prominent; it does not receive or invent a separate `primary_action`
 contract. Dashboard task rows (`features/task/TaskList.tsx`,
-`styles/task/list.css`) keep the first non-resume action behind the full-width
-row; left swipe exposes it at `--task-row-reveal-width` (158px) via
+`styles/task/list.css`) keep the `drop` action behind the full-width
+row (with `Repair` excluded from Web Cockpit actions); left swipe exposes `Drop` at `--task-row-reveal-width` (158px) via
 `useSwipeReveal` on `.task-row-wrap` (touchstart inside `.task-row-reveal` is
 ignored). Swipe right on the wrap closes a revealed row (offset returns to 0);
 only one row may be revealed at a time; a settled reveal auto-hides after 10s
@@ -1477,6 +1477,7 @@ reconnect-safe without process-local bridge state).
 
 The browser’s durable viewport is an **isolated grouped tmux session** named
 from the task’s registered session plus a stable per-connection `client=` id
+(lazily creating the base task `tmux_session` in the task worktree on first terminal attach if it does not yet exist)
 (minted once per terminal connection controller, hashed to a 12-hex suffix).
 Duplicated browser tabs must not share that id. Setup uses detached `new-session -d` and treats an already-present ephemeral session (`duplicate session`) as success so reconnect reuses the viewport without attaching during setup; disconnect kills the
 PTY child but leaves the ephemeral session for reattach. Destroy/reaper paths

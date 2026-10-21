@@ -1,9 +1,8 @@
 use ajax_core::{
-    commands::{BranchAdoptionPlan, CommandContext, OpenMode},
+    commands::{BranchAdoptionPlan, CommandContext},
     models::OperatorAction,
     output::TaskCard,
     registry::Registry,
-    task_operations::operator_dispatch::{plan_task_command_operation, TaskCommandKind},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -72,32 +71,11 @@ pub fn browser_actions<R: Registry>(
 }
 
 fn web_action_for_card<R: Registry>(
-    context: &CommandContext<R>,
-    card: &TaskCard,
+    _context: &CommandContext<R>,
+    _card: &TaskCard,
     action: OperatorAction,
 ) -> Option<WebAction> {
-    if !supported_web_action(action) {
-        return None;
-    }
-    let mut state = WebAction {
-        action: action.as_str().to_string(),
-        label: operator_action_label(action).to_string(),
-        destructive: action == OperatorAction::Drop,
-        confirmation_required: action == OperatorAction::Drop,
-        branch_adoption: None,
-    };
-    if action == OperatorAction::Repair {
-        if let Ok(plan) = plan_task_command_operation(
-            context,
-            TaskCommandKind::Repair,
-            &card.qualified_handle,
-            OpenMode::NoAttach,
-        ) {
-            state.confirmation_required = plan.requires_confirmation;
-            state.branch_adoption = plan.branch_adoption;
-        }
-    }
-    Some(state)
+    web_action(action)
 }
 
 pub fn supported_web_action(action: OperatorAction) -> bool {
@@ -105,7 +83,6 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
         action,
         OperatorAction::Review
             | OperatorAction::Ship
-            | OperatorAction::Repair
             | OperatorAction::Drop
             | OperatorAction::Resume
     )

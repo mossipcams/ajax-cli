@@ -83,7 +83,7 @@ const TaskRow = memo(function TaskRow({
   const statusInfo = taskRowStatus(card);
   const tone = statusInfo.tone;
   const wrapRef = useRef<HTMLDivElement>(null);
-  const revealAction = visibleTaskActions(card.actions)[0];
+  const revealAction = visibleTaskActions(card.actions).find((action) => action.action === "drop");
 
   useSwipeReveal(wrapRef, revealAction
     ? {

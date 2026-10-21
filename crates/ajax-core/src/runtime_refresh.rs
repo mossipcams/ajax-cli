@@ -120,18 +120,36 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     let sessions_output = match runner.run(&sessions_command) {
         Ok(output) if output.status_code == 0 => output.stdout,
         Ok(output) => {
-            let reason = format!(
-                "tmux list-sessions probe failed: exited with status {}",
-                output.status_code
-            );
-            for task_id in &probe_task_ids {
-                record_runtime_probe_failure(context, task_id, reason.clone(), &mut changed);
+            let combined = format!("{}{}", output.stdout, output.stderr);
+            let no_server = combined.contains("no server running")
+                || combined.contains("error connecting to")
+                || combined.contains("No such file or directory");
+            if no_server {
+                String::new()
+            } else {
+                let reason = format!(
+                    "tmux list-sessions probe failed: exited with status {}",
+                    output.status_code
+                );
+                for task_id in &probe_task_ids {
+                    if let Some(task) = context.registry.get_task(task_id) {
+                        if task.skip_interactive_agent() {
+                            continue;
+                        }
+                    }
+                    record_runtime_probe_failure(context, task_id, reason.clone(), &mut changed);
+                }
+                return Ok(changed);
             }
-            return Ok(changed);
         }
         Err(error) => {
             let reason = format!("tmux list-sessions probe failed: {error}");
             for task_id in &probe_task_ids {
+                if let Some(task) = context.registry.get_task(task_id) {
+                    if task.skip_interactive_agent() {
+                        continue;
+                    }
+                }
                 record_runtime_probe_failure(context, task_id, reason.clone(), &mut changed);
             }
             return Ok(changed);
@@ -213,6 +231,33 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
         if !session_status.exists {
+            if task_snapshot.skip_interactive_agent() {
+                let missing_tmux = TaskWindowStatus::missing(
+                    task_snapshot.task_window.clone(),
+                    task_snapshot.worktree_path.clone(),
+                );
+                changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
+                context
+                    .registry
+                    .update_tmux_status(&task_id, Some(session_status.clone()))
+                    .map_err(CommandError::Registry)?;
+                changed |= task_snapshot.task_window_status.as_ref() != Some(&missing_tmux);
+                context
+                    .registry
+                    .update_task_window_status(&task_id, Some(missing_tmux))
+                    .map_err(CommandError::Registry)?;
+                refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    let previous = task.clone();
+                    task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
+                    task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
+                    task.clear_live_status_if(LiveStatusKind::TmuxMissing);
+                    task.clear_live_status_if(LiveStatusKind::TaskWindowMissing);
+                    refresh_cached_annotations(task);
+                    changed |= *task != previous;
+                }
+                continue;
+            }
             let has_fresh_complete_command_result_runtime = task_snapshot.runtime_projection.source
                 == RuntimeObservationSource::CommandResult
                 && !task_snapshot
@@ -247,8 +292,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::AgentRunning);
-                // Same episode (kind already TmuxMissing with a stored timestamp)
-                // keeps its original observation time; stamp only new episodes.
                 let already_tmux_missing = matches!(
                     task.live_status.as_ref().map(|status| status.kind),
                     Some(LiveStatusKind::TmuxMissing)
@@ -328,6 +371,9 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
 
         if !task_window_status.exists {
+            if task_snapshot.skip_interactive_agent() {
+                continue;
+            }
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 live::apply_observation(
                     task,
@@ -336,6 +382,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 refresh_cached_annotations(task);
                 changed = true;
             }
+            continue;
+        }
+
+        if task_snapshot.skip_interactive_agent() {
             continue;
         }
 

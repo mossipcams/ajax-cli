@@ -95,14 +95,17 @@ test("left swipe opens the row to SWIPE_REVEAL_WIDTH and the revealed action dis
     .toBe(`translateX(-${revealWidth}px)`);
 
   const revealedAction = page.locator(
-    `.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="review"]`,
+    `.task-row-wrap[data-handle="${TARGET_HANDLE}"] [data-action="drop"]`,
   );
   await expect(revealedAction).toBeVisible();
 
   await revealedAction.click();
+  const confirmPanel = page.getByTestId("result-panel-confirm");
+  await expect(confirmPanel).toBeVisible({ timeout: 3_000 });
+  await confirmPanel.getByRole("button", { name: "Confirm" }).click();
 
   await expect
-    .poll(() => fetchCalls(page))
+    .poll(() => fetchCalls(page), { timeout: 7_000 })
     .toContainEqual(
       expect.objectContaining({
         url: expect.stringContaining(OPERATION_PATH),

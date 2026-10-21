@@ -21,18 +21,35 @@ pub fn open_task_plan<R: Registry>(
         return Ok(plan);
     }
 
+    let skip_ia = task.skip_interactive_agent();
+
     if task
         .git_status
         .as_ref()
         .is_some_and(|status| !status.worktree_exists)
-        || task
+    {
+        plan.blocked_reasons
+            .push("task has missing substrate".to_string());
+        return Ok(plan);
+    }
+    if !skip_ia {
+        if task
             .tmux_status
             .as_ref()
             .is_some_and(|status| !status.exists)
-        || task
-            .task_window_status
-            .as_ref()
-            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+            || task
+                .task_window_status
+                .as_ref()
+                .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+        {
+            plan.blocked_reasons
+                .push("task has missing substrate".to_string());
+            return Ok(plan);
+        }
+    } else if task
+        .task_window_status
+        .as_ref()
+        .is_some_and(|status| status.exists && !status.points_at_expected_path)
     {
         plan.blocked_reasons
             .push("task has missing substrate".to_string());
@@ -53,6 +70,18 @@ pub fn open_task_plan<R: Registry>(
     }
 
     let tmux = TmuxAdapter::new("tmux");
+    let needs_lazy_session = skip_ia
+        && task
+            .tmux_status
+            .as_ref()
+            .is_none_or(|status| !status.exists);
+    if needs_lazy_session {
+        plan.commands.push(tmux.new_detached_task_session(
+            &task.tmux_session,
+            &task.task_window,
+            &task.worktree_path.display().to_string(),
+        ));
+    }
     plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.task_window));
     match mode {
