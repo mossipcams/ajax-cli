@@ -149,10 +149,11 @@ describe("diagnostic network failures", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("uses shared session-expiry recovery when a protected route fails", async () => {
+  it("reports a plain network error for a protected route without login navigation", async () => {
     const result = await diagnostics.diagnosticFetch("/api/version");
     expect(result.ok).toBe(false);
+    expect(result.status).toBeNull();
     expect(result.error).toContain("Load failed");
-    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
   });
 });
