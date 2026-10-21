@@ -933,15 +933,21 @@ create browser-owned task state, persist pending work, cache operational data,
 or replay mutations. It is a transport recovery mechanism for the host-native
 private listener.
 
-When `POST /api/session` renewal fails — an unrecoverable session expiry such
-as Cloudflare Access expiring while a Home Screen app stays open — the shared
-browser API transport performs a one-shot top-level navigation to the current
-URL so Cloudflare Access can run its normal sign-in flow in place, without
-closing and reopening the app. A `sessionStorage` flag plus an in-memory guard
-bound this to at most one navigation per page load / tab session, so repeated
-unauthorized responses cannot cause a reload loop; if navigation does not
-proceed (storage or navigation unavailable), the caller retains the
-stale-session error. The recovery path never replays failed mutations.
+Protected API requests send `X-Requested-With: XMLHttpRequest` so Cloudflare
+Access answers an expired session with a direct error instead of an HTML login
+redirect. When `POST /api/session` renewal fails, the retried request is still
+unauthorized or redirected, or a protected fetch rejects without an abort or
+timeout — an unrecoverable session expiry such as Cloudflare Access expiring
+while a Home Screen app stays open — the shared browser API transport performs
+a one-shot top-level navigation to the current URL so Cloudflare Access can run
+its normal sign-in flow in place, without closing and reopening the app. A
+`sessionStorage` flag plus an in-memory guard bound this to at most one
+navigation per page load / tab session, so repeated unauthorized responses
+cannot cause a reload loop; if navigation does not proceed (storage or
+navigation unavailable), the caller retains the stale-session error. Successful
+renewal alone does not clear the guard; only a successful protected API
+response (completed reauthentication) clears it. The recovery path never
+replays failed mutations.
 The server keeps `Cf-Access-Jwt-Assertion` verification and the HttpOnly
 browser-session cookie authoritative, and the browser stores no Access
 tokens.

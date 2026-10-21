@@ -44,11 +44,18 @@ function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS, querySignal?: Ab
   return {
     cache: "no-store",
     credentials: "same-origin",
+    headers: { ...AJAX_PROTECTED_HEADERS },
     signal,
   };
 }
 
 export const AJAX_FOREGROUND_HEADER = "X-Ajax-Foreground";
+
+/**
+ * Marks protected API requests as AJAX so Cloudflare Access fails an expired
+ * session with a direct 401/4xx response instead of an HTML login redirect.
+ */
+export const AJAX_PROTECTED_HEADERS = { "X-Requested-With": "XMLHttpRequest" };
 
 function documentIsForeground(): boolean {
   return typeof document !== "undefined" && document.visibilityState === "visible";
@@ -60,6 +67,7 @@ function cockpitGetOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS): RequestI
   return {
     ...options,
     headers: {
+      ...AJAX_PROTECTED_HEADERS,
       [AJAX_FOREGROUND_HEADER]: "1",
     },
   };
@@ -70,6 +78,7 @@ function sessionRenewOptions(): RequestInit {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
+    headers: { ...AJAX_PROTECTED_HEADERS },
     signal: AbortSignal.timeout(GET_REQUEST_TIMEOUT_MS),
   };
 }
@@ -78,6 +87,22 @@ let browserSessionRenewal: Promise<void> | null = null;
 
 const SESSION_RECOVERY_GUARD_KEY = "ajax.pwa.session-expiry-recovered";
 let sessionExpiryNavigationStarted = false;
+
+/**
+ * Clears the one-shot recovery guard after a protected request succeeds
+ * (successful reauthentication): the expiry episode is over, so a later
+ * expiry may navigate once again in the same tab session.
+ */
+function clearSessionRecoveryGuard(): void {
+  sessionExpiryNavigationStarted = false;
+  try {
+    if (sessionStorage.getItem(SESSION_RECOVERY_GUARD_KEY)) {
+      sessionStorage.removeItem(SESSION_RECOVERY_GUARD_KEY);
+    }
+  } catch {
+    // Ignore; the in-memory guard resets on page load.
+  }
+}
 
 /**
  * One-shot top-level navigation when the browser session has unrecoverably
@@ -100,14 +125,6 @@ export function attemptSessionExpiryNavigation(): boolean {
     return true;
   } catch {
     return false;
-  }
-}
-
-function clearSessionRecoveryGuard(): void {
-  try {
-    sessionStorage.removeItem(SESSION_RECOVERY_GUARD_KEY);
-  } catch {
-    // Ignore; the in-memory guard resets on page load.
   }
 }
 
@@ -147,8 +164,6 @@ export async function renewBrowserSession(): Promise<void> {
           response.status,
         );
       }
-
-      clearSessionRecoveryGuard();
     })().finally(() => {
       browserSessionRenewal = null;
     });
@@ -156,14 +171,30 @@ export async function renewBrowserSession(): Promise<void> {
   return browserSessionRenewal;
 }
 
-async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
+function isAbortOrTimeout(error: unknown): boolean {
+  const name = typeof error === "object" && error !== null && "name" in error ? error.name : null;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+function rejectedProtectedFetch(error: unknown): ApiError {
+  // A rejected protected fetch can be a Cloudflare Access expiry (cross-origin
+  // login redirect) that the browser never surfaces as a 401; the one-shot
+  // guard keeps this to at most one navigation per tab session.
+  if (!isAbortOrTimeout(error)) attemptSessionExpiryNavigation();
+  return new ApiError("network", error instanceof Error ? error.message : String(error));
+}
+
+export async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(path, init);
   } catch (error) {
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
+    throw rejectedProtectedFetch(error);
   }
-  if (response.status !== 401) return response;
+  if (response.status !== 401 && !response.redirected) {
+    if (response.ok) clearSessionRecoveryGuard();
+    return response;
+  }
 
   try {
     await renewBrowserSession();
@@ -174,14 +205,15 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
   }
   try {
     const retryResponse = await fetch(path, init);
-    if (retryResponse.status === 401) {
+    if (retryResponse.status === 401 || retryResponse.redirected) {
       attemptSessionExpiryNavigation();
       throw new ApiError("stale-session", "HTTP 401", 401);
     }
+    if (retryResponse.ok) clearSessionRecoveryGuard();
     return retryResponse;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
+    throw rejectedProtectedFetch(error);
   }
 }
 
@@ -301,7 +333,7 @@ export async function sendPushUnsubscribe(
       : { all: true };
   const response = await fetchProtectedWithSessionRenewal("/api/push/subscribe", {
     method: "DELETE",
-    headers: { "content-type": "application/json" },
+    headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     cache: "no-store",
     credentials: "same-origin",
     body: JSON.stringify(body),
@@ -330,7 +362,7 @@ export async function sendPushTest(subscription: PushTestSubscription): Promise<
 async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {
   const response = await fetchProtectedWithSessionRenewal(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     cache: "no-store",
     credentials: "same-origin",
     body: JSON.stringify(body),
@@ -420,7 +452,7 @@ export async function waitForServerOnline(
 
 async function peekVersion(): Promise<string | null> {
   try {
-    const response = await fetch("/api/version", getOptions());
+    const response = await fetchProtectedWithSessionRenewal("/api/version", getOptions());
     if (!response.ok) return null;
     const value = await readJson(response);
     if (

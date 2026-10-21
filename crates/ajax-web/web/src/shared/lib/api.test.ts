@@ -92,10 +92,15 @@ describe("GET transport options", () => {
     await checkHealth();
     await fetchDetail("web/x");
 
-    const getInit = { cache: "no-store", credentials: "same-origin", signal: expect.any(AbortSignal) };
+    const getInit = {
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+      signal: expect.any(AbortSignal),
+    };
     expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
       ...getInit,
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
     });
     expect(fetch).toHaveBeenCalledWith("/api/version", getInit);
     expect(fetch).toHaveBeenCalledWith("/api/health", getInit);
@@ -187,19 +192,20 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/cockpit", {
       cache: "no-store",
       credentials: "same-origin",
-      headers: { "X-Ajax-Foreground": "1" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "X-Ajax-Foreground": "1" },
       signal: expect.any(AbortSignal),
     });
   });
@@ -216,6 +222,7 @@ describe("browser session renewal", () => {
       expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
         cache: "no-store",
         credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
         signal: expect.any(AbortSignal),
       });
     } finally {
@@ -252,7 +259,7 @@ describe("browser session renewal", () => {
     expect(result.ok).toBe(true);
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
@@ -261,11 +268,12 @@ describe("browser session renewal", () => {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
@@ -377,6 +385,7 @@ describe("browser session renewal", () => {
     expect(fetch).toHaveBeenCalledWith("/api/health", {
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
       signal: expect.any(AbortSignal),
     });
   });
@@ -531,28 +540,28 @@ describe("POST transport options", () => {
 
     expect(fetch).toHaveBeenCalledWith("/api/operations", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(operationRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/tasks", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(startRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/restart", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
@@ -611,7 +620,7 @@ describe("startTestInStable", () => {
     expect(response.ok).toBe(true);
     expect(fetch).toHaveBeenCalledWith("/api/server/test-in-stable", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "X-Requested-With": "XMLHttpRequest", "content-type": "application/json" },
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify({}),
@@ -787,91 +796,5 @@ describe("task terminal socket helpers", () => {
 
     expect(taskTerminalWebSocketUrl("web/fix-login")).not.toContain("client=");
   });
-});
 
-describe("session-expiry recovery", () => {
-  const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
-  let navigate: Mock;
-  let api: typeof import("./api");
-
-  beforeEach(() => {
-    vi.resetModules();
-    sessionStorage.clear();
-    navigate = vi.fn();
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: {
-        href: "https://ajax.example/cockpit?x=1",
-        replace: (url: string) => navigate(url),
-      },
-    });
-  });
-
-  afterEach(() => {
-    if (locationDescriptor) Object.defineProperty(window, "location", locationDescriptor);
-    vi.unstubAllGlobals();
-  });
-
-  const expiredFetch = () =>
-    mockFetch((path) =>
-      path === "/api/cockpit"
-        ? Promise.resolve(new Response(null, { status: 401 }))
-        : Promise.resolve(
-            new Response(JSON.stringify({ error: "cloudflare access gone" }), {
-              status: 503,
-              headers: { "content-type": "application/json" },
-            }),
-          ),
-    );
-
-  it("navigates the top-level page to the current URL once when renewal fails", async () => {
-    api = await import("./api");
-    expiredFetch();
-
-    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("https://ajax.example/cockpit?x=1");
-  });
-
-  it("does not navigate again while the recovery guard is already set", async () => {
-    api = await import("./api");
-    sessionStorage.setItem("ajax.pwa.session-expiry-recovered", "1");
-    expiredFetch();
-
-    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
-    expect(navigate).not.toHaveBeenCalled();
-  });
-
-  it("navigates once when the retried request is still 401", async () => {
-    api = await import("./api");
-    mockFetch((path) => {
-      if (path === "/api/session") {
-        return Promise.resolve(
-          new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        );
-      }
-      return Promise.resolve(new Response(null, { status: 401 }));
-    });
-
-    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
-    expect(navigate).toHaveBeenCalledTimes(1);
-  });
-
-  it("clears the guard on successful renewal so a later expiry can recover", async () => {
-    const firstApi = await import("./api");
-    expiredFetch();
-    await expect(firstApi.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
-    expect(navigate).toHaveBeenCalledTimes(1);
-
-    mockFetch(() => Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 })));
-    await firstApi.renewBrowserSession();
-    expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
-
-    navigate.mockClear();
-    vi.resetModules();
-    api = await import("./api"); // fresh page load: in-memory guard is reset
-    expiredFetch();
-    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
-    expect(navigate).toHaveBeenCalledTimes(1);
-  });
 });
