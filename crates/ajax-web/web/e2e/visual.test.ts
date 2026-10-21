@@ -9,9 +9,9 @@ import {
 } from "./fixtures";
 
 
-const ACCENT = "rgb(135, 175, 215)";
-const WARN = "rgb(215, 175, 95)";
-const DANGER = "rgb(215, 135, 135)";
+const ACCENT = "rgb(63, 118, 255)";
+const WARN = "rgb(245, 158, 11)";
+const DANGER = "rgb(239, 68, 68)";
 const TRANSPARENT = "rgba(0, 0, 0, 0)";
 
 function bg(locator: Locator) {
@@ -27,8 +27,6 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const newButton = page.locator('.bottom-nav button[data-bottom-action="new-task"]');
   expect(await bg(newButton)).toBe(ACCENT);
 
-  const activePill = page.locator(".project-pill.is-active").first();
-  expect(await bg(activePill)).toBe(ACCENT);
 
   const taskRow = page.locator('.task-row[data-handle="web/fix-login"]').first();
   const rowStyle = await taskRow.evaluate((el) => {

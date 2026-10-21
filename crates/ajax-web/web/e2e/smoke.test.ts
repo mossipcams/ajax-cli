@@ -46,12 +46,9 @@ test("operator action and reload project authoritative task state", async ({ pag
 
 test("project filter shows only matching repo tasks", async ({ page }) => {
   await mockFetch(page);
-  await page.goto("/app.html");
+  await page.goto("/app.html#/p/web");
+
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
-
-  await page.locator("button.project-pill").filter({ hasText: "web" }).first().click();
-
-  await expect(page.getByText("web/fix-login")).toBeVisible();
   await expect(page.getByText("api/add-auth")).not.toBeVisible();
 });
 
