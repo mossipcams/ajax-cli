@@ -22,6 +22,21 @@ import {
 
 export { ApiError, type ApiErrorKind };
 
+export interface CursorAuthStatus {
+  present: boolean;
+  valid: boolean | null;
+  email: string | null;
+  expiresAtMs: number | null;
+  error: string | null;
+}
+
+export type CursorLoginPhase =
+  | { phase: "idle" }
+  | { phase: "waiting"; url: string }
+  | { phase: "verifying" }
+  | { phase: "succeeded"; email: string | null; expiresAtMs: number | null }
+  | { phase: "failed"; message: string };
+
 export function requestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -213,7 +228,6 @@ export async function fetchTaskDiff(
   }
   return value as TaskDiffView;
 }
-
 export async function fetchVersion(): Promise<VersionResponse> {
   const value = await getJson("/api/version");
   return value as VersionResponse;
@@ -460,6 +474,36 @@ export async function startTestInStable(): Promise<OperationResponse> {
 }
 
 export { TEST_IN_STABLE_TIMEOUT_MS };
+
+export async function fetchCursorAuthStatus(): Promise<CursorAuthStatus> {
+  const value = await getJson("/api/cursor/auth");
+  return value as CursorAuthStatus;
+}
+
+export async function fetchCursorLoginPhase(): Promise<CursorLoginPhase> {
+  const value = await getJson("/api/cursor/auth/login");
+  return value as CursorLoginPhase;
+}
+
+async function postCursorLogin(path: string): Promise<CursorLoginPhase> {
+  const { response, payload } = await postJson(path, {});
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
+  return payload as CursorLoginPhase;
+}
+
+export async function startCursorLogin(): Promise<CursorLoginPhase> {
+  return postCursorLogin("/api/cursor/auth/login");
+}
+
+export async function cancelCursorLogin(): Promise<CursorLoginPhase> {
+  return postCursorLogin("/api/cursor/auth/login/cancel");
+}
 
 export async function fetchDevDeploy(querySignal?: AbortSignal): Promise<DevDeployResponse> {
   const value = await getJson("/api/dev-deploy", GET_REQUEST_TIMEOUT_MS, querySignal);

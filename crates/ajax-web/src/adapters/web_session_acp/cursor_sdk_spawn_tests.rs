@@ -112,7 +112,8 @@ fn authentication_failures_name_the_fix() {
     let authed = spawn_error("Authentication required".to_string(), None);
     match authed {
         AcpSpawnError::Message(text) => {
-            assert!(text.contains("Cursor.auth.login"), "{text}")
+            assert!(text.contains("Settings > Cursor"), "{text}");
+            assert!(text.starts_with("Authentication required"), "{text}")
         }
         other => panic!("expected a message, got: {other:?}"),
     }
