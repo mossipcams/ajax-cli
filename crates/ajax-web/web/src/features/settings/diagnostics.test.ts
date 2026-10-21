@@ -21,11 +21,54 @@ describe("diagnosticFetch", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/version", {
       cache: "no-store",
       credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
     });
     expect(result.ok).toBe(true);
     expect(result.status).toBe(200);
     expect(result.error).toBeNull();
     expect(result.body).toBe(JSON.stringify({ version: "0.1" }, null, 2));
+  });
+
+  it("renews the browser session and retries a protected route after a 401", async () => {
+    let cockpitCalls = 0;
+    const mockFetch = vi.fn((path: string) => {
+      if (path === "/api/session") {
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"ok":true}') });
+      }
+      cockpitCalls += 1;
+      return Promise.resolve(
+        cockpitCalls === 1
+          ? { ok: false, status: 401, text: () => Promise.resolve("") }
+          : { ok: true, status: 200, text: () => Promise.resolve('{"tasks":[]}') },
+      );
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await diagnosticFetch("/api/cockpit");
+    expect(mockFetch.mock.calls.map(([path]) => path)).toEqual([
+      "/api/cockpit",
+      "/api/session",
+      "/api/cockpit",
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
+  });
+
+  it("checks /api/health directly without session renewal", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await diagnosticFetch("/api/health");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith("/api/health", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(result.status).toBe(401);
   });
 
   it("returns ok=false for a non-2xx response", async () => {
@@ -75,5 +118,42 @@ describe("buildDiagnosticsReport", () => {
     expect(report).not.toHaveProperty("service_worker_controller");
     expect(report).not.toHaveProperty("terminal_surface_v2");
     expect(report).not.toHaveProperty("surface_v2_last_error");
+  });
+});
+
+describe("diagnostic network failures", () => {
+  const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+  let navigate: ReturnType<typeof vi.fn>;
+  let diagnostics: typeof import("./diagnostics");
+
+  beforeEach(async () => {
+    vi.resetModules();
+    sessionStorage.clear();
+    navigate = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { href: "https://ajax.example/settings", replace: navigate },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Load failed")));
+    diagnostics = await import("./diagnostics");
+  });
+  afterEach(() => {
+    if (locationDescriptor) Object.defineProperty(window, "location", locationDescriptor);
+    vi.unstubAllGlobals();
+    sessionStorage.clear();
+  });
+
+  it("does not navigate to login when the public health check fails", async () => {
+    const result = await diagnostics.diagnosticFetch("/api/health");
+    expect(result.error).toContain("Load failed");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("reports a plain network error for a protected route without login navigation", async () => {
+    const result = await diagnostics.diagnosticFetch("/api/version");
+    expect(result.ok).toBe(false);
+    expect(result.status).toBeNull();
+    expect(result.error).toContain("Load failed");
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

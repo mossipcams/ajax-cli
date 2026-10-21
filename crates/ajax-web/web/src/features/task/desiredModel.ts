@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { AJAX_PROTECTED_HEADERS, fetchProtectedWithSessionRenewal } from "@/shared/lib/api";
 import {
   DEFAULT_SESSION_MODEL,
   decodeModelSelection,
@@ -340,10 +341,14 @@ function fallbackCatalog(agent: string): SessionModelCatalog {
 
 export async function fetchSessionModels(agent = "cursor"): Promise<SessionModelCatalog> {
   const harness = normalizeSessionAgent(agent);
-  const response = await fetch(`/api/session/models?agent=${encodeURIComponent(harness)}`, {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+  const response = await fetchProtectedWithSessionRenewal(
+    `/api/session/models?agent=${encodeURIComponent(harness)}`,
+    {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { ...AJAX_PROTECTED_HEADERS },
+    },
+  );
   if (!response.ok) {
     throw new Error(`session models request failed (${response.status})`);
   }
