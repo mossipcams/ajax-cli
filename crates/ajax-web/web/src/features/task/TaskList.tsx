@@ -24,7 +24,6 @@ import {
 interface Props {
   cockpit: BrowserCockpitView;
   selectedProject?: string | null;
-  onSelectProject?: (project: string | null) => void;
   onOpenTask?: (handle: string) => void;
   onCockpit?: (cockpit: BrowserCockpitView) => void;
   onResult?: (
@@ -82,7 +81,7 @@ const TaskRow = memo(function TaskRow({
   onCancelPendingConfirm,
 }: TaskRowProps) {
   const statusInfo = taskRowStatus(card);
-  const tone = card.attention === "review" && card.status === "idle" ? "done" : statusInfo.tone;
+  const tone = statusInfo.tone;
   const wrapRef = useRef<HTMLDivElement>(null);
   const revealAction = visibleTaskActions(card.actions)[0];
 
@@ -116,6 +115,8 @@ const TaskRow = memo(function TaskRow({
   const closeRevealOnKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
+    // SAFETY: Enter/Space keydown carries no trusted target; reuse the click handler's
+    // Element-based closest() check, which never reads mouse-only event fields.
     closeRevealUnlessAction(event as unknown as MouseEvent<HTMLDivElement>);
   };
 

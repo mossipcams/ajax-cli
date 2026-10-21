@@ -145,7 +145,7 @@ describe("taskRowStatus", () => {
 
   it("labels review-attention cards Ready for review", () => {
     const c = { ...card("web/a", "idle"), attention: "review" as const };
-    expect(taskRowStatus(c)).toEqual({ tone: "idle", label: "Ready for review" });
+    expect(taskRowStatus(c)).toEqual({ tone: "done", label: "Ready for review" });
   });
 
   it("falls back to Working/Waiting/Error for active statuses", () => {

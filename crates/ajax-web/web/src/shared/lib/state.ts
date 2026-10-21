@@ -27,7 +27,9 @@ export function taskRowStatus(
 ): { tone: string; label: string | null } {
   const meta = statusMeta(card.status);
   if (card.status_explanation) return { tone: meta.tone, label: card.status_explanation };
-  if (card.attention === "review") return { tone: meta.tone, label: "Ready for review" };
+  if (meta.tone === "idle" && card.attention === "review") {
+    return { tone: "done", label: "Ready for review" };
+  }
   switch (meta.tone) {
     case "running":
       return { tone: meta.tone, label: "Working" };

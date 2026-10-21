@@ -296,6 +296,8 @@ function AppContent() {
 
   function whenIdle(callback: () => void): number {
     if (typeof requestIdleCallback === "function") return requestIdleCallback(callback);
+    // SAFETY: setTimeout returns NodeJS.Timeout under node typings and number in the
+    // browser; cancelIdle only passes it back to clearTimeout, which accepts both.
     return setTimeout(callback, 1) as unknown as number;
   }
 
@@ -750,9 +752,6 @@ function AppContent() {
           <TaskList
             cockpit={cockpit.data}
             selectedProject={selectedProject}
-            onSelectProject={(project: string | null) =>
-              go(project ? projectHash(project) : dashboardHash())
-            }
             onOpenTask={openTask}
             onCockpit={applyCockpit}
             onResult={showResult}
@@ -805,6 +804,8 @@ function AppContent() {
         }
         await loadCockpit({ trailing: true });
       } catch {
+        // Intentional: a failed opportunistic reload is retried on the next tick;
+        // surfacing it here would race with cockpit error reporting.
       }
       reloadLatchRef.current = false;
     })();
