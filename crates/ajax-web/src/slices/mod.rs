@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod cockpit;
+pub mod cursor_auth;
 pub mod dev_deploy;
 pub mod diff_review;
 pub mod install;

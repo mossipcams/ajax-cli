@@ -77,6 +77,19 @@ where
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/session/models", get(axum_session_models))
+        .route(
+            "/api/cursor/auth",
+            get(crate::slices::cursor_auth::axum_cursor_auth_status),
+        )
+        .route(
+            "/api/cursor/auth/login",
+            get(crate::slices::cursor_auth::axum_cursor_login_phase)
+                .post(crate::slices::cursor_auth::axum_cursor_login_start),
+        )
+        .route(
+            "/api/cursor/auth/login/cancel",
+            post(crate::slices::cursor_auth::axum_cursor_login_cancel),
+        )
         .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
         .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
@@ -764,5 +777,25 @@ pub(crate) use state::{
 #[cfg(test)]
 pub(crate) use task_routes::websocket_origin_allowed;
 
+#[cfg(test)]
+mod cursor_auth_access_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_auth_routes_require_browser_session() {
+        let cases = [
+            ("GET", "/api/cursor/auth"),
+            ("GET", "/api/cursor/auth/login"),
+            ("POST", "/api/cursor/auth/login"),
+            ("POST", "/api/cursor/auth/login/cancel"),
+        ];
+        for (method, path) in cases {
+            assert_eq!(
+                api_access_policy(method, path),
+                ApiAccess::BrowserSessionRequired
+            );
+        }
+    }
+}
 #[cfg(test)]
 mod tests;

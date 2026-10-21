@@ -19,6 +19,7 @@ import {
   writeOrchestrationChatEnabled,
 } from "./orchestrationChatPreference";
 import { Button } from "@/shared/ui/button";
+import CursorSignIn from "./CursorSignIn";
 import {
   runPushNotificationTest,
   enablePushNotifications,
@@ -240,6 +241,8 @@ export default function SettingsView({
           Supported agents run with full tool access and without approval prompts.
         </p>
       </div>
+
+      <CursorSignIn />
 
       <div className="settings-section" data-testid="dev-settings">
         <h3>Diagnostics</h3>

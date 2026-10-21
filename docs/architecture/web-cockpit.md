@@ -200,7 +200,25 @@ name the level. A selection is therefore stored as `model|configId=value`, e.g.
 `opus|effort=low`, parsed by `parse_model_selection` in core and applied one
 config option at a time.
 
-Cursor chat authenticates as the ajax-web host user through the Cursor SDK login: the `CURSOR_API_KEY` environment variable or the SDK credential store written by `Cursor.auth.login()` (`~/.cursor/sdk/auth.json`, renewed every 90 days). The sidecar passes no API key and Ajax never reads, logs, or stores one; an authentication failure surfaces a spawn error naming that login.
+Cursor chat authenticates as the ajax-web host user. Credentials come from the
+`CURSOR_API_KEY` environment variable or the SDK credential store
+(`~/.cursor/sdk/auth.json`), and the chat sidecar passes no API key itself.
+Sign-in is in-product under **Settings > Cursor**, which shows a server-verified
+status — the login sidecar calls `Cursor.me()`, because the SDK's own auth status
+only checks expiry locally — plus a Sign in action.
+
+Sign-in runs host-side in `crates/ajax-web/sidecar/cursor_sdk_login.mjs`, following
+T3 Code's pattern: the SDK logs in into an in-memory store with `openBrowser`
+disabled, and while the login is pending the login URL is shown in the browser. The
+minted key is verified against `Cursor.me()` and only then saved; a cancel, a 300s
+timeout, or a failed verify leaves the existing credential untouched. The key exists
+only inside that Node process — never in Rust, argv, logs, task state, or browser
+responses: all sidecar console output and uncaught errors are redacted, and its
+stderr is never shown in the UI.
+
+The routes are `GET /api/cursor/auth`, `GET|POST /api/cursor/auth/login`, and
+`POST /api/cursor/auth/login/cancel`; each requires a browser session. Chat
+authentication failures point back at Settings > Cursor.
 
 Codex is reached through its Agent Client
 Protocol adapter, a separate install:

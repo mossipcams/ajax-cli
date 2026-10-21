@@ -9,6 +9,7 @@ mod client;
 mod config_model;
 mod config_option_descriptors;
 mod config_options;
+mod cursor_login;
 mod cursor_sdk_client;
 mod cursor_sdk_map;
 mod cursor_sdk_spawn;
@@ -65,6 +66,8 @@ mod claude_sdk_hardening_tests;
 mod claude_sdk_map_native_tests;
 #[cfg(test)]
 mod claude_sdk_map_tests;
+#[cfg(test)]
+mod cursor_login_tests;
 #[cfg(test)]
 mod cursor_sdk_client_tests;
 #[cfg(test)]
@@ -149,6 +152,7 @@ pub use catalog::{read_agent_model_catalog, read_cursor_catalog_if_sdk, AgentMod
 pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
+pub use cursor_login::{CursorCredentialStatus, CursorLogin, CursorLoginPhase};
 pub use cursor_sdk_client::CursorCatalogModel;
 pub(crate) use sdk_connection::CancelOutcome;
 pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
