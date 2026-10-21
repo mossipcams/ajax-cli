@@ -15,11 +15,12 @@ Follow instructions in this order:
 5. Generated summaries, code maps, or prior plans.
 
 When instructions conflict, preserve the safest behavior and identify the
-conflict. The active agent remains responsible for investigation, engineering
-decisions, review, and verification, including delegated work.
+conflict. The orchestrator owns engineering decisions, acceptance of results,
+and final reporting; delegates investigate and edit within their scope.
 
-Before editing, inspect the relevant source files and tests. Treat source and
-tests as authoritative over generated summaries.
+Whoever edits, whether a delegate or an agent working in-process, must first
+inspect the relevant source files and tests. Treat source and tests as
+authoritative over generated summaries.
 
 ## Conditional reading
 
@@ -113,27 +114,60 @@ land in an already over-limit file. Split only by cohesive responsibility; see
 
 ## Delegation
 
-The local agent does the work; the frontier agent orchestrates. All
-exploration, implementation, testing, diagnosis, and reporting go through the
-Ajax Model Router: call the `model-router` skill, then dispatch via acpx
-(`scripts/run-delegate`). The selected local delegate runs the full loop inside
-the `EXECUTION` scope: explore, implement, test, diagnose failures, and report.
-Never spawn native harness subagents (Cursor Task, best-of-n, Claude/Codex/Pi
-task children, or pstack explorers) for any reason, including missing `acpx`.
-Never use Composer 2.5 Fast (`composer-2.5-fast` or any Fast Composer variant)
-as a native Task or subagent model. Missing `acpx` is stop, not a license to
-Task or parent-local writes.
+Delegation is the default for substantive repository work, including read-only
+requests: discovery, source inspection, diagnosis, implementation, test authoring
+and execution, documentation, and review. Do not finish the investigation locally
+and delegate only the edits. Small scope, confidence, and delegate failure do not
+authorize parent-local work.
 
-The frontier agent writes plans when required, emits one `EXECUTION` decision,
-and reviews the delegate's delta and report. It does not explore the tree,
-implement, test, diagnose, commit, push, or open pull requests. When the
-delegate fails, re-route through the router; do not take over. Do not
-duplicate model rankings or exact model IDs in this file.
+All subagent and delegate work goes through the Ajax Model Router: call the
+`model-router` skill, then dispatch via acpx (`scripts/run-delegate` from the
+Ajax repo). Never spawn native harness subagents (Cursor Task, best-of-n,
+Claude/Codex/Pi task children, or pstack explorers) for any reason, including
+missing `acpx`. Never use Composer 2.5 Fast (`composer-2.5-fast` or any Fast
+Composer variant) as a native Task or subagent model. If the required router
+skill or dispatch tooling is unavailable, stop and report the blocker; do not
+substitute native subagents or parent-local work. Do not duplicate model rankings
+or exact model IDs in this file.
 
-Only an explicit user approval to bypass delegation for this request lets the
-frontier agent run the loop in-process (explore, implement, test, diagnose,
-report, commit, push, open pull requests). That approval is per-request; it
-does not change the default, and silence or a delegate failure is not approval.
+The orchestrator frames the task, writes plans when required, emits one initial
+`EXECUTION` decision using the skill's format, dispatches work, resolves decisions,
+and accepts or rejects results. It does not perform broad tree exploration,
+diagnose the implementation itself, or write repository files. Commits, pushes,
+and pull requests, when part of the authorized task, also go through delegates.
+Live-host operations (running benchmarks, deploying to the GPU host) are not
+repository writes and do not need delegation; host safety rules still apply.
+
+- **Dispatch early.** Before substantive investigation, delegate a bounded
+  discovery task if the affected files or cause are unknown. Use its evidence
+  to assign the next task. A plan or announced intention is not delegation;
+  actually dispatch the work.
+- **Separate independent work.** Delegate independent investigations and reviews
+  concurrently when router capacity allows. Follow the router's concurrency
+  limits; do not equate more delegation with more simultaneous model calls.
+  Serialize dependent work, overlapping writes, and GPU jobs. Give each writable
+  path one owner at a time.
+- **Make assignments concrete.** Specify scope, read/write permissions, expected
+  deliverables, acceptance criteria, verification commands, and stop conditions.
+  Require file references, actual command results, and unresolved questions.
+  Give discovery tasks a bounded question when paths are not yet known.
+- **Handle failures through the router.** Check progress and results. Narrow or
+  split stalled work, then retry or reroute under the skill's policy. Do not
+  silently take over or repeat the same broad task indefinitely. If permitted
+  recovery is exhausted, report the blocker and request direction.
+- **Review independently.** For nontrivial changes, route review to a delegate
+  other than the implementer. The active agent must also inspect the actual
+  delta, confirm scope, and independently accept or reject the result using
+  focused source reads and practical checks. Delegate corrections. A delegate
+  report is evidence, not approval.
+
+If the user explicitly approved bypassing delegation for this request, the
+active agent may investigate, implement, commit, push, and open pull requests
+in-process within the authorized scope. That approval is per-request; do not
+infer it from urgency, task size, or a failed delegate.
+
+Exception: when the orchestrator harness is pi, do not delegate — run the full
+loop in-process — unless explicitly told to delegate for that request.
 
 When the user asks to create a PR, the selected delegate runs the repository's
 local verification gate, then always runs `scripts/gh-pr-create` (never raw
@@ -141,14 +175,10 @@ local verification gate, then always runs `scripts/gh-pr-create` (never raw
 derives a CI-valid title from `type/scope/description` branch names, creates or
 reopens the PR, strips Cursor footer / co-author lines from the body, and
 prints the URL; the orchestrator reports that URL after reviewing the delta.
-After an explicit bypass, the frontier agent follows that same PR path in-process.
+After an explicit bypass, the active agent follows that same PR path in-process.
+
 Delegates must not merge, rebase, force-push, or switch branches unless the user
 explicitly authorizes that behavior.
-
-Every delegated task must be bounded by scope, acceptance criteria,
-verification, and stop conditions. The active agent must inspect the actual
-delta, confirm scope, and independently accept or reject the result. A delegate
-report is evidence, not approval.
 
 Harness-specific workflows are optional. They cannot override repository
 requirements or become dependencies for other harnesses. Detailed routing,
