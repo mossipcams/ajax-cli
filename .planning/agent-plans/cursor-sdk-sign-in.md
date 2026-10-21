@@ -80,7 +80,7 @@ when wanted); sign-out (a new sign-in overwrites); auto-renew; terminal-mode
   2s poll target), `POST /api/cursor/auth/login` → `start()` phase
   (immediate), `POST /api/cursor/auth/login/cancel` → `cancel()` phase.
   Verify: inline tests for the access policy and the JSON shapes.
-- [ ] **4. Settings card**. "Cursor" row shows status (`email · expires
+- [x] **4. Settings card**. "Cursor" row shows status (`email · expires
   <date>` / `Key rejected` / `Not signed in`). The sign-in button POSTs, then
   polls status every 2s while Waiting/Verifying. Waiting renders the URL as a
   normal link (`target=_blank`); success or failure stops polling. Verify:
@@ -114,3 +114,8 @@ the rejected file is kept as `~/.cursor/sdk/auth.json.rejected-2026-10-20`.
   unresponsive-sidecar deadline regression, negative-controlled);
   `nextest cursor_sdk` 45/45.
 - 2026-10-20 slice 3: fmt/clippy clean; `nextest cursor_ runtime::tests` 206/206.
+- 2026-10-20 security fix (folded into slices 1-2): all console methods and
+  uncaught errors redacted in the login sidecar; sidecar stderr never reaches
+  the UI. JS 9/9 + 13/13, nextest 207/207.
+- 2026-10-20 slice 4: web:check, web:lint clean; settings vitest 47/47;
+  `CI=1 npm run web:smoke` 158 passed, 1 flaky unrelated (#850 reload), 2 skipped.
