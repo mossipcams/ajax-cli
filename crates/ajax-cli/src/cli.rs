@@ -61,6 +61,7 @@ pub fn build_cli() -> Command {
         .subcommand(agent_runtime_command())
         .subcommand(agent_event_command())
         .subcommand(agent_hooks_command())
+        .subcommand(cursor_command())
         .subcommand(web_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
@@ -211,6 +212,21 @@ fn state_command() -> Command {
                         .long("output")
                         .value_name("PATH")
                         .required(true),
+                ),
+        )
+}
+
+fn cursor_command() -> Command {
+    Command::new("cursor")
+        .about("Cursor SDK host utilities")
+        .subcommand(
+            Command::new("auth")
+                .about("Cursor SDK authentication on the Ajax host")
+                .subcommand(json_command("status").about("Show Cursor SDK credential status"))
+                .subcommand(json_command("sign-in").about("Start Cursor SDK browser sign-in"))
+                .subcommand(json_command("renew").about("Renew the Cursor SDK credential"))
+                .subcommand(
+                    json_command("sign-out").about("Remove the stored Cursor SDK credential"),
                 ),
         )
 }

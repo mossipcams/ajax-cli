@@ -9,6 +9,7 @@ mod cockpit_actions;
 mod cockpit_backend;
 mod cockpit_snapshot;
 mod context;
+mod cursor_auth;
 mod dispatch;
 mod execution_dispatch;
 mod render;
@@ -120,6 +121,10 @@ pub fn run_with_args(
         return agent_hooks::run_agent_hooks_command(subcommand);
     }
 
+    if let Some(("cursor", subcommand)) = matches.subcommand() {
+        return cursor_auth::run_cursor_command(subcommand);
+    }
+
     let paths = context_paths_from_matches(&matches)?;
     if let Some(("runtime", subcommand)) = matches.subcommand() {
         return snapshot_dispatch::render_runtime_paths(
@@ -175,6 +180,11 @@ pub fn run_with_args_to_writer(
 
     if let Some(("agent-hooks", subcommand)) = matches.subcommand() {
         let output = agent_hooks::run_agent_hooks_command(subcommand)?;
+        return write_command_output(writer, &output);
+    }
+
+    if let Some(("cursor", subcommand)) = matches.subcommand() {
+        let output = cursor_auth::run_cursor_command(subcommand)?;
         return write_command_output(writer, &output);
     }
 
