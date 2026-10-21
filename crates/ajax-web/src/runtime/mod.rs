@@ -68,7 +68,7 @@ where
     B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
     let session_state = state.clone();
-    Router::new()
+    let router = Router::new()
         .route("/", get(axum_browser_shell::<C, B>))
         .route("/index.html", get(axum_browser_shell::<C, B>))
         .route("/app.css", get(axum_app_css))
@@ -107,7 +107,8 @@ where
         .route(
             "/api/training/models/switch",
             post(axum_training_switch::<C, B>),
-        )
+        );
+    crate::slices::web_session::cursor_auth::mount_cursor_auth_routes(router)
         .fallback(axum_fallback)
         .layer(from_fn_with_state(
             session_state,

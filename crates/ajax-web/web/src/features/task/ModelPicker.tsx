@@ -57,6 +57,12 @@ export default function ModelPicker({
   const listRef = useRef<HTMLDivElement>(null);
   const catalogNotifiedRef = useRef<string | null>(null);
   const isCursor = normalizeSessionAgent(agent) === "cursor";
+  const credentialLabel =
+    catalog?.cursorCredential === "env"
+      ? "Credential: env key"
+      : catalog?.cursorCredential === "store"
+        ? "Credential: host store"
+        : null;
 
   useEffect(() => {
     if (!catalog || catalogNotifiedRef.current === agent) return;
@@ -258,6 +264,12 @@ export default function ModelPicker({
           ))
         )}
       </div>
+
+      {isCursor && credentialLabel ? (
+        <p className="model-credential" data-testid="cursor-credential">
+          {credentialLabel}
+        </p>
+      ) : null}
 
       <div className="model-picker-extras">
       {applyEffortThroughLive && thoughtOption ? (

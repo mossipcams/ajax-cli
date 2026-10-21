@@ -27,6 +27,43 @@ import {
   type PushSubscriptionStatus,
 } from "./pushTest";
 
+interface CursorAuthStatusResponse {
+  ok: boolean;
+  present: boolean;
+  accountLabel?: string;
+  expiresAt?: string;
+  error?: string;
+}
+
+interface CursorAuthActionResponse {
+  ok: boolean;
+  status?: string;
+  accountLabel?: string;
+  expiresAt?: string;
+  loginUrl?: string;
+  signedOut?: boolean;
+  error?: string;
+}
+
+async function fetchCursorAuthStatus(): Promise<CursorAuthStatusResponse> {
+  const response = await fetch("/api/cursor/auth/status", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  return (await response.json()) as CursorAuthStatusResponse;
+}
+
+async function postCursorAuthAction(
+  path: "/api/cursor/auth/sign-in" | "/api/cursor/auth/renew" | "/api/cursor/auth/sign-out",
+): Promise<CursorAuthActionResponse> {
+  const response = await fetch(path, {
+    method: "POST",
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  return (await response.json()) as CursorAuthActionResponse;
+}
+
 interface Props {
   detailHandle?: string | null;
   onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
@@ -49,6 +86,10 @@ export default function SettingsView({
     useState<PushSubscriptionStatus>("disabled");
   const [testingPush, setTestingPush] = useState(false);
   const [orchestrationChat, setOrchestrationChat] = useState(readOrchestrationChatEnabled);
+  const [cursorAuthStatus, setCursorAuthStatus] = useState<CursorAuthStatusResponse | null>(null);
+  const [cursorAuthBusy, setCursorAuthBusy] = useState(false);
+  const [cursorAuthMessage, setCursorAuthMessage] = useState<string | null>(null);
+  const [cursorLoginUrl, setCursorLoginUrl] = useState<string | null>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diagnosticsLatchRef = useRef(false);
   const { data: versionInfo } = useVersionQuery();
@@ -73,6 +114,44 @@ export default function SettingsView({
   useEffect(() => {
     setTestInStableAvailable(versionInfo?.test_in_stable === true);
   }, [versionInfo]);
+
+  async function refreshCursorAuthStatus() {
+    try {
+      setCursorAuthStatus(await fetchCursorAuthStatus());
+    } catch {
+      setCursorAuthStatus({ ok: false, present: false, error: "Could not load Cursor auth status." });
+    }
+  }
+
+  useEffect(() => {
+    void refreshCursorAuthStatus();
+  }, []);
+
+  async function runCursorAuthAction(
+    path: "/api/cursor/auth/sign-in" | "/api/cursor/auth/renew" | "/api/cursor/auth/sign-out",
+  ) {
+    setCursorAuthBusy(true);
+    setCursorAuthMessage(null);
+    try {
+      const result = await postCursorAuthAction(path);
+      if (result.loginUrl) {
+        setCursorLoginUrl(result.loginUrl);
+      }
+      if (!result.ok) {
+        setCursorAuthMessage(result.error ?? "Cursor auth action failed.");
+      } else if (result.signedOut) {
+        setCursorLoginUrl(null);
+        setCursorAuthMessage("Cursor SDK credential removed.");
+      } else if (result.status) {
+        setCursorAuthMessage(`Cursor SDK: ${result.status}`);
+      }
+      await refreshCursorAuthStatus();
+    } catch {
+      setCursorAuthMessage("Cursor auth action failed.");
+    } finally {
+      setCursorAuthBusy(false);
+    }
+  }
 
   const testInStableRestartsThisInstance = versionInfo?.profile === "stable";
 
@@ -239,6 +318,72 @@ export default function SettingsView({
         <p id="orchestration-chat-description" className="settings-note">
           Supported agents run with full tool access and without approval prompts.
         </p>
+      </div>
+
+      <div className="settings-section" data-testid="cursor-sdk-auth-settings">
+        <h3>Cursor SDK sign-in</h3>
+        <p className="settings-note">
+          Host-owned Cursor SDK credential for Ajax Chat. Open the login URL on another device if
+          needed; Ajax never stores or displays API keys in the browser.
+        </p>
+        <dl className="settings-debug" data-testid="cursor-auth-status">
+          <div>
+            <dt>Credential</dt>
+            <dd data-testid="cursor-auth-present">
+              {cursorAuthStatus === null
+                ? "Loading…"
+                : cursorAuthStatus.present
+                  ? "Present"
+                  : "Absent"}
+            </dd>
+          </div>
+          {cursorAuthStatus?.accountLabel ? (
+            <div>
+              <dt>Account</dt>
+              <dd>{cursorAuthStatus.accountLabel}</dd>
+            </div>
+          ) : null}
+          {cursorAuthStatus?.expiresAt ? (
+            <div>
+              <dt>Expires</dt>
+              <dd>{cursorAuthStatus.expiresAt}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {cursorLoginUrl ? (
+          <p className="settings-note" data-testid="cursor-auth-login-url">
+            <a href={cursorLoginUrl} target="_blank" rel="noreferrer">
+              Open Cursor sign-in URL
+            </a>
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={cursorAuthBusy}
+          onClick={() => void runCursorAuthAction("/api/cursor/auth/sign-in")}
+        >
+          Sign in
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={cursorAuthBusy}
+          onClick={() => void runCursorAuthAction("/api/cursor/auth/renew")}
+        >
+          Renew
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={cursorAuthBusy}
+          onClick={() => void runCursorAuthAction("/api/cursor/auth/sign-out")}
+        >
+          Sign out
+        </Button>
+        {cursorAuthMessage ? (
+          <p className="settings-status" data-testid="cursor-auth-message">{cursorAuthMessage}</p>
+        ) : null}
       </div>
 
       <div className="settings-section" data-testid="dev-settings">

@@ -5,15 +5,16 @@
 #![allow(dead_code)]
 
 use std::path::Path;
+use std::sync::mpsc::TryRecvError;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ajax_core::adapters::{parse_model_selection, ModelSelection};
 use serde_json::{json, Value};
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::cursor_sdk_map::map_cursor_message;
-use super::jsonl_process::JsonlProcess;
+use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_client::RpcClientCore;
 use super::rpc_handshake::{
     await_init_response, check_resumed_session, init_commands, init_session_id, RpcHandshake,
@@ -22,6 +23,159 @@ use super::rpc_handshake::{
 use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_sidecar.mjs");
+
+const AUTH_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
+const AUTH_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Sanitized Cursor SDK credential presence for operators (no key material).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorAuthStatus {
+    pub present: bool,
+    #[serde(rename = "accountLabel", skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
+    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+/// Sanitized sign-in / renew outcome; `login_url` is safe to show the operator.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorAuthSignInResult {
+    pub status: String,
+    #[serde(rename = "accountLabel", skip_serializing_if = "Option::is_none")]
+    pub account_label: Option<String>,
+    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(rename = "loginUrl", skip_serializing_if = "Option::is_none")]
+    pub login_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorAuthSignOutResult {
+    #[serde(rename = "signedOut")]
+    pub signed_out: bool,
+}
+
+fn str_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn parse_auth_status(data: &Value) -> CursorAuthStatus {
+    CursorAuthStatus {
+        present: data.get("present").and_then(Value::as_bool) == Some(true),
+        account_label: str_field(data, "accountLabel"),
+        expires_at: str_field(data, "expiresAt"),
+    }
+}
+
+fn parse_auth_sign_in(data: &Value, login_url: Option<String>) -> CursorAuthSignInResult {
+    CursorAuthSignInResult {
+        status: str_field(data, "status").unwrap_or_else(|| "signed-in".to_string()),
+        account_label: str_field(data, "accountLabel"),
+        expires_at: str_field(data, "expiresAt"),
+        login_url,
+    }
+}
+
+fn await_auth_response(
+    process: &mut JsonlProcess,
+    command: &str,
+    request_id: &str,
+    timeout: Duration,
+    mut on_auth_url: impl FnMut(&str),
+) -> Result<Value, String> {
+    let started = Instant::now();
+    loop {
+        if started.elapsed() >= timeout {
+            return Err(format!(
+                "cursor sdk {command} timed out: {}",
+                process.stderr_tail()
+            ));
+        }
+        match process.try_recv() {
+            Ok(JsonlRecord::Record(record)) => {
+                if record.get("type").and_then(Value::as_str) == Some("auth_url") {
+                    if let Some(url) = record.get("url").and_then(Value::as_str) {
+                        on_auth_url(url);
+                    }
+                    continue;
+                }
+                if record.get("type").and_then(Value::as_str) == Some("response")
+                    && record.get("command").and_then(Value::as_str) == Some(command)
+                    && record.get("id").and_then(Value::as_str) == Some(request_id)
+                {
+                    if record.get("success").and_then(Value::as_bool) == Some(true) {
+                        return Ok(record.get("data").cloned().unwrap_or(Value::Null));
+                    }
+                    let error = record
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("cursor sdk auth command failed");
+                    return Err(error.to_string());
+                }
+            }
+            Ok(JsonlRecord::Error(error)) => {
+                return Err(format!(
+                    "cursor sdk {command} failed: {error}; stderr: {}",
+                    process.stderr_tail()
+                ));
+            }
+            Ok(JsonlRecord::Exited) | Err(TryRecvError::Disconnected) => {
+                return Err(format!(
+                    "cursor sdk sidecar exited during {command}: {}",
+                    process.stderr_tail()
+                ));
+            }
+            Err(TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
+fn run_auth_command(
+    cwd: &Path,
+    command: &str,
+    timeout: Duration,
+) -> Result<(Value, Option<String>), String> {
+    let (program, args) =
+        super::cursor_sdk_spawn::cursor_launch().map_err(|error| error.to_string())?;
+    let mut process = JsonlProcess::spawn(&program, &args, cwd)
+        .map_err(|error| format!("failed to spawn cursor sdk sidecar: {error}"))?;
+    let request_id = process.send(command, json!({}))?;
+    let mut login_url = None;
+    let data = await_auth_response(&mut process, command, &request_id, timeout, |url| {
+        login_url = Some(url.to_string());
+    })?;
+    process.close_stdin();
+    Ok((data, login_url))
+}
+
+/// Read sanitized Cursor SDK auth status from the host sidecar (`auth-status`).
+pub fn cursor_auth_status(cwd: &Path) -> Result<CursorAuthStatus, String> {
+    let (data, _) = run_auth_command(cwd, "auth-status", AUTH_STATUS_TIMEOUT)?;
+    Ok(parse_auth_status(&data))
+}
+
+/// Run host-side SDK sign-in (`auth-signin`); surfaces `login_url` when emitted.
+pub fn cursor_auth_sign_in(cwd: &Path) -> Result<CursorAuthSignInResult, String> {
+    let (data, login_url) = run_auth_command(cwd, "auth-signin", AUTH_SIGN_IN_TIMEOUT)?;
+    Ok(parse_auth_sign_in(&data, login_url))
+}
+
+/// Renew the stored Cursor SDK credential (`auth-renew`).
+pub fn cursor_auth_renew(cwd: &Path) -> Result<CursorAuthSignInResult, String> {
+    let (data, login_url) = run_auth_command(cwd, "auth-renew", AUTH_SIGN_IN_TIMEOUT)?;
+    Ok(parse_auth_sign_in(&data, login_url))
+}
+
+/// Remove the protected SDK credential store (`auth-signout`).
+pub fn cursor_auth_sign_out(cwd: &Path) -> Result<CursorAuthSignOutResult, String> {
+    let (data, _) = run_auth_command(cwd, "auth-signout", AUTH_STATUS_TIMEOUT)?;
+    Ok(CursorAuthSignOutResult {
+        signed_out: data
+            .get("signedOut")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    })
+}
 
 pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
     super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
@@ -53,6 +207,7 @@ struct CursorState {
     models: Vec<CursorModel>,
     selection: ModelSelection,
     mode: String,
+    cursor_credential: Option<String>, // non-secret credential-source status; never key material
 }
 
 pub const MODES: [&str; 2] = ["agent", "plan"];
@@ -157,6 +312,12 @@ impl CursorSdkClient {
         let models = parse_models(&data);
         let session_id = init_session_id(&data, "cursor sdk")?;
         check_resumed_session("cursor sdk", resume, &session_id)?;
+        // Non-secret credential-source status ("env" | "store"); absent in
+        // older sidecars, so the Option stays None.
+        let cursor_credential = data
+            .get("cursorCredential")
+            .and_then(Value::as_str)
+            .map(str::to_string);
         let handshake = RpcHandshake {
             session_id,
             session_file: None,
@@ -184,6 +345,7 @@ impl CursorSdkClient {
             thinking_levels: Vec::new(),
             commands: init_commands(&data),
             context_window: None,
+            cursor_credential: cursor_credential.clone(),
             pending,
         };
         let commands: Vec<NativeCommand> = handshake
@@ -205,6 +367,7 @@ impl CursorSdkClient {
                 models,
                 selection: selection.clone(),
                 mode: "agent".to_string(),
+                cursor_credential,
             })),
         };
         if apply_defaults {
@@ -238,6 +401,12 @@ impl CursorSdkClient {
 
     pub fn applied_model(&self) -> String {
         self.lock().selection.encode()
+    }
+
+    /// Non-secret status of where the SDK credential came from ("env" | "store");
+    /// `None` when the sidecar predates the field.
+    pub fn cursor_credential_source(&self) -> Option<String> {
+        self.lock().cursor_credential.clone()
     }
 
     fn send_selection(&self, selection: ModelSelection) -> Result<(), String> {

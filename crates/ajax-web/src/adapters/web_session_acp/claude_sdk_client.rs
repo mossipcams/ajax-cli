@@ -113,6 +113,7 @@ impl ClaudeSdkClient {
                 .collect(),
             commands: init_commands(&data),
             context_window: None,
+            cursor_credential: None,
             pending,
         };
         check_resumed_session("claude sdk", resume, &handshake.session_id)?;

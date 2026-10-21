@@ -5,6 +5,7 @@ mod acp_slot;
 pub(crate) mod acp_usage;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
+pub mod cursor_auth;
 mod execution_ownership;
 mod headless_dispatch;
 pub(crate) use headless_dispatch::{run_all as run_headless_dispatch, HeadlessTarget};

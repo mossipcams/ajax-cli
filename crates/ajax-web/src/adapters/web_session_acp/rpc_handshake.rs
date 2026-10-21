@@ -28,6 +28,9 @@ pub struct RpcHandshake {
     pub commands: Vec<RpcCommand>,
     /// `get_state.data.model.contextWindow`, when a model is selected.
     pub context_window: Option<u64>,
+    /// Non-secret credential-source status (`"env"` | `"store"`) from the Cursor
+    /// SDK init response; `None` for harnesses that do not report one.
+    pub cursor_credential: Option<String>,
     /// Every non-handshake record (events, other responses) captured in order
     /// while the handshake ran; the caller replays these.
     pub pending: Vec<Value>,

@@ -199,6 +199,7 @@ pub fn handshake_with_model_provider(
         context_window: model
             .and_then(|m| m.get("contextWindow"))
             .and_then(Value::as_u64),
+        cursor_credential: None,
         pending,
     };
     Ok((handshake, model_provider))

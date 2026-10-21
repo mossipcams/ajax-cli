@@ -476,4 +476,55 @@ describe("ModelPicker", () => {
     expect(screen.queryByRole("radio", { name: /Cursor Grok/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /1M High/i })).not.toBeInTheDocument();
   });
+
+  it("shows the env-key credential status when the Cursor catalog reports it", async () => {
+    stubCatalog({ ...FULL_CATALOG, cursorCredential: "env" });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="model-3"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cursor-credential")).toHaveTextContent("Credential: env key");
+    });
+  });
+
+  it("shows the host-store credential status when the Cursor catalog reports it", async () => {
+    stubCatalog({ ...FULL_CATALOG, cursorCredential: "store" });
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="model-3"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cursor-credential")).toHaveTextContent(
+        "Credential: host store",
+      );
+    });
+  });
+
+  it("renders no credential status when the catalog omits it", async () => {
+    stubCatalog();
+    render(
+      <ModelPicker
+        agent="cursor"
+        agentLabel="Cursor"
+        value="model-3"
+        onChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("radio")).toHaveLength(FULL_CATALOG.models.length);
+    });
+    expect(screen.queryByTestId("cursor-credential")).not.toBeInTheDocument();
+  });
 });

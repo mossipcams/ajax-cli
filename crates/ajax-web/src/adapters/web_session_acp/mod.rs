@@ -149,7 +149,10 @@ pub use catalog::{read_agent_model_catalog, read_cursor_catalog_if_sdk, AgentMod
 pub use client::{
     AcpClientEvent, AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport,
 };
-pub use cursor_sdk_client::CursorCatalogModel;
+pub use cursor_sdk_client::{
+    cursor_auth_renew, cursor_auth_sign_in, cursor_auth_sign_out, cursor_auth_status,
+    CursorAuthSignInResult, CursorAuthSignOutResult, CursorAuthStatus, CursorCatalogModel,
+};
 pub(crate) use sdk_connection::CancelOutcome;
 pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
 

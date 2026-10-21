@@ -1,6 +1,14 @@
 //! Spawn path for the Cursor SDK transport: launch resolution, the Node
 //! version floor, fail-closed restore, operator-pin application and the spawn
 //! report. Mirrors `claude_sdk_spawn`.
+//!
+//! Credentials: the sidecar resolves the Cursor key itself. When
+//! `CURSOR_API_KEY` is set in the ajax-web process environment, the spawn argv
+//! carries it as `--api-key <value>` (env only; never read from config files
+//! or task fields). Otherwise the sidecar falls back to the protected SDK
+//! store `~/.cursor/sdk/auth.json` (0600). Only the non-secret source
+//! (`env` or `store`) leaves the sidecar, and the key is never logged or
+//! written to task state or JSONL.
 // A later packet wires this module into the SessionClient variant.
 #![allow(dead_code)]
 
@@ -12,9 +20,49 @@ use super::cursor_sdk_client::CursorSdkClient;
 use super::PromptCapabilityDescriptor;
 
 const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
+/// Shown with an SDK failure when the host has no usable credential: neither
+/// `CURSOR_API_KEY` in the ajax-web environment nor a stored SDK login. Kept
+/// for store-less hosts; a set `CURSOR_API_KEY` takes precedence and is passed
+/// on argv as `--api-key`.
 const LOGIN_HINT: &str = "log in with the Cursor SDK as the ajax-web host user: run Cursor.auth.login() from @cursor/sdk (credentials in ~/.cursor/sdk/auth.json; renew every 90 days)";
 /// `@cursor/sdk` requires Node.js 22.13; Claude's Node 20 floor is unaffected.
 const MIN_NODE: (u32, u32) = (22, 13);
+
+/// argv for `node <sidecar.mjs>` (tests) or appended after embedded launch args (prod).
+/// `--api-key` is appended only when `api_key` is non-empty (the `CURSOR_API_KEY` env value).
+pub(super) fn sidecar_args(sdk_module: Option<&str>, api_key: Option<&str>) -> Vec<String> {
+    let mut args = vec![format!(
+        "{}/sidecar/cursor_sdk_sidecar.mjs",
+        env!("CARGO_MANIFEST_DIR")
+    )];
+    if let Some(module) = sdk_module {
+        args.push("--sdk-module".to_string());
+        args.push(module.to_string());
+    }
+    if let Some(key) = api_key.filter(|s| !s.is_empty()) {
+        args.extend(["--api-key".to_string(), key.to_string()]);
+    }
+    args
+}
+
+/// The host key for the spawn argv: `CURSOR_API_KEY` from the process environment
+/// only. Under `cfg(test)` a fixture key is returned instead so integration tests
+/// stay hermetic and never depend on the developer's real environment.
+fn cursor_api_key_from_env() -> Option<String> {
+    if let Ok(key) = std::env::var("CURSOR_API_KEY") {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+    #[cfg(test)]
+    {
+        return Some("ajax-test-fixture-cursor-api-key".to_string());
+    }
+    #[cfg(not(test))]
+    {
+        None
+    }
+}
 
 /// Whether `node --version` output (e.g. `v22.13.0`) meets the Cursor SDK floor.
 pub(super) fn node_version_ok(text: &str) -> bool {
@@ -54,16 +102,10 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
 pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     #[cfg(test)]
     if let Some(module) = cursor_sdk_module_override() {
+        let api_key = cursor_api_key_from_env();
         return Ok((
             PathBuf::from("node"),
-            vec![
-                format!(
-                    "{}/sidecar/cursor_sdk_sidecar.mjs",
-                    env!("CARGO_MANIFEST_DIR")
-                ),
-                "--sdk-module".to_string(),
-                module.to_string_lossy().into_owned(),
-            ],
+            sidecar_args(Some(&module.to_string_lossy()), api_key.as_deref()),
         ));
     }
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
@@ -93,10 +135,11 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
             root.display()
         ))
     })?;
-    Ok((
-        program,
-        super::cursor_sdk_client::sidecar_launch_args(Some(&module.to_string_lossy())),
-    ))
+    let mut args = super::cursor_sdk_client::sidecar_launch_args(Some(&module.to_string_lossy()));
+    if let Some(key) = cursor_api_key_from_env() {
+        args.extend(["--api-key".to_string(), key]);
+    }
+    Ok((program, args))
 }
 
 /// Classify a spawn failure: restore failures fail closed, authentication
@@ -202,4 +245,48 @@ where
     let result = f();
     *TEST_CURSOR_SDK_MODULE.lock().unwrap() = None;
     result
+}
+
+#[cfg(test)]
+mod sidecar_args_tests {
+    use super::sidecar_args;
+
+    #[test]
+    fn sidecar_args_includes_api_key_flag_when_set() {
+        let args = sidecar_args(Some("/fake/sdk.mjs"), Some("k"));
+        assert_eq!(
+            args,
+            vec![
+                format!(
+                    "{}/sidecar/cursor_sdk_sidecar.mjs",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                "--sdk-module".to_string(),
+                "/fake/sdk.mjs".to_string(),
+                "--api-key".to_string(),
+                "k".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sidecar_args_omits_api_key_when_unset_or_empty() {
+        let base = vec![
+            format!(
+                "{}/sidecar/cursor_sdk_sidecar.mjs",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            "--sdk-module".to_string(),
+            "/fake/sdk.mjs".to_string(),
+        ];
+        assert_eq!(sidecar_args(Some("/fake/sdk.mjs"), None), base);
+        assert_eq!(sidecar_args(Some("/fake/sdk.mjs"), Some("")), base);
+        assert_eq!(
+            sidecar_args(None, None),
+            vec![format!(
+                "{}/sidecar/cursor_sdk_sidecar.mjs",
+                env!("CARGO_MANIFEST_DIR")
+            )]
+        );
+    }
 }

@@ -33,6 +33,8 @@ pub struct SessionModelsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub harness_version: String,
+    #[serde(rename = "cursorCredential", skip_serializing_if = "Option::is_none")]
+    pub cursor_credential: Option<String>,
 }
 
 struct Cache {
@@ -125,16 +127,17 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
     if client == AgentClient::Cursor {
-        if let Some(sdk_models) =
+        if let Some(sdk) =
             crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&std::env::temp_dir())
         {
             return SessionModelsResponse {
-                models: cursor_options_from_sdk(sdk_models),
+                models: cursor_options_from_sdk(sdk.models),
                 default: CURSOR_DEFAULT_MODEL.to_string(),
                 agent: agent.to_string(),
                 reasoning: None,
                 error: None,
                 harness_version: String::new(),
+                cursor_credential: sdk.credential,
             };
         }
         let raw = fetch_models_from_agent().unwrap_or_else(|| {
@@ -153,6 +156,7 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
             reasoning: None,
             error: None,
             harness_version: String::new(),
+            cursor_credential: None,
         };
     }
 
@@ -164,6 +168,7 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
             reasoning: None,
             error: Some(missing),
             harness_version: String::new(),
+            cursor_credential: None,
         };
     }
 
@@ -210,6 +215,7 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
                 .collect(),
         }),
         harness_version: String::new(),
+        cursor_credential: None,
     }
 }
 

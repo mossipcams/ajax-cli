@@ -378,6 +378,53 @@ describe("SettingsView", () => {
     );
   });
 
+  it("loads Cursor SDK auth status and runs sign-in", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    let statusCalls = 0;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/cursor/auth/status") && init?.method !== "POST") {
+        statusCalls += 1;
+        const present = statusCalls > 1;
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            present,
+            ...(present ? { accountLabel: "operator@example.com" } : {}),
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/api/cursor/auth/sign-in") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            status: "signed-in",
+            loginUrl: "https://cursor.com/sdk/login?code=test",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<SettingsView />);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("cursor-auth-present")).toHaveTextContent("Absent"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("cursor-auth-login-url")).toBeInTheDocument(),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("cursor-auth-present")).toHaveTextContent("Present"),
+    );
+    fetchMock.mockRestore();
+  });
+
   it("shows push test errors from the helper", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",

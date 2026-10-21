@@ -78,6 +78,8 @@ export interface SessionModelCatalog {
   default: string;
   reasoning?: SessionModelGroup;
   error?: string;
+  /** Non-secret Cursor SDK credential source; absent for other harnesses and older servers. */
+  cursorCredential?: "env" | "store";
 }
 
 export const CURSOR_EFFORT_SUFFIXES = ["xhigh", "high", "medium", "low", "none", "max"] as const;
@@ -357,6 +359,7 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
     default?: string;
     reasoning?: SessionModelGroup;
     error?: string;
+    cursorCredential?: string;
   };
   if (!Array.isArray(body.models) || body.models.length === 0) {
     return body.error
@@ -375,6 +378,9 @@ export async function fetchSessionModels(agent = "cursor"): Promise<SessionModel
     default: typeof body.default === "string" ? body.default : "",
     ...(body.reasoning && Array.isArray(body.reasoning.options)
       ? { reasoning: body.reasoning }
+      : {}),
+    ...(body.cursorCredential === "env" || body.cursorCredential === "store"
+      ? { cursorCredential: body.cursorCredential }
       : {}),
   };
 }

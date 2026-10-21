@@ -90,11 +90,22 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
     }
 }
 
+/// The Cursor SDK model list plus the non-secret credential status
+/// ("env" | "store") reported by the sidecar; `None` when it predates the field.
+pub struct CursorSdkCatalog {
+    pub models: Vec<super::cursor_sdk_client::CursorCatalogModel>,
+    pub credential: Option<String>,
+}
+
 /// Read the Cursor model catalog from a Cursor SDK sidecar handshake.
 /// Empty when the sidecar cannot be launched or fails to start.
-pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::CursorCatalogModel> {
+pub fn read_cursor_sdk_catalog(cwd: &Path) -> CursorSdkCatalog {
+    let empty = CursorSdkCatalog {
+        models: Vec::new(),
+        credential: None,
+    };
     let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch() else {
-        return Vec::new();
+        return empty;
     };
     let Ok(client) = super::cursor_sdk_client::CursorSdkClient::spawn(
         &program,
@@ -104,25 +115,24 @@ pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::Curs
         None,
         super::client::HANDSHAKE_TIMEOUT,
     ) else {
-        return Vec::new();
+        return empty;
     };
     let models = client.model_catalog();
+    let credential = client.cursor_credential_source();
     client.shutdown();
-    models
+    CursorSdkCatalog { models, credential }
 }
 
-/// `Some(models)` when Cursor runs on the SDK transport and its catalog
+/// `Some(catalog)` when Cursor runs on the SDK transport and its catalog
 /// could be read; `None` otherwise (the caller falls back).
-pub fn read_cursor_catalog_if_sdk(
-    cwd: &Path,
-) -> Option<Vec<super::cursor_sdk_client::CursorCatalogModel>> {
+pub fn read_cursor_catalog_if_sdk(cwd: &Path) -> Option<CursorSdkCatalog> {
     if super::session_client::transport_for(AgentClient::Cursor)
         != ajax_core::adapters::HarnessTransport::CursorSdk
     {
         return None;
     }
-    let models = read_cursor_sdk_catalog(cwd);
-    (!models.is_empty()).then_some(models)
+    let catalog = read_cursor_sdk_catalog(cwd);
+    (!catalog.models.is_empty()).then_some(catalog)
 }
 
 /// Build the model catalog for a Pi RPC agent from its handshake config
