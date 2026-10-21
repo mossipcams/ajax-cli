@@ -376,10 +376,7 @@ fn reconcile_lifecycle_from_prs(task: &mut Task) {
 
     if has_open
         && task.lifecycle_status == LifecycleStatus::Active
-        && matches!(
-            task.agent_status,
-            crate::models::AgentRuntimeStatus::Done | crate::models::AgentRuntimeStatus::NotStarted
-        )
+        && task.agent_status == crate::models::AgentRuntimeStatus::Done
         && !task.has_side_flag(crate::models::SideFlag::AgentRunning)
         && !task.has_side_flag(crate::models::SideFlag::NeedsInput)
     {

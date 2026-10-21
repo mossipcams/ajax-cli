@@ -92,6 +92,14 @@ All touched Rust files must remain under the 1,000-line hard limit and near the 
 - [x] **Step 4 (Independent review & verification):**
   - Run `cargo test -p ajax-core`, `cargo test -p ajax-web`, and frontend Vitest suite (`npm test` in `crates/ajax-web/web`).
   - Route independent review to a non-implementer delegate and verify `git diff` and `git status`.
+- [x] **Step 5 (CI failure repair on PR #1381):**
+  - **Rust Test (`crates/ajax-core/src/runtime_refresh/ci_monitor.rs` & `crates/ajax-cli/src/web_backend/tests/suite_2.rs`):**
+    - In `reconcile_lifecycle_from_prs` (`crates/ajax-core/src/runtime_refresh/ci_monitor.rs`), require `task.agent_status == AgentRuntimeStatus::Done` (rather than `Done | NotStarted`) before promoting `Active -> Reviewable` on an open PR so tasks with `NotStarted` (including CLI wrapper liveness before completion) stay `Active` until a turn finishes (`cockpit_refresh_does_not_mark_agent_running_from_wrapper_liveness_alone`).
+    - Update `web_bridge_persists_confirmed_mismatch_branch_adoption` (`crates/ajax-cli/src/web_backend/tests/suite_2.rs`) to assert that `action: "repair"` is rejected with `OperateError::UnsupportedCapability` without mutating SQLite, matching the removal of `Repair` from Web Cockpit.
+  - **Web E2E (`crates/ajax-web/web/e2e/fixtures.ts` & `crates/ajax-web/web/e2e/swipe-reveal.test.ts`):**
+    - Include the `drop` action on `api/add-auth` in `COCKPIT_FIXTURE` (`crates/ajax-web/web/e2e/fixtures.ts`) and update `swipe-reveal.test.ts` (`crates/ajax-web/web/e2e/swipe-reveal.test.ts`) to assert `[data-action="drop"]` is revealed on left swipe and dispatches `POST /api/operations` after confirming in `result-panel-confirm`.
+  - **Web Unit (`crates/ajax-web/web/dist/*`):**
+    - Rebuild `crates/ajax-web/web/dist` with locked Vite 8.3.0 (`npm run web:build`) so `dist/app.css` and `dist/index.html` match the `BASELINE` in `src/styles.architecture.test.ts` and `src/shared/lib/styleSources.test.ts` and `npm run web:build:check` passes.
 
 ## Verification
 
