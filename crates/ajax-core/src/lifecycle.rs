@@ -156,6 +156,10 @@ fn named_transition_allowed(
             LifecycleStatus::Error,
             LifecycleStatus::Active | LifecycleStatus::Reviewable
         ) | (
+            LifecycleTransitionReason::OperationResult,
+            LifecycleStatus::Reviewable | LifecycleStatus::Mergeable,
+            LifecycleStatus::Active
+        ) | (
             LifecycleTransitionReason::ForceRemove,
             LifecycleStatus::Created
                 | LifecycleStatus::Provisioning
@@ -187,6 +191,7 @@ fn generic_transition_allowed(from: LifecycleStatus, to: LifecycleStatus) -> boo
             | (LifecycleStatus::Provisioning, LifecycleStatus::Error)
             | (LifecycleStatus::Active, LifecycleStatus::Waiting)
             | (LifecycleStatus::Active, LifecycleStatus::Reviewable)
+            | (LifecycleStatus::Active, LifecycleStatus::Merged)
             | (LifecycleStatus::Active, LifecycleStatus::Error)
             | (LifecycleStatus::Waiting, LifecycleStatus::Active)
             | (LifecycleStatus::Waiting, LifecycleStatus::Reviewable)
@@ -244,6 +249,7 @@ mod tests {
     #[case(LifecycleStatus::Provisioning, LifecycleStatus::Error)]
     #[case(LifecycleStatus::Active, LifecycleStatus::Waiting)]
     #[case(LifecycleStatus::Active, LifecycleStatus::Reviewable)]
+    #[case(LifecycleStatus::Active, LifecycleStatus::Merged)]
     #[case(LifecycleStatus::Waiting, LifecycleStatus::Active)]
     #[case(LifecycleStatus::Waiting, LifecycleStatus::Reviewable)]
     #[case(LifecycleStatus::Reviewable, LifecycleStatus::Mergeable)]
@@ -274,7 +280,6 @@ mod tests {
 
     #[rstest]
     #[case(LifecycleStatus::Created, LifecycleStatus::Merged)]
-    #[case(LifecycleStatus::Active, LifecycleStatus::Merged)]
     #[case(LifecycleStatus::Reviewable, LifecycleStatus::Removed)]
     #[case(LifecycleStatus::Mergeable, LifecycleStatus::Cleanable)]
     #[case(LifecycleStatus::Merged, LifecycleStatus::Active)]

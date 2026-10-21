@@ -175,14 +175,28 @@ pub fn reconcile_runtime(
     observed_at: SystemTime,
     source: RuntimeObservationSource,
 ) -> RuntimeProjection {
+    reconcile_runtime_for_task(observed, expected_branch, false, observed_at, source)
+}
+
+pub fn reconcile_runtime_for_task(
+    observed: &ObservedTaskRuntime,
+    expected_branch: &str,
+    tmux_optional: bool,
+    observed_at: SystemTime,
+    source: RuntimeObservationSource,
+) -> RuntimeProjection {
     RuntimeProjection::new(
-        runtime_health(observed, expected_branch),
+        runtime_health(observed, expected_branch, tmux_optional),
         observed_at,
         source,
     )
 }
 
-fn runtime_health(observed: &ObservedTaskRuntime, expected_branch: &str) -> RuntimeHealth {
+fn runtime_health(
+    observed: &ObservedTaskRuntime,
+    expected_branch: &str,
+    tmux_optional: bool,
+) -> RuntimeHealth {
     let Some(git_status) = observed.git_status.as_ref() else {
         return RuntimeHealth::Unobservable;
     };
@@ -191,6 +205,17 @@ fn runtime_health(observed: &ObservedTaskRuntime, expected_branch: &str) -> Runt
     }
     if git_status.current_branch.as_deref() != Some(expected_branch) {
         return RuntimeHealth::CheckoutMismatch;
+    }
+
+    if tmux_optional {
+        if observed
+            .task_window_status
+            .as_ref()
+            .is_some_and(|w| w.exists && !w.points_at_expected_path)
+        {
+            return RuntimeHealth::WrongTaskWindowPath;
+        }
+        return RuntimeHealth::Healthy;
     }
 
     let Some(tmux_status) = observed.tmux_status.as_ref() else {

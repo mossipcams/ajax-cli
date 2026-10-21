@@ -3,6 +3,7 @@ pub struct TerminalAttachPlan {
     pub qualified_handle: String,
     pub tmux_session: String,
     pub task_window: String,
+    pub worktree_path: std::path::PathBuf,
 }
 
 use portable_pty::{Child, CommandBuilder};
@@ -189,6 +190,7 @@ pub(crate) fn build_isolated_attach_plan_with_token(
         qualified_handle: plan.qualified_handle.clone(),
         tmux_session: ephemeral.clone(),
         task_window: plan.task_window.clone(),
+        worktree_path: plan.worktree_path.clone(),
     };
     IsolatedAttachPlan {
         setup: vec![

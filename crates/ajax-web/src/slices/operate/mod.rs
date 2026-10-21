@@ -110,10 +110,10 @@ fn operate_inner<R: Registry>(
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
         )),
-        OperatorAction::Review
-        | OperatorAction::Ship
-        | OperatorAction::Repair
-        | OperatorAction::Resume => {
+        OperatorAction::Repair => Err(OperateError::UnsupportedCapability(
+            "repair is not supported in Web Cockpit; use Drop or CLI repair",
+        )),
+        OperatorAction::Review | OperatorAction::Ship | OperatorAction::Resume => {
             let kind = task_command_kind(action)?;
             execute_task_command(context, runner, kind, &request)
         }

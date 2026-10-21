@@ -170,75 +170,6 @@ fn task_detail_exposes_runtime_probe_failure_reason() {
 }
 
 #[test]
-fn browser_cockpit_mismatch_repair_projects_exact_adoption_confirmation() {
-    let mut registry = InMemoryRegistry::default();
-    let mut task = crate::test_support::fix_login_task();
-    task.lifecycle_status = LifecycleStatus::Active;
-    task.git_status = Some(GitStatus {
-        worktree_exists: true,
-        branch_exists: true,
-        current_branch: Some("fix/pane-stuck".to_string()),
-        dirty: false,
-        ahead: 0,
-        behind: 0,
-        merged: false,
-        untracked_files: 0,
-        unpushed_commits: 0,
-        conflicted: false,
-        last_commit: Some("abc123 Fix login".to_string()),
-    });
-    registry.create_task(task).unwrap();
-    let context = CommandContext::new(Config::default(), registry);
-
-    let json = browser_cockpit_json(&context).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let card_repair = &value["cards"][0]["actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|action| action["action"] == "repair")
-        .expect("repair action on card");
-    assert_eq!(card_repair["confirmation_required"], true);
-    assert_eq!(
-        card_repair["branch_adoption"],
-        serde_json::json!({
-            "expected_branch": "ajax/fix-login",
-            "observed_branch": "fix/pane-stuck",
-        })
-    );
-    let card_resume = value["cards"][0]["actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|action| action["action"] == "resume")
-        .expect("resume action on card");
-    assert_eq!(card_resume["confirmation_required"], false);
-    assert!(card_resume.get("branch_adoption").is_none());
-
-    let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
-    let detail_repair = detail
-        .actions
-        .iter()
-        .find(|action| action.action == "repair")
-        .expect("repair action in detail");
-    assert!(detail_repair.confirmation_required);
-    assert_eq!(
-        detail_repair.branch_adoption,
-        Some(ajax_core::commands::BranchAdoptionPlan {
-            expected_branch: "ajax/fix-login".to_string(),
-            observed_branch: "fix/pane-stuck".to_string(),
-        })
-    );
-    let detail_resume = detail
-        .actions
-        .iter()
-        .find(|action| action.action == "resume")
-        .expect("resume action in detail");
-    assert!(!detail_resume.confirmation_required);
-    assert!(detail_resume.branch_adoption.is_none());
-}
-
-#[test]
 fn browser_cockpit_and_detail_pass_through_checkout_mismatch() {
     const EXPLANATION: &str = "Worktree on fix/pane-stuck; expected ajax/fix-login";
     let mut registry = InMemoryRegistry::default();
@@ -267,17 +198,24 @@ fn browser_cockpit_and_detail_pass_through_checkout_mismatch() {
     assert_eq!(card["qualified_handle"], "web/fix-login");
     assert_eq!(card["status"], "error");
     assert_eq!(card["status_explanation"], EXPLANATION);
-    assert_eq!(card["actions"][0]["action"], "repair");
-    assert_eq!(card["actions"][1]["action"], "resume");
-    assert_eq!(card["actions"][2]["action"], "drop");
+    assert!(!card["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["action"] == "repair"));
+    assert_eq!(card["actions"][0]["action"], "resume");
+    assert_eq!(card["actions"][1]["action"], "drop");
 
     let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
     assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
     assert_eq!(detail.status_explanation.as_deref(), Some(EXPLANATION));
-    assert_eq!(detail.actions[0].action, "repair");
-    assert_eq!(detail.actions[1].action, "resume");
-    assert_eq!(detail.actions[2].action, "drop");
+    assert!(!detail
+        .actions
+        .iter()
+        .any(|action| action.action == "repair"));
+    assert_eq!(detail.actions[0].action, "resume");
+    assert_eq!(detail.actions[1].action, "drop");
 }
 
 #[test]
@@ -292,8 +230,11 @@ fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
     let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
     assert_eq!(detail.qualified_handle, "web/fix-login");
-    assert_eq!(detail.actions[0].action, "repair");
-    assert!(detail.actions.iter().any(|action| action.action == "drop"));
+    assert!(!detail
+        .actions
+        .iter()
+        .any(|action| action.action == "repair"));
+    assert_eq!(detail.actions[0].action, "drop");
     assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
     assert_eq!(
         detail.status_explanation.as_deref(),

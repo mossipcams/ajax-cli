@@ -20,7 +20,7 @@ fn issue_1229_repair_stops_when_git_evidence_cannot_be_refreshed() {
         &mut runner,
         OperateRequest {
             task_handle: "web/fix-login".to_string(),
-            action: "repair".to_string(),
+            action: "review".to_string(),
             confirmed: true,
             branch_adoption: None,
         },

@@ -1,4 +1,3 @@
-
 #[test]
 fn web_bridge_rejects_empty_save_over_non_empty_sqlite_state() {
     let dir = scratch_dir("empty-save-guard");
@@ -61,9 +60,9 @@ fn web_bridge_persists_confirmed_mismatch_branch_adoption() {
         .unwrap();
     let mut context = saved_context;
     let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
-    let mut runner = MismatchAdoptionRunner::default();
+    let mut runner = AbsentDropRunner;
 
-    let outcome = bridge
+    let error = bridge
         .execute_operate(
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
@@ -77,73 +76,20 @@ fn web_bridge_persists_confirmed_mismatch_branch_adoption() {
             &mut context,
             &mut runner,
         )
-        .expect("confirmed mismatch repair should adopt");
+        .expect_err("repair is not supported in Web Cockpit");
 
-    assert!(outcome.state_changed);
-    assert_eq!(
-        context
-            .registry
-            .get_task(&TaskId::new("web/fix-login"))
-            .unwrap()
-            .branch,
-        "fix/pane-stuck"
-    );
-    assert_eq!(runner.commands.len(), 2);
-    assert!(runner.commands.iter().all(|command| {
-        command.program == "git"
-            && (command
-                .args
-                .windows(2)
-                .any(|window| window == ["worktree", "list"])
-                || command
-                    .args
-                    .windows(2)
-                    .any(|window| window == ["branch", "--format=%(refname:short)"]))
-    }));
+    assert!(error
+        .message
+        .contains("repair is not supported in Web Cockpit"));
 
-    let reloaded = crate::context::load_context(&paths).expect("reload after adoption");
+    let reloaded = crate::context::load_context(&paths).expect("reload after rejected repair");
     let task = reloaded
         .registry
         .get_task(&TaskId::new("web/fix-login"))
         .unwrap();
-    assert_eq!(task.branch, "fix/pane-stuck");
-    assert_eq!(
-        task.worktree_path,
-        std::path::Path::new("/repo/web__worktrees/ajax-fix-login")
-    );
-    assert_eq!(task.tmux_session, "ajax-web-fix-login");
-    assert!(!task.has_checkout_mismatch());
+    assert_eq!(task.branch, "ajax/fix-login");
 
     let _ = std::fs::remove_dir_all(dir);
-}
-
-#[derive(Default)]
-struct MismatchAdoptionRunner {
-    commands: Vec<CommandSpec>,
-}
-
-impl CommandRunner for MismatchAdoptionRunner {
-    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-        self.commands.push(command.clone());
-        let stdout = match command.args.as_slice() {
-            [_, repo, subcommand, ..] if repo == "/repo/web" && subcommand == "worktree" => {
-                "worktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/fix/pane-stuck\n\n"
-            }
-            [_, repo, subcommand, format]
-                if repo == "/repo/web"
-                    && subcommand == "branch"
-                    && format == "--format=%(refname:short)" =>
-            {
-                "main\najax/fix-login\n"
-            }
-            _ => "",
-        };
-        Ok(CommandOutput {
-            status_code: 0,
-            stdout: stdout.to_string(),
-            stderr: String::new(),
-        })
-    }
 }
 
 #[test]
@@ -356,13 +302,12 @@ fn acknowledge_operator_input_marks_attention_and_persists_across_reload() {
         .unwrap();
     let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
 
-    let acked =
-        <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::acknowledge_operator_input(
-            &mut bridge,
-            &mut context,
-            "web/fix-login",
-        )
-        .expect("ack ok");
+    let acked = <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::acknowledge_operator_input(
+        &mut bridge,
+        &mut context,
+        "web/fix-login",
+    )
+    .expect("ack ok");
     assert!(acked, "first operator input acknowledges and persists");
     assert!(
         context
@@ -411,13 +356,12 @@ fn acknowledge_operator_input_skips_persist_without_newer_evidence() {
     let store = SqliteRegistryStore::new(&paths.state_file);
     let revision_before = store.current_revision().unwrap();
 
-    let acked =
-        <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::acknowledge_operator_input(
-            &mut bridge,
-            &mut context,
-            "web/fix-login",
-        )
-        .expect("ack ok");
+    let acked = <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::acknowledge_operator_input(
+        &mut bridge,
+        &mut context,
+        "web/fix-login",
+    )
+    .expect("ack ok");
     assert!(!acked, "no newer evidence => no ack");
 
     let revision_after = store.current_revision().unwrap();

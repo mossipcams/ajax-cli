@@ -123,7 +123,7 @@ fn row_issue_1096() -> GoldenRow {
         reducer_phase: projection.phase,
         operator_status: operator.status,
         disagreements: vec![
-            "operator Unknown while launch episode closed (NotStarted) — attempt history no longer reads in-progress (#1096 fixed Wave 1)",
+            "operator Idle (skip_interactive_agent) while reducer_phase is Unknown before the first ACP turn",
         ],
     }
 }
@@ -246,7 +246,7 @@ fn golden_table_records_cross_layer_disagreements_without_fixing_them() {
         !issue_1096.open_attempt_running,
         "#1096: launch episode must close when spawn/auth never starts a turn"
     );
-    assert_eq!(issue_1096.operator_status, TaskStatus::Unknown);
+    assert_eq!(issue_1096.operator_status, TaskStatus::Idle);
     assert_eq!(issue_1096.reducer_phase, ParentPhase::Unknown);
 
     let acknowledged = &rows[1];
