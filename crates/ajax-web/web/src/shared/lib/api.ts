@@ -76,6 +76,41 @@ function sessionRenewOptions(): RequestInit {
 
 let browserSessionRenewal: Promise<void> | null = null;
 
+const SESSION_RECOVERY_GUARD_KEY = "ajax.pwa.session-expiry-recovered";
+let sessionExpiryNavigationStarted = false;
+
+/**
+ * One-shot top-level navigation when the browser session has unrecoverably
+ * expired (e.g. Cloudflare Access re-auth on a deployed PWA). A sessionStorage
+ * guard plus an in-memory flag ensure concurrent stale requests trigger at most
+ * one navigation per page load / tab session. Returns true only when navigation
+ * was initiated; callers must still surface the stale-session error.
+ */
+export function attemptSessionExpiryNavigation(): boolean {
+  if (sessionExpiryNavigationStarted) return false;
+  try {
+    if (sessionStorage.getItem(SESSION_RECOVERY_GUARD_KEY)) return false;
+    sessionStorage.setItem(SESSION_RECOVERY_GUARD_KEY, "1");
+  } catch {
+    // Storage unavailable: fall back to the in-memory guard only.
+  }
+  sessionExpiryNavigationStarted = true;
+  try {
+    window.location.replace(window.location.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearSessionRecoveryGuard(): void {
+  try {
+    sessionStorage.removeItem(SESSION_RECOVERY_GUARD_KEY);
+  } catch {
+    // Ignore; the in-memory guard resets on page load.
+  }
+}
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return {};
@@ -112,6 +147,8 @@ export async function renewBrowserSession(): Promise<void> {
           response.status,
         );
       }
+
+      clearSessionRecoveryGuard();
     })().finally(() => {
       browserSessionRenewal = null;
     });
@@ -128,10 +165,17 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
   }
   if (response.status !== 401) return response;
 
-  await renewBrowserSession();
+  try {
+    await renewBrowserSession();
+  } catch (error) {
+    // Every renewal failure is an unrecoverable session expiry here.
+    attemptSessionExpiryNavigation();
+    throw error;
+  }
   try {
     const retryResponse = await fetch(path, init);
     if (retryResponse.status === 401) {
+      attemptSessionExpiryNavigation();
       throw new ApiError("stale-session", "HTTP 401", 401);
     }
     return retryResponse;

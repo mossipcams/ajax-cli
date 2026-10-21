@@ -1,4 +1,4 @@
-import { ApiError, renewBrowserSession } from "@/shared/lib/api";
+import { ApiError, attemptSessionExpiryNavigation, renewBrowserSession } from "@/shared/lib/api";
 import { GET_REQUEST_TIMEOUT_MS } from "@/shared/lib/polling";
 
 export type TrainingJobKind = "generate" | "lfm-train" | "lfm-eval" | "wake-train";
@@ -136,10 +136,19 @@ async function protectedFetch(path: string, init: RequestInit): Promise<Response
   }
   if (response.status !== 401) return response;
 
-  await renewBrowserSession();
+  try {
+    await renewBrowserSession();
+  } catch (error) {
+    // Every renewal failure is an unrecoverable session expiry here.
+    attemptSessionExpiryNavigation();
+    throw error;
+  }
   try {
     const retry = await fetch(path, init);
-    if (retry.status === 401) throw new ApiError("stale-session", "HTTP 401", 401);
+    if (retry.status === 401) {
+      attemptSessionExpiryNavigation();
+      throw new ApiError("stale-session", "HTTP 401", 401);
+    }
     return retry;
   } catch (error) {
     if (error instanceof ApiError) throw error;
