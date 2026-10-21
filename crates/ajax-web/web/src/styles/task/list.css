@@ -117,13 +117,19 @@
   gap: 1px;
 }
 
-/* Option A: clean colored status text, no pill box, no uppercase. */
+/* Clean status text, no pill box, no uppercase. Neutral by default; only rows
+   that need the operator (waiting / error) carry their hue into the text. */
 .task-row-status {
   flex: none;
   font-size: var(--text-label);
   font-weight: 500;
-  color: var(--tone, var(--ink-muted));
+  color: var(--ink-muted);
   white-space: nowrap;
+}
+
+.task-row.tone-waiting .task-row-status,
+.task-row.tone-error .task-row-status {
+  color: var(--tone);
 }
 
 .task-row-time {

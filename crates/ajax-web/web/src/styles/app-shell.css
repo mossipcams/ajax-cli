@@ -145,15 +145,15 @@ header .bar h1 {
 }
 
 .connection-actions button.is-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--ink);
+  border-color: var(--ink);
   color: var(--paper);
 }
 
 .connection-actions button.is-primary:hover,
 .connection-actions button.is-primary:focus-visible {
-  background: var(--accent-bright);
-  border-color: var(--accent-bright);
+  background: var(--ink-bright);
+  border-color: var(--ink-bright);
   color: var(--paper);
 }
 
@@ -184,7 +184,7 @@ html.terminal-expanded .result-panel,
 }
 
 .result-panel.is-error {
-  background: rgba(215, 135, 135, 0.14);
+  background: rgba(235, 130, 123, 0.14);
 }
 
 .result-message {

@@ -437,12 +437,17 @@ describe("TaskList", () => {
     expect(onOpenTask).not.toHaveBeenCalled();
   });
 
-  it("styles the row status as clean colored text and idle dots as a hollow ring", () => {
+  it("styles the row status as clean neutral text, carrying tone only for waiting and error", () => {
     const statusRule = stylesSource.match(/\.task-row-status\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(statusRule).toMatch(/font-size:\s*var\(--text-label\)/);
     expect(statusRule).toMatch(/font-weight:\s*500/);
-    expect(statusRule).toMatch(/color:\s*var\(--tone/);
+    expect(statusRule).toMatch(/color:\s*var\(--ink-muted\)/);
+    expect(statusRule).not.toMatch(/var\(--tone/);
     expect(statusRule).not.toMatch(/text-transform/);
+
+    const toneStatusRule =
+      stylesSource.match(/\.task-row\.tone-waiting \.task-row-status,\s*\.task-row\.tone-error \.task-row-status\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(toneStatusRule).toMatch(/color:\s*var\(--tone\)/);
 
     const listRule = stylesSource.match(/\.task-list\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(listRule).toMatch(/border-radius:\s*var\(--radius\)/);

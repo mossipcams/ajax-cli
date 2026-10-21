@@ -40,15 +40,15 @@
 }
 
 .action.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--ink);
+  border-color: var(--ink);
   color: var(--paper);
 }
 
 .action.primary:hover,
 .action.primary:focus-visible {
-  background: var(--accent-bright);
-  border-color: var(--accent-bright);
+  background: var(--ink-bright);
+  border-color: var(--ink-bright);
 }
 
 .action.remediation-action {
@@ -120,15 +120,15 @@
 }
 
 .pill.is-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--ink);
+  border-color: var(--ink);
   color: var(--paper);
 }
 
 .pill.is-primary:hover,
 .pill.is-primary:focus-visible {
-  background: var(--accent-bright);
-  border-color: var(--accent-bright);
+  background: var(--ink-bright);
+  border-color: var(--ink-bright);
 }
 
 .pill.is-danger {

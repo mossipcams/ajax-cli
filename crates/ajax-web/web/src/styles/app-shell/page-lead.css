@@ -18,8 +18,8 @@
   width: 100%;
   margin: 10px 0 12px;
   padding: 11px 16px;
-  background: var(--accent-deep);
-  border: 1px solid var(--accent);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius-sm);
   color: var(--ink);
   font-size: var(--text-label);
@@ -38,8 +38,8 @@
 
 .update-banner:hover,
 .update-banner:focus-visible {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--paper);
+  background: var(--paper-high);
+  border-color: var(--ink-soft);
+  color: var(--ink);
   outline: none;
 }
