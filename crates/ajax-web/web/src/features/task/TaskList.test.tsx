@@ -32,6 +32,7 @@ const cockpit: BrowserCockpitView = {
       { name: "api", attention_items: 0 },
     ],
   },
+  inbox: { items: [] },
   cards: [
     {
       id: "web/a",
@@ -251,42 +252,61 @@ describe("TaskList", () => {
     expect(wrap).toHaveClass("is-revealed-wrap");
   });
 
-  it("places running/error tasks in Active and idle tasks in the disclosure", () => {
+  it("renders every card in one unified list — no Active/Idle split", () => {
     render(<TaskList cockpit={cockpit} />);
     const tasks = screen.getByRole("region", { name: "Tasks" });
-    expect(within(tasks).getByText("Active")).toHaveClass("task-band-label");
-
-    const idle = within(tasks).getByRole("group");
-    expect(idle).toHaveAttribute("open");
-    expect(within(idle).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
-    expect(within(idle).queryByRole("button", { name: /web\/a/ })).toBeNull();
-    expect(within(idle).queryByRole("button", { name: /web\/b/ })).toBeNull();
+    expect(within(tasks).queryByRole("group")).toBeNull();
+    expect(within(tasks).queryByText("Active")).toBeNull();
+    expect(within(tasks).getByRole("button", { name: /web\/a/ })).toBeInTheDocument();
+    expect(within(tasks).getByRole("button", { name: /web\/b/ })).toBeInTheDocument();
+    expect(within(tasks).getByRole("button", { name: /api\/c/ })).toBeInTheDocument();
   });
 
-  it("shows per-repo attention counts on project pills", () => {
+  it("renders no project filter pill bar", () => {
     render(<TaskList cockpit={cockpit} />);
-    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
-    expect(webPill).toHaveAttribute("aria-label", "web — 2 need attention");
-    expect(within(webPill).getByText("2")).toHaveClass("pill-badge");
-    const apiPill = screen.getByRole("button", { name: "api" });
-    expect(apiPill).toHaveAttribute("aria-label", "api");
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
   });
 
-  it("marks the active project pill for assistive tech", () => {
-    render(<TaskList cockpit={cockpit} selectedProject="api" />);
-    const allPill = screen.getByRole("button", { name: "All" });
-    const apiPill = screen.getByRole("button", { name: "api" });
-    expect(apiPill).toHaveAttribute("aria-current", "true");
-    expect(allPill).not.toHaveAttribute("aria-current");
+  it("shows the concrete status_explanation on active rows (Option A)", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const rowA = screen.getByRole("button", { name: /web\/a/ });
+    expect(within(rowA).getByText("CI failed")).toHaveClass("task-row-status");
+    expect(rowA).toHaveClass("tone-error");
+    const rowB = screen.getByRole("button", { name: /web\/b/ });
+    expect(within(rowB).getByText("Agent working")).toHaveClass("task-row-status");
+    expect(rowB).toHaveClass("tone-running");
   });
 
-  it("offers project pills and reports selection", () => {
-    const onSelectProject = vi.fn();
-    render(<TaskList cockpit={cockpit} onSelectProject={onSelectProject} />);
-    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
-    const webPill = screen.getByRole("button", { name: "web — 2 need attention" });
-    fireEvent.click(webPill);
-    expect(onSelectProject).toHaveBeenCalledWith("web");
+  it("falls back to Working/Waiting/Error labels and hides the label for idle rows", () => {
+    const noExplain: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        { id: "web/x", qualified_handle: "web/x", repo: "web", title: "X", status: "running", last_activity_unix_secs: 0, actions: [] },
+        { id: "api/w", qualified_handle: "api/w", repo: "api", title: "W", status: "waiting", last_activity_unix_secs: 0, actions: [] },
+        { id: "api/e", qualified_handle: "api/e", repo: "api", title: "E", status: "error", last_activity_unix_secs: 0, actions: [] },
+        cockpit.cards[2],
+      ],
+    };
+    render(<TaskList cockpit={noExplain} />);
+    expect(within(screen.getByRole("button", { name: /web\/x/ })).getByText("Working")).toHaveClass("task-row-status");
+    expect(within(screen.getByRole("button", { name: /api\/w/ })).getByText("Waiting")).toHaveClass("task-row-status");
+    expect(within(screen.getByRole("button", { name: /api\/e/ })).getByText("Error")).toHaveClass("task-row-status");
+    const rowC = screen.getByRole("button", { name: /api\/c/ });
+    expect(rowC).not.toHaveTextContent(/Working|Waiting|Error|Ready for review/);
+  });
+
+  it("labels review-attention idle rows Ready for review with the done tone", () => {
+    const review: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        { id: "web/r", qualified_handle: "web/r", repo: "web", title: "R", status: "idle", attention: "review", last_activity_unix_secs: 0, actions: [] },
+      ],
+    };
+    render(<TaskList cockpit={review} />);
+    const row = screen.getByRole("button", { name: /web\/r/ });
+    expect(within(row).getByText("Ready for review")).toHaveClass("task-row-status");
+    expect(row).toHaveClass("tone-done");
   });
 
   it("filters by the selected project", () => {
@@ -416,14 +436,19 @@ describe("TaskList", () => {
     expect(onOpenTask).not.toHaveBeenCalled();
   });
 
-  it("uses accent for the active project pill and warn for attention badges", () => {
-    const activePillRule =
-      stylesSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
-    const pillBadgeRule = stylesSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
+  it("styles the row status as clean colored text and idle dots as a hollow ring", () => {
+    const statusRule = stylesSource.match(/\.task-row-status\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(statusRule).toMatch(/font-size:\s*var\(--text-label\)/);
+    expect(statusRule).toMatch(/font-weight:\s*500/);
+    expect(statusRule).toMatch(/color:\s*var\(--tone/);
+    expect(statusRule).not.toMatch(/text-transform/);
 
-    expect(activePillRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
-    expect(activePillRule).not.toMatch(/var\(--warn/);
-    expect(pillBadgeRule).toMatch(/var\(--warn/);
+    const listRule = stylesSource.match(/\.task-list\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(listRule).toMatch(/border-radius:\s*var\(--radius\)/);
+    expect(listRule).not.toMatch(/box-shadow/);
+
+    const idleDotRule = stylesSource.match(/\.status-dot\.tone-idle\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(idleDotRule).toMatch(/background:\s*transparent/);
   });
 
   it("does not mark the resting row as revealed", () => {

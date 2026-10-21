@@ -6,6 +6,7 @@ import {
   sortCards,
   isConfirmExpired,
   statusMeta,
+  taskRowStatus,
   relativeTime,
   formatDuration,
 } from "./state";
@@ -133,6 +134,29 @@ describe("statusMeta", () => {
 
   it("defaults to idle for unrecognized values", () => {
     expect(statusMeta("wat")).toEqual({ tone: "idle", label: "Idle" });
+  });
+});
+
+describe("taskRowStatus", () => {
+  it("prefers the concrete status_explanation when present", () => {
+    const c = { ...card("web/a", "running"), status_explanation: "Agent working" };
+    expect(taskRowStatus(c)).toEqual({ tone: "running", label: "Agent working" });
+  });
+
+  it("labels review-attention cards Ready for review", () => {
+    const c = { ...card("web/a", "idle"), attention: "review" as const };
+    expect(taskRowStatus(c)).toEqual({ tone: "idle", label: "Ready for review" });
+  });
+
+  it("falls back to Working/Waiting/Error for active statuses", () => {
+    expect(taskRowStatus(card("web/a", "running"))).toEqual({ tone: "running", label: "Working" });
+    expect(taskRowStatus(card("web/b", "waiting"))).toEqual({ tone: "waiting", label: "Waiting" });
+    expect(taskRowStatus(card("web/c", "error"))).toEqual({ tone: "error", label: "Error" });
+  });
+
+  it("omits the label for idle and unknown cards without review attention", () => {
+    expect(taskRowStatus(card("web/a", "idle"))).toEqual({ tone: "idle", label: null });
+    expect(taskRowStatus(card("web/b", "unknown"))).toEqual({ tone: "unknown", label: null });
   });
 });
 

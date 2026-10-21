@@ -10,7 +10,7 @@ import {
   type CSSProperties,
 } from "react";
 import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
-import { filterByProject, relativeTime, sortCards, statusMeta } from "@/shared/lib/state";
+import { filterByProject, relativeTime, sortCards, taskRowStatus } from "@/shared/lib/state";
 import { visibleTaskActions } from "./taskActions";
 import ActionBar from "./ActionBar";
 import type { PendingConfirmRequest } from "./ActionBar";
@@ -81,7 +81,8 @@ const TaskRow = memo(function TaskRow({
   pendingConfirmAction = null,
   onCancelPendingConfirm,
 }: TaskRowProps) {
-  const meta = statusMeta(card.status);
+  const statusInfo = taskRowStatus(card);
+  const tone = card.attention === "review" && card.status === "idle" ? "done" : statusInfo.tone;
   const wrapRef = useRef<HTMLDivElement>(null);
   const revealAction = visibleTaskActions(card.actions)[0];
 
@@ -102,7 +103,7 @@ const TaskRow = memo(function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  const className = ["task-row", `tone-${meta.tone}`, offset > 0 ? "is-revealed" : "", "ph-no-autocapture"]
+  const className = ["task-row", `tone-${tone}`, offset > 0 ? "is-revealed" : "", "ph-no-autocapture"]
     .filter(Boolean)
     .join(" ");
 
@@ -165,17 +166,13 @@ const TaskRow = memo(function TaskRow({
         style={{ transform: `translateX(-${offset}px)` }}
         onClick={handleTap}
       >
-        <span className={`status-dot tone-${meta.tone}`} aria-hidden="true" />
+        <span className={`status-dot tone-${tone}`} aria-hidden="true" />
         <div className="task-row-main">
           <span className="task-row-title">{card.title || card.qualified_handle}</span>
           {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
-          {card.status_explanation &&
-          card.status_explanation.toLowerCase() !== meta.label.toLowerCase() ? (
-            <span className="task-row-sub">{card.status_explanation}</span>
-          ) : null}
         </div>
         <span className="task-row-side">
-          <span className="task-row-status">{meta.label}</span>
+          {statusInfo.label ? <span className="task-row-status">{statusInfo.label}</span> : null}
           {card.last_activity_unix_secs ? (
             <span className="task-row-time">
               {relativeTime(card.last_activity_unix_secs, nowSecs)}
@@ -191,7 +188,6 @@ const TaskRow = memo(function TaskRow({
 export default function TaskList({
   cockpit,
   selectedProject = null,
-  onSelectProject,
   onOpenTask,
   onCockpit,
   onResult,
@@ -332,24 +328,6 @@ export default function TaskList({
     [onResult],
   );
 
-  const projects = useMemo(
-    () =>
-      [
-        ...new Set([
-          ...cockpit.cards.map((card) => card.repo),
-          ...(cockpit.repos?.repos ?? []).map((repo) => repo.name),
-        ]),
-      ].sort(),
-    [cockpit.cards, cockpit.repos?.repos],
-  );
-
-  const attentionByRepo = useMemo(
-    () =>
-      new Map(
-        (cockpit.repos?.repos ?? []).map((repo) => [repo.name, repo.attention_items ?? 0]),
-      ),
-    [cockpit.repos?.repos],
-  );
 
   const calm = useMemo(
     () => sortCards(filterByProject(cockpit.cards, selectedProject), stableOrder),
@@ -366,9 +344,6 @@ export default function TaskList({
     });
   }, [calm]);
 
-  const active = useMemo(() => calm.filter((card) => card.status !== "idle"), [calm]);
-  const idle = useMemo(() => calm.filter((card) => card.status === "idle"), [calm]);
-
   const rowProps = {
     nowSecs,
     onOffset: setOffset,
@@ -381,74 +356,20 @@ export default function TaskList({
     onCancelPendingConfirm,
   };
 
-  const band = (cards: BrowserTaskCard[]) => (
-    <div className="task-list">
-      {cards.map((card) => (
-        <TaskRow
-          key={card.qualified_handle}
-          card={card}
-          offset={offsets[card.qualified_handle] ?? 0}
-          {...rowProps}
-        />
-      ))}
-    </div>
-  );
-
   return (
     <>
-      {projects.length > 0 ? (
-        <nav className="project-nav" aria-label="Projects">
-          <span className="project-nav-label">Projects</span>
-          <button
-            type="button"
-            className={`project-pill${!selectedProject ? " is-active" : ""}`}
-            onClick={() => onSelectProject?.(null)}
-          >
-            All
-          </button>
-          {projects.map((project) => {
-            const count = attentionByRepo.get(project) ?? 0;
-            return (
-              <button
-                key={project}
-                type="button"
-                className={`project-pill${selectedProject === project ? " is-active" : ""}`}
-                aria-label={count ? `${project} — ${count} need attention` : project}
-                aria-current={selectedProject === project ? "true" : undefined}
-                onClick={() => onSelectProject?.(project)}
-              >
-                {project}
-                {count ? (
-                  <span className="pill-badge" aria-hidden="true">
-                    {count}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </nav>
-      ) : null}
-
       {calm.length > 0 ? (
         <section className="tasks" aria-label="Tasks" aria-live="polite">
-          {active.length > 0 ? (
-            <section className="task-band">
-              <div className="task-band-title">
-                <span className="task-band-label">Active</span>
-                <span className="task-band-count">{active.length}</span>
-              </div>
-              {band(active)}
-            </section>
-          ) : null}
-          {idle.length > 0 ? (
-            <details className="task-band idle-band" open>
-              <summary className="task-band-title">
-                <span className="task-band-label">Idle</span>
-                <span className="task-band-count">{idle.length}</span>
-              </summary>
-              {band(idle)}
-            </details>
-          ) : null}
+          <div className="task-list">
+            {calm.map((card) => (
+              <TaskRow
+                key={card.qualified_handle}
+                card={card}
+                offset={offsets[card.qualified_handle] ?? 0}
+                {...rowProps}
+              />
+            ))}
+          </div>
         </section>
       ) : null}
 
