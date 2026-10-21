@@ -12,16 +12,16 @@ colors:
   ink-faint: "#808080"
   rule: "#2a2a2a"
   rule-strong: "#454545"
-  soft-steel-blue: "#87afd7"
-  soft-steel-blue-bright: "#a3c6e8"
-  soft-steel-blue-deep: "#24384c"
-  attention-amber: "#d7af5f"
-  attention-amber-bright: "#e5c88a"
-  fault-rose: "#d78787"
-  fault-rose-bright: "#e3a5a5"
-  fault-rose-deep: "#5f3535"
-  done-sage: "#87af87"
-  done-sage-bright: "#a5c8a5"
+  soft-steel-blue: "#3f76ff"
+  soft-steel-blue-bright: "#6692ff"
+  soft-steel-blue-deep: "#13234c"
+  attention-amber: "#f59e0b"
+  attention-amber-bright: "#fbbf24"
+  fault-rose: "#ef4444"
+  fault-rose-bright: "#f87171"
+  fault-rose-deep: "#5f1d1d"
+  done-sage: "#22c55e"
+  done-sage-bright: "#4ade80"
 typography:
   micro:
     fontFamily: "ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif"
@@ -169,7 +169,7 @@ components:
 
 Ajax is the product and the visual brief: a pocket operator console for a local agent fleet. Soft Charcoal surfaces, Soft Steel Blue as the running signal, and a terminal pane that owns the work. Chrome is sparse, pill-decisive, and mobile-first for Safari on iPhone — status, required decision, then the raw tmux/xterm bridge.
 
-Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are CLI-locked to match Native Cockpit. Motion is short state feedback (≈140–220ms), never page choreography. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
+Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are crisp plane-mobile tones on the CLI-locked charcoal neutrals. Motion is short state feedback (≈140–220ms), never page choreography. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
 
 **Key Characteristics:**
 - Soft Charcoal stack with hairline rules; depth mostly from paper steps
@@ -181,17 +181,17 @@ Density stays operational, not decorative. Tone carries meaning (`running` / `wa
 
 ## 2. Colors
 
-Restrained dark console palette: neutrals do the work; semantic accents speak only when status or a decisive action needs them. Values stay in lockstep with `ajax-tui` xterm 110 / 179 / 174 / 108.
+Restrained dark console palette: neutrals do the work; semantic accents speak only when status or a decisive action needs them. Charcoal surfaces stay in lockstep with `ajax-tui`; accent tones are crisp plane-mobile values.
 
 ### Primary
-- **Soft Steel Blue** (`#87afd7`): Primary actions, current nav, running tone. Bright (`#a3c6e8`) on hover; deep (`#24384c`) for filled attention bands (update banner, selected nav wash).
+- **Soft Steel Blue** (`#3f76ff`): Primary actions, current nav, running tone. Bright (`#6692ff`) on hover; deep (`#13234c`) for filled attention bands (update banner, selected nav wash).
 
 ### Secondary
-- **Attention Amber** (`#d7af5f`): Waiting / needs-input / remediation. Bright (`#e5c88a`) for ready-for-review emphasis.
+- **Attention Amber** (`#f59e0b`): Waiting / needs-input / remediation. Bright (`#fbbf24`) for ready-for-review emphasis.
 
 ### Tertiary
-- **Fault Rose** (`#d78787`): Errors and destructive intents. Bright (`#e3a5a5`) on confirm/hover fill; deep (`#5f3535`) for destructive borders at rest.
-- **Done Sage** (`#87af87`): Success / done. Bright (`#a5c8a5`) when a brighter success cue is needed.
+- **Fault Rose** (`#ef4444`): Errors and destructive intents. Bright (`#f87171`) on confirm/hover fill; deep (`#5f1d1d`) for destructive borders at rest.
+- **Done Sage** (`#22c55e`): Success / done. Bright (`#4ade80`) when a brighter success cue is needed.
 
 ### Neutral
 - **Soft Charcoal** (`#161616`): Body / app paper.
@@ -363,7 +363,7 @@ is hidden.
 - **Do** use Soft Steel Blue only for primary CTA and running/selection state.
 - **Do** keep actions pill-shaped with ≥44px height on touch.
 - **Do** convey depth with Soft Charcoal paper steps before reaching for shadow.
-- **Do** keep accents locked to CLI cockpit values (xterm 110 / 179 / 174 / 108).
+- **Do** keep accent tones crisp and plane-mobile-inspired; neutrals stay locked to the CLI cockpit charcoal/ink values.
 - **Do** respect `prefers-reduced-motion` (collapse pulse/nudge/transitions).
 - **Do** use the rem type ramp tokens for UI type; keep listed literal exceptions only.
 

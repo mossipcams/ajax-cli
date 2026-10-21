@@ -22,6 +22,26 @@ export function statusMeta(status: string): StatusMeta {
   return { tone, label: STATUS_LABELS[tone] };
 }
 
+export function taskRowStatus(
+  card: Pick<BrowserTaskCard, "status" | "status_explanation" | "attention">,
+): { tone: string; label: string | null } {
+  const meta = statusMeta(card.status);
+  if (card.status_explanation) return { tone: meta.tone, label: card.status_explanation };
+  if (meta.tone === "idle" && card.attention === "review") {
+    return { tone: "done", label: "Ready for review" };
+  }
+  switch (meta.tone) {
+    case "running":
+      return { tone: meta.tone, label: "Working" };
+    case "waiting":
+      return { tone: meta.tone, label: "Waiting" };
+    case "error":
+      return { tone: meta.tone, label: "Error" };
+    default:
+      return { tone: meta.tone, label: null };
+  }
+}
+
 export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle", "unknown"];
 
 export function statusRank(status: string): number {

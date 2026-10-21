@@ -1,7 +1,7 @@
 :root {
   color-scheme: dark;
 
-  /* DESIGN.md colors — source of truth (CLI lockstep: ajax-tui xterm 110/179/174/108). */
+  /* DESIGN.md colors — source of truth (charcoal surfaces CLI-locked; accents are plane-mobile tones). */
   --soft-charcoal: #161616;
   --soft-charcoal-tint: #1d1d1d;
   --soft-charcoal-raised: #242424;
@@ -12,16 +12,16 @@
   --ink-faint: #808080; /* CLI text_chrome (xterm 244) */
   --rule: #2a2a2a;
   --rule-strong: #454545;
-  --soft-steel-blue: #87afd7; /* primary / running (xterm 110) */
-  --soft-steel-blue-bright: #a3c6e8;
-  --soft-steel-blue-deep: #24384c;
-  --attention-amber: #d7af5f; /* warning / waiting (xterm 179) */
-  --attention-amber-bright: #e5c88a;
-  --fault-rose: #d78787; /* danger / error (xterm 174) */
-  --fault-rose-bright: #e3a5a5;
-  --fault-rose-deep: #5f3535;
-  --done-sage: #87af87; /* success / done (xterm 108) */
-  --done-sage-bright: #a5c8a5;
+  --soft-steel-blue: #3f76ff; /* primary / running */
+  --soft-steel-blue-bright: #6692ff;
+  --soft-steel-blue-deep: #13234c;
+  --attention-amber: #f59e0b; /* warning / waiting */
+  --attention-amber-bright: #fbbf24;
+  --fault-rose: #ef4444; /* danger / error */
+  --fault-rose-bright: #f87171;
+  --fault-rose-deep: #5f1d1d;
+  --done-sage: #22c55e; /* success / done */
+  --done-sage-bright: #4ade80;
 
   /* Legacy role aliases — same values; prefer DESIGN.md names in new code. */
   --paper: var(--soft-charcoal);
@@ -86,17 +86,17 @@
 /* Canonical task status tones — set --tone / --tone-bg consumed by status dots,
    badges, task rows, inbox cards, and interact pills across components. These
    classes are applied dynamically (tone-{kind}); do not treat them as unused. */
-.tone-running { --tone: var(--accent); --tone-bg: rgba(135, 175, 215, 0.14); }
+.tone-running { --tone: var(--accent); --tone-bg: rgba(63, 118, 255, 0.14); }
 .tone-waiting,
-.tone-attention { --tone: var(--warn); --tone-bg: rgba(215, 175, 95, 0.14); }
+.tone-attention { --tone: var(--warn); --tone-bg: rgba(245, 158, 11, 0.14); }
 .tone-idle,
 .tone-unknown,
 .tone-muted { --tone: var(--ink-muted); --tone-bg: rgba(168, 168, 168, 0.1); }
 .tone-error,
-.tone-danger { --tone: var(--danger); --tone-bg: rgba(215, 135, 135, 0.14); }
-.tone-ready { --tone: var(--warn-bright); --tone-bg: rgba(229, 200, 138, 0.14); }
-.tone-done { --tone: var(--ok); --tone-bg: rgba(135, 175, 135, 0.12); }
-.tone-success { --tone: var(--ok); --tone-bg: rgba(135, 175, 135, 0.14); }
+.tone-danger { --tone: var(--danger); --tone-bg: rgba(239, 68, 68, 0.14); }
+.tone-ready { --tone: var(--warn-bright); --tone-bg: rgba(251, 191, 36, 0.14); }
+.tone-done { --tone: var(--ok); --tone-bg: rgba(34, 197, 94, 0.12); }
+.tone-success { --tone: var(--ok); --tone-bg: rgba(34, 197, 94, 0.14); }
 
 /* Base element resets ----------------------------------------------------- */
 * {

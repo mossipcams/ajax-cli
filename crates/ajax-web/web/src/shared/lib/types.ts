@@ -112,6 +112,7 @@ export interface BrowserBackend {
   warning?: string | null;
 }
 
+export type AttentionBand = "needs-you" | "review" | "active" | "idle";
 export interface BrowserTaskCard {
   id: string;
   qualified_handle: string;
@@ -119,6 +120,7 @@ export interface BrowserTaskCard {
   title: string;
   status: TaskStatus;
   status_explanation?: string | null;
+  attention?: AttentionBand;
   last_activity_unix_secs: number;
   actions: WebAction[];
   session_capable?: boolean;
