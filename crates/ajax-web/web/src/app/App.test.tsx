@@ -430,14 +430,16 @@ describe("App shell", () => {
     expect(bottomNavRule).not.toMatch(/color-mix/);
   });
 
-  it("styles the current bottom-nav page with an accent selected state", () => {
+  it("styles the current bottom-nav page with a neutral selected state", () => {
     const stylesSource = loadStylesSource();
     const currentPageRule =
       stylesSource.match(/\.bottom-nav button\[aria-current(?:="page")?\]\s*\{([^}]*)\}/)?.[1] ??
       "";
 
     expect(stylesSource).toMatch(/\.bottom-nav button\[aria-current/);
-    expect(currentPageRule).toMatch(/var\(--accent(?:-bright|-deep)?\)/);
+    expect(currentPageRule).toMatch(/background:\s*var\(--paper-raised\)/);
+    expect(currentPageRule).toMatch(/color:\s*var\(--ink\)/);
+    expect(currentPageRule).not.toMatch(/var\(--accent/);
   });
 
   it("anchors the result toast above the bottom nav with full-width actions", () => {

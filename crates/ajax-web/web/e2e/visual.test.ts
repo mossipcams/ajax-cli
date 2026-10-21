@@ -9,9 +9,9 @@ import {
 } from "./fixtures";
 
 
-const ACCENT = "rgb(63, 118, 255)";
-const WARN = "rgb(245, 158, 11)";
-const DANGER = "rgb(239, 68, 68)";
+const INK = "rgb(230, 230, 230)";
+const WARN = "rgb(221, 174, 108)";
+const DANGER = "rgb(235, 130, 123)";
 const TRANSPARENT = "rgba(0, 0, 0, 0)";
 
 function bg(locator: Locator) {
@@ -25,7 +25,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const newButton = page.locator('.bottom-nav button[data-bottom-action="new-task"]');
-  expect(await bg(newButton)).toBe(ACCENT);
+  expect(await bg(newButton)).toBe(INK);
 
 
   const taskRow = page.locator('.task-row[data-handle="web/fix-login"]').first();
@@ -134,7 +134,7 @@ test("task detail panels and action buttons are styled", async ({ page }, testIn
   await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
 
   const primary = page.locator(".action.primary").first();
-  expect(await bg(primary)).toBe(ACCENT);
+  expect(await bg(primary)).toBe(INK);
 
   const destructive = page.locator('.action[data-destructive="true"]').first();
   expect(await destructive.evaluate((el) => getComputedStyle(el).color)).toBe(DANGER);

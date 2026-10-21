@@ -7,21 +7,22 @@ colors:
   soft-charcoal-raised: "#242424"
   soft-charcoal-high: "#2d2d2d"
   ink: "#e6e6e6"
+  ink-bright: "#f5f5f5"
   ink-soft: "#c6c6c6"
   ink-muted: "#a8a8a8"
   ink-faint: "#808080"
   rule: "#2a2a2a"
   rule-strong: "#454545"
-  soft-steel-blue: "#3f76ff"
-  soft-steel-blue-bright: "#6692ff"
-  soft-steel-blue-deep: "#13234c"
-  attention-amber: "#f59e0b"
-  attention-amber-bright: "#fbbf24"
-  fault-rose: "#ef4444"
-  fault-rose-bright: "#f87171"
-  fault-rose-deep: "#5f1d1d"
-  done-sage: "#22c55e"
-  done-sage-bright: "#4ade80"
+  soft-steel-blue: "#85bcf5"
+  soft-steel-blue-bright: "#a9d6ff"
+  soft-steel-blue-deep: "#192f46"
+  attention-amber: "#ddae6c"
+  attention-amber-bright: "#f0ca96"
+  fault-rose: "#eb827b"
+  fault-rose-bright: "#fda19a"
+  fault-rose-deep: "#442322"
+  done-sage: "#82cb9b"
+  done-sage-bright: "#a7e1ba"
 typography:
   micro:
     fontFamily: "ui-sans-serif, Avenir Next, Helvetica Neue, system-ui, -apple-system, sans-serif"
@@ -109,13 +110,13 @@ spacing:
   6: "24px"
 components:
   button-primary:
-    backgroundColor: "{colors.soft-steel-blue}"
+    backgroundColor: "{colors.ink}"
     textColor: "{colors.soft-charcoal}"
     rounded: "{rounded.pill}"
     padding: "10px 16px"
     height: "44px"
   button-primary-hover:
-    backgroundColor: "{colors.soft-steel-blue-bright}"
+    backgroundColor: "{colors.ink-bright}"
     textColor: "{colors.soft-charcoal}"
     rounded: "{rounded.pill}"
     padding: "10px 16px"
@@ -139,7 +140,7 @@ components:
     padding: "10px 16px"
     height: "44px"
   pill-primary:
-    backgroundColor: "{colors.soft-steel-blue}"
+    backgroundColor: "{colors.ink}"
     textColor: "{colors.soft-charcoal}"
     rounded: "{rounded.pill}"
     padding: "8px 16px"
@@ -151,7 +152,7 @@ components:
     padding: "10px 12px"
     typography: "{typography.input}"
   nav-new-task:
-    backgroundColor: "{colors.soft-steel-blue}"
+    backgroundColor: "{colors.ink}"
     textColor: "{colors.soft-charcoal}"
     rounded: "{rounded.sm}"
     height: "44px"
@@ -167,13 +168,13 @@ components:
 
 **Creative North Star: "Ajax"**
 
-Ajax is the product and the visual brief: a pocket operator console for a local agent fleet. Soft Charcoal surfaces, Soft Steel Blue as the running signal, and a terminal pane that owns the work. Chrome is sparse, pill-decisive, and mobile-first for Safari on iPhone — status, required decision, then the raw tmux/xterm bridge.
+Ajax is the product and the visual brief: a pocket operator console for a local agent fleet. Ink-on-charcoal chrome, hue reserved for task status, and a terminal pane that owns the work. Chrome is sparse, pill-decisive, and mobile-first for Safari on iPhone — status, required decision, then the raw tmux/xterm bridge.
 
-Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); accents are crisp plane-mobile tones on the CLI-locked charcoal neutrals. Motion is short state feedback (≈140–220ms), never page choreography. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
+Density stays operational, not decorative. Tone carries meaning (`running` / `waiting` / `error` / `done`); blue, amber and sage share one OKLCH lightness and chroma (L≈0.78, C≈0.10); Fault Rose sits slightly darker and more saturated (L≈0.72, C≈0.13) so errors read as red, not salmon, on the CLI-locked charcoal neutrals. Motion is short state feedback (≈140–220ms), never page choreography. The system rejects generic SaaS dashboards (card grids, metric strips, soft purple/indigo chrome) and overbuilt IDE shells that fight the terminal.
 
 **Key Characteristics:**
 - Soft Charcoal stack with hairline rules; depth mostly from paper steps
-- Soft Steel Blue as primary action and running tone; semantic amber / rose / sage for wait / fault / done
+- Ink fill with Soft Charcoal text as primary action; Soft Steel Blue for running / live / selection; semantic amber / rose / sage for wait / fault / done
 - Pill actions (44px min) and uppercase tracked chrome labels
 - Shell width capped at 560px; iOS safe-area and keyboard geometry are first-class
 - Terminal is the signature surface; UI never competes with the pane
@@ -181,28 +182,30 @@ Density stays operational, not decorative. Tone carries meaning (`running` / `wa
 
 ## 2. Colors
 
-Restrained dark console palette: neutrals do the work; semantic accents speak only when status or a decisive action needs them. Charcoal surfaces stay in lockstep with `ajax-tui`; accent tones are crisp plane-mobile values.
+Restrained dark console palette: neutrals do the work, and hue speaks only for task status. Charcoal surfaces stay in lockstep with `ajax-tui`. Blue, amber and sage share one OKLCH lightness and chroma (L≈0.78, C≈0.10); Fault Rose sits slightly darker and more saturated (L≈0.72, C≈0.13) so errors read as red, not salmon.
 
 ### Primary
-- **Soft Steel Blue** (`#3f76ff`): Primary actions, current nav, running tone. Bright (`#6692ff`) on hover; deep (`#13234c`) for filled attention bands (update banner, selected nav wash).
+- **Soft Steel Blue** (`#85bcf5`): Running, live, and selection signal only — never a CTA or chrome fill. Bright (`#a9d6ff`) for emphasis; deep (`#192f46`) reserved for rare tinted running/selection washes.
 
 ### Secondary
-- **Attention Amber** (`#f59e0b`): Waiting / needs-input / remediation. Bright (`#fbbf24`) for ready-for-review emphasis.
+- **Attention Amber** (`#ddae6c`): Waiting / needs-input / remediation. Bright (`#f0ca96`) for ready-for-review emphasis.
 
 ### Tertiary
-- **Fault Rose** (`#ef4444`): Errors and destructive intents. Bright (`#f87171`) on confirm/hover fill; deep (`#5f1d1d`) for destructive borders at rest.
-- **Done Sage** (`#22c55e`): Success / done. Bright (`#4ade80`) when a brighter success cue is needed.
+- **Fault Rose** (`#eb827b`): Errors and destructive intents. Bright (`#fda19a`) on confirm/hover fill; deep (`#442322`) for destructive borders at rest.
+- **Done Sage** (`#82cb9b`): Success / done. Bright (`#a7e1ba`) when a brighter success cue is needed.
 
 ### Neutral
 - **Soft Charcoal** (`#161616`): Body / app paper.
 - **Soft Charcoal Tint / Raised / High** (`#1d1d1d` / `#242424` / `#2d2d2d`): Nested surfaces and hover washes — the main depth ladder.
-- **Ink** (`#e6e6e6`): Primary text. Soft / muted / faint (`#c6c6c6` / `#a8a8a8` / `#808080`) for secondary, status line, and empty chrome.
+- **Ink** (`#e6e6e6`): Primary text, primary-button fill, and the New-task fill. Bright (`#f5f5f5`) on hover/focus of those fills. Soft / muted / faint (`#c6c6c6` / `#a8a8a8` / `#808080`) for secondary, status line, and empty chrome.
 - **Rule / Rule Strong** (`#2a2a2a` / `#454545`): Hairline dividers and resting control borders.
 
 ### Named Rules
 **The One Tone Rule.** Status is a single `--tone` / `--tone-bg` pair consumed by dots, badges, rows, and interact pills. Never invent a parallel status color path.
 
-**The Accent Rarity Rule.** Soft Steel Blue and semantic accents appear for running state, primary CTA, or attention — not as decorative fill across idle chrome.
+**The Accent Rarity Rule.** Soft Steel Blue appears only for running, live, and selection state. Semantic amber / rose / sage appear only for task status or a destructive/remediation intent — never as decorative fill across idle chrome.
+
+**The Color Means Status Rule.** Chrome and CTAs are ink and charcoal. Hue appears only to show task state (`running` / `waiting` / `error` / `done`); a primary button is never blue, and a status-free surface is never tinted.
 
 ## 3. Typography
 
@@ -258,7 +261,7 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 
 ### Buttons
 - **Shape:** Full pill (`999px`); primary tap target min-height `44px`.
-- **Primary (`.action.primary` / `.pill.is-primary`):** Soft Steel Blue fill, Soft Charcoal text; hover → Soft Steel Blue Bright.
+- **Primary (`.action.primary` / `.pill.is-primary`):** Ink fill, Soft Charcoal text; hover → Ink Bright.
 - **Secondary (`.action` / `.pill`):** Transparent + Rule Strong border; hover strengthens border to Ink Soft.
 - **Remediation:** Attention Amber stroke (or fill when primary).
 - **Destructive:** Fault Rose text/border; confirm state fills Fault Rose and nudges once. Drop uses a short pre-commit Undo window before the API runs.
@@ -284,7 +287,7 @@ Pill-decisive: full-radius operator actions, sparse hairline chrome, status by t
 
 ### Navigation
 - **Top chrome:** Sticky, blurred Soft Charcoal, hairline bottom rule; uppercase Ajax title + status line + settings pill.
-- **Bottom nav:** Two-column fixed bar; **New** is Soft Steel Blue fill (sole new-task CTA); current page gets Soft Steel Blue Deep wash + accent border.
+- **Bottom nav:** Two-column fixed bar; **New** is Ink fill (sole new-task CTA); the current page is a raised neutral (`--paper-raised`, no border, Ink text).
 - **Connection recovery:** Retry is the sole primary; Reload / diagnostics / health are secondary.
 - **Mobile:** Safe-area padding mandatory; keyboard-open and terminal-expanded modes collapse chrome so the terminal owns the band.
 
@@ -360,10 +363,10 @@ is hidden.
 
 ### Do:
 - **Do** lead every task screen with status + next safe action, then the terminal.
-- **Do** use Soft Steel Blue only for primary CTA and running/selection state.
+- **Do** keep chrome and CTAs in Ink and charcoal; use Soft Steel Blue only for running, live, and selection state.
 - **Do** keep actions pill-shaped with ≥44px height on touch.
 - **Do** convey depth with Soft Charcoal paper steps before reaching for shadow.
-- **Do** keep accent tones crisp and plane-mobile-inspired; neutrals stay locked to the CLI cockpit charcoal/ink values.
+- **Do** keep the status palette matched: blue, amber and sage share one OKLCH lightness and chroma (L≈0.78, C≈0.10); Fault Rose sits slightly darker and more saturated (L≈0.72, C≈0.13) so errors read as red, not salmon; neutrals stay locked to the CLI cockpit charcoal/ink values.
 - **Do** respect `prefers-reduced-motion` (collapse pulse/nudge/transitions).
 - **Do** use the rem type ramp tokens for UI type; keep listed literal exceptions only.
 
