@@ -50,22 +50,9 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
         .join("index.js");
     path.is_file().then_some(path)
 }
-
-pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
-    #[cfg(test)]
-    if let Some(module) = cursor_sdk_module_override() {
-        return Ok((
-            PathBuf::from("node"),
-            vec![
-                format!(
-                    "{}/sidecar/cursor_sdk_sidecar.mjs",
-                    env!("CARGO_MANIFEST_DIR")
-                ),
-                "--sdk-module".to_string(),
-                module.to_string_lossy().into_owned(),
-            ],
-        ));
-    }
+/// Resolve the Node binary (at the Cursor SDK version floor) and the loadable
+/// `@cursor/sdk` entry point from the user's global npm root.
+fn resolve_node_and_sdk() -> Result<(PathBuf, PathBuf), AcpSpawnError> {
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
         AcpSpawnError::Message("node is not installed - install Node.js 22.13 or newer".to_string())
     })?;
@@ -93,6 +80,24 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
             root.display()
         ))
     })?;
+    Ok((program, module))
+}
+pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    #[cfg(test)]
+    if let Some(module) = cursor_sdk_module_override() {
+        return Ok((
+            PathBuf::from("node"),
+            vec![
+                format!(
+                    "{}/sidecar/cursor_sdk_sidecar.mjs",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                "--sdk-module".to_string(),
+                module.to_string_lossy().into_owned(),
+            ],
+        ));
+    }
+    let (program, module) = resolve_node_and_sdk()?;
     Ok((
         program,
         super::cursor_sdk_client::sidecar_launch_args(Some(&module.to_string_lossy())),
@@ -119,6 +124,44 @@ pub(super) fn spawn_error(text: String, resume_session_id: Option<&str>) -> AcpS
         return AcpSpawnError::Message(format!("{text} - {LOGIN_HINT}"));
     }
     AcpSpawnError::Message(text)
+}
+/// The embedded login sidecar script; launched via `sidecar_launch_args`.
+const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
+
+/// Node argv for the Cursor SDK login/status sidecar (`--mode login|status`,
+/// optionally pinned to a store path).
+pub(super) fn cursor_login_launch(
+    mode: &str,
+    store_path: Option<&Path>,
+) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    #[cfg(test)]
+    if let Some(module) = cursor_sdk_module_override() {
+        let mut args = vec![
+            format!(
+                "{}/sidecar/cursor_sdk_login.mjs",
+                env!("CARGO_MANIFEST_DIR")
+            ),
+            "--sdk-module".to_string(),
+            module.to_string_lossy().into_owned(),
+            "--mode".to_string(),
+            mode.to_string(),
+        ];
+        if let Some(path) = store_path {
+            args.push("--store-path".to_string());
+            args.push(path.to_string_lossy().into_owned());
+        }
+        return Ok((PathBuf::from("node"), args));
+    }
+    let (_program, module) = resolve_node_and_sdk()?;
+    let mut args =
+        super::rpc_handshake::sidecar_launch_args(LOGIN_SOURCE, Some(&module.to_string_lossy()));
+    args.push("--mode".to_string());
+    args.push(mode.to_string());
+    if let Some(path) = store_path {
+        args.push("--store-path".to_string());
+        args.push(path.to_string_lossy().into_owned());
+    }
+    Ok((_program, args))
 }
 
 pub(super) fn spawn_cursor_sdk(
@@ -188,6 +231,13 @@ pub(super) fn apply_pin_to_cursor(client: &CursorSdkClient, pin: &str) -> Option
 #[cfg(test)]
 static TEST_CURSOR_SDK_MODULE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
+// Tests run in parallel and each registers a per-test SDK module file; the
+// fake's release sentinel lives next to whichever file the sidecar loads, so an
+// overlapping registration would make a sidecar watch the wrong directory.
+// Serialize every with_test_cursor_sdk_module section across the whole suite.
+#[cfg(test)]
+static TEST_CURSOR_SDK_MODULE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 pub(super) fn cursor_sdk_module_override() -> Option<PathBuf> {
     TEST_CURSOR_SDK_MODULE.lock().unwrap().clone()
@@ -198,6 +248,10 @@ pub(crate) fn with_test_cursor_sdk_module<F, R>(sdk_module: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
+    // Held until after the global is reset (declared first, dropped last).
+    let _guard = TEST_CURSOR_SDK_MODULE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *TEST_CURSOR_SDK_MODULE.lock().unwrap() = Some(sdk_module.to_path_buf());
     let result = f();
     *TEST_CURSOR_SDK_MODULE.lock().unwrap() = None;
