@@ -118,13 +118,27 @@ describe("session-expiry recovery", () => {
     expect(navigate).toHaveBeenCalledTimes(1);
   });
 
-  it("navigates once when a protected fetch rejects (Access expiry without a 401)", async () => {
+  it("treats a generic protected fetch rejection as a retryable network failure without navigating", async () => {
     api = await import("./api");
-    mockFetch(() => Promise.reject(new Error("cloudflare access gone")));
+    mockFetch(() => Promise.reject(new TypeError("load failed")));
 
     await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "network" });
-    expect(navigate).toHaveBeenCalledTimes(1);
-    expect(navigate).toHaveBeenCalledWith("https://ajax.example/cockpit?x=1");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
+  });
+
+  it("recovers after a generic network outage without consuming the one-shot navigation", async () => {
+    api = await import("./api");
+    mockFetch(() => Promise.reject(new TypeError("load failed")));
+
+    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "network" });
+    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "network" });
+    expect(navigate).not.toHaveBeenCalled();
+
+    mockFetch(() => Promise.resolve(json(validCockpit)));
+    const cockpit = await api.fetchCockpit();
+    expect(cockpit.cards).toEqual([]);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("recovers a login-page redirect via renewal and retry without navigating", async () => {

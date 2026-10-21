@@ -186,16 +186,11 @@ export async function renewBrowserSession(): Promise<void> {
   return browserSessionRenewal;
 }
 
-function isAbortOrTimeout(error: unknown): boolean {
-  const name = typeof error === "object" && error !== null && "name" in error ? error.name : null;
-  return name === "AbortError" || name === "TimeoutError";
-}
-
 function rejectedProtectedFetch(error: unknown): ApiError {
-  // A rejected protected fetch can be a Cloudflare Access expiry (cross-origin
-  // login redirect) that the browser never surfaces as a 401; the one-shot
-  // guard keeps this to at most one navigation per tab session.
-  if (!isAbortOrTimeout(error)) attemptSessionExpiryNavigation();
+  // A rejected protected fetch is a plain network failure (outage, offline,
+  // WebKit transient drop). It is retryable and must NOT trigger session
+  // expiry navigation; only 401s with failed renewal navigate (see
+  // fetchProtectedWithSessionRenewal) under the one-shot recovery guard.
   return new ApiError("network", error instanceof Error ? error.message : String(error));
 }
 
