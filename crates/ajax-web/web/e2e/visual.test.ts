@@ -13,6 +13,8 @@ const INK = "rgb(230, 230, 230)";
 const WARN = "rgb(221, 174, 108)";
 const DANGER = "rgb(235, 130, 123)";
 const TRANSPARENT = "rgba(0, 0, 0, 0)";
+const SOFT_WARN = "rgb(214, 184, 143)";
+const SOFT_NEW = "rgba(255, 255, 255, 0.1)";
 
 function bg(locator: Locator) {
   return locator.evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -25,7 +27,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
 
   const newButton = page.locator('.bottom-nav button[data-bottom-action="new-task"]');
-  expect(await bg(newButton)).toBe(INK);
+  expect(await bg(newButton)).toBe(SOFT_NEW);
 
 
   const taskRow = page.locator('.task-row[data-handle="web/fix-login"]').first();
@@ -40,7 +42,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   expect(rowStyle.leftWidth).not.toBe("3px");
 
   const status = taskRow.locator(".task-row-status");
-  expect(await status.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
+  expect(await status.evaluate((el) => getComputedStyle(el).color)).toBe(SOFT_WARN);
 
   const row = page.locator(".task-row").first();
   expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("10px");
