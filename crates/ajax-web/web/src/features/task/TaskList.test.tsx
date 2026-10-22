@@ -1,7 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { act, render, fireEvent, screen, within } from "@testing-library/react";
+import { act, render, fireEvent, screen, within, waitFor } from "@testing-library/react";
+import * as api from "@/shared/lib/api";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import TaskList from "./TaskList";
 import type { BrowserCockpitView } from "@/shared/lib/types";
@@ -132,13 +133,13 @@ describe("TaskList", () => {
     expect(screen.getByText("CI failed")).toBeInTheDocument();
   });
 
-  it("hides the first non-resume action on the resting row", () => {
+  it("shows the non-destructive visible action inline on the resting row", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");
     const row = screen.getByRole("button", { name: /web\/a/ });
     expect(wrap).not.toHaveClass("is-revealed-wrap");
-    expect(within(wrap).queryByRole("button", { name: "Fix CI" })).toBeNull();
-    expect(within(row).queryByRole("button", { name: "Fix CI" })).toBeNull();
+    expect(within(wrap).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
     expect(screen.queryByText("Open")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
@@ -151,7 +152,7 @@ describe("TaskList", () => {
     expect(wrap).toHaveClass("is-revealed-wrap");
     expect(row).toHaveClass("is-revealed");
     expect(within(wrap).getByRole("button", { name: "Drop" })).toBeInTheDocument();
-    expect(within(wrap).queryByRole("button", { name: "Fix CI" })).toBeNull();
+    expect(within(wrap).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
   });
 
   it("closes a revealed row on swipe right", () => {
@@ -341,6 +342,25 @@ describe("TaskList", () => {
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   });
 
+  it("shows the card's non-destructive visible actions inline and never shows Drop inline", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    expect(within(wrap).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Drop" })).not.toBeInTheDocument();
+  });
+
+  it("runs the inline action without opening the task", async () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onOpenTask = vi.fn();
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    fireEvent.click(
+      within(screen.getByTestId("task-row-wrap-web/a")).getByRole("button", { name: "Fix CI" }),
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(onOpenTask).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it("reveals a swipe action behind a row that has actions", () => {
     const withAction: BrowserCockpitView = {
       ...cockpit,
@@ -362,7 +382,7 @@ describe("TaskList", () => {
     const wrap = screen.getByTestId("task-row-wrap-web/b");
     const webBRow = screen.getByRole("button", { name: /web\/b/ });
     expect(wrap).not.toHaveClass("is-revealed-wrap");
-    expect(within(webBRow).queryByRole("button", { name: "Review" })).toBeNull();
+    expect(within(webBRow).getByRole("button", { name: "Review" })).toBeInTheDocument();
     expect(webBRow).toHaveAttribute("data-handle", "web/b");
   });
 

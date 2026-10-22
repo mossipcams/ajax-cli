@@ -194,9 +194,16 @@ function AppContent() {
   } | null>(null);
   const statusText = (() => {
     if (!cockpit.data) return "— loading";
-    const running = cockpit.data.cards.filter((card) => card.status === "running").length;
-    if (running) return `${running} running`;
-    const total = cockpit.data.cards.length;
+    const cards = cockpit.data.cards;
+    const parts: string[] = [];
+    const needsYou = cards.filter(
+      (card) => card.attention === "needs-you" || card.attention === "review",
+    ).length;
+    if (needsYou) parts.push(`${needsYou} need you`);
+    const running = cards.filter((card) => card.status === "running").length;
+    if (running) parts.push(`${running} running`);
+    if (parts.length > 0) return parts.join(" · ");
+    const total = cards.length;
     return `${total} ${total === 1 ? "task" : "tasks"}`;
   })();
 
