@@ -134,7 +134,8 @@ mod tests {
         assert!(compact.contains("position:fixed"));
         assert!(compact.contains("height:var(--app-band-height"));
         assert!(compact.contains("font-size:16px"));
-        for hex in ["#e6e6e6", "#87afd7", "#d7af5f", "#d78787", "#87af87"] {
+        // Palette tokens from foundation.css / DESIGN.md colors (source of truth).
+        for hex in ["#e6e6e6", "#85bcf5", "#ddae6c", "#d78787", "#87af87"] {
             assert!(compact.contains(hex), "css missing palette token: {hex}");
         }
         assert!(!compact.contains("100vh"));
