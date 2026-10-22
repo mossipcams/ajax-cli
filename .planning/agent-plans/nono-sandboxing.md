@@ -153,3 +153,29 @@ Review findings fixed (router: Qwen core, Haiku callers, DeepSeek docs/CI):
 Validation: fmt OK; clippy --all-targets --all-features OK; nextest --all-features 3097/3098
 (same unrelated stylesheet failure). E2E (home-dir scratch repo, real binary): commit OK; hooks,
 git config, profile writes denied; forged `.git` → no git grants, ~/.ssh unreachable.
+
+## Issue #1387 — host-side git trusts worktree `.git` (2026-10-22)
+
+Exploit reproduced: agent inside nono rewrote `<wt>/.git` → `gitdir: <wt>/evil/.git` with
+`core.fsmonitor`; unpinned host `git status` ran it.
+Fix (uncommitted, awaiting ship decision):
+- `ajax-core::adapters::trusted_git`: at sandboxed launch (before the agent runs) record verified
+  worktree → admin dir + common dir under `~/.config/ajax/nono/trusted-worktrees/` (atomic, FNV key,
+  exact-match lookup, stale records ignored unless admin dir still lives in `common/worktrees`).
+- Host git pinned via GIT_DIR/GIT_COMMON_DIR/GIT_WORK_TREE: process runner (direct `git`) and
+  supervisor `git_snapshot`. Shell-wrapped git targets the main repo via `$1` (not pinned; safe).
+- Sandboxed launch refused in a non-linked checkout (its `.git` would be agent-writable).
+- Security-review fix: `.git` must be a regular file (no symlink); back-link compared to
+  canonical(worktree)/.git.
+Validation: fmt/clippy/rustdoc OK; nextest 3105/3106 (known stylesheet failure). Regression test
+`trusted_env_defeats_forged_worktree_link_that_runs_fsmonitor` proves exploit fires unpinned and is
+blocked pinned. E2E with real binary: record written, store write-denied in sandbox, pinned git safe.
+Blocker: adding to #1385 breaks size gates (1766/1500 PR lines; sandbox.rs 628/600 changed) →
+needs stacked PR `fix/sandbox/trusted-worktree-git` (BASE_BRANCH=feat/sandbox/nono-agent-sandboxing).
+- Security-review follow-up (fail-open): parent verified a sandboxed agent CAN `rm -rf` its own
+  admin dir (Seatbelt checks the target path), which made the H2 "stale record" check ignore the
+  record and fall back to the forged `.git`. Fixed: lookup always pins when a record exists
+  (missing admin dir → git fails closed); `forget` removes the record after a successful drop
+  `EnsureWorktreeAbsent`; pinned git also gets `core.fsmonitor=false` via GIT_CONFIG_COUNT.
+  Gate: fmt/clippy/rustdoc OK, nextest 3108/3109 (known stylesheet failure). E2E: forge + admin-dir
+  deletion → `fatal: not a git repository`, planted fsmonitor not run.

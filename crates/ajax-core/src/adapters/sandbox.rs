@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::trusted_git::{self, TrustedGit};
+
 const PROFILE_JSON: &str = include_str!("nono_agent_profile.json");
 const PROFILE_FILE: &str = "ajax-agent.json";
 
@@ -87,13 +89,40 @@ pub fn resolve_nono() -> Result<PathBuf, String> {
         })
 }
 
+/// A linked worktree whose `.git` file and admin dir were verified against each other.
+#[derive(Debug, PartialEq, Eq)]
+struct LinkedWorktree {
+    gitdir: PathBuf,
+    common: PathBuf,
+}
+
+impl LinkedWorktree {
+    fn grants(&self) -> GitGrants {
+        GitGrants {
+            read: vec![self.common.clone()],
+            read_write: vec![
+                self.gitdir.clone(),
+                self.common.join("objects"),
+                self.common.join("refs"),
+                self.common.join("logs"),
+            ],
+        }
+    }
+}
+
 /// Git grants for a linked worktree, or empty grants if `worktree` cannot be verified as one.
 // ponytail: main-checkout (non-linked) runs and packed-ref branch deletion get no .git write access; widen only with a hooks/config-safe grant.
 pub fn git_grants(worktree: &Path) -> GitGrants {
-    linked_git_grants(worktree).unwrap_or_default()
+    linked_worktree(worktree).map_or_else(GitGrants::default, |linked| linked.grants())
 }
 
-fn linked_git_grants(worktree: &Path) -> Option<GitGrants> {
+fn linked_worktree(worktree: &Path) -> Option<LinkedWorktree> {
+    // A symlinked `.git` could point at another worktree's admin dir, which passes the
+    // back-link check below. Only a regular `.git` file is a linked worktree.
+    let dot_git = worktree.join(".git");
+    if !fs::symlink_metadata(&dot_git).ok()?.file_type().is_file() {
+        return None;
+    }
     let mut command = Command::new("git");
     command.arg("-C").arg(worktree).args([
         "rev-parse",
@@ -121,18 +150,10 @@ fn linked_git_grants(worktree: &Path) -> Option<GitGrants> {
     }
     let back_link = fs::read_to_string(gitdir.join("gitdir")).ok()?;
     let back_link = fs::canonicalize(PathBuf::from(back_link.trim())).ok()?;
-    if back_link != fs::canonicalize(worktree.join(".git")).ok()? {
+    if back_link != fs::canonicalize(worktree).ok()?.join(".git") {
         return None;
     }
-    Some(GitGrants {
-        read: vec![common.clone()],
-        read_write: vec![
-            gitdir,
-            common.join("objects"),
-            common.join("refs"),
-            common.join("logs"),
-        ],
-    })
+    Some(LinkedWorktree { gitdir, common })
 }
 
 /// Builds the nono command line that runs `program args...` inside the sandbox.
@@ -190,6 +211,13 @@ pub fn sandbox_command(
     if !enabled {
         return Ok((program.to_string(), args.to_vec()));
     }
+    let dot_git = cwd.join(".git");
+    if fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.file_type().is_dir()) {
+        return Err(format!(
+            "agent sandbox refuses a non-linked checkout: {} would be writable by the agent; run from a linked worktree or set AJAX_SANDBOX=off",
+            dot_git.display()
+        ));
+    }
     let nono = nono()?;
     let dir = profile_dir.ok_or_else(|| {
         "agent sandbox is on but HOME is unset, so no profile directory can be found; set HOME or AJAX_SANDBOX=off"
@@ -201,7 +229,25 @@ pub fn sandbox_command(
             dir.display()
         )
     })?;
-    let mut grants = git_grants(cwd);
+    let linked = linked_worktree(cwd);
+    if let Some(linked) = &linked {
+        let store = trusted_git::default_store().ok_or_else(|| {
+            "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off"
+                .to_string()
+        })?;
+        let trusted = TrustedGit {
+            git_dir: linked.gitdir.clone(),
+            common_dir: linked.common.clone(),
+            work_tree: cwd.to_path_buf(),
+        };
+        trusted_git::record(&store, &trusted).map_err(|err| {
+            format!(
+                "agent sandbox could not record trusted git metadata for {}: {err}; set AJAX_SANDBOX=off to run unsandboxed",
+                cwd.display()
+            )
+        })?;
+    }
+    let mut grants = linked.map_or_else(GitGrants::default, |linked| linked.grants());
     grants.read_write.extend(extra_read_write.iter().cloned());
     Ok(wrap_argv(
         &nono,
@@ -519,6 +565,58 @@ mod tests {
         .unwrap();
 
         assert_eq!(git_grants(&forged), GitGrants::default());
+    }
+
+    #[test]
+    fn git_grants_return_default_when_dot_git_is_symlink_to_other_worktree() {
+        let root = scratch("symlinked-worktree");
+        init_repo(&root);
+        let repo = root.join("repo");
+        let linked = root.join("linked");
+        let other = root.join("other");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                linked.to_str().unwrap(),
+            ],
+        );
+        git(
+            &repo,
+            &["worktree", "add", "-q", "--detach", other.to_str().unwrap()],
+        );
+        fs::remove_file(linked.join(".git")).unwrap();
+        std::os::unix::fs::symlink(other.join(".git"), linked.join(".git")).unwrap();
+
+        assert_eq!(git_grants(&linked), GitGrants::default());
+    }
+
+    #[test]
+    fn sandbox_command_refuses_non_linked_checkout() {
+        let root = scratch("non-linked-refusal");
+        init_repo(&root);
+        let repo = root.join("repo");
+
+        let result = sandbox_command(
+            true,
+            || Ok(PathBuf::from("/opt/nono")),
+            Some(root.join("profile")),
+            &repo,
+            &[],
+            "claude",
+            &[],
+        );
+
+        let err = result.unwrap_err();
+        assert!(err.contains("non-linked checkout"), "{err}");
+        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
+        assert!(
+            !root.join("profile").exists(),
+            "profile written before refusal"
+        );
     }
 
     #[test]

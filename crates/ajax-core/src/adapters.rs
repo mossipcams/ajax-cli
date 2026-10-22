@@ -6,6 +6,7 @@ pub mod github;
 pub mod process;
 pub mod sandbox;
 pub mod tmux;
+pub mod trusted_git;
 
 pub use agent::{
     acp_adapter_packages, acp_args_for_candidate, acp_launch_for_agent, acp_spawn_model_for_argv,

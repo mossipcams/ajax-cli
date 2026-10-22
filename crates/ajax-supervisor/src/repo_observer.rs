@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, path::Path, process::Output};
 
 use ajax_core::{
-    adapters::{GitAdapter, AMBIENT_GIT_ENV_VARS},
+    adapters::{trusted_git, GitAdapter, AMBIENT_GIT_ENV_VARS},
     events::{MonitorEvent, RepoEvent},
 };
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -39,7 +39,7 @@ pub fn watch_repo(
 pub async fn git_snapshot(worktree_path: impl AsRef<Path>) -> Result<RepoEvent, SupervisorError> {
     let worktree_path = worktree_path.as_ref();
     let mut status_cmd = Command::new("git");
-    clear_ambient_git_env(&mut status_cmd);
+    clear_worktree_git_env(&mut status_cmd, worktree_path);
     let status_output = status_cmd
         .args(["-C"])
         .arg(worktree_path)
@@ -48,7 +48,7 @@ pub async fn git_snapshot(worktree_path: impl AsRef<Path>) -> Result<RepoEvent, 
         .await?;
     ensure_git_success("git status", &status_output)?;
     let mut diff_cmd = Command::new("git");
-    clear_ambient_git_env(&mut diff_cmd);
+    clear_worktree_git_env(&mut diff_cmd, worktree_path);
     let diff_output = diff_cmd
         .args(["-C"])
         .arg(worktree_path)
@@ -89,6 +89,13 @@ fn clear_ambient_git_env(cmd: &mut Command) {
     for variable in AMBIENT_GIT_ENV_VARS {
         cmd.env_remove(variable);
     }
+}
+
+/// Clears ambient git env, then pins git to the worktree's trusted record when one exists, so a
+/// task worktree's rewritten `.git` file cannot steer the host-side read.
+fn clear_worktree_git_env(cmd: &mut Command, worktree_path: &Path) {
+    clear_ambient_git_env(cmd);
+    trusted_git::harden(cmd.as_std_mut(), worktree_path);
 }
 
 fn ensure_git_success(command: &str, output: &Output) -> Result<(), SupervisorError> {
