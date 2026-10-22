@@ -4,6 +4,7 @@ pub mod environment;
 pub mod git;
 pub mod github;
 pub mod process;
+pub mod sandbox;
 pub mod tmux;
 
 pub use agent::{

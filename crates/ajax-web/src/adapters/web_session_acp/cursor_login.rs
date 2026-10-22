@@ -120,7 +120,8 @@ impl CursorLogin {
                 return self.phase();
             }
         };
-        let process = match JsonlProcess::spawn(&program, &args, &std::env::temp_dir()) {
+        let process = match JsonlProcess::spawn_unsandboxed(&program, &args, &std::env::temp_dir())
+        {
             Ok(process) => process,
             Err(error) => {
                 self.fail_flow(flow, format!("cursor login spawn failed: {error}"));
@@ -158,7 +159,7 @@ impl CursorLogin {
     pub fn status(&self) -> Result<CursorCredentialStatus, String> {
         let (program, args) = cursor_login_launch("status", self.store_path.as_deref())
             .map_err(|error| error.to_string())?;
-        let process = JsonlProcess::spawn(&program, &args, &std::env::temp_dir())
+        let process = JsonlProcess::spawn_unsandboxed(&program, &args, &std::env::temp_dir())
             .map_err(|error| format!("cursor status spawn failed: {error}"))?;
         let deadline = Instant::now() + STATUS_TIMEOUT;
         loop {

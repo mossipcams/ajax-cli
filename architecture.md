@@ -193,6 +193,10 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   or delivery authority.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
+- Agent processes launched by Ajax run inside the nono sandbox. Launch fails
+  closed when `nono` is missing; `AJAX_SANDBOX=off` is the only opt-out. Policy
+  lives in `ajax-core` `adapters::sandbox`; spawn sites must route through it
+  rather than spawning agents directly.
 
 Detailed task-authority, registry, live-status, and Web Cockpit rules live in
 the focused docs below.

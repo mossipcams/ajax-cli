@@ -891,10 +891,17 @@ fn spawn_acp_process(
     for (program, base_args) in acp_candidates(launch) {
         let base_args: Vec<&str> = base_args.iter().map(String::as_str).collect();
         let args = acp_args_for_program(launch, &base_args, model);
-        let Some(mut command) = crate::adapters::program::harness_command(&program) else {
-            continue;
+        let mut command = match crate::adapters::program::sandboxed_harness_command(
+            &program,
+            &args,
+            worktree_path,
+        ) {
+            Ok(command) => command,
+            // Not installed: try the next candidate.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            // Sandbox refused (nono missing or profile unwritable): fail closed.
+            Err(error) => return Err(error.to_string()),
         };
-        command.args(&args);
         command
             .current_dir(worktree_path)
             .stdin(Stdio::piped())

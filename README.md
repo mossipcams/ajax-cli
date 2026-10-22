@@ -155,7 +155,14 @@ cargo install --path crates/ajax-cli
 ```
 
 Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
-`PATH`. Run `ajax-cli doctor` after installing to check the local operator
+`PATH`. Ajax also requires [nono](https://github.com/nolabs-ai/nono), the agent
+sandbox, on `PATH`:
+
+```sh
+brew install nono
+```
+
+Run `ajax-cli doctor` after installing to check the local operator
 environment.
 
 ## Configuration
@@ -253,6 +260,32 @@ most every 5 minutes per task.
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
+
+### Agent sandbox (nono)
+
+Every Ajax-launched agent runs under [nono](https://github.com/nolabs-ai/nono)
+by default: tmux task agents (through `__agent-runtime`), Web Cockpit ACP,
+Claude SDK, Cursor SDK, and Pi RPC sessions, and `ajax-cli supervise`. If `nono`
+is missing, the launch is refused; Ajax never falls back to running unsandboxed.
+Set `AJAX_SANDBOX=off` to disable the sandbox.
+
+The agent can write only to:
+
+- its task worktree;
+- the repo's git common dir, so commits work from the worktree;
+- the Ajax agent-events dir;
+- its own agent state dirs (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`) and
+  caches.
+
+Network is open. Of the keychain, only `login.keychain-db` and
+`metadata.keychain-db` are reachable, for agent OAuth. Codex's own sandbox is
+turned off under nono (for a binary named `codex`) because Seatbelt cannot
+nest; nono is the boundary. Claude auto-update fails inside the sandbox, so
+update Claude outside Ajax.
+
+The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
+Ajax rewrites it to `~/.cache/ajax/nono/ajax-agent.json` on every launch. Cursor
+login runs unsandboxed.
 
 ## First Run
 
