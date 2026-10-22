@@ -137,6 +137,7 @@ pub fn spawn_monitor(
                     raw_events.clone(),
                     config.hang_after,
                     cancel_rx,
+                    config.worktree_path.as_deref(),
                 )
                 .await
             }
@@ -147,6 +148,7 @@ pub fn spawn_monitor(
                     raw_events.clone(),
                     config.hang_after,
                     cancel_rx,
+                    config.worktree_path.as_deref(),
                 )
                 .await
             }

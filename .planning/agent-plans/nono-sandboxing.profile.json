@@ -1,0 +1,69 @@
+{
+  "extends": "default",
+  "meta": {
+    "name": "ajax-agent",
+    "version": "1.0.0",
+    "description": "Ajax task agent"
+  },
+  "groups": {
+    "include": [
+      {
+        "name": "user_caches_macos",
+        "when": "macos"
+      },
+      "node_runtime",
+      "rust_runtime",
+      "python_runtime",
+      "nix_runtime",
+      "git_config",
+      "unlink_protection"
+    ]
+  },
+  "filesystem": {
+    "allow": [
+      "$HOME/.claude",
+      "$HOME/.cache/claude",
+      "$HOME/.local/state/claude",
+      "$HOME/.codex",
+      "$HOME/.pi",
+      "$HOME/.cursor",
+      "$HOME/.config/cursor",
+      "$HOME/.npm",
+      "$HOME/.cargo/registry",
+      "$HOME/.cargo/git"
+    ],
+    "allow_file": [
+      "$HOME/.claude.json",
+      "$HOME/.claude.json.lock",
+      "$HOME/.claude.lock",
+      {
+        "path": "$HOME/Library/Keychains/login.keychain-db",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/Library/Keychains/metadata.keychain-db",
+        "when": "macos"
+      }
+    ],
+    "bypass_protection": [
+      {
+        "path": "$HOME/Library/Keychains/login.keychain-db",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/Library/Keychains/metadata.keychain-db",
+        "when": "macos"
+      }
+    ],
+    "read": [
+      "$HOME/.local/share/cursor-agent",
+      "$HOME/.local/share/claude"
+    ]
+  },
+  "network": {
+    "block": false
+  },
+  "workdir": {
+    "access": "readwrite"
+  }
+}

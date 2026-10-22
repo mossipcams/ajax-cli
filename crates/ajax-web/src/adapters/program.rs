@@ -1,8 +1,13 @@
 use std::{
     collections::HashMap,
+    io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
+};
+
+use ajax_core::adapters::sandbox::{
+    default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled,
 };
 
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
@@ -104,6 +109,80 @@ fn shell_path() -> Option<String> {
 
 pub fn harness_command(program: &str) -> Option<Command> {
     let mut command = Command::new(resolve_program(program)?);
+    apply_shell_path(&mut command);
+    Some(command)
+}
+
+/// [`harness_command`] for a worktree launch: `program args` runs inside nono
+/// when the agent sandbox is on. `cwd` is the task worktree.
+pub(crate) fn sandboxed_harness_command(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+) -> io::Result<Command> {
+    let resolved = resolve_program(program).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{program} is not installed"),
+        )
+    })?;
+    let (wrapped, wrapped_args) = sandboxed_program(&resolved, args, cwd)?;
+    let mut command = Command::new(wrapped);
+    command.args(wrapped_args);
+    apply_shell_path(&mut command);
+    Ok(command)
+}
+
+/// Wraps `program args` for a launch in `cwd` with nono when the agent sandbox
+/// is on; identity when it is off. Fails closed: a missing nono or an
+/// unwritable profile is an error, never an unsandboxed launch.
+pub(crate) fn sandboxed_program(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+) -> io::Result<(PathBuf, Vec<String>)> {
+    sandbox_launch(
+        sandbox_enabled(),
+        resolve_nono_for_launch,
+        default_profile_dir(),
+        program,
+        args,
+        cwd,
+    )
+    .map_err(io::Error::other)
+}
+
+/// nono on the process PATH, then the login shell PATH (which the merged
+/// harness PATH is built from).
+fn resolve_nono_for_launch() -> Result<PathBuf, String> {
+    resolve_nono().or_else(|error| resolve_program("nono").ok_or(error))
+}
+
+/// Pure core of [`sandboxed_program`]: the sandbox decision and nono lookup are
+/// injected so tests never touch process-global environment.
+fn sandbox_launch(
+    enabled: bool,
+    nono: impl FnOnce() -> Result<PathBuf, String>,
+    profile_dir: Option<PathBuf>,
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+) -> Result<(PathBuf, Vec<String>), String> {
+    let (wrapped, wrapped_args) = sandbox_command(
+        enabled,
+        nono,
+        profile_dir,
+        cwd,
+        &[],
+        &program.display().to_string(),
+        args,
+    )?;
+    Ok((PathBuf::from(wrapped), wrapped_args))
+}
+
+/// Sets the harness PATH: the login-shell PATH ahead of our own, so agent
+/// CLIs and nono resolve the way they do in a terminal.
+fn apply_shell_path(command: &mut Command) {
     if let Some(shell_path) = shell_path() {
         let own = std::env::var("PATH").unwrap_or_default();
         let merged = if own.is_empty() {
@@ -113,7 +192,6 @@ pub fn harness_command(program: &str) -> Option<Command> {
         };
         command.env("PATH", merged);
     }
-    Some(command)
 }
 
 #[cfg(test)]
@@ -140,6 +218,21 @@ mod tests {
     }
 
     #[test]
+    fn a_sandboxed_harness_for_a_missing_program_is_not_found_so_callers_can_skip_it() {
+        let error = sandboxed_harness_command(
+            "ajax-not-a-real-program",
+            &["exec".to_string()],
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+        )
+        .expect_err("a missing program has no launch");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    // nvm and friends export PATH from `.zshrc`, which a plain login shell does
+    // not read — the daemon then cannot see any harness the operator installed.
+    // An ACP adapter spawns the harness CLI itself, so it needs a PATH that
+    // names it — resolving only our own child is not enough.
+    #[test]
     fn a_harness_command_carries_the_shell_path() {
         let command = harness_command("sh").expect("sh is installed");
         let path = command
@@ -165,5 +258,118 @@ mod tests {
             login_at < interactive_at,
             "the cheaper login shell should be tried first"
         );
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/sandbox-tests/program")
+            .join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn fake_nono() -> Result<PathBuf, String> {
+        Ok(PathBuf::from("/opt/nono"))
+    }
+
+    #[test]
+    fn an_enabled_launch_wraps_the_agent_in_nono_with_the_worktree_and_profile() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let profile_dir = scratch_dir("argv");
+        let args = vec!["exec".to_string()];
+
+        let (program, argv) = sandbox_launch(
+            true,
+            fake_nono,
+            Some(profile_dir.clone()),
+            Path::new("codex"),
+            &args,
+            cwd,
+        )
+        .expect("enabled launch wraps");
+
+        assert_eq!(program, PathBuf::from("/opt/nono"));
+        assert!(profile_dir.join("ajax-agent.json").is_file());
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair[0] == "--workdir" && pair[1] == cwd.display().to_string()));
+        assert!(argv.ends_with(
+            &[
+                "--",
+                "codex",
+                "-c",
+                "sandbox_mode=\"danger-full-access\"",
+                "exec",
+            ]
+            .map(String::from)
+        ));
+    }
+
+    #[test]
+    fn a_disabled_launch_is_the_identity() {
+        let args = vec!["--mode".to_string(), "rpc".to_string()];
+
+        let launched = sandbox_launch(
+            false,
+            || panic!("nono must not be resolved when the sandbox is off"),
+            None,
+            Path::new("node"),
+            &args,
+            Path::new("/work/task"),
+        )
+        .expect("disabled launch is never an error");
+
+        assert_eq!(launched, (PathBuf::from("node"), args));
+    }
+
+    #[test]
+    fn an_enabled_launch_fails_closed_when_nono_is_missing() {
+        let error = sandbox_launch(
+            true,
+            || Err("nono is not installed (AJAX_SANDBOX=off)".to_string()),
+            Some(scratch_dir("missing-nono")),
+            Path::new("codex"),
+            &[],
+            Path::new("/work/task"),
+        )
+        .expect_err("a missing nono must refuse the launch");
+
+        assert_eq!(error, "nono is not installed (AJAX_SANDBOX=off)");
+    }
+
+    #[test]
+    fn an_enabled_launch_fails_closed_when_the_profile_cannot_be_written() {
+        // A regular file where the profile directory should be makes the write fail.
+        let blocker = scratch_dir("blocked").join("not-a-dir");
+        std::fs::write(&blocker, "file").unwrap();
+
+        let error = sandbox_launch(
+            true,
+            fake_nono,
+            Some(blocker),
+            Path::new("codex"),
+            &[],
+            Path::new("/work/task"),
+        )
+        .expect_err("an unwritable profile must refuse the launch");
+
+        assert!(error.contains("profile"), "{error}");
+        assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
+    }
+
+    #[test]
+    fn an_enabled_launch_fails_closed_without_a_profile_directory() {
+        let error = sandbox_launch(
+            true,
+            fake_nono,
+            None,
+            Path::new("codex"),
+            &[],
+            Path::new("/work/task"),
+        )
+        .expect_err("no profile directory must refuse the launch");
+
+        assert!(error.contains("HOME"), "{error}");
+        assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
     }
 }

@@ -53,10 +53,17 @@ pub struct JsonlProcess {
 }
 
 impl JsonlProcess {
-    /// Spawn `program` with `args` (for example `--mode rpc …` for the Pi RPC child) in
-    /// `cwd`, piped on all three std streams and without any shell. Stdout
-    /// starts feeding [`JsonlRecord`]s as soon as the child writes lines.
+    /// Spawn an agent `program` with `args` (for example `--mode rpc …` for the Pi RPC
+    /// child) in `cwd`, inside nono when the agent sandbox is on. Fails closed:
+    /// a sandbox that cannot be set up is an error, never an unsandboxed spawn.
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
+        let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd)?;
+        Self::spawn_unsandboxed(&program, &args, cwd)
+    }
+
+    /// Spawn `program` with `args` in `cwd` without the agent sandbox. Only for
+    /// non-agent helpers that must keep their current behaviour.
+    pub fn spawn_unsandboxed(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
         let mut command = Command::new(program);
         command
             .args(args)

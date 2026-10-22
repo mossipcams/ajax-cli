@@ -17,6 +17,10 @@ Composition shell and supervised agent execution.
 - `event_log.rs` owns optional append-only JSONL event persistence.
 - `status.rs` reduces monitor events into observed live status.
 
+`process_observer.rs` wraps the supervised agent in nono via `ajax-core`
+`adapters::sandbox`. The workdir is the worktree when one is given, otherwise
+the current directory.
+
 ## CLI Architecture
 
 
@@ -52,6 +56,10 @@ Composition shell and supervised agent execution.
   filters Cockpit-owned shortcuts such as Ctrl-Q and Ctrl-T without installing
   tmux bindings, and resumes Cockpit when the task attach client detaches.
   Ctrl-T returns to Cockpit on the create-task screen for the task's project.
+
+`__agent-runtime` wraps the tmux agent in nono via `ajax-core`
+`adapters::sandbox`, granting the git common dir and the agent-events dir
+read-write.
 
 Startup behavior should stay inside normal CLI parsing and dispatch. Bare
 invocations may choose a default operator surface, and flags may select runtime

@@ -9,6 +9,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use ajax_core::adapters::sandbox::{
+    default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled,
+};
 use ajax_core::canonical_agent_event::CanonicalEventKind;
 use serde::{Deserialize, Serialize};
 
@@ -90,6 +93,28 @@ fn run_agent_runtime_with_interval(
     args: &[&str],
     heartbeat_interval: Duration,
 ) -> Result<i32, CliError> {
+    run_agent_runtime_sandboxed(
+        task_id,
+        state_root,
+        program,
+        args,
+        heartbeat_interval,
+        SandboxInputs {
+            enabled: sandbox_enabled(),
+            nono: resolve_nono,
+            profile_dir: default_profile_dir(),
+        },
+    )
+}
+
+fn run_agent_runtime_sandboxed(
+    task_id: &str,
+    state_root: &Path,
+    program: &str,
+    args: &[&str],
+    heartbeat_interval: Duration,
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+) -> Result<i32, CliError> {
     write_runtime_snapshot(
         state_root,
         &AgentRuntimeSnapshot {
@@ -114,8 +139,14 @@ fn run_agent_runtime_with_interval(
         CliError::CommandFailed(format!("failed to read current directory: {error}"))
     })?;
     publish_cwd_index(&agent_events_dir, task_id, "primary", &cwd)?;
-    let child = Command::new(program)
-        .args(args)
+    let (program, args) = match agent_command(sandbox, &cwd, &agent_events_dir, program, args) {
+        Ok(command) => command,
+        Err(message) => {
+            return fail_launch(state_root, task_id, &agent_events_dir, &cwd, message);
+        }
+    };
+    let child = Command::new(&program)
+        .args(&args)
         .env("AJAX_TASK_ID", task_id)
         .env("AJAX_RUN_ID", "primary")
         .env("AJAX_AGENT_EVENTS_DIR", &agent_events_dir)
@@ -126,21 +157,13 @@ fn run_agent_runtime_with_interval(
     let mut child = match child {
         Ok(child) => child,
         Err(error) => {
-            let _ = clear_cwd_index(&agent_events_dir, &cwd);
-            write_runtime_snapshot(
+            return fail_launch(
                 state_root,
-                &AgentRuntimeSnapshot {
-                    task_id: task_id.to_string(),
-                    state: AgentRuntimeState::ExitedFailure,
-                    observed_at_unix_millis: now_millis()?,
-                    pid: None,
-                    exit_code: None,
-                    message: Some(format!("failed to start agent: {error}")),
-                },
-            )?;
-            return Err(CliError::CommandFailed(format!(
-                "failed to start agent: {error}"
-            )));
+                task_id,
+                &agent_events_dir,
+                &cwd,
+                format!("failed to start agent: {error}"),
+            );
         }
     };
     let pid = child.id();
@@ -183,6 +206,55 @@ fn run_agent_runtime_with_interval(
         )?;
         thread::sleep(heartbeat_interval);
     }
+}
+
+/// nono inputs for the agent launch. Production reads them from the environment; tests inject them.
+struct SandboxInputs<N> {
+    enabled: bool,
+    nono: N,
+    profile_dir: Option<PathBuf>,
+}
+
+/// The program and args to exec: the agent as-is, or wrapped in nono when sandboxed.
+fn agent_command(
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+    cwd: &Path,
+    agent_events_dir: &Path,
+    program: &str,
+    args: &[&str],
+) -> Result<(String, Vec<String>), String> {
+    let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    sandbox_command(
+        sandbox.enabled,
+        sandbox.nono,
+        sandbox.profile_dir,
+        cwd,
+        &[agent_events_dir.to_path_buf()],
+        program,
+        &args,
+    )
+}
+
+fn fail_launch(
+    state_root: &Path,
+    task_id: &str,
+    agent_events_dir: &Path,
+    cwd: &Path,
+    message: String,
+) -> Result<i32, CliError> {
+    let _ = clear_cwd_index(agent_events_dir, cwd);
+    write_runtime_snapshot(
+        state_root,
+        &AgentRuntimeSnapshot {
+            task_id: task_id.to_string(),
+            state: AgentRuntimeState::ExitedFailure,
+            observed_at_unix_millis: now_millis()?,
+            pid: None,
+            exit_code: None,
+            message: Some(message.clone()),
+        },
+    )?;
+    Err(CliError::CommandFailed(message))
 }
 
 fn write_runtime_snapshot(
@@ -351,12 +423,26 @@ pub(crate) fn runtime_hooks_accepted(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, time::Duration};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::Duration,
+    };
 
     use super::{
-        clear_cwd_index, cwd_index_path, publish_cwd_index, run_agent_runtime_with_interval,
-        snapshot_path, AgentRuntimeSnapshot, AgentRuntimeState,
+        agent_command, clear_cwd_index, cwd_index_path, publish_cwd_index,
+        run_agent_runtime_sandboxed, run_agent_runtime_with_interval, snapshot_path,
+        AgentRuntimeSnapshot, AgentRuntimeState, SandboxInputs,
     };
+
+    fn sandbox_test_base(label: &str) -> PathBuf {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/agent-runtime-sandbox-tests")
+            .join(label);
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
 
     fn temp_runtime_cache(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -524,8 +610,94 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exit_code, 0);
+        // Index remains after exit so settle hooks can resolve identity.
         assert!(cwd_index_path(&events_dir, &cwd).is_file());
 
         fs::remove_dir_all(cache_root).unwrap();
+    }
+
+    #[test]
+    fn enabled_sandbox_wraps_agent_in_nono_with_events_grant() {
+        let base = sandbox_test_base("wraps");
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let events_dir = base.join("agent-events");
+
+        let (program, argv) = agent_command(
+            SandboxInputs {
+                enabled: true,
+                nono: || Ok(PathBuf::from("/opt/nono")),
+                profile_dir: Some(base.join("profiles")),
+            },
+            cwd,
+            &events_dir,
+            "claude",
+            &["--resume"],
+        )
+        .unwrap();
+
+        assert_eq!(program, "/opt/nono");
+        assert!(base.join("profiles").join("ajax-agent.json").is_file());
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair[0] == "--allow" && pair[1] == events_dir.display().to_string()));
+        assert!(argv.ends_with(&[
+            "--".to_string(),
+            "claude".to_string(),
+            "--resume".to_string()
+        ]));
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn disabled_sandbox_keeps_agent_program_and_args_without_resolving_nono() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let (program, argv) = agent_command(
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
+            cwd,
+            Path::new("/unused"),
+            "claude",
+            &["--resume"],
+        )
+        .unwrap();
+
+        assert_eq!(program, "claude");
+        assert_eq!(argv, ["--resume"]);
+    }
+
+    #[test]
+    fn missing_nono_fails_closed_without_spawning_agent() {
+        let base = sandbox_test_base("fail-closed");
+        let root = base.join("agent-runtime");
+        let marker = base.join("agent-spawned");
+
+        let error = run_agent_runtime_sandboxed(
+            "web/fix-login",
+            &root,
+            "/bin/sh",
+            &["-c", &format!("touch {}", marker.display())],
+            Duration::from_millis(5),
+            SandboxInputs {
+                enabled: true,
+                nono: || Err("agent sandbox is on but nono is not installed".to_string()),
+                profile_dir: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("nono"));
+        assert!(!marker.exists());
+        let latest = snapshots(&root).pop().unwrap();
+        assert_eq!(latest.state, AgentRuntimeState::ExitedFailure);
+        assert!(latest.message.unwrap().contains("nono"));
+        let cwd = std::env::current_dir().unwrap();
+        assert!(!cwd_index_path(&base.join("agent-events"), &cwd).exists());
+
+        fs::remove_dir_all(base).unwrap();
     }
 }

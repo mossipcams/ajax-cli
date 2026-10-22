@@ -1,6 +1,7 @@
 use crate::{
     adapters::{
-        CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter,
+        trusted_git, CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter,
+        TmuxAdapter,
     },
     commands::{
         self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
@@ -226,6 +227,9 @@ pub fn execute_drop_task_operation<R: Registry>(
                     return Err(drop_error);
                 }
                 outputs.push(output);
+                if matches!(op, DropOp::EnsureWorktreeAbsent) {
+                    forget_trusted_worktree(context, qualified_handle);
+                }
                 commands::mark_task_cleanup_step_completed(context, qualified_handle, &command)?;
                 record_drop_step_event(context, qualified_handle, op)?;
                 record_drop_step_receipt(
@@ -278,6 +282,17 @@ pub(super) fn drop_op_execution_decision<R: Registry>(
             DropExecutionDecision::Command(drop_op_command(context, qualified_handle, op, force)?)
         }
     })
+}
+
+/// Drops the trusted-git record of a task's removed worktree, so a reused path is not pinned to a
+/// pruned admin dir. Best effort: sandbox launch re-records the path, so errors are ignored.
+fn forget_trusted_worktree<R: Registry>(context: &CommandContext<R>, qualified_handle: &str) {
+    let Some(store) = trusted_git::default_store() else {
+        return;
+    };
+    if let Ok(task) = task(context, qualified_handle) {
+        let _ = trusted_git::forget(&store, &task.worktree_path);
+    }
 }
 
 fn unknown_observation() -> DropObservation {

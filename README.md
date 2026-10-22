@@ -155,7 +155,14 @@ cargo install --path crates/ajax-cli
 ```
 
 Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
-`PATH`. Run `ajax-cli doctor` after installing to check the local operator
+`PATH`. Ajax also requires [nono](https://github.com/nolabs-ai/nono), the agent
+sandbox, on `PATH`:
+
+```sh
+brew install nono
+```
+
+Run `ajax-cli doctor` after installing to check the local operator
 environment.
 
 ## Configuration
@@ -253,6 +260,42 @@ most every 5 minutes per task.
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
+
+### Agent sandbox (nono)
+
+Every Ajax-launched agent runs under [nono](https://github.com/nolabs-ai/nono)
+by default: tmux task agents (through `__agent-runtime`), Web Cockpit ACP,
+Claude SDK, Cursor SDK, and Pi RPC sessions, and `ajax-cli supervise`. If `nono`
+is missing, the launch is refused; Ajax never falls back to running unsandboxed.
+Set `AJAX_SANDBOX=off` to disable the sandbox.
+
+The agent can write only to:
+
+- its task worktree;
+- the worktree's own git admin dir plus the repo's `objects`, `refs` and `logs` (the rest of `.git`, including `hooks` and `config`, is read-only), so commits and new branches work from a linked worktree; deleting a packed branch and committing from a non-linked main checkout do not;
+- the Ajax agent-events dir;
+- its own agent state dirs (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`) and
+  caches.
+
+Network is open. Of the keychain, only `login.keychain-db` and
+`metadata.keychain-db` are reachable, for agent OAuth. Codex's own sandbox is
+turned off under nono (for a binary named `codex`) because Seatbelt cannot
+nest; nono is the boundary. The `codex-acp` and `npx` ACP fallbacks cannot be passed
+that override; they need `sandbox_mode = "danger-full-access"` in
+`~/.codex/config.toml`. Claude auto-update fails inside the sandbox, so
+update Claude outside Ajax.
+
+The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
+Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
+login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
+
+At each sandboxed launch Ajax verifies the linked worktree and records its git
+admin dir and common dir under `~/.config/ajax/nono/trusted-worktrees/` (outside
+every sandbox grant). Host-side git that Ajax runs in that worktree is pinned to
+those paths with `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`, so an agent
+that rewrites the worktree's `.git` file cannot make Ajax run its git config. A
+sandboxed launch is refused in a non-linked checkout, because its `.git` would
+be agent-writable. Run from a linked worktree, or set `AJAX_SANDBOX=off`.
 
 ## First Run
 
