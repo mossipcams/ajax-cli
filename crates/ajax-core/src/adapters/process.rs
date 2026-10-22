@@ -1,5 +1,6 @@
 use std::{
     io::Read,
+    path::PathBuf,
     process::{Command, Stdio},
     sync::OnceLock,
     thread,
@@ -7,6 +8,7 @@ use std::{
 };
 
 use super::command::{CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec};
+use super::trusted_git;
 
 pub const AMBIENT_GIT_ENV_VARS: &[&str] = &[
     "GIT_DIR",
@@ -36,6 +38,9 @@ impl CommandRunner for ProcessCommandRunner {
         }
         if command_invokes_git(command) {
             clear_ambient_git_env(&mut process);
+        }
+        if command.program == "git" {
+            trusted_git::harden(&mut process, &git_target_dir(command));
         }
         let outcome = match command.mode {
             CommandMode::Capture => run_capture(process, command),
@@ -162,6 +167,25 @@ fn run_inherit_stdio(mut process: Command) -> Result<CommandOutput, CommandRunEr
         stdout: String::new(),
         stderr: String::new(),
     })
+}
+
+/// The directory a direct `git` invocation operates in: the arg after the first `-C`, resolved
+/// against the command's cwd, else the cwd, else the process cwd.
+fn git_target_dir(command: &CommandSpec) -> PathBuf {
+    let base = command
+        .cwd
+        .clone()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let target = command
+        .args
+        .iter()
+        .position(|arg| arg == "-C")
+        .and_then(|index| command.args.get(index + 1));
+    match target {
+        Some(dir) => base.join(dir),
+        None => base,
+    }
 }
 
 fn command_invokes_git(command: &CommandSpec) -> bool {

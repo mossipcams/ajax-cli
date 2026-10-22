@@ -289,6 +289,14 @@ The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
 Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
 login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
 
+At each sandboxed launch Ajax verifies the linked worktree and records its git
+admin dir and common dir under `~/.config/ajax/nono/trusted-worktrees/` (outside
+every sandbox grant). Host-side git that Ajax runs in that worktree is pinned to
+those paths with `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`, so an agent
+that rewrites the worktree's `.git` file cannot make Ajax run its git config. A
+sandboxed launch is refused in a non-linked checkout, because its `.git` would
+be agent-writable. Run from a linked worktree, or set `AJAX_SANDBOX=off`.
+
 ## First Run
 
 After installing and writing a config file, check the environment:
