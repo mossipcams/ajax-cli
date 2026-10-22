@@ -85,18 +85,6 @@ const TaskRow = memo(function TaskRow({
   const wrapRef = useRef<HTMLDivElement>(null);
   const visibleActions = visibleTaskActions(card.actions);
   const time = card.last_activity_unix_secs;
-  const glyph =
-    tone === "running" ? (
-      <span className="task-row-spinner" />
-    ) : tone === "waiting" ? (
-      "!"
-    ) : tone === "error" ? (
-      "✕"
-    ) : tone === "done" ? (
-      "✓"
-    ) : (
-      "–"
-    );
   const inlineActions = visibleActions.filter((action) => !action.destructive);
   const revealAction = visibleActions.find((action) => action.action === "drop");
 
@@ -202,25 +190,20 @@ const TaskRow = memo(function TaskRow({
           handleTap();
         }}
       >
-        <span
-          className={`status-dot task-row-tile tone-${tone}`}
-          aria-hidden="true"
-        >
-          {glyph}
-        </span>
-        <div className="task-row-main">
+        <div className="task-row-line">
           <span className="task-row-title">{card.title || card.qualified_handle}</span>
+          {time ? (
+            <span className="task-row-time">{relativeTime(time, nowSecs)}</span>
+          ) : null}
+        </div>
+        <div className="task-row-line task-row-line-meta">
+          <span className={`status-dot task-row-marker tone-${tone}`} aria-hidden="true" />
           <span className="task-row-meta">
             {statusInfo.label ? (
               <span className="task-row-status">{statusInfo.label}</span>
             ) : null}
             {card.title ? (
               <span className="task-row-handle">{card.qualified_handle}</span>
-            ) : null}
-            {time ? (
-              <span className="task-row-time">
-                {relativeTime(time, nowSecs)}
-              </span>
             ) : null}
           </span>
           {inlineActions.length > 0 ? (
