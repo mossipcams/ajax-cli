@@ -1,24 +1,40 @@
 /* TASK LIST (dashboard) --------------------------------------------------- */
+/* Soft pastel status tones, scoped to the list. */
+.tasks .tone-running { --tone: #9cbbe0; --tone-bg: rgba(156, 187, 224, 0.13); }
+.tasks .tone-waiting { --tone: #d6b88f; --tone-bg: rgba(214, 184, 143, 0.13); }
+.tasks .tone-error   { --tone: #d99a94; --tone-bg: rgba(217, 154, 148, 0.13); }
+.tasks .tone-done    { --tone: #9ec7aa; --tone-bg: rgba(158, 199, 170, 0.12); }
+
+/* One soft rounded panel holds the whole list. */
 .tasks {
-  margin-top: 6px;
+  margin-top: 8px;
+  background: #252528;
+  border-radius: 20px;
+  overflow: hidden;
+  padding: 2px 0;
 }
 
 .task-list {
   display: grid;
-  border: 1px solid var(--rule);
   border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--paper-tint);
 }
 
+/* Rows sit flush in the panel; hairline separators inset from the edges. */
 .task-row-wrap {
   position: relative;
   overflow: hidden;
-  border-top: 1px solid var(--rule);
+  background: #252528;
 }
 
-.task-row-wrap:first-child {
-  border-top: none;
+.task-row-wrap + .task-row-wrap::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* Mail-style reveal: the action sits behind the full-width row; swipe left to expose. */
@@ -51,13 +67,11 @@
 .task-row {
   position: relative;
   z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  display: grid;
+  gap: 4px;
   width: 100%;
-  min-height: 48px;
-  padding: 10px var(--space-4);
-  background: var(--paper-tint);
+  padding: 10px 16px 13px;
+  background: #252528;
   border: none;
   color: var(--ink);
   text-align: left;
@@ -67,12 +81,12 @@
 
 .task-row:hover,
 .task-row:focus-visible {
-  background: var(--paper-raised);
+  background: #2a2a2d;
   outline: none;
 }
 
 .task-row:active {
-  background: var(--paper-high);
+  background: #2e2e31;
 }
 
 /* #1038: full-row button sits above the reveal layer; when open, let Drop/actions
@@ -81,40 +95,74 @@
   pointer-events: none;
 }
 
-.task-row-main {
+.task-row-line {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
-/* Title is what the operator recognises; the handle is the address below it. */
+.task-row-line-meta {
+  gap: 6px;
+}
+
+/* Title is what the operator recognises; the handle lives in the meta line. */
 .task-row-title {
-  font-size: var(--text-body);
-  font-weight: 500;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15.5px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: #e4e4e6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ink);
+}
+
+.task-row-time {
+  flex: none;
+  font-size: 12.5px;
+  color: #6f6f74;
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+}
+
+/* Tiny round status marker, hollow when idle (see .status-dot.tone-idle). */
+.task-row-marker.status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 1px;
+}
+
+/* Meta line: status · handle, separated by CSS pseudo-elements. */
+.task-row-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 13px;
+  color: #8a8a8e;
+}
+
+.task-row-meta > * + *::before {
+  content: "·";
+  margin-right: 6px;
+  color: #5f5f63;
 }
 
 .task-row-handle {
-  font-size: var(--text-micro);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
+  font-family: inherit;
+  font-size: 13px;
+  color: #8a8a8e;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--ink-faint);
-}
-
-.task-row-side {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
+  min-width: 0;
 }
 
 /* Clean status text, no pill box, no uppercase. Neutral by default; only rows
@@ -132,23 +180,57 @@
   color: var(--tone);
 }
 
-.task-row-time {
-  font-size: var(--text-micro);
-  font-weight: 500;
-  color: var(--ink-faint);
-  font-feature-settings: "tnum";
-  white-space: nowrap;
-}
-
-/* Idle rows rest as a subtle hollow ring instead of a filled dot. */
+/* Idle rows rest as a hollow dot instead of a filled one. Must follow .task-row-marker. */
 .status-dot.tone-idle {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--ink-faint);
 }
 
-.task-row-chevron {
+.task-row-meta .task-row-status {
+  font-size: 13px;
+  font-weight: 400;
+  color: #8a8a8e;
+}
+
+/* Inline row actions are soft tinted chips; the row body stays the main tap target. */
+.task-row-actions {
   flex: none;
-  font-size: 18px;
-  line-height: 1;
-  color: var(--ink-faint);
+  display: flex;
+  gap: 6px;
+}
+
+.task-row-actions .action,
+.task-row-actions .action.primary {
+  position: relative;
+  min-height: 0;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #c9c9cc;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+/* Bump the tap target to ~44px without shifting layout. */
+.task-row-actions .action::after {
+  content: "";
+  position: absolute;
+  inset: -9px -3px;
+}
+
+.task-row-actions .action:hover,
+.task-row-actions .action:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e4e4e6;
+  border: none;
+}
+
+/* Waiting / error rows carry their hue into the primary quick action. */
+.task-row-wrap.tone-waiting .task-row-actions .action:first-child,
+.task-row-wrap.tone-error .task-row-actions .action:first-child {
+  background: var(--tone-bg);
+  color: var(--tone);
 }

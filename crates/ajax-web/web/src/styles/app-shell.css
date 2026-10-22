@@ -26,10 +26,10 @@ header .bar {
 header .bar h1 {
   margin: 0;
   font-size: var(--text-title);
-  font-weight: 700;
-  letter-spacing: var(--tracking-display);
-  text-transform: uppercase;
-  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: #e2e2e4;
   flex: none;
 }
 
@@ -37,8 +37,8 @@ header .bar h1 {
   margin: 0;
   flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--text-data);
-  color: var(--ink-muted);
+  font-size: var(--text-body-sm);
+  color: #8a8a8e;
   font-feature-settings: "tnum";
   white-space: nowrap;
   overflow: hidden;
@@ -47,22 +47,22 @@ header .bar h1 {
 
 .settings-link {
   flex: none;
-  background: transparent;
-  border: 1px solid var(--rule-strong);
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 999px;
-  padding: 4px 12px;
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  transition: border-color 140ms ease, color 140ms ease;
+  padding: 6px 14px;
+  font-size: var(--text-body-sm);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #c9c9cc;
+  transition: background 140ms ease, color 140ms ease;
 }
 
 .settings-link:hover,
 .settings-link:focus-visible {
-  border-color: var(--ink-soft);
-  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  color: #e4e4e6;
   outline: none;
 }
 
