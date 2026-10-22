@@ -1439,21 +1439,25 @@ SaySo records stay authoritative; the slice must not depend on `ajax_core`
 (architecture guard).
 
 Routes: `GET /api/training/status`, `GET /api/training/models`,
+`GET /api/training/datasets`, `GET /api/training/evals`,
 `POST /api/training/start`, `POST /api/training/stop`, `POST /api/training/serve`,
-and `POST /api/training/models/switch`. Each call runs
-`ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <verb> [<arg>]` on
-`spawn_blocking`; the host defaults to `llm-gpu` (override with env
+`POST /api/training/models/switch`, and `POST /api/training/datasets/select`.
+Each call runs `ssh -o BatchMode=yes -o ConnectTimeout=5 <host> <verb> [<arg>]`
+on `spawn_blocking`; the host defaults to `llm-gpu` (override with env
 `AJAX_TRAINING_SSH_HOST`). Verbs are the constants
-`status | start <job> | stop | serve | profile-set <name>`; argv is those
-constants plus at most one argument, a profile name validated against
-`^[a-z0-9][a-z0-9.-]{0,63}$` and the host-reported profile list. The browser
-never supplies argv. ssh stderr is discarded; failures map to generic 502/504
-responses without host detail.
+`status | start <job> | stop | serve | profile-set <name> | datasets | dataset-select <run_id> | evals`;
+argv is those constants plus at most one argument, a profile name validated against
+`^[a-z0-9][a-z0-9.-]{0,63}$` and the host-reported profile list, or a dataset
+`run_id` validated against `^\d{8}T\d{6}Z-[0-9a-f]{8}$` and the host-reported
+dataset list. The browser never supplies argv. ssh stderr is discarded; failures
+map to generic 502/504 responses without host detail.
 
 All mutating routes require the same browser-session cookie as other live
-control routes plus a JSON body `{ "confirm": true }` (400 without it). `start`
-and `models/switch` are refused with 409 while a reported state shows a
-`train:` status, a running job, or a running generation.
+control routes plus a JSON body `{ "confirm": true }` (400 without it). `start`,
+`models/switch`, and `datasets/select` are refused with 409 while a reported state
+shows a `train:` status, a running job, or a running generation. `status` reports
+`device` (`gpu` when the GPU lock holds `train:`, `cpu` for other running jobs) and
+`pipeline` (the current SaySo run's stage flags).
 
 Security assumption: the VM side exposes only a forced-command SSH key
 (`command=…`, `restrict`, `from=` pinned) running `/srv/llm/bin/gpu-ctl`, which

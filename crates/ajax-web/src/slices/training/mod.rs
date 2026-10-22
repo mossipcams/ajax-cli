@@ -9,7 +9,17 @@ use self::runner::TrainingRunError;
 pub use self::runner::{SshTrainingRunner, TrainingCommandRunner};
 use crate::adapters::http::{json_response, response_from_web_error, Response};
 
-const TRAINING_JOBS: [&str; 4] = ["generate", "lfm-train", "lfm-eval", "wake-train"];
+const TRAINING_JOBS: [&str; 9] = [
+    "generate",
+    "lfm-train",
+    "lfm-eval",
+    "wake-train",
+    "validate",
+    "canary",
+    "promote-dataset",
+    "promote-model",
+    "select-checkpoint",
+];
 
 fn is_known_job(job: &str) -> bool {
     TRAINING_JOBS.contains(&job)
@@ -24,6 +34,20 @@ fn is_valid_profile_name(name: &str) -> bool {
             .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-'))
 }
 
+// Matches ^\d{8}T\d{6}Z-[0-9a-f]{8}$
+fn is_valid_run_id(run_id: &str) -> bool {
+    let bytes = run_id.as_bytes();
+    bytes.len() == 25
+        && bytes[..8].iter().all(u8::is_ascii_digit)
+        && bytes[8] == b'T'
+        && bytes[9..15].iter().all(u8::is_ascii_digit)
+        && bytes[15] == b'Z'
+        && bytes[16] == b'-'
+        && bytes[17..]
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct HostStatus {
     state: String,
@@ -36,6 +60,14 @@ struct HostStatus {
     generation: Option<HostGeneration>,
     #[serde(default)]
     profile_details: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    device: Option<String>,
+    #[serde(default)]
+    pipeline: Option<serde_json::Value>,
+    #[serde(default)]
+    checkpoint_eval: bool,
+    #[serde(default)]
+    eval_progress: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,6 +81,8 @@ struct HostRun {
     progress: Option<HostProgress>,
     #[serde(default)]
     log_tail: Vec<String>,
+    #[serde(default)]
+    external: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -111,8 +145,30 @@ fn host_status(runner: &dyn TrainingCommandRunner) -> Result<HostStatus, Respons
 }
 fn host_busy(status: &HostStatus) -> bool {
     status.state.starts_with("train:")
+        || !status.eval_progress.is_empty()
         || matches!(&status.run, Some(run) if run.running)
         || matches!(&status.generation, Some(generation) if generation.running)
+}
+
+fn host_document(
+    runner: &dyn TrainingCommandRunner,
+    verb: &str,
+    key: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, Response> {
+    let stdout = runner
+        .run(&[verb.to_string()])
+        .map_err(run_error_response)?;
+    match serde_json::from_str::<serde_json::Value>(&stdout) {
+        Ok(serde_json::Value::Object(document))
+            if document.get(key).is_some_and(serde_json::Value::is_array) =>
+        {
+            Ok(document)
+        }
+        _ => Err(json(
+            502,
+            serde_json::json!({ "ok": false, "error": format!("training host {verb} is not valid JSON") }),
+        )),
+    }
 }
 
 fn run_verb(runner: &dyn TrainingCommandRunner, args: &[&str]) -> Response {
@@ -136,6 +192,43 @@ pub fn status_response(runner: &dyn TrainingCommandRunner) -> Response {
                 "run": status.run,
                 "generation": status.generation,
                 "profile_details": status.profile_details,
+                "device": status.device,
+                "pipeline": status.pipeline,
+                "checkpoint_eval": status.checkpoint_eval,
+                "eval_progress": status.eval_progress,
+            }),
+        ),
+        Err(response) => response,
+    }
+}
+
+pub fn datasets_response(runner: &dyn TrainingCommandRunner) -> Response {
+    match host_document(runner, "datasets", "datasets") {
+        Ok(mut document) => json(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "datasets": document.remove("datasets"),
+                "promoted_run_id": document
+                    .remove("promoted_run_id")
+                    .unwrap_or(serde_json::Value::Null),
+                "promoted_record_present": document
+                    .remove("promoted_record_present")
+                    .unwrap_or(serde_json::json!(false)),
+            }),
+        ),
+        Err(response) => response,
+    }
+}
+
+pub fn evals_response(runner: &dyn TrainingCommandRunner) -> Response {
+    match host_document(runner, "evals", "evals") {
+        Ok(mut document) => json(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "evals": document.remove("evals"),
+                "champion": document.remove("champion").unwrap_or(serde_json::Value::Null),
             }),
         ),
         Err(response) => response,
@@ -248,4 +341,51 @@ pub fn switch_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Respo
         );
     }
     run_verb(runner, &["profile-set", parsed.profile.as_str()])
+}
+
+#[derive(Deserialize)]
+struct DatasetBody {
+    run_id: String,
+    #[serde(default)]
+    confirm: bool,
+}
+
+pub fn select_dataset_response(runner: &dyn TrainingCommandRunner, body: &[u8]) -> Response {
+    let parsed: DatasetBody = match serde_json::from_slice(body) {
+        Ok(parsed) => parsed,
+        Err(_) => return bad_request("invalid JSON body"),
+    };
+    if !parsed.confirm {
+        return bad_request("confirm is required");
+    }
+    if !is_valid_run_id(&parsed.run_id) {
+        return bad_request("invalid run id");
+    }
+    let status = match host_status(runner) {
+        Ok(status) => status,
+        Err(response) => return response,
+    };
+    if host_busy(&status) {
+        return json(
+            409,
+            serde_json::json!({ "ok": false, "error": "dataset selection is refused while training, eval, or generation is running" }),
+        );
+    }
+    let datasets = match host_document(runner, "datasets", "datasets") {
+        Ok(document) => document,
+        Err(response) => return response,
+    };
+    let known = datasets
+        .get("datasets")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("run_id").and_then(serde_json::Value::as_str)
+                    == Some(parsed.run_id.as_str())
+            })
+        });
+    if !known {
+        return bad_request("unknown dataset");
+    }
+    run_verb(runner, &["dataset-select", parsed.run_id.as_str()])
 }

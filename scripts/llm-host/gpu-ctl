@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
 """Forced-command entry for the Ajax web training modal (ssh key restricted to this script).
 
-Verbs: status | start <job> | stop | serve | profile-set <name>. Anything else exits 2.
+Verbs: status | start <job> | stop | serve | profile-set <name> | datasets | dataset-select <run_id> | evals. Anything else exits 2.
 """
 import json, os, re, shlex, signal, subprocess, sys, time
 from pathlib import Path
 
+CONTAINER_HOST = "/workspace/host"
+HOST_ROOT = Path("/srv/llm")
 RUN = Path(os.environ.get("GPU_RUN_DIR", "/srv/llm/run"))
 GPU = "/srv/llm/bin/gpu"
 SAYSO = Path("/srv/llm/sayso")
+TRAINING = Path("/srv/llm/lfm/ajax-optimization/sayso-training")
 PROFILES = SAYSO / "scripts/llm-host/profiles"
 ACTIVE = RUN / "llama-compose.active"
 JOB = RUN / "ajax-job.json"
-CANDIDATES = SAYSO / "training/datasets/candidates"
+CANDIDATES = TRAINING / "training/datasets/candidates"
 GEN_PROGRESS = RUN / "ajax-gen-progress.json"
-GEN_YAML = SAYSO / "training/configs/generation/full_sft_v5.yaml"
+GEN_YAML = TRAINING / "training/configs/generation/full_sft_v6.yaml"
+STATE = TRAINING / "training/runs/promotion"
+EVAL_RESULTS = Path("/srv/llm/lfm/runs/sayso-promotion")
+RUN_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+STAGES = ("validated", "canary_passed", "dataset_promoted", "trained", "final_eval_passed")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 # Fixed argv per job; nothing here is caller-controlled.
 JOBS = {
@@ -23,7 +30,13 @@ JOBS = {
     "lfm-eval": ["./sayso", "eval"],
     "wake-train": [GPU, "train", "wake", "--serve-after", "python", "scripts/wake_livekit_run.py", "run",
                    "--config", "satellite/models/sayso.yaml", "--work-dir", "/srv/llm/wake/runs/ajax-{ts}"],
+    "validate": ["./sayso", "validate"],
+    "canary": ["./sayso", "canary"],
+    "promote-dataset": ["./sayso", "promote-dataset"],
+    "promote-model": ["./sayso", "promote-model"],
+    "select-checkpoint": ["./sayso", "select-checkpoint"],
 }
+JOB_CWD = {"wake-train": SAYSO}
 
 
 def die(code, msg):
@@ -54,6 +67,71 @@ def job():
 def runtime_up():
     out = subprocess.run(["docker", "ps", "-q", "--filter", "name=^llama-server$"], capture_output=True, text=True)
     return bool(out.stdout.strip())
+
+
+def procs():
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,etimes=,args="], capture_output=True, text=True, check=True)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in out.stdout.splitlines():
+        try:
+            pid, elapsed, args = line.split(None, 2)
+            rows.append((int(pid), int(elapsed), args.split()))
+        except ValueError:
+            continue
+    return rows
+
+
+def external_sayso():
+    cmds = {argv[1] for argv in JOBS.values() if argv[0] == "./sayso"}
+    for _, elapsed, argv in procs():
+        for i, arg in enumerate(argv[:-1]):
+            if arg == "./sayso" and argv[i + 1] in cmds:
+                return {"kind": argv[i + 1], "elapsed_s": elapsed}
+    return None
+
+
+def evals_in_flight():
+    out = []
+    seen = set()
+    for _, elapsed, argv in procs():
+        if not argv or Path(argv[0]).name == "docker":
+            continue
+        script = next((i for i, arg in enumerate(argv) if Path(arg).name == "eval_checkpoint_cpu.py"), None)
+        if script is None:
+            continue
+        try:
+            checkpoint = argv[script + 1]
+            opts, tags = {}, []
+            for i in range(script + 2, len(argv), 2):
+                key, value = argv[i], argv[i + 1]
+                if key not in ("--suite", "--tag", "--profile", "--out") or value.startswith("-"):
+                    raise ValueError
+                if key == "--tag":
+                    tags.append(value)
+                else:
+                    opts[key] = value
+            suite, path = opts["--suite"], Path(opts["--out"])
+            if checkpoint.startswith("-") or suite not in ("smoke", "promotion", "context") or not path.is_absolute():
+                continue
+        except (IndexError, KeyError, ValueError):
+            continue
+        if path.is_relative_to(CONTAINER_HOST):
+            path = HOST_ROOT / path.relative_to(CONTAINER_HOST)
+        key = (path.name, Path(checkpoint).name)
+        if key in seen:
+            continue
+        seen.add(key)
+        labels = [suite, *tags]
+        finished = [(read_obj(p.parent / "metadata.json") or {}).get("gate_label")
+                    for p in path.glob("*/summary.json") if p.is_file()]
+        done = [label for label in labels if label in finished]
+        out.append({"checkpoint_label": Path(checkpoint).name, "group": path.name,
+                    "labels": labels, "done": done, "current": next((label for label in labels if label not in done), None),
+                    "elapsed_s": elapsed})
+    return out
 
 
 def profiles():
@@ -115,7 +193,7 @@ def host_run():
     lines = tail(logs[-1]) if logs else []
     started = time.strftime("%Y%m%dT%H%M%S", time.localtime(int(parts[3]))) if len(parts) > 3 and parts[3].isdigit() else ""
     return {"kind": f"{label}-train", "started": started, "running": True,
-            "progress": progress(lines), "log_tail": lines[-12:]}
+            "progress": progress(lines), "log_tail": lines[-12:], "external": False}
 
 
 def generating():
@@ -135,7 +213,7 @@ def count_rows(path):
         f.seek(offset)
         for chunk in iter(lambda: f.read(1 << 20), b""):
             rows += chunk.count(b"\n")
-    tmp = cache.with_suffix(".tmp")
+    tmp = cache.with_suffix(f".{os.getpid()}.tmp")  # per-process: concurrent status calls raced on a shared tmp
     tmp.write_text(json.dumps({"path": str(path), "offset": size, "rows": rows}))
     os.replace(tmp, cache)
     return rows
@@ -164,21 +242,161 @@ def status():
     if j:
         lines = tail(j["log"])
         run = {"kind": j["kind"], "started": j["started"], "running": j["running"],
-               "progress": progress(lines), "log_tail": lines[-12:]}
+               "progress": progress(lines), "log_tail": lines[-12:], "external": False}
     if not (run and run["running"]):
         run = host_run() or run
-    print(json.dumps({"state": state(), "runtime_up": runtime_up(), "active_profile": active(),
-                      "profiles": profiles(), "profile_details": profile_details(), "run": run, "generation": generation(j)}))
+    if not (run and run["running"]):
+        external = external_sayso()
+        if external:
+            run = {"kind": external["kind"], "started": "", "running": True,
+                   "progress": None, "log_tail": [], "external": True}
+    eval_progress = evals_in_flight()
+    up = runtime_up()
+    # ponytail device heuristic: GPU lock wins; evals use CPU; generation uses GPU only with the runtime up.
+    st = state()
+    if st.startswith("train:"):
+        device = "gpu"
+    elif eval_progress:
+        device = "cpu"
+    elif generating():
+        device = "gpu" if up else "cpu"
+    else:
+        device = "cpu" if run and run["running"] else None
+    print(json.dumps({"state": st, "runtime_up": up, "active_profile": active(),
+                      "profiles": profiles(), "profile_details": profile_details(), "run": run, "generation": generation(j),
+                      "device": device, "eval_progress": eval_progress,
+                      "pipeline": pipeline(), "checkpoint_eval": checkpoint_eval_supported()}))
 
+def read_obj(path):
+    try:
+        v = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return v if isinstance(v, dict) else None
+
+
+def _run_id_of(name):
+    o = read_obj(STATE / name)
+    return o.get("run_id") if o else None
+
+
+def _promoted_flags():
+    promoted_rid = _run_id_of("promoted_dataset.json")
+    return promoted_rid, bool(promoted_rid and (STATE / f"{promoted_rid}.json").is_file())
+
+
+def pipeline():
+    cur = _run_id_of("current.json")
+    if not cur:
+        return None
+    rec = read_obj(STATE / f"{cur}.json") or {}
+    promoted_rid, promoted_present = _promoted_flags()
+    return {"run_id": cur, **{f: bool(rec.get(f)) for f in STAGES},
+            "promoted_run_id": promoted_rid, "promoted_record_present": promoted_present}
+
+
+def dataset_entries():
+    current = _run_id_of("current.json")
+    promoted = _run_id_of("promoted_dataset.json")
+    out = []
+    if STATE.is_dir():
+        for path in sorted(STATE.glob("*.json"), key=lambda p: p.stem, reverse=True):
+            rid = path.stem
+            if not RUN_ID_RE.match(rid):
+                continue
+            rec = read_obj(path)
+            if rec is None:
+                continue
+            dp = Path(rec.get("dataset_path") or "")
+            size = dp.stat().st_size if dp.is_file() else None
+            entry = {"run_id": rid, "current": rid == current, "promoted": rid == promoted, "size_bytes": size}
+            entry.update({f: bool(rec.get(f)) for f in STAGES})
+            out.append(entry)
+    return out
+
+
+def datasets():
+    promoted_rid, promoted_present = _promoted_flags()
+    print(json.dumps({"datasets": dataset_entries(), "promoted_run_id": promoted_rid,
+                      "promoted_record_present": promoted_present}))
+
+
+def dataset_select(rid):
+    if not RUN_ID_RE.match(rid) or not (STATE / f"{rid}.json").is_file():
+        die(2, "unknown dataset")
+    if busy():
+        die(3, "busy")
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = (STATE / "current.json").with_suffix(f".{os.getpid()}.tmp")  # per-process: concurrent calls raced on a shared tmp
+    tmp.write_text(json.dumps({"run_id": rid}))
+    os.replace(tmp, STATE / "current.json")
+    print(json.dumps({"ok": True, "run_id": rid}))
+
+
+def _rate(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def pass_rates(em):
+    """Legacy flat eval_metrics {overall_pass_rate} -> {promotion: rate}; else per-suite {suite: summary.overall_pass_rate}."""
+    if not isinstance(em, dict):
+        return {}
+    if _rate(em.get("overall_pass_rate")) is not None:
+        return {"promotion": em["overall_pass_rate"]}
+    out = {}
+    for suite, v in em.items():
+        s = v.get("summary") if isinstance(v, dict) else None
+        r = _rate(s.get("overall_pass_rate") if isinstance(s, dict) else None)
+        if r is not None:
+            out[suite] = r
+    return out
+
+
+def champion():
+    m = read_obj(STATE / "promoted_model.json")
+    if m is None:
+        return None
+    return {"run_id": m.get("run_id"), "checkpoint": m.get("checkpoint"),
+            "pass_rates": pass_rates(m.get("eval_metrics"))}
+
+
+def evals():
+    out = []
+    if EVAL_RESULTS.is_dir():
+        for summary in EVAL_RESULTS.glob("*/*/summary.json"):
+            s = read_obj(summary)
+            m = read_obj(summary.parent / "metadata.json")  # sibling required
+            if s is None or m is None:
+                continue
+            label = Path(m.get("checkpoint") or "").name
+            sm, pr = s.get("summary") or {}, s.get("promotion") or {}
+            out.append({"id": f"{summary.parent.parent.name}/{summary.parent.name}", "group": summary.parent.parent.name,
+                        "checkpoint_label": label, "kind": "final" if label == "final" else "checkpoint",
+                        "suite": m.get("suite"), "gate_label": m.get("gate_label"), "created_at": m.get("created_at"),
+                        "total": sm.get("total"), "passed": sm.get("passed"), "pass_rate": sm.get("overall_pass_rate"),
+                        "promotion_passed": pr.get("passed"), "failures": pr.get("failures") or [],
+                        "category_pass_rate": sm.get("category_pass_rate") or {}})
+    out.sort(key=lambda e: e["created_at"] or "", reverse=True)  # newest first, missing created_at last
+    print(json.dumps({"evals": out[:200], "champion": champion()}))
 
 def busy():
     j = job()
-    return state().startswith("train:") or bool(j and j["running"])
+    return state().startswith("train:") or bool(j and j["running"] or external_sayso() or evals_in_flight())
+
+
+def checkpoint_eval_supported():
+    sayso = TRAINING / "sayso"
+    try:
+        return "select-checkpoint" in sayso.read_text()
+    except OSError:
+        return False
 
 
 def start(kind):
     if kind not in JOBS:
         die(2, "unknown job")
+    if kind == "select-checkpoint" and not checkpoint_eval_supported():
+        die(2, "unsupported job")
     if busy():
         die(3, "busy")
     ts = time.strftime("%Y%m%dT%H%M%S")
@@ -186,7 +404,7 @@ def start(kind):
     argv = [a.format(ts=ts) for a in JOBS[kind]]
     GEN_PROGRESS.unlink(missing_ok=True)
     with open(log, "wb") as out:
-        p = subprocess.Popen(argv, cwd=SAYSO, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        p = subprocess.Popen(argv, cwd=JOB_CWD.get(kind, TRAINING), stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                              start_new_session=True, env={**os.environ, "AJAX_GEN_PROGRESS": str(GEN_PROGRESS)})
     tmp = JOB.with_suffix(".tmp")
     tmp.write_text(json.dumps({"kind": kind, "pgid": p.pid, "log": str(log), "started": ts}))
@@ -227,10 +445,12 @@ def profile_set(name):
 def main():
     parts = shlex.split(os.environ.get("SSH_ORIGINAL_COMMAND", ""))
     verb, args = (parts[0] if parts else ""), parts[1:]
-    arity = {"status": 0, "stop": 0, "serve": 0, "start": 1, "profile-set": 1}
+    arity = {"status": 0, "stop": 0, "serve": 0, "start": 1, "profile-set": 1,
+             "datasets": 0, "dataset-select": 1, "evals": 0}
     if verb not in arity or len(args) != arity[verb]:
-        die(2, "usage: status | start <job> | stop | serve | profile-set <name>")
-    {"status": status, "stop": stop, "serve": serve, "start": start, "profile-set": profile_set}[verb](*args)
+        die(2, "usage: status | start <job> | stop | serve | profile-set <name> | datasets | dataset-select <run_id> | evals")
+    {"status": status, "stop": stop, "serve": serve, "start": start, "profile-set": profile_set,
+     "datasets": datasets, "dataset-select": dataset_select, "evals": evals}[verb](*args)
 
 
 if __name__ == "__main__":

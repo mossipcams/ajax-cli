@@ -8,6 +8,7 @@ mod test_support {
     pub(crate) struct FakeTrainingRunner {
         pub calls: Arc<Mutex<Vec<Vec<String>>>>,
         status_stdout: String,
+        replies: Vec<(String, String)>,
         result: Result<(), TrainingRunError>,
     }
 
@@ -16,6 +17,7 @@ mod test_support {
             Self {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 status_stdout: status_json.to_string(),
+                replies: Vec::new(),
                 result: Ok(()),
             }
         }
@@ -25,6 +27,11 @@ mod test_support {
                 result: Err(error),
                 ..self
             }
+        }
+
+        pub fn replying(mut self, verb: &str, stdout: &str) -> Self {
+            self.replies.push((verb.to_string(), stdout.to_string()));
+            self
         }
 
         pub fn recorded_calls(&self) -> Vec<Vec<String>> {
@@ -43,6 +50,11 @@ mod test_support {
                 .push(args.to_vec());
             if args.first().is_some_and(|verb| verb == "status") {
                 return Ok(self.status_stdout.clone());
+            }
+            if let Some(verb) = args.first() {
+                if let Some((_, stdout)) = self.replies.iter().find(|(name, _)| name == verb) {
+                    return Ok(stdout.clone());
+                }
             }
             self.result.map(|()| String::new())
         }
@@ -396,5 +408,269 @@ fn profile_name_validation_matches_regex() {
     }
     for name in ["", "_a", "-a", ".a", "A1", "a b", &"a".repeat(65)] {
         assert!(!is_valid_profile_name(name), "{name}");
+    }
+}
+
+const RUN_ID: &str = "20260722T101112Z-abcdef12";
+const RUN_ID_OTHER: &str = "20260721T090000Z-0123abcd";
+const DATASETS: &str = r#"{"datasets":[{"run_id":"20260722T101112Z-abcdef12","rows":512},{"run_id":"20260721T090000Z-0123abcd","rows":2048}]}"#;
+
+#[test]
+fn datasets_passes_through_host_list() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let response = datasets_response(&runner);
+    assert_eq!(response.status_code, 200);
+    let value = status_of(&response);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["datasets"][0]["run_id"], RUN_ID);
+    assert_eq!(value["datasets"][1]["rows"], 2048);
+}
+
+#[test]
+fn datasets_invalid_json_or_shape_maps_to_502() {
+    for stdout in ["not json", r#"["not","an","object"]"#, r#"{"datasets":{}}"#] {
+        let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", stdout);
+        let response = datasets_response(&runner);
+        assert_eq!(response.status_code, 502, "stdout {stdout}");
+        assert_eq!(
+            status_of(&response)["error"],
+            "training host datasets is not valid JSON"
+        );
+    }
+}
+
+#[test]
+fn evals_passes_through_with_champion() {
+    let evals = r#"{"evals":[{"id":"group-a/checkpoint-3000","group":"group-a","checkpoint_label":"checkpoint-3000","kind":"checkpoint","suite":"smoke","gate_label":"smoke","pass_rate":0.91}],"champion":{"run_id":"20260722T101112Z-abcdef12","checkpoint":"/workspace/host/lfm/runs/x/checkpoint-3000","pass_rates":{"promotion":0.79,"context":1.0}}}"#;
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("evals", evals);
+    let response = evals_response(&runner);
+    assert_eq!(response.status_code, 200);
+    let value = status_of(&response);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["evals"][0]["id"], "group-a/checkpoint-3000");
+    assert_eq!(value["evals"][0]["pass_rate"], 0.91);
+    assert_eq!(value["champion"]["run_id"], RUN_ID);
+    assert_eq!(
+        value["champion"]["checkpoint"],
+        "/workspace/host/lfm/runs/x/checkpoint-3000"
+    );
+    assert_eq!(value["champion"]["pass_rates"]["promotion"], 0.79);
+
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("evals", r#"{"evals":[]}"#);
+    let value = status_of(&evals_response(&runner));
+    assert!(value["champion"].is_null());
+}
+
+#[test]
+fn evals_invalid_shape_maps_to_502() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("evals", r#"{"champion":null}"#);
+    assert_eq!(evals_response(&runner).status_code, 502);
+}
+
+#[test]
+fn select_dataset_rejects_missing_confirm() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let response =
+        select_dataset_response(&runner, format!("{{\"run_id\":\"{RUN_ID}\"}}").as_bytes());
+    assert_eq!(response.status_code, 400);
+    assert_eq!(status_of(&response)["error"], "confirm is required");
+    assert!(runner.recorded_calls().is_empty());
+}
+
+#[test]
+fn select_dataset_rejects_bad_run_id_without_selecting() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let response = select_dataset_response(&runner, br#"{"run_id":"../x","confirm":true}"#);
+    assert_eq!(response.status_code, 400);
+    assert_eq!(status_of(&response)["error"], "invalid run id");
+    assert!(
+        runner
+            .recorded_calls()
+            .iter()
+            .all(|call| call.first().map(String::as_str) != Some("dataset-select")),
+        "dataset-select must never run for an invalid run id"
+    );
+}
+
+#[test]
+fn select_dataset_rejects_run_id_not_in_host_list() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let unknown = "20250101T000000Z-deadbeef";
+    let response = select_dataset_response(
+        &runner,
+        format!("{{\"run_id\":\"{unknown}\",\"confirm\":true}}").as_bytes(),
+    );
+    assert_eq!(response.status_code, 400);
+    assert_eq!(status_of(&response)["error"], "unknown dataset");
+    assert!(runner
+        .recorded_calls()
+        .iter()
+        .all(|call| call.first().map(String::as_str) != Some("dataset-select")));
+}
+
+#[test]
+fn select_dataset_refused_while_busy() {
+    for status in [
+        status_json("train:lfm", &Value::Null, &Value::Null),
+        status_json("idle", &json(RUN), &Value::Null),
+        status_json("idle", &Value::Null, &json(GEN_ACTIVE)),
+    ] {
+        let runner = FakeTrainingRunner::new(&status).replying("datasets", DATASETS);
+        let response = select_dataset_response(
+            &runner,
+            format!("{{\"run_id\":\"{RUN_ID}\",\"confirm\":true}}").as_bytes(),
+        );
+        assert_eq!(response.status_code, 409);
+        assert_eq!(
+            status_of(&response)["error"],
+            "dataset selection is refused while training, eval, or generation is running"
+        );
+        assert_eq!(runner.recorded_calls(), vec![vec!["status".to_string()]]);
+    }
+}
+
+#[test]
+fn select_dataset_sends_only_the_validated_run_id() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let response = select_dataset_response(
+        &runner,
+        format!("{{\"run_id\":\"{RUN_ID_OTHER}\",\"confirm\":true}}").as_bytes(),
+    );
+    assert_eq!(response.status_code, 200);
+    assert_eq!(status_of(&response)["ok"], true);
+    assert_eq!(
+        runner.recorded_calls(),
+        vec![
+            vec!["status".to_string()],
+            vec!["datasets".to_string()],
+            vec!["dataset-select".to_string(), RUN_ID_OTHER.to_string()],
+        ]
+    );
+}
+
+#[test]
+fn start_accepts_canary() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS);
+    let response = start_response(&runner, br#"{"job":"canary","confirm":true}"#);
+    assert_eq!(response.status_code, 200);
+    assert_eq!(
+        runner.recorded_calls().last(),
+        Some(&vec!["start".to_string(), "canary".to_string()])
+    );
+}
+
+#[test]
+fn start_accepts_select_checkpoint() {
+    let runner = FakeTrainingRunner::new(IDLE_STATUS);
+    let response = start_response(&runner, br#"{"job":"select-checkpoint","confirm":true}"#);
+    assert_eq!(response.status_code, 200);
+    assert_eq!(
+        runner.recorded_calls().last(),
+        Some(&vec!["start".to_string(), "select-checkpoint".to_string()])
+    );
+}
+
+#[test]
+fn datasets_passes_through_promoted_run_id_and_record_present() {
+    let stdout = r#"{"datasets":[{"run_id":"20260722T101112Z-abcdef12"}],"promoted_run_id":"20260721T090000Z-0123abcd","promoted_record_present":true}"#;
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", stdout);
+    let value = status_of(&datasets_response(&runner));
+    assert_eq!(value["promoted_run_id"], "20260721T090000Z-0123abcd");
+    assert_eq!(value["promoted_record_present"], true);
+
+    let runner = FakeTrainingRunner::new(IDLE_STATUS).replying("datasets", DATASETS);
+    let value = status_of(&datasets_response(&runner));
+    assert!(value["promoted_run_id"].is_null());
+    assert_eq!(value["promoted_record_present"], false);
+}
+
+#[test]
+fn status_includes_device_and_pipeline() {
+    let status = r#"{"state":"train:lfm","runtime_up":true,"active_profile":null,"profiles":[],"run":null,"generation":null,"device":"gpu","pipeline":{"stage":"train","dataset":true,"eval":false}}"#;
+    let value = status_of(&status_response(&FakeTrainingRunner::new(status)));
+    assert_eq!(value["device"], "gpu");
+    assert_eq!(value["pipeline"]["stage"], "train");
+    assert_eq!(value["pipeline"]["eval"], false);
+
+    let value = status_of(&status_response(&FakeTrainingRunner::new(IDLE_STATUS)));
+    assert!(value["device"].is_null());
+    assert!(value["pipeline"].is_null());
+}
+
+#[test]
+fn status_passes_checkpoint_eval() {
+    let status = r#"{"state":"idle","runtime_up":false,"active_profile":null,"profiles":[],"run":null,"generation":null,"checkpoint_eval":true}"#;
+    let value = status_of(&status_response(&FakeTrainingRunner::new(status)));
+    assert_eq!(value["checkpoint_eval"], true);
+
+    let value = status_of(&status_response(&FakeTrainingRunner::new(IDLE_STATUS)));
+    assert_eq!(value["checkpoint_eval"], false);
+}
+
+#[test]
+fn status_passes_external_run_and_eval_progress() {
+    let mut status = json(&status_json("idle", &json(RUN), &Value::Null));
+    status["run"]["external"] = serde_json::json!(true);
+    status["eval_progress"] = serde_json::json!([{
+        "checkpoint_label": "checkpoint-600",
+        "group": "group-a",
+        "labels": ["promotion", "gold", "shadow"],
+        "done": ["promotion"],
+        "current": "gold",
+        "elapsed_s": 42,
+    }]);
+    let response = status_response(&FakeTrainingRunner::new(&status.to_string()));
+    assert_eq!(response.status_code, 200);
+    let value = status_of(&response);
+    assert_eq!(value["run"]["external"], true);
+    assert_eq!(value["eval_progress"], status["eval_progress"]);
+
+    let status = status_json("idle", &json(RUN_DONE), &Value::Null);
+    let value = status_of(&status_response(&FakeTrainingRunner::new(&status)));
+    assert_eq!(value["run"]["external"], false);
+    assert_eq!(value["eval_progress"], serde_json::json!([]));
+}
+
+#[test]
+fn mutations_are_refused_while_external_eval_is_in_flight() {
+    let mut status = json(IDLE_STATUS);
+    status["eval_progress"] = serde_json::json!([{"current": "promotion"}]);
+    let runner = FakeTrainingRunner::new(&status.to_string());
+    for response in [
+        start_response(&runner, br#"{"job":"lfm-eval","confirm":true}"#),
+        switch_response(&runner, br#"{"profile":"qwen3-4b","confirm":true}"#),
+        select_dataset_response(
+            &runner,
+            format!("{{\"run_id\":\"{RUN_ID}\",\"confirm\":true}}").as_bytes(),
+        ),
+    ] {
+        assert_eq!(response.status_code, 409);
+    }
+    assert_eq!(runner.recorded_calls(), vec![vec!["status".to_string()]; 3]);
+}
+
+#[test]
+fn run_id_validation_matches_regex() {
+    for run_id in [
+        RUN_ID,
+        "00000000T000000Z-00000000",
+        "99999999T999999Z-ffffffff",
+    ] {
+        assert!(is_valid_run_id(run_id), "{run_id}");
+    }
+    for run_id in [
+        "",
+        "../x",
+        "20260722T101112Z-ABCDEF12",
+        "20260722T101112Z-abcdef1",
+        "20260722T101112Z-abcdef123",
+        "20260722 101112Z-abcdef12",
+        "20260722T101112z-abcdef12",
+        "20260722T101112Z_abcdef12",
+        "2026072aT101112Z-abcdef12",
+        "20260722T101112Z-abcdef1g",
+        "20260722T101112Z-abcdef12\n",
+    ] {
+        assert!(!is_valid_run_id(run_id), "{run_id:?}");
     }
 }
