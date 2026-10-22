@@ -83,7 +83,22 @@ const TaskRow = memo(function TaskRow({
   const statusInfo = taskRowStatus(card);
   const tone = statusInfo.tone;
   const wrapRef = useRef<HTMLDivElement>(null);
-  const revealAction = visibleTaskActions(card.actions).find((action) => action.action === "drop");
+  const visibleActions = visibleTaskActions(card.actions);
+  const time = card.last_activity_unix_secs;
+  const glyph =
+    tone === "running" ? (
+      <span className="task-row-spinner" />
+    ) : tone === "waiting" ? (
+      "!"
+    ) : tone === "error" ? (
+      "✕"
+    ) : tone === "done" ? (
+      "✓"
+    ) : (
+      "–"
+    );
+  const inlineActions = visibleActions.filter((action) => !action.destructive);
+  const revealAction = visibleActions.find((action) => action.action === "drop");
 
   useSwipeReveal(wrapRef, revealAction
     ? {
@@ -101,6 +116,11 @@ const TaskRow = memo(function TaskRow({
     }
     onOpenTask?.(card.qualified_handle);
   };
+
+  // Inline actions are real buttons: let their own handlers run and keep the row
+  // body (and Enter/Space aimed at an action) from opening the task.
+  const isInlineActionTarget = (event: { target: EventTarget | null }) =>
+    event.target instanceof Element && Boolean(event.target.closest(".task-row-actions"));
 
   const className = ["task-row", `tone-${tone}`, offset > 0 ? "is-revealed" : "", "ph-no-autocapture"]
     .filter(Boolean)
@@ -138,7 +158,12 @@ const TaskRow = memo(function TaskRow({
   return (
     <div
       ref={wrapRef}
-      className={["task-row-wrap", revealAction ? "has-reveal" : "", offset > 0 ? "is-revealed-wrap" : ""]
+      className={[
+        "task-row-wrap",
+        `tone-${tone}`,
+        revealAction ? "has-reveal" : "",
+        offset > 0 ? "is-revealed-wrap" : "",
+      ]
         .filter(Boolean)
         .join(" ")}
       data-handle={card.qualified_handle}
@@ -159,29 +184,60 @@ const TaskRow = memo(function TaskRow({
           />
         </div>
       ) : null}
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         className={className}
         data-ph-no-autocapture=""
         data-handle={card.qualified_handle}
         style={{ transform: `translateX(-${offset}px)` }}
-        onClick={handleTap}
+        onClick={(event) => {
+          if (isInlineActionTarget(event)) return;
+          handleTap();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          if (isInlineActionTarget(event)) return;
+          event.preventDefault();
+          handleTap();
+        }}
       >
-        <span className={`status-dot tone-${tone}`} aria-hidden="true" />
+        <span
+          className={`status-dot task-row-tile tone-${tone}`}
+          aria-hidden="true"
+        >
+          {glyph}
+        </span>
         <div className="task-row-main">
           <span className="task-row-title">{card.title || card.qualified_handle}</span>
-          {card.title ? <span className="task-row-handle">{card.qualified_handle}</span> : null}
-        </div>
-        <span className="task-row-side">
-          {statusInfo.label ? <span className="task-row-status">{statusInfo.label}</span> : null}
-          {card.last_activity_unix_secs ? (
-            <span className="task-row-time">
-              {relativeTime(card.last_activity_unix_secs, nowSecs)}
-            </span>
+          <span className="task-row-meta">
+            {statusInfo.label ? (
+              <span className="task-row-status">{statusInfo.label}</span>
+            ) : null}
+            {card.title ? (
+              <span className="task-row-handle">{card.qualified_handle}</span>
+            ) : null}
+            {time ? (
+              <span className="task-row-time">
+                {relativeTime(time, nowSecs)}
+              </span>
+            ) : null}
+          </span>
+          {inlineActions.length > 0 ? (
+            <div className="task-row-actions">
+              <ActionBar
+                actions={inlineActions}
+                handle={card.qualified_handle}
+                onCockpit={onCockpit}
+                onResult={onResult}
+                onMutated={onMutated}
+                pendingConfirmAction={pendingConfirmAction}
+                onCancelPendingConfirm={onCancelPendingConfirm}
+              />
+            </div>
           ) : null}
-        </span>
-        <span className="task-row-chevron">›</span>
-      </button>
+        </div>
+      </div>
     </div>
   );
 });
