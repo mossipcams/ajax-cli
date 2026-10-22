@@ -298,11 +298,11 @@ sandboxed launch is refused in a non-linked checkout, because its `.git` would
 be agent-writable. Run from a linked worktree, or set `AJAX_SANDBOX=off`.
 
 By default agents cannot use `gh` (and so cannot `git push` over HTTPS through
-`gh auth git-credential`), and `ps` cannot see other processes. Grant those per
+`gh auth git-credential`), and `pgrep` cannot see other processes. Grant those per
 machine with a nono profile fragment at `~/.config/ajax/nono/local.json`. Ajax
 merges it into the profile at every launch (objects merge, arrays append,
 scalars replace), and an invalid file refuses the launch. Agents cannot edit
-it. For example, to let agents use `gh`, run `ps`, and run a local tool
+it. For example, to let agents use `gh`, run `pgrep`, and run a local tool
 checkout:
 
 ```json
@@ -317,9 +317,32 @@ checkout:
 
 Granting `~/.config/gh` exposes your GitHub token to agents if `gh` keeps it in
 `hosts.yml` rather than the keychain. `allow_all` lets agents read other
-processes' command lines. `~/.ssh` stays unreadable either way, so SSH pushes do
-not work from a sandboxed agent; to push workflow files over HTTPS instead, run
-`gh auth refresh -s workflow` once.
+processes' command lines. On macOS `/bin/ps` is setuid and nono never runs
+setuid binaries, so agents use `pgrep -fl` instead.
+
+Private keys in `~/.ssh` stay unreadable. To let agents SSH (for example to
+your VMs) without exposing keys, run a dedicated `ssh-agent` on a socket outside
+`~/.ssh` (for example `~/.config/ajax/ssh/agent.sock`, kept alive by a launchd
+job that loads your keys), point `~/.ssh/config` at it with
+`IdentityAgent ~/.config/ajax/ssh/agent.sock` under `Host *`, and grant it in
+`local.json`:
+
+```json
+{
+  "filesystem": {
+    "read_file": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"],
+    "bypass_protection": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"],
+    "unix_socket": ["$HOME/.config/ajax/ssh/agent.sock"]
+  }
+}
+```
+
+List every public key your `IdentityFile` entries name: ssh matches agent keys
+to them and refuses to log in if the `.pub` files are unreadable. Agents can
+then log in wherever those keys work for as long as they run, but cannot copy
+the keys. `known_hosts` is read-only, so connections to new hosts fail. To push
+workflow files over HTTPS instead of SSH, run `gh auth refresh -s workflow`
+once.
 
 ## First Run
 

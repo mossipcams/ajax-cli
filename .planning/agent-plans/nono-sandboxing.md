@@ -196,3 +196,11 @@ Not verifiable in-sandbox: real `gh`/`ps`/router under the new profile (no neste
   profile into the documented per-machine `local.json` opt-in (gh may expose a hosts.yml token;
   allow_all exposes other processes' argv). Shipped profile is byte-identical to #1390's. Matt's
   local.json (gh + ps + router) validated as a merged profile (`Process info: AllowAll`).
+- SSH for sandboxed agents (Matt's VMs), verified with a real `ajax-cli __agent-runtime` launch:
+  dedicated `ssh-agent -D -a ~/.config/ajax/ssh/agent.sock` (launchd `com.matt.ajax-ssh-agent`,
+  keys loaded at start), `IdentityAgent` under `Host *` in ~/.ssh/config, local.json grants
+  `unix_socket` + read_file/bypass_protection for config, known_hosts and every `.pub` named by
+  `IdentityFile` (ssh refuses agent keys it cannot match to an unreadable .pub). sayso-llm,
+  proxmox, debian101, llm-gpu reachable; private keys still denied. `gh api user` works;
+  router runnable. `/bin/ps` is setuid → nono refuses exec regardless of process_info_mode;
+  `pgrep` works with allow_all (empty without).
