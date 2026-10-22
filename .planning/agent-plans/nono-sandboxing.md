@@ -179,3 +179,16 @@ needs stacked PR `fix/sandbox/trusted-worktree-git` (BASE_BRANCH=feat/sandbox/no
   `EnsureWorktreeAbsent`; pinned git also gets `core.fsmonitor=false` via GIT_CONFIG_COUNT.
   Gate: fmt/clippy/rustdoc OK, nextest 3108/3109 (known stylesheet failure). E2E: forge + admin-dir
   deletion → `fatal: not a git repository`, planted fsmonitor not run.
+
+## Agent tooling access (2026-10-22, in-process at Matt's request)
+
+Found from inside a sandboxed Ajax session: `gh` (no read on ~/.config/gh), git push over HTTPS
+(gh credential helper), `ps` (process info), and the model router (workspace repo not granted) all
+fail. Fix: profile reads `$HOME/.config/gh`; macOS `process_info_mode: allow_all`; machine-specific
+grants via user-owned `~/.config/ajax/nono/local.json`, merged into the written profile (invalid →
+launch refused). `~/.ssh` stays denied (no ssh-agent; would expose keys) — use
+`gh auth refresh -s workflow` for workflow-file pushes over HTTPS.
+Validation (inside the sandbox): profile validates (`Process info: AllowAll`); sandbox tests 16/16
+incl. local.json merge + invalid-file refusal; fmt/clippy/rustdoc OK. Full nextest inside the
+sandbox: 150 env failures (ps denied, home writes) unrelated to this change — CI is the gate.
+Not verifiable in-sandbox: real `gh`/`ps`/router under the new profile (no nested nono).

@@ -297,6 +297,21 @@ that rewrites the worktree's `.git` file cannot make Ajax run its git config. A
 sandboxed launch is refused in a non-linked checkout, because its `.git` would
 be agent-writable. Run from a linked worktree, or set `AJAX_SANDBOX=off`.
 
+Agents can read `~/.config/gh`, so `gh` and `git push` over HTTPS (through
+`gh auth git-credential`) work, and `ps` can see other processes. `~/.ssh` stays
+unreadable, so SSH pushes do not work from a sandboxed agent; to push workflow
+files over HTTPS instead, run `gh auth refresh -s workflow` once.
+
+For machine-specific grants, put a nono profile fragment at
+`~/.config/ajax/nono/local.json`. Ajax merges it into the profile at every launch
+(objects merge, arrays append, scalars replace), and an invalid file refuses the
+launch. Agents cannot edit it. For example, to let a sandboxed agent run a
+local tool checkout:
+
+```json
+{ "filesystem": { "read": ["/path/to/tool"], "allow": ["$HOME/.tool-state"] } }
+```
+
 ## First Run
 
 After installing and writing a config file, check the environment:
