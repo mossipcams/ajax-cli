@@ -290,6 +290,9 @@ The host tmux socket directory (`/private/tmp/tmux-$UID` on macOS,
 `tmux new-window` on Ajax's tmux server and execute commands outside the
 sandbox. Agents therefore cannot run `tmux` commands themselves. A tmux server
 started with a custom `TMUX_TMPDIR` or `-S` socket elsewhere is not covered.
+This is verified on macOS only: on Linux, Landlock may not enforce a deny inside
+the granted `/tmp` or restrict connecting to a Unix socket, so do not rely on
+it there.
 
 The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
 Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
