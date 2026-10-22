@@ -8,7 +8,7 @@ export type ConnectionState =
   | "backend unreachable"
   | "stale session";
 
-export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
+export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session" | "training";
 
 export interface PullRequestView {
   number: number;

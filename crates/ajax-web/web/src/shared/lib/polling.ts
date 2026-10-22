@@ -17,7 +17,14 @@ export const TEST_IN_STABLE_TIMEOUT_MS = 900_000;
 export const GET_REQUEST_TIMEOUT_MS = 10000;
 export const DIFF_REQUEST_TIMEOUT_MS = 45000;
 
-export type PollingRouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session";
+export type PollingRouteKind =
+  | "dashboard"
+  | "project"
+  | "task"
+  | "diff"
+  | "settings"
+  | "session"
+  | "training";
 
 export function cockpitRefreshIntervalMs(input: {
   visibilityState: DocumentVisibilityState;
@@ -28,7 +35,11 @@ export function cockpitRefreshIntervalMs(input: {
   if (input.routeKind === "task" || input.routeKind === "session") {
     return REFRESH_INTERVAL_TERMINAL_MS;
   }
-  if (input.routeKind === "settings" || input.routeKind === "diff") {
+  if (
+    input.routeKind === "settings" ||
+    input.routeKind === "diff" ||
+    input.routeKind === "training"
+  ) {
     return REFRESH_INTERVAL_IDLE_MS;
   }
   if (

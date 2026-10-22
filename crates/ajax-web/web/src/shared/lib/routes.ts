@@ -43,6 +43,7 @@ export function parseRoute(hash: string): Route {
   const query = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
 
   if (value === "#/settings") return { kind: "settings" };
+  if (value === "#/training") return { kind: "training" };
   if (value === "#/session") return { kind: "session" };
   if (value.startsWith(SESSION_PREFIX)) {
     const handle = safeDecode(value.slice(SESSION_PREFIX.length));
@@ -82,6 +83,10 @@ export function dashboardHash(): string {
 
 export function settingsHash(): string {
   return "#/settings";
+}
+
+export function trainingHash(): string {
+  return "#/training";
 }
 
 export function projectHash(project: string): string {
