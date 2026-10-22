@@ -343,6 +343,21 @@ mod tests {
     }
 
     #[test]
+    fn profile_denies_host_tmux_socket_issue_1396() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        for (path, platform) in [
+            ("/private/tmp/tmux-$UID", "macos"),
+            ("/tmp/tmux-$UID", "linux"),
+        ] {
+            assert!(
+                deny.contains(&serde_json::json!({"path": path, "when": platform})),
+                "agents must not reach the host tmux server at {path} on {platform}"
+            );
+        }
+    }
+
+    #[test]
     fn wrap_argv_builds_exact_argv_with_multiple_grants() {
         let (program, argv) = wrap_argv(
             Path::new("/opt/nono"),

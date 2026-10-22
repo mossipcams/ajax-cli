@@ -285,6 +285,12 @@ that override; they need `sandbox_mode = "danger-full-access"` in
 `~/.codex/config.toml`. Claude auto-update fails inside the sandbox, so
 update Claude outside Ajax.
 
+The host tmux socket directory (`/private/tmp/tmux-$UID` on macOS,
+`/tmp/tmux-$UID` on Linux) is denied: otherwise an agent could run
+`tmux new-window` on Ajax's tmux server and execute commands outside the
+sandbox. Agents therefore cannot run `tmux` commands themselves. A tmux server
+started with a custom `TMUX_TMPDIR` or `-S` socket elsewhere is not covered.
+
 The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
 Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
 login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
