@@ -30,6 +30,8 @@ mkdir -p "$(dirname "$STATE")" "$WORKTREE_ROOT"
 STUBS="$ROOT/scripts/exploratory/agent-stubs"
 export PATH="$STUBS:$PATH"
 export AJAX_EXPLORATORY_FAKE_ACP="$STUBS/fake-acp"
+# Exploratory CI runs stub agents on ubuntu without nono; the agent sandbox is on by default.
+export AJAX_SANDBOX="${AJAX_SANDBOX:-off}"
 
 nohup "$BIN" \
   --config "$CONFIG" \

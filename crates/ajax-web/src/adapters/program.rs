@@ -7,7 +7,7 @@ use std::{
 };
 
 use ajax_core::adapters::sandbox::{
-    default_profile_dir, git_common_dir, resolve_nono, sandbox_enabled, wrap_argv, write_profile,
+    default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled,
 };
 
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
@@ -168,35 +168,16 @@ fn sandbox_launch(
     args: &[String],
     cwd: &Path,
 ) -> Result<(PathBuf, Vec<String>), String> {
-    if !enabled {
-        return Ok((program.to_path_buf(), args.to_vec()));
-    }
-    let nono = nono()?;
-    let profile_dir = profile_dir.ok_or_else(|| {
-        sandbox_failure("cannot locate the nono profile directory because HOME is unset")
-    })?;
-    let profile = write_profile(&profile_dir).map_err(|error| {
-        sandbox_failure(&format!(
-            "cannot write the nono profile to {}: {error}",
-            profile_dir.display()
-        ))
-    })?;
-    let grants: Vec<PathBuf> = git_common_dir(cwd).into_iter().collect();
-    let (nono_path, argv) = wrap_argv(
-        &nono,
-        &profile,
+    let (wrapped, wrapped_args) = sandbox_command(
+        enabled,
+        nono,
+        profile_dir,
         cwd,
-        &grants,
+        &[],
         &program.display().to_string(),
         args,
-    );
-    Ok((PathBuf::from(nono_path), argv))
-}
-
-fn sandbox_failure(detail: &str) -> String {
-    format!(
-        "{detail}; the agent sandbox is on (nono), so the launch was refused. Set AJAX_SANDBOX=off to run unsandboxed"
-    )
+    )?;
+    Ok((PathBuf::from(wrapped), wrapped_args))
 }
 
 /// Sets the harness PATH: the login-shell PATH ahead of our own, so agent
@@ -247,6 +228,10 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
+    // nvm and friends export PATH from `.zshrc`, which a plain login shell does
+    // not read — the daemon then cannot see any harness the operator installed.
+    // An ACP adapter spawns the harness CLI itself, so it needs a PATH that
+    // names it — resolving only our own child is not enough.
     #[test]
     fn a_harness_command_carries_the_shell_path() {
         let command = harness_command("sh").expect("sh is installed");
@@ -288,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn an_enabled_launch_wraps_the_agent_in_nono_with_the_worktree_and_git_grant() {
+    fn an_enabled_launch_wraps_the_agent_in_nono_with_the_worktree_and_profile() {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let profile_dir = scratch_dir("argv");
         let args = vec!["exec".to_string()];
@@ -303,32 +288,21 @@ mod tests {
         )
         .expect("enabled launch wraps");
 
-        let mut expected: Vec<String> = [
-            "-s",
-            "run",
-            "--allow-cwd",
-            "--no-rollback-prompt",
-            "--profile",
-        ]
-        .map(String::from)
-        .into();
-        expected.push(profile_dir.join("ajax-agent.json").display().to_string());
-        expected.extend(["--workdir".to_string(), cwd.display().to_string()]);
-        if let Some(common) = git_common_dir(cwd) {
-            expected.extend(["--allow".to_string(), common.display().to_string()]);
-        }
-        expected.extend(
-            [
+        assert_eq!(program, PathBuf::from("/opt/nono"));
+        assert!(profile_dir.join("ajax-agent.json").is_file());
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair[0] == "--workdir" && pair[1] == cwd.display().to_string()));
+        assert!(argv.ends_with(
+            &[
                 "--",
                 "codex",
                 "-c",
                 "sandbox_mode=\"danger-full-access\"",
                 "exec",
             ]
-            .map(String::from),
-        );
-        assert_eq!(program, PathBuf::from("/opt/nono"));
-        assert_eq!(argv, expected);
+            .map(String::from)
+        ));
     }
 
     #[test]
@@ -379,7 +353,7 @@ mod tests {
         )
         .expect_err("an unwritable profile must refuse the launch");
 
-        assert!(error.contains("nono"), "{error}");
+        assert!(error.contains("profile"), "{error}");
         assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
     }
 
@@ -395,7 +369,7 @@ mod tests {
         )
         .expect_err("no profile directory must refuse the launch");
 
-        assert!(error.contains("nono"), "{error}");
+        assert!(error.contains("HOME"), "{error}");
         assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
     }
 }

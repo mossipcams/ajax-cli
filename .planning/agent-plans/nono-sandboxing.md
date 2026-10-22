@@ -128,3 +128,28 @@ Implementation 2026-10-22 (router: Haiku delegates for code slices, Qwen for doc
   by unit tests + the spike of the same process shapes. Cursor SDK sidecar never spiked.
 - File-size warnings (under 1000 hard cap): agent_runtime.rs 704, process_observer.rs 796.
 - Spike cleanup: `nono remove nolabs-ai/claude` reversed its ~/.claude wiring.
+
+## Code review follow-up (PR #1385, 2026-10-22)
+
+Review findings fixed (router: Qwen core, Haiku callers, DeepSeek docs/CI):
+- Profile tamper: profile moved to `~/.config/ajax/nono` (verified ungranted; `~/.cache` is granted);
+  written atomically (temp + rename) and only when content differs (also fixes concurrent-launch race).
+- Git escape: whole `.git` rw grant replaced by validated `git_grants`: read common dir; rw only the
+  worktree admin dir + objects/refs/logs. Validation runs git with GIT_* stripped and requires
+  common=`.git`, gitdir under `common/worktrees`, and the gitdir back-link == `<worktree>/.git`;
+  otherwise no git grants (forged `.git` cannot widen grants). nono cannot protect the `.git` file
+  itself (deny blocks reads; rename still allowed), hence validation instead.
+- Exploratory CI: `start-server.sh` defaults `AJAX_SANDBOX=off`.
+- Supervised cancel: SIGTERM to `nono` (verified: nono forwards TERM/INT to the agent), 2s grace,
+  then SIGKILL. Process-group approach rejected: it breaks terminal Ctrl-C.
+- Duplication/lookup drift: all three call sites use `ajax_core::adapters::sandbox::sandbox_command`;
+  `resolve_nono` also checks /opt/homebrew/bin, /usr/local/bin, ~/.cargo/bin, ~/.nix-profile/bin.
+- Accepted/documented, not fixed: codex-acp/npx fallbacks need `sandbox_mode = "danger-full-access"`
+  in ~/.codex/config.toml (codex-acp has no -c flag); ACP candidate fallback on inner exec failure
+  is lost under nono; repo-wide `.cargo/config.toml` AJAX_SANDBOX=off kept for test runs.
+- Residual (out of scope): host-side git in a worktree whose `.git` an agent redirected still reads
+  agent-controlled config (fsmonitor etc.). Needs host git to use trusted GIT_DIR — follow-up.
+
+Validation: fmt OK; clippy --all-targets --all-features OK; nextest --all-features 3097/3098
+(same unrelated stylesheet failure). E2E (home-dir scratch repo, real binary): commit OK; hooks,
+git config, profile writes denied; forged `.git` → no git grants, ~/.ssh unreachable.

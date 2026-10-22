@@ -8,15 +8,12 @@ use std::{
 };
 
 use ajax_core::{
-    adapters::sandbox::{
-        default_profile_dir, git_common_dir, resolve_nono, sandbox_enabled, wrap_argv,
-        write_profile,
-    },
+    adapters::sandbox::{default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled},
     events::{AgentEvent, MonitorEvent, ProcessEvent},
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::Command,
+    process::{Child, Command},
     sync::{mpsc, watch},
 };
 
@@ -84,7 +81,11 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
         hang_after,
         cancel,
         worktree,
-        SandboxLaunch::from_env(),
+        SandboxInputs {
+            enabled: sandbox_enabled(),
+            nono: resolve_nono,
+            profile_dir: default_profile_dir(),
+        },
     )
     .await
 }
@@ -96,7 +97,7 @@ async fn supervise_launch<P: ProcessProtocol>(
     hang_after: Option<Duration>,
     mut cancel: watch::Receiver<bool>,
     worktree: Option<&Path>,
-    sandbox: SandboxLaunch,
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
 ) -> Result<Option<i32>, SupervisorError> {
     let mut command = agent_command(
         protocol.program(),
@@ -173,7 +174,9 @@ async fn supervise_launch<P: ProcessProtocol>(
     });
 
     let status = tokio::select! {
-        status = child.wait() => status?,
+        status = child.wait() => {
+            status?
+        }
         changed = cancel.changed() => {
             process_done.store(true, Ordering::SeqCst);
             if let Some(hang_task) = hang_task {
@@ -183,10 +186,7 @@ async fn supervise_launch<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
-                    child.start_kill()?;
-                    tokio::time::timeout(Duration::from_secs(2), child.wait())
-                        .await
-                        .map_err(|_| SupervisorError::Process("cancelled process did not exit".to_string()))??;
+                    terminate(&mut child).await?;
                     Err(SupervisorError::Process("process cancelled".to_string()))
                 }
                 Ok(()) => Err(SupervisorError::Process("process cancellation channel changed".to_string())),
@@ -223,40 +223,35 @@ async fn supervise_launch<P: ProcessProtocol>(
     Ok(status_code)
 }
 
-/// Whether the agent is wrapped in nono, with the inputs resolved up front (fail-closed when they error).
-enum SandboxLaunch {
-    Disabled,
-    Enabled {
-        nono: Result<PathBuf, String>,
-        profile_dir: Option<PathBuf>,
-    },
-}
-
-impl SandboxLaunch {
-    fn from_env() -> Self {
-        if sandbox_enabled() {
-            Self::Enabled {
-                nono: resolve_nono(),
-                profile_dir: default_profile_dir(),
-            }
-        } else {
-            Self::Disabled
-        }
-    }
+/// nono inputs for the agent launch. Production reads them from the environment; tests inject them.
+struct SandboxInputs<N> {
+    enabled: bool,
+    nono: N,
+    profile_dir: Option<PathBuf>,
 }
 
 fn agent_command(
     program: &str,
     args: &[String],
     worktree: Option<&Path>,
-    sandbox: SandboxLaunch,
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
 ) -> Result<Command, SupervisorError> {
-    let (program, args) = match sandbox {
-        SandboxLaunch::Disabled => (program.to_string(), args.to_vec()),
-        SandboxLaunch::Enabled { nono, profile_dir } => {
-            sandboxed_argv(nono, profile_dir, worktree, program, args)?
-        }
+    let cwd = match worktree {
+        Some(worktree) => worktree.to_path_buf(),
+        None => std::env::current_dir().map_err(|error| {
+            SupervisorError::Process(format!("failed to read the working directory: {error}"))
+        })?,
     };
+    let (program, args) = sandbox_command(
+        sandbox.enabled,
+        sandbox.nono,
+        sandbox.profile_dir,
+        &cwd,
+        &[],
+        program,
+        args,
+    )
+    .map_err(SupervisorError::Process)?;
     let mut command = Command::new(program);
     command.args(args);
     if let Some(worktree) = worktree {
@@ -265,44 +260,28 @@ fn agent_command(
     Ok(command)
 }
 
-/// Wraps the agent in nono; any failure returns an error so the agent never runs unsandboxed.
-fn sandboxed_argv(
-    nono: Result<PathBuf, String>,
-    profile_dir: Option<PathBuf>,
-    worktree: Option<&Path>,
-    program: &str,
-    args: &[String],
-) -> Result<(String, Vec<String>), SupervisorError> {
-    let nono = nono.map_err(SupervisorError::Process)?;
-    let profile_dir = profile_dir.ok_or_else(|| {
-        SupervisorError::Process(
-            "agent sandbox is on but no nono profile directory is available (HOME is unset); set AJAX_SANDBOX=off to run without nono"
-                .to_string(),
-        )
-    })?;
-    let profile = write_profile(&profile_dir).map_err(|error| {
-        SupervisorError::Process(format!(
-            "agent sandbox is on but the nono profile could not be written to {}: {error}; set AJAX_SANDBOX=off to run without nono",
-            profile_dir.display()
-        ))
-    })?;
-    let workdir = match worktree {
-        Some(worktree) => worktree.to_path_buf(),
-        None => std::env::current_dir().map_err(|error| {
-            SupervisorError::Process(format!(
-                "agent sandbox is on but the working directory is unknown ({error}); set AJAX_SANDBOX=off to run without nono"
-            ))
-        })?,
-    };
-    let read_write: Vec<PathBuf> = git_common_dir(&workdir).into_iter().collect();
-    Ok(wrap_argv(
-        &nono,
-        &profile,
-        &workdir,
-        &read_write,
-        program,
-        args,
-    ))
+/// Stops the direct child the way a terminal Ctrl-C would: SIGTERM first, so a wrapper such as
+/// `nono` can forward it to the agent, then SIGKILL if it has not exited within 2 seconds.
+async fn terminate(child: &mut Child) -> Result<(), SupervisorError> {
+    if let Some(pid) = child.id() {
+        // ponytail: shells out to kill(1) like ajax-web's process_group does; use nix::sys::signal::kill(Pid, SIGTERM) if nix becomes a dependency.
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    if tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .is_ok()
+    {
+        return Ok(());
+    }
+    child.start_kill()?;
+    tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .map_err(|_| SupervisorError::Process("cancelled process did not exit".to_string()))??;
+    Ok(())
 }
 
 async fn read_stdout_lines<R>(
@@ -584,20 +563,18 @@ mod tests {
 }
 
 #[cfg(test)]
-mod sandbox_launch_tests {
+mod launch_tests {
     use std::{
         fs,
-        os::unix::fs::PermissionsExt,
         path::{Path, PathBuf},
+        sync::Arc,
+        time::{Duration, Instant},
     };
 
-    use ajax_core::{
-        adapters::sandbox::git_common_dir,
-        events::{MonitorEvent, ProcessEvent},
-    };
+    use ajax_core::events::AgentEvent;
     use tokio::sync::{mpsc, watch};
 
-    use super::{agent_command, sandboxed_argv, supervise_launch, SandboxLaunch};
+    use super::{agent_command, supervise_launch, ProcessProtocol, SandboxInputs, StdoutParser};
     use crate::{agent::codex::CodexAdapter, SupervisorError};
 
     fn scratch_dir(name: &str) -> PathBuf {
@@ -609,93 +586,67 @@ mod sandbox_launch_tests {
         dir
     }
 
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
+    /// Runs `/bin/sh -c <script>` as the agent.
+    struct ShellProtocol(String);
+
+    impl ProcessProtocol for ShellProtocol {
+        fn process_name(&self) -> &str {
+            "shell"
+        }
+
+        fn program(&self) -> &str {
+            "/bin/sh"
+        }
+
+        fn args(&self, _prompt: &str) -> Vec<String> {
+            vec!["-c".to_string(), self.0.clone()]
+        }
+
+        fn stdout_parser(&self) -> StdoutParser {
+            Arc::new(|_line: &str| None::<AgentEvent>)
+        }
     }
 
     #[test]
-    fn enabled_argv_wraps_program_with_profile_and_worktree_grants() {
+    fn enabled_sandbox_wraps_agent_in_nono_with_worktree_cwd() {
         let dir = scratch_dir("enabled-argv");
         let worktree = dir.join("worktree");
         fs::create_dir_all(&worktree).unwrap();
         let profile_dir = dir.join("profiles");
 
-        let (program, argv) = sandboxed_argv(
-            Ok(PathBuf::from("/opt/nono")),
-            Some(profile_dir.clone()),
-            Some(&worktree),
+        let command = agent_command(
             "codex",
-            &args(&["exec"]),
+            &["exec".to_string()],
+            Some(&worktree),
+            SandboxInputs {
+                enabled: true,
+                nono: || Ok(PathBuf::from("/opt/nono")),
+                profile_dir: Some(profile_dir.clone()),
+            },
         )
         .unwrap();
 
-        let profile = profile_dir.join("ajax-agent.json");
-        assert!(profile.is_file());
-        let grants: Vec<String> = git_common_dir(&worktree)
-            .into_iter()
-            .flat_map(|common| ["--allow".to_string(), common.display().to_string()])
+        let std_command = command.as_std();
+        assert_eq!(std_command.get_program(), "/opt/nono");
+        assert_eq!(std_command.get_current_dir(), Some(worktree.as_path()));
+        assert!(profile_dir.join("ajax-agent.json").is_file());
+        let argv: Vec<String> = std_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        let mut expected: Vec<String> = [
-            "-s",
-            "run",
-            "--allow-cwd",
-            "--no-rollback-prompt",
-            "--profile",
-        ]
-        .map(String::from)
-        .into();
-        expected.push(profile.display().to_string());
-        expected.extend(["--workdir".to_string(), worktree.display().to_string()]);
-        expected.extend(grants);
-        expected.extend(args(&[
-            "--",
-            "codex",
-            "-c",
-            "sandbox_mode=\"danger-full-access\"",
-            "exec",
-        ]));
-        assert_eq!(program, "/opt/nono");
-        assert_eq!(argv, expected);
-    }
-
-    #[test]
-    fn enabled_sandbox_fails_closed_when_nono_or_profile_dir_is_unavailable() {
-        let dir = scratch_dir("fail-closed-argv");
-        let worktree = dir.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        let blocker = dir.join("blocker");
-        fs::write(&blocker, "not a directory").unwrap();
-
-        let cases = [
-            sandboxed_argv(
-                Err("agent sandbox is on but nono is not installed; set AJAX_SANDBOX=off".into()),
-                Some(dir.join("profiles")),
-                Some(&worktree),
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair[0] == "--workdir" && pair[1] == worktree.display().to_string()));
+        assert!(argv.ends_with(
+            &[
+                "--",
                 "codex",
-                &[],
-            ),
-            sandboxed_argv(
-                Ok(PathBuf::from("/opt/nono")),
-                None,
-                Some(&worktree),
-                "codex",
-                &[],
-            ),
-            sandboxed_argv(
-                Ok(PathBuf::from("/opt/nono")),
-                Some(blocker.join("profiles")),
-                Some(&worktree),
-                "codex",
-                &[],
-            ),
-        ];
-        for result in cases {
-            let message = result
-                .expect_err("sandbox failure must not produce a command")
-                .to_string();
-            assert!(message.contains("nono"), "{message}");
-            assert!(message.contains("AJAX_SANDBOX=off"), "{message}");
-        }
+                "-c",
+                "sandbox_mode=\"danger-full-access\"",
+                "exec"
+            ]
+            .map(String::from)
+        ));
     }
 
     #[test]
@@ -704,9 +655,13 @@ mod sandbox_launch_tests {
 
         let command = agent_command(
             "codex",
-            &args(&["exec", "fix"]),
+            &["exec".to_string(), "fix".to_string()],
             Some(&worktree),
-            SandboxLaunch::Disabled,
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
         )
         .unwrap();
 
@@ -717,7 +672,7 @@ mod sandbox_launch_tests {
                 .get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
-            vec!["exec".to_string(), "fix".to_string()]
+            ["exec", "fix"]
         );
         assert_eq!(std_command.get_current_dir(), Some(worktree.as_path()));
     }
@@ -735,11 +690,9 @@ mod sandbox_launch_tests {
             None,
             cancel_rx,
             None,
-            SandboxLaunch::Enabled {
-                nono: Err(
-                    "agent sandbox is on but nono is not installed; set AJAX_SANDBOX=off"
-                        .to_string(),
-                ),
+            SandboxInputs {
+                enabled: true,
+                nono: || Err("nono is not installed; set AJAX_SANDBOX=off".to_string()),
                 profile_dir: None,
             },
         )
@@ -754,43 +707,74 @@ mod sandbox_launch_tests {
         assert!(rx.try_recv().is_err());
     }
 
+    fn process_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// Polls until the script writes a pid to `path`, then returns it.
+    async fn read_pid(path: &Path) -> u32 {
+        for _ in 0..400 {
+            if let Some(pid) = fs::read_to_string(path)
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("pid never written to {}", path.display());
+    }
+
     #[tokio::test]
-    async fn disabled_supervised_process_runs_in_worktree() {
-        let dir = scratch_dir("cwd-spawn");
-        let worktree = dir.join("worktree");
-        fs::create_dir_all(&worktree).unwrap();
-        let script = dir.join("codex");
-        fs::write(&script, "#!/bin/sh\npwd -P >&2\n").unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+    async fn cancel_terminates_grandchild_through_term_forwarding_parent() {
+        let dir = scratch_dir("cancel-term");
+        let pid_file = dir.join("grandchild.pid");
+        // Stands in for nono: the direct child forwards SIGTERM to the agent it spawned.
+        let protocol = ShellProtocol(format!(
+            "trap 'kill $CHILD; exit 143' TERM; sleep 30 & CHILD=$!; echo $CHILD > {}; wait",
+            pid_file.display()
+        ));
+        let (tx, _rx) = mpsc::channel(8);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let canceller = tokio::spawn(async move {
+            let grandchild = read_pid(&pid_file).await;
+            cancel_tx.send(true).unwrap();
+            grandchild
+        });
 
-        let adapter = CodexAdapter::new(script.display().to_string());
-        let (tx, mut rx) = mpsc::channel(8);
-        let (_cancel_tx, cancel_rx) = watch::channel(false);
-
-        let status = supervise_launch(
-            &adapter,
+        let error = supervise_launch(
+            &protocol,
             "ignored",
             tx,
             None,
             cancel_rx,
-            Some(&worktree),
-            SandboxLaunch::Disabled,
+            None,
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
         )
         .await
-        .unwrap();
+        .unwrap_err();
+        let grandchild = canceller.await.unwrap();
 
-        assert_eq!(status, Some(0));
-        let mut stderr = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            if let MonitorEvent::Process(ProcessEvent::Stderr { line }) = event {
-                stderr.push(line);
-            }
+        assert!(
+            matches!(&error, SupervisorError::Process(message) if message == "process cancelled"),
+            "{error}"
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while process_alive(grandchild) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        assert_eq!(
-            stderr,
-            vec![worktree.canonicalize().unwrap().display().to_string()]
+        assert!(
+            !process_alive(grandchild),
+            "grandchild {grandchild} survived cancel"
         );
     }
 }

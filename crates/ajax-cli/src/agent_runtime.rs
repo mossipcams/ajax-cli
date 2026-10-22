@@ -10,7 +10,7 @@ use std::{
 };
 
 use ajax_core::adapters::sandbox::{
-    default_profile_dir, git_common_dir, resolve_nono, sandbox_enabled, wrap_argv, write_profile,
+    default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled,
 };
 use ajax_core::canonical_agent_event::CanonicalEventKind;
 use serde::{Deserialize, Serialize};
@@ -99,7 +99,11 @@ fn run_agent_runtime_with_interval(
         program,
         args,
         heartbeat_interval,
-        resolve_sandbox,
+        SandboxInputs {
+            enabled: sandbox_enabled(),
+            nono: resolve_nono,
+            profile_dir: default_profile_dir(),
+        },
     )
 }
 
@@ -109,7 +113,7 @@ fn run_agent_runtime_sandboxed(
     program: &str,
     args: &[&str],
     heartbeat_interval: Duration,
-    sandbox: impl FnOnce() -> Result<Option<SandboxLaunch>, String>,
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
 ) -> Result<i32, CliError> {
     write_runtime_snapshot(
         state_root,
@@ -135,9 +139,7 @@ fn run_agent_runtime_sandboxed(
         CliError::CommandFailed(format!("failed to read current directory: {error}"))
     })?;
     publish_cwd_index(&agent_events_dir, task_id, "primary", &cwd)?;
-    let (program, args) = match sandbox()
-        .and_then(|launch| agent_command(launch.as_ref(), &cwd, &agent_events_dir, program, args))
-    {
+    let (program, args) = match agent_command(sandbox, &cwd, &agent_events_dir, program, args) {
         Ok(command) => command,
         Err(message) => {
             return fail_launch(state_root, task_id, &agent_events_dir, &cwd, message);
@@ -206,48 +208,31 @@ fn run_agent_runtime_sandboxed(
     }
 }
 
-/// nono inputs resolved at launch; absent when the sandbox is off.
-struct SandboxLaunch {
-    nono: PathBuf,
-    profile_dir: PathBuf,
-}
-
-fn resolve_sandbox() -> Result<Option<SandboxLaunch>, String> {
-    if !sandbox_enabled() {
-        return Ok(None);
-    }
-    let nono = resolve_nono()?;
-    let profile_dir = default_profile_dir().ok_or_else(|| {
-        "agent sandbox is on but HOME is unset, so no nono profile dir".to_string()
-    })?;
-    Ok(Some(SandboxLaunch { nono, profile_dir }))
+/// nono inputs for the agent launch. Production reads them from the environment; tests inject them.
+struct SandboxInputs<N> {
+    enabled: bool,
+    nono: N,
+    profile_dir: Option<PathBuf>,
 }
 
 /// The program and args to exec: the agent as-is, or wrapped in nono when sandboxed.
 fn agent_command(
-    sandbox: Option<&SandboxLaunch>,
+    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
     cwd: &Path,
     agent_events_dir: &Path,
     program: &str,
     args: &[&str],
 ) -> Result<(String, Vec<String>), String> {
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    let Some(sandbox) = sandbox else {
-        return Ok((program.to_string(), args));
-    };
-    let profile = write_profile(&sandbox.profile_dir).map_err(|error| {
-        format!("agent sandbox is on but the nono profile could not be written: {error}")
-    })?;
-    let mut grants = git_common_dir(cwd).into_iter().collect::<Vec<_>>();
-    grants.push(agent_events_dir.to_path_buf());
-    Ok(wrap_argv(
-        &sandbox.nono,
-        &profile,
+    sandbox_command(
+        sandbox.enabled,
+        sandbox.nono,
+        sandbox.profile_dir,
         cwd,
-        &grants,
+        &[agent_events_dir.to_path_buf()],
         program,
         &args,
-    ))
+    )
 }
 
 fn fail_launch(
@@ -444,12 +429,10 @@ mod tests {
         time::Duration,
     };
 
-    use ajax_core::adapters::sandbox::{git_common_dir, wrap_argv};
-
     use super::{
         agent_command, clear_cwd_index, cwd_index_path, publish_cwd_index,
         run_agent_runtime_sandboxed, run_agent_runtime_with_interval, snapshot_path,
-        AgentRuntimeSnapshot, AgentRuntimeState, SandboxLaunch,
+        AgentRuntimeSnapshot, AgentRuntimeState, SandboxInputs,
     };
 
     fn sandbox_test_base(label: &str) -> PathBuf {
@@ -627,49 +610,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exit_code, 0);
+        // Index remains after exit so settle hooks can resolve identity.
         assert!(cwd_index_path(&events_dir, &cwd).is_file());
 
         fs::remove_dir_all(cache_root).unwrap();
     }
 
     #[test]
-    fn sandboxed_agent_is_wrapped_in_nono_with_git_and_events_grants() {
+    fn enabled_sandbox_wraps_agent_in_nono_with_events_grant() {
         let base = sandbox_test_base("wraps");
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let events_dir = base.join("agent-events");
-        let sandbox = SandboxLaunch {
-            nono: PathBuf::from("/opt/nono"),
-            profile_dir: base.join("profiles"),
-        };
 
-        let (program, argv) =
-            agent_command(Some(&sandbox), cwd, &events_dir, "claude", &["--resume"]).unwrap();
-
-        let profile = base.join("profiles").join("ajax-agent.json");
-        assert!(profile.is_file());
-        let mut grants = git_common_dir(cwd).into_iter().collect::<Vec<_>>();
-        grants.push(events_dir.clone());
-        let expected = wrap_argv(
-            Path::new("/opt/nono"),
-            &profile,
+        let (program, argv) = agent_command(
+            SandboxInputs {
+                enabled: true,
+                nono: || Ok(PathBuf::from("/opt/nono")),
+                profile_dir: Some(base.join("profiles")),
+            },
             cwd,
-            &grants,
+            &events_dir,
             "claude",
-            &["--resume".to_string()],
-        );
-        assert_eq!(program, expected.0);
-        assert_eq!(argv, expected.1);
-        assert!(argv.contains(&events_dir.display().to_string()));
+            &["--resume"],
+        )
+        .unwrap();
+
+        assert_eq!(program, "/opt/nono");
+        assert!(base.join("profiles").join("ajax-agent.json").is_file());
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair[0] == "--allow" && pair[1] == events_dir.display().to_string()));
+        assert!(argv.ends_with(&[
+            "--".to_string(),
+            "claude".to_string(),
+            "--resume".to_string()
+        ]));
 
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn unsandboxed_agent_keeps_original_program_and_args() {
+    fn disabled_sandbox_keeps_agent_program_and_args_without_resolving_nono() {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        let (program, argv) =
-            agent_command(None, cwd, Path::new("/unused"), "claude", &["--resume"]).unwrap();
+        let (program, argv) = agent_command(
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
+            cwd,
+            Path::new("/unused"),
+            "claude",
+            &["--resume"],
+        )
+        .unwrap();
 
         assert_eq!(program, "claude");
         assert_eq!(argv, ["--resume"]);
@@ -687,7 +682,11 @@ mod tests {
             "/bin/sh",
             &["-c", &format!("touch {}", marker.display())],
             Duration::from_millis(5),
-            || Err("agent sandbox is on but nono is not installed".to_string()),
+            SandboxInputs {
+                enabled: true,
+                nono: || Err("agent sandbox is on but nono is not installed".to_string()),
+                profile_dir: None,
+            },
         )
         .unwrap_err();
 

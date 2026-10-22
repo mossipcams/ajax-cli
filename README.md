@@ -272,7 +272,7 @@ Set `AJAX_SANDBOX=off` to disable the sandbox.
 The agent can write only to:
 
 - its task worktree;
-- the repo's git common dir, so commits work from the worktree;
+- the worktree's own git admin dir plus the repo's `objects`, `refs` and `logs` (the rest of `.git`, including `hooks` and `config`, is read-only), so commits and new branches work from a linked worktree; deleting a packed branch and committing from a non-linked main checkout do not;
 - the Ajax agent-events dir;
 - its own agent state dirs (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`) and
   caches.
@@ -280,12 +280,14 @@ The agent can write only to:
 Network is open. Of the keychain, only `login.keychain-db` and
 `metadata.keychain-db` are reachable, for agent OAuth. Codex's own sandbox is
 turned off under nono (for a binary named `codex`) because Seatbelt cannot
-nest; nono is the boundary. Claude auto-update fails inside the sandbox, so
+nest; nono is the boundary. The `codex-acp` and `npx` ACP fallbacks cannot be passed
+that override; they need `sandbox_mode = "danger-full-access"` in
+`~/.codex/config.toml`. Claude auto-update fails inside the sandbox, so
 update Claude outside Ajax.
 
 The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
-Ajax rewrites it to `~/.cache/ajax/nono/ajax-agent.json` on every launch. Cursor
-login runs unsandboxed.
+Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
+login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
 
 ## First Run
 
