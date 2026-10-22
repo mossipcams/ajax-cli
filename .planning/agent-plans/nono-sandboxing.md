@@ -192,3 +192,7 @@ Validation (inside the sandbox): profile validates (`Process info: AllowAll`); s
 incl. local.json merge + invalid-file refusal; fmt/clippy/rustdoc OK. Full nextest inside the
 sandbox: 150 env failures (ps denied, home writes) unrelated to this change — CI is the gate.
 Not verifiable in-sandbox: real `gh`/`ps`/router under the new profile (no nested nono).
+- Security-review follow-up: gh read and `process_info_mode: allow_all` moved OUT of the shipped
+  profile into the documented per-machine `local.json` opt-in (gh may expose a hosts.yml token;
+  allow_all exposes other processes' argv). Shipped profile is byte-identical to #1390's. Matt's
+  local.json (gh + ps + router) validated as a merged profile (`Process info: AllowAll`).

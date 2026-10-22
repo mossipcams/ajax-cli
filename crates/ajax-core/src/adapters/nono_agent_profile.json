@@ -57,8 +57,7 @@
     ],
     "read": [
       "$HOME/.local/share/cursor-agent",
-      "$HOME/.local/share/claude",
-      "$HOME/.config/gh"
+      "$HOME/.local/share/claude"
     ]
   },
   "network": {
@@ -66,12 +65,5 @@
   },
   "workdir": {
     "access": "readwrite"
-  },
-  "platform_overrides": {
-    "macos": {
-      "security": {
-        "process_info_mode": "allow_all"
-      }
-    }
   }
 }
