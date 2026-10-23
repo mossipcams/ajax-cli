@@ -1,6 +1,7 @@
 import { Button } from "@/shared/ui/button";
 
 import * as trainingApi from "./trainingApi";
+import { formatElapsed, formatEta } from "./trainingPageModel";
 
 export interface TrainingStatusPanelProps {
   heroMode: "run" | "generation" | "live" | "idle";
@@ -18,11 +19,6 @@ export interface TrainingStatusPanelProps {
   onTrain: () => void;
 }
 
-function formatEta(seconds: number): string {
-  const minutes = Math.round(seconds / 60);
-  return minutes >= 1 ? `~${minutes} min` : `~${Math.max(1, Math.round(seconds))}s`;
-}
-
 function progressWidth(fraction: number): string {
   const percent = Math.min(100, Math.max(0, fraction * 100));
   return `${Number(percent.toFixed(1))}%`;
@@ -33,15 +29,7 @@ function formatStarted(started: string | null): string {
   const startedMs = Date.parse(started);
   if (!Number.isFinite(startedMs)) return "";
   const text = new Date(startedMs).toLocaleString();
-  let elapsed = "";
-  const diff = Math.max(0, Date.now() - startedMs);
-  if (diff > 5000) {
-    const seconds = Math.floor(diff / 1000);
-    if (seconds < 60) elapsed = `${seconds} s`;
-    else if (seconds < 3600) elapsed = `${Math.floor(seconds / 60)} min`;
-    else
-      elapsed = `${Math.floor(seconds / 3600)} h ${Math.floor((seconds % 3600) / 60)} min`;
-  }
+  const elapsed = formatElapsed(started);
   return elapsed ? `${text} · ${elapsed}` : text;
 }
 
