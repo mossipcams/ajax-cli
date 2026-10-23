@@ -457,8 +457,7 @@
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px
-    calc(24px + env(safe-area-inset-bottom, 0px));
+  /* No padding; route-scroll already pads sides and safe areas (#1402). */
 }
 
 .training-page-header {
