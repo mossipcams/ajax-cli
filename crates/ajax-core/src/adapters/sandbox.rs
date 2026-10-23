@@ -396,6 +396,25 @@ mod tests {
     }
 
     #[test]
+    fn profile_denies_host_escape_sockets() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        for path in [
+            "$HOME/.orbstack",
+            "/private/var/run/docker.sock",
+            "$HOME/.colima",
+            "$HOME/.lima",
+            "$HOME/.rd",
+            "/private/tmp/.s.PGSQL.5432",
+        ] {
+            assert!(
+                deny.contains(&serde_json::json!({"path": path, "when": "macos"})),
+                "agents must not reach the host socket at {path}: a reachable Docker API or Postgres superuser can run commands outside the sandbox"
+            );
+        }
+    }
+
+    #[test]
     fn wrap_argv_builds_exact_argv_with_multiple_grants() {
         let (program, argv) = wrap_argv(
             Path::new("/opt/nono"),

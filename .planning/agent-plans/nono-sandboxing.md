@@ -213,3 +213,61 @@ Sandboxed agents (any launch path, incl. Web Cockpit chat) could reach the host 
 and `/tmp/tmux-$UID` (Linux). Host spike: `tmux ls` / `tmux -S … new-window` → Operation not
 permitted, `/tmp` still writable, `claude -p` OK. Regression test
 `profile_denies_host_tmux_socket_issue_1396`. Not covered: custom TMUX_TMPDIR / -S sockets.
+
+## Security review 2026-10-22 — live escape probes
+
+Probed from inside a live Ajax nono session (nono 0.80.0, macOS 26; profile plus a per-machine
+`local.json`). nono's own boundary held: `launchctl submit`, `open`/LaunchServices, AppleEvents,
+`~/.ssh` private keys, `~/.config/ajax`, `~/.ajax-dev`, LaunchAgents, shell rc files, `~/.cargo/bin`,
+`.git/hooks` and `.git/config`, and host process signal/inspect were all denied. Escapes came from
+host services and host-executed files the agent can reach:
+
+- **Docker API (escape, confirmed):** `/var/run/docker.sock` → `~/.orbstack/run/docker.sock` answered
+  `GET /version` although `~/.orbstack` is ungranted. Seatbelt treats AF_UNIX `connect()` as
+  `network-outbound`, so file grants do not protect sockets; only a `filesystem.deny` (which nono also
+  emits as a network deny) does. Fixed: profile denies OrbStack, Docker, Colima, Lima, Rancher Desktop
+  sockets and `/private/tmp/.s.PGSQL.5432`. Regression test `profile_denies_host_escape_sockets`.
+- **Postgres (escape, confirmed):** local Postgres 14 with `trust` auth and a superuser role ran
+  `COPY … TO PROGRAM` as the user outside the sandbox. The socket deny covers the Unix socket only;
+  loopback TCP stays open while the network is open. Host fix required: `scram-sha-256` in
+  `pg_hba.conf` or drop superuser.
+- **Host git hooks (fixed):** `core.hooksPath=.husky/_` resolves into the agent-writable worktree, so
+  a planted `.husky/post-merge` would run during Ajax's own `switch` / `merge --ff-only` /
+  `worktree add`. Every Ajax-run git now gets `core.hooksPath=/dev/null` and `core.fsmonitor=false`
+  (`trusted_git::disable_hooks`, applied by the process runner incl. shell-wrapped git and by the
+  supervisor). Regression test `disable_hooks_stops_planted_post_checkout_hook`.
+- **Refs (residual):** `refs/` is writable, so an agent can repoint any branch, including `main`
+  (a loose ref overrides `packed-refs`). Review merges against the expected commit.
+- **Host-executed writable files (residual):** `~/.claude/settings.json` hooks, `~/.claude.json` MCP
+  servers, `~/.codex/config.toml` and `~/.codex/packages` daemon binaries, `~/.cursor` hooks/MCP,
+  `~/.cargo/registry/src`, `~/.npm/_npx`, `~/Library/Caches/ms-playwright` are all agent-writable and
+  are executed by unsandboxed processes (desktop apps, host builds, `cargo run` with
+  `AJAX_SANDBOX=off`).
+- **SSH agent (local.json, residual):** the agent socket held every key; sandboxed agents reached
+  `root@pve` (Proxmox), `root@debian101`, and GitHub push. Host fix: a dedicated key authorized only
+  on the intended hosts.
+
+### nono 0.80 limits found (verified with `nono why --profile`)
+
+- A narrower `read`/`read_file` inside an `allow` dir does **not** remove write: grants union. `deny`
+  blocks read and write. So Claude Code-style "protected paths" (config read-only inside a writable
+  config dir) cannot be expressed; Claude, Codex, and Cursor write top-level files in their dirs.
+- Default network mode allows all loopback TCP and AF_UNIX connects not explicitly denied.
+- Proxy mode (`network_profile` / `allow_domain`) blocks loopback (except `open_port`) and Unix
+  sockets, but also direct TCP such as `ssh` to LAN hosts; macOS Seatbelt cannot allow outbound by
+  port or host.
+- Nested nono inside nono fails (`sandbox initialization failed`), so profile changes must be spiked
+  from an unsandboxed shell.
+
+### Phase 2 options: SHELVED 2026-10-22
+
+Shelved by Matt. The sandbox's job is preventing agent accidents, not containing a hostile agent. If hostile-agent containment is needed later, move agents into a VM (for example an OrbStack machine with only the project mounted) instead of adding more nono denies. The options below are kept for reference only.
+
+1. **Egress allowlist (proxy mode):** closes loopback services, Unix sockets, and exfiltration.
+   Needs the agent API domains, package registries, `open_port` for the local LLM tunnel, and ssh via
+   `ProxyCommand` through the proxy (untested) or nono `command_policies` for ssh.
+2. **Separate agent config homes:** sandboxed agents get their own `CLAUDE_CONFIG_DIR` / `CODEX_HOME`
+   / Pi / Cursor dirs so host apps' config is no longer agent-writable. Costs a re-login and splits
+   memories/history from unsandboxed sessions.
+3. **Separate package caches:** sandbox-owned `CARGO_HOME` / npm cache so agents cannot poison caches
+   the host builds from.
