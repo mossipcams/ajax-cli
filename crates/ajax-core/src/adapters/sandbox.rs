@@ -11,6 +11,7 @@ use super::trusted_git::{self, TrustedGit};
 
 const PROFILE_JSON: &str = include_str!("nono_agent_profile.json");
 const PROFILE_FILE: &str = "ajax-agent.json";
+const LOCAL_FILE: &str = "local.json";
 
 /// Git paths a sandboxed linked worktree needs in order to commit.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -32,27 +33,64 @@ pub fn sandbox_enabled() -> bool {
     sandbox_enabled_from(env::var("AJAX_SANDBOX").ok().as_deref())
 }
 
-/// Writes the embedded profile to `dir/ajax-agent.json`.
+/// Writes the embedded profile to `dir/ajax-agent.json`, with `dir/local.json` merged in
+/// when present.
 ///
-/// An identical existing file is left alone. Otherwise the profile is written to a
-/// unique temp file in `dir` and renamed over the target, so a concurrent launch
-/// never reads a truncated profile.
+/// `local.json` holds machine-specific grants and is user-owned: `dir` sits outside every
+/// sandbox grant, so agents cannot edit it. An identical existing profile is left alone.
+/// Otherwise the profile is written to a unique temp file in `dir` and renamed over the
+/// target, so a concurrent launch never reads a truncated profile.
 pub fn write_profile(dir: &Path) -> std::io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
+    let content = profile_content(dir)?;
     let path = dir.join(PROFILE_FILE);
-    if fs::read_to_string(&path).is_ok_and(|content| content == PROFILE_JSON) {
+    if fs::read_to_string(&path).is_ok_and(|existing| existing == content) {
         return Ok(path);
     }
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
     let tmp = dir.join(format!("{PROFILE_FILE}.{}.{nanos}.tmp", std::process::id()));
-    fs::write(&tmp, PROFILE_JSON)?;
+    fs::write(&tmp, content)?;
     if let Err(err) = fs::rename(&tmp, &path) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
     Ok(path)
+}
+
+fn profile_content(dir: &Path) -> std::io::Result<String> {
+    let local_path = dir.join(LOCAL_FILE);
+    let local = match fs::read_to_string(&local_path) {
+        Ok(local) => local,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PROFILE_JSON.to_string())
+        }
+        Err(err) => return Err(err),
+    };
+    let invalid = |err: serde_json::Error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{}: {err}", local_path.display()),
+        )
+    };
+    let mut profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).map_err(invalid)?;
+    merge_json(&mut profile, serde_json::from_str(&local).map_err(invalid)?);
+    serde_json::to_string_pretty(&profile).map_err(invalid)
+}
+
+// ponytail: objects merge, arrays append, scalars replace; enough for adding grants.
+fn merge_json(base: &mut serde_json::Value, extra: serde_json::Value) {
+    use serde_json::Value;
+    match (base, extra) {
+        (Value::Object(base), Value::Object(extra)) => {
+            for (key, value) in extra {
+                merge_json(base.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (Value::Array(base), Value::Array(extra)) => base.extend(extra),
+        (base, extra) => *base = extra,
+    }
 }
 
 /// Ajax-owned profile directory, `$HOME/.config/ajax/nono`.
@@ -471,6 +509,48 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(fs::read_to_string(&second).unwrap(), PROFILE_JSON);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn write_profile_merges_local_grants_into_embedded_profile() {
+        let dir = scratch("write-profile-local");
+        fs::write(
+            dir.join(LOCAL_FILE),
+            r#"{"filesystem": {"read": ["/opt/router"]}, "security": {"process_info_mode": "allow_same_sandbox"}}"#,
+        )
+        .unwrap();
+
+        let profile: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(write_profile(&dir).unwrap()).unwrap())
+                .unwrap();
+        let embedded: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+
+        let read = profile["filesystem"]["read"].as_array().unwrap();
+        assert!(read.contains(&serde_json::json!("/opt/router")));
+        for grant in embedded["filesystem"]["read"].as_array().unwrap() {
+            assert!(read.contains(grant), "lost embedded grant {grant}");
+        }
+        assert_eq!(
+            profile["filesystem"]["allow"],
+            embedded["filesystem"]["allow"]
+        );
+        assert_eq!(
+            profile["security"]["process_info_mode"],
+            "allow_same_sandbox"
+        );
+        assert_eq!(profile["extends"], embedded["extends"]);
+    }
+
+    #[test]
+    fn write_profile_fails_closed_on_invalid_local_json() {
+        let dir = scratch("write-profile-local-invalid");
+        fs::write(dir.join(LOCAL_FILE), "{not json").unwrap();
+
+        let err = write_profile(&dir).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("local.json"), "{err}");
+        assert!(!dir.join(PROFILE_FILE).exists());
     }
 
     #[test]

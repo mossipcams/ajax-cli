@@ -180,6 +180,31 @@ needs stacked PR `fix/sandbox/trusted-worktree-git` (BASE_BRANCH=feat/sandbox/no
   Gate: fmt/clippy/rustdoc OK, nextest 3108/3109 (known stylesheet failure). E2E: forge + admin-dir
   deletion → `fatal: not a git repository`, planted fsmonitor not run.
 
+## Agent tooling access (2026-10-22, in-process at Matt's request)
+
+Found from inside a sandboxed Ajax session: `gh` (no read on ~/.config/gh), git push over HTTPS
+(gh credential helper), `ps` (process info), and the model router (workspace repo not granted) all
+fail. Fix: profile reads `$HOME/.config/gh`; macOS `process_info_mode: allow_all`; machine-specific
+grants via user-owned `~/.config/ajax/nono/local.json`, merged into the written profile (invalid →
+launch refused). `~/.ssh` stays denied (no ssh-agent; would expose keys) — use
+`gh auth refresh -s workflow` for workflow-file pushes over HTTPS.
+Validation (inside the sandbox): profile validates (`Process info: AllowAll`); sandbox tests 16/16
+incl. local.json merge + invalid-file refusal; fmt/clippy/rustdoc OK. Full nextest inside the
+sandbox: 150 env failures (ps denied, home writes) unrelated to this change — CI is the gate.
+Not verifiable in-sandbox: real `gh`/`ps`/router under the new profile (no nested nono).
+- Security-review follow-up: gh read and `process_info_mode: allow_all` moved OUT of the shipped
+  profile into the documented per-machine `local.json` opt-in (gh may expose a hosts.yml token;
+  allow_all exposes other processes' argv). Shipped profile is byte-identical to #1390's. Matt's
+  local.json (gh + ps + router) validated as a merged profile (`Process info: AllowAll`).
+- SSH for sandboxed agents (Matt's VMs), verified with a real `ajax-cli __agent-runtime` launch:
+  dedicated `ssh-agent -D -a ~/.config/ajax/ssh/agent.sock` (launchd `com.matt.ajax-ssh-agent`,
+  keys loaded at start), `IdentityAgent` under `Host *` in ~/.ssh/config, local.json grants
+  `unix_socket` + read_file/bypass_protection for config, known_hosts and every `.pub` named by
+  `IdentityFile` (ssh refuses agent keys it cannot match to an unreadable .pub). sayso-llm,
+  proxmox, debian101, llm-gpu reachable; private keys still denied. `gh api user` works;
+  router runnable. `/bin/ps` is setuid → nono refuses exec regardless of process_info_mode;
+  `pgrep` works with allow_all (empty without).
+
 ## Issue #1396 — tmux socket escape (2026-10-22)
 
 Sandboxed agents (any launch path, incl. Web Cockpit chat) could reach the host tmux server at
