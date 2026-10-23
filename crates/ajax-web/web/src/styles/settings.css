@@ -697,3 +697,15 @@
   max-height: 280px;
   overflow-y: auto;
 }
+
+.training-page-dock {
+  position: sticky;
+  /* route-scroll is the scroll owner and its bottom padding already clears .bottom-nav; sticky respects that padding, so no safe-area term (see nav.css). */
+  bottom: 8px;
+  z-index: 5;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--paper-raised);
+}
