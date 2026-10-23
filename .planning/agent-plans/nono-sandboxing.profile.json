@@ -58,6 +58,16 @@
     "read": [
       "$HOME/.local/share/cursor-agent",
       "$HOME/.local/share/claude"
+    ],
+    "deny": [
+      {
+        "path": "/private/tmp/tmux-$UID",
+        "when": "macos"
+      },
+      {
+        "path": "/tmp/tmux-$UID",
+        "when": "linux"
+      }
     ]
   },
   "network": {

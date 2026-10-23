@@ -179,3 +179,12 @@ needs stacked PR `fix/sandbox/trusted-worktree-git` (BASE_BRANCH=feat/sandbox/no
   `EnsureWorktreeAbsent`; pinned git also gets `core.fsmonitor=false` via GIT_CONFIG_COUNT.
   Gate: fmt/clippy/rustdoc OK, nextest 3108/3109 (known stylesheet failure). E2E: forge + admin-dir
   deletion → `fatal: not a git repository`, planted fsmonitor not run.
+
+## Issue #1396 — tmux socket escape (2026-10-22)
+
+Sandboxed agents (any launch path, incl. Web Cockpit chat) could reach the host tmux server at
+`/private/tmp/tmux-$UID/default` (covered by the `/private/tmp` system write grant) and run
+`tmux new-window` unsandboxed. Fix: profile `filesystem.deny` on `/private/tmp/tmux-$UID` (macOS)
+and `/tmp/tmux-$UID` (Linux). Host spike: `tmux ls` / `tmux -S … new-window` → Operation not
+permitted, `/tmp` still writable, `claude -p` OK. Regression test
+`profile_denies_host_tmux_socket_issue_1396`. Not covered: custom TMUX_TMPDIR / -S sockets.
