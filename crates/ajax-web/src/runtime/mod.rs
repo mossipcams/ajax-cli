@@ -121,6 +121,15 @@ where
             "/api/training/models/switch",
             post(axum_training_switch::<C, B>),
         )
+        .route(
+            "/api/training/datasets",
+            get(axum_training_datasets::<C, B>),
+        )
+        .route("/api/training/evals", get(axum_training_evals::<C, B>))
+        .route(
+            "/api/training/datasets/select",
+            post(axum_training_dataset_select::<C, B>),
+        )
         .fallback(axum_fallback)
         .layer(from_fn_with_state(
             session_state,
@@ -611,6 +620,39 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     axum_training_verb(&state, body, training::switch_response).await
+}
+
+async fn axum_training_datasets<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, Bytes::new(), |runner, _body| {
+        training::datasets_response(runner)
+    })
+    .await
+}
+
+async fn axum_training_evals<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, Bytes::new(), |runner, _body| {
+        training::evals_response(runner)
+    })
+    .await
+}
+
+async fn axum_training_dataset_select<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    axum_training_verb(&state, body, training::select_dataset_response).await
 }
 
 fn handle_server_restart() -> Response {

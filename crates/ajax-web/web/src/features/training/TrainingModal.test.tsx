@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import TrainingModal from "./TrainingModal";
+import * as trainingApi from "./trainingApi";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
 let postResponse: { body: unknown; status?: number } = { body: {} };
@@ -469,6 +470,42 @@ const calls = (routeMock as unknown as {
       vi.advanceTimersByTime(3000);
     });
     await waitFor(() => expect(screen.queryByTestId("training-profiles-error")).toBeNull());
+  });
+
+  it("calls stopTraining once when Confirm is double-clicked", async () => {
+    let resolveStop: () => void = () => undefined;
+    const stopTraining = vi.spyOn(trainingApi, "stopTraining").mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveStop = resolve;
+      }),
+    );
+    statusRoute.body = {
+      ...idleStatus,
+      run: {
+        kind: "lfm-train",
+        started: "2026-07-19T08:00:00Z",
+        running: true,
+        progress: null,
+        log_tail: [],
+      },
+    };
+    try {
+      openModal();
+      fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
+      const confirm = await screen.findByRole("button", { name: "Confirm" });
+      // Click twice before React renders the disabled state to exercise the ref guard.
+      act(() => {
+        confirm.click();
+        confirm.click();
+      });
+      expect(stopTraining).toHaveBeenCalledTimes(1);
+      expect(confirm).toBeDisabled();
+      expect(confirm).toHaveTextContent("Stopping run…");
+      expect(confirm).toHaveAttribute("aria-busy", "true");
+    } finally {
+      stopTraining.mockRestore();
+      await act(async () => resolveStop());
+    }
   });
 
   it("shows an action error banner when a confirmed request fails with 409", async () => {

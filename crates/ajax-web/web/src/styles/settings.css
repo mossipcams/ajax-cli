@@ -445,3 +445,255 @@
   max-height: 240px;
   overflow-y: auto;
 }
+
+.training-page-link {
+  width: 100%;
+  margin-top: 12px;
+}
+
+/* Full-page training command center (#/training) */
+.training-page {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 16px
+    calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.training-page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.training-page-header h2 {
+  margin: 0;
+  flex: 1;
+}
+
+.training-back {
+  flex-shrink: 0;
+}
+
+.training-page-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.training-device {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: var(--text-label);
+  font-weight: 600;
+  border: 1px solid var(--rule);
+  background: var(--paper-raised);
+}
+
+.training-device.is-gpu {
+  border-color: color-mix(in srgb, #16a34a 40%, var(--rule));
+  color: #15803d;
+}
+
+.training-device.is-cpu {
+  border-color: color-mix(in srgb, #ca8a04 40%, var(--rule));
+  color: #a16207;
+}
+
+.training-device.is-idle {
+  color: var(--muted-foreground, #737373);
+}
+
+.training-page-run {
+  margin: 8px 0 4px;
+}
+
+.training-page-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+
+.training-page-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.training-page-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+
+.training-page-step.is-done {
+  border-color: color-mix(in srgb, #16a34a 35%, var(--rule));
+}
+
+.training-page-step.is-next {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--rule));
+}
+
+.training-page-step-label {
+  font-weight: 600;
+  flex: 1 1 120px;
+}
+
+.training-page-secondary {
+  margin-top: 12px;
+}
+
+.training-page-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.training-page-row {
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+
+.training-page-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.training-page-runid {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.training-page-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.training-page-champion {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+
+.training-page-champion-checkpoint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-body-sm);
+  max-width: min(100%, 14rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  display: inline-block;
+}
+
+.training-page-show-more {
+  margin-top: 10px;
+}
+
+.training-page-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.training-page-row-toggle {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.training-page-row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.training-page-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: var(--text-body-sm);
+}
+
+.training-page-metrics .is-pass {
+  color: #15803d;
+}
+
+.training-page-metrics .is-fail {
+  color: #b91c1c;
+}
+
+.training-page-row-details {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  font-size: var(--text-body-sm);
+}
+
+.training-page-row-details h4 {
+  margin: 8px 0 4px;
+  font-size: 0.85rem;
+}
+
+.training-page-categories {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.training-page-categories dt {
+  margin: 0;
+  color: var(--muted-foreground, #737373);
+}
+
+.training-page-categories dd {
+  margin: 0;
+  text-align: right;
+}
+
+.training-page-log {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-micro);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 280px;
+  overflow-y: auto;
+}
