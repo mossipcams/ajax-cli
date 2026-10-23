@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
+import { trainingHash } from "@/shared/lib/routes";
+import { markNavigationStart } from "@/shared/lib/telemetry";
 import { Button } from "@/shared/ui/button";
 import Skeleton from "@/shared/ui/Skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -13,12 +15,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const JOB_LABELS: Record<trainingApi.TrainingJobKind, string> = {
-  generate: "Data generation",
-  "lfm-train": "Unsloth train",
-  "lfm-eval": "Unsloth eval",
-  "wake-train": "Wake train",
-};
+const JOB_LABELS = trainingApi.TRAINING_JOB_LABELS;
 
 // Jobs that sit behind the primary Unsloth train action.
 const SECONDARY_JOBS: trainingApi.TrainingJobKind[] = [
@@ -73,6 +70,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   // Mirrors `open` for event handlers: a POST that rejects after the user
   // closed the dialog must not surface a stale error banner on next open.
   const openRef = useRef(open);
+  const actionInFlightRef = useRef(false);
   useEffect(() => {
     openRef.current = open;
   }, [open]);
@@ -134,6 +132,8 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   }
 
   async function execute(action: PendingAction): Promise<void> {
+    if (actionInFlightRef.current) return;
+    actionInFlightRef.current = true;
     setActive(action);
     setActionError(null);
     try {
@@ -151,12 +151,19 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         setActionError(err instanceof Error ? err.message : String(err));
       }
     } finally {
+      actionInFlightRef.current = false;
       setActive(null);
     }
   }
 
   function handleClose(): void {
     onOpenChange(false);
+  }
+
+  function openTrainingPage(): void {
+    markNavigationStart(undefined, "hash");
+    onOpenChange(false);
+    window.location.hash = trainingHash();
   }
 
   if (!open) return null;
@@ -210,6 +217,15 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
 
           {status ? (
             <>
+              <Button
+                type="button"
+                variant="secondary"
+                className="training-page-link"
+                onClick={openTrainingPage}
+              >
+                Training
+              </Button>
+
               <TrainingStatusPanel
                 heroMode={heroMode}
                 heroTitle={heroTitle}
@@ -283,7 +299,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                   <div className="training-confirm-buttons">
                     <Button
                       type="button"
-                      disabled={busy && !confirmInFlight}
+                      disabled={active !== null}
                       aria-busy={confirmInFlight || undefined}
                       onClick={confirmPending}
                     >
