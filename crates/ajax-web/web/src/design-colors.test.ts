@@ -59,6 +59,22 @@ describe("DESIGN.md color lock", () => {
     expect(css.danger).toBe(css["fault-rose"]);
     expect(css.ok).toBe(css["done-sage"]);
   });
+
+  // #1406: Apple system grays (#1c1c1e, #252528) gave the cockpit a muddy blue-violet cast.
+  it("keeps charcoal surfaces neutral gray (R=G=B)", () => {
+    const css = rootCustomProps(stylesCss);
+    const charcoal = Object.keys(css).filter((name) => name.startsWith("soft-charcoal"));
+    expect(charcoal.length).toBeGreaterThanOrEqual(4);
+    const backgrounds = [...stylesCss.matchAll(/background(?:-color)?\s*:\s*(#[0-9a-fA-F]{6})\b/g)].map(
+      (match) => match[1].toLowerCase(),
+    );
+    const tinted = [...charcoal.map((name) => css[name]), ...backgrounds].filter((hex) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const spread = Math.max(r, g, b) - Math.min(r, g, b);
+      return spread > 0 && spread <= 6;
+    });
+    expect(tinted, "tinted grays").toEqual([]);
+  });
 });
 
 describe("Tailwind contract", () => {

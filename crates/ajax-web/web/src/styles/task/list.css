@@ -8,7 +8,7 @@
 /* One soft rounded panel holds the whole list. */
 .tasks {
   margin-top: 8px;
-  background: #252528;
+  background: var(--paper-tint);
   border-radius: 20px;
   overflow: hidden;
   padding: 2px 0;
@@ -23,7 +23,7 @@
 .task-row-wrap {
   position: relative;
   overflow: hidden;
-  background: #252528;
+  background: var(--paper-tint);
 }
 
 .task-row-wrap + .task-row-wrap::before {
@@ -71,7 +71,7 @@
   gap: 4px;
   width: 100%;
   padding: 10px 16px 13px;
-  background: #252528;
+  background: var(--paper-tint);
   border: none;
   color: var(--ink);
   text-align: left;
@@ -81,12 +81,12 @@
 
 .task-row:hover,
 .task-row:focus-visible {
-  background: #2a2a2d;
+  background: var(--paper-raised);
   outline: none;
 }
 
 .task-row:active {
-  background: #2e2e31;
+  background: var(--paper-high);
 }
 
 /* #1038: full-row button sits above the reveal layer; when open, let Drop/actions
