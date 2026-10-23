@@ -33,6 +33,7 @@ import {
   resolveTaskWorkspaceHash,
 } from "@/features/task-workspace/public";
 import { TrainingModal } from "@/features/training/public";
+import TrainingPage from "@/features/training/TrainingPage";
 import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
@@ -493,6 +494,8 @@ function AppContent() {
       document.title = "New session — Ajax";
     } else if (kind === "settings") {
       document.title = "Settings — Ajax";
+    } else if (kind === "training") {
+      document.title = "Training — Ajax";
     } else if (kind === "project" && route.project) {
       document.title = `${route.project} — Ajax`;
     } else {
@@ -504,6 +507,7 @@ function AppContent() {
     const kind = route.kind;
     const contentReady =
       kind === "settings" ||
+      kind === "training" ||
       (kind === "session" && (!route.handle || detail.status !== "loading")) ||
       (kind === "task" && detail.status !== "loading" && detail.data) ||
       kind === "diff" ||
@@ -708,6 +712,19 @@ function AppContent() {
               void loadCockpit();
             }}
           />
+        </section>
+      );
+    }
+
+    if (activeRoute.kind === "training") {
+      return (
+        <section
+          key={surfaceKey}
+          data-outlet="training"
+          data-testid="outlet-training"
+          aria-live="polite"
+        >
+          <TrainingPage onBack={() => go(dashboardHash())} />
         </section>
       );
     }
