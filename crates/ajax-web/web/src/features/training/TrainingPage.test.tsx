@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@/test/testing-library-shim";
 import TrainingPage from "./TrainingPage";
 import type { TrainingStatus } from "./trainingApi";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import * as trainingApi from "./trainingApi";
 import { formatElapsed, formatEta } from "./trainingPageModel";
 
@@ -344,5 +347,15 @@ describe("TrainingPage elapsed time", () => {
     mountPage();
     const line = await screen.findByText(/elapsed/);
     expect(line).toHaveClass("training-muted");
+  });
+});
+
+describe("TrainingPage styles", () => {
+  it("does not pad the page on top of route-scroll (#1402)", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const stylesSource = readOrderedStylesSource(join(here, "../.."));
+    const block = stylesSource.match(/(?:^|\n)\.training-page\s*\{([^}]*)\}/)?.[1];
+    expect(block).toBeDefined();
+    expect(block).not.toMatch(/\bpadding\s*:/);
   });
 });
