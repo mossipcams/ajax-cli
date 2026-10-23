@@ -2,10 +2,10 @@
 name: Ajax Cockpit
 description: Mobile-first operator console for a local AI agent fleet — status, decision, terminal.
 colors:
-  soft-charcoal: "#1c1c1e"
-  soft-charcoal-tint: "#222225"
-  soft-charcoal-raised: "#29292c"
-  soft-charcoal-high: "#313134"
+  soft-charcoal: "#161616"
+  soft-charcoal-tint: "#1d1d1d"
+  soft-charcoal-raised: "#242424"
+  soft-charcoal-high: "#2d2d2d"
   ink: "#e6e6e6"
   ink-bright: "#f5f5f5"
   ink-soft: "#c6c6c6"
@@ -195,8 +195,8 @@ Restrained dark console palette: neutrals do the work, and hue speaks only for t
 - **Done Sage** (`#82cb9b`): Success / done. Bright (`#a7e1ba`) when a brighter success cue is needed.
 
 ### Neutral
-- **Soft Charcoal** (`#1c1c1e`): Body / app paper. Lifted from #161616 in 2026-10 for a softer dashboard; the terminal pane keeps #161616.
-- **Soft Charcoal Tint / Raised / High** (`#222225` / `#29292c` / `#313134`): Nested surfaces and hover washes — the main depth ladder.
+- **Soft Charcoal** (`#161616`): Body / app paper, same as the terminal pane. Keep the ladder neutral (R=G=B): the 2026-10 Apple-gray lift (`#1c1c1e`) read as a muddy blue-violet cast and was reverted.
+- **Soft Charcoal Tint / Raised / High** (`#1d1d1d` / `#242424` / `#2d2d2d`): Nested surfaces and hover washes — the main depth ladder.
 - **Ink** (`#e6e6e6`): Primary text, primary-button fill, and the New-task fill. Bright (`#f5f5f5`) on hover/focus of those fills. Soft / muted / faint (`#c6c6c6` / `#a8a8a8` / `#808080`) for secondary, status line, and empty chrome.
 - **Rule / Rule Strong** (`#2a2a2a` / `#454545`): Hairline dividers and resting control borders.
 
