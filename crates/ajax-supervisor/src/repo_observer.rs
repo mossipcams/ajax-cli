@@ -91,8 +91,8 @@ fn clear_ambient_git_env(cmd: &mut Command) {
     }
 }
 
-/// Clears ambient git env, then pins git to the worktree's trusted record when one exists, so a
-/// task worktree's rewritten `.git` file cannot steer the host-side read.
+/// Clears ambient git env, disables hooks, then pins git to the worktree's trusted record when one
+/// exists, so a task worktree's rewritten `.git` file cannot steer the host-side read.
 fn clear_worktree_git_env(cmd: &mut Command, worktree_path: &Path) {
     clear_ambient_git_env(cmd);
     trusted_git::harden(cmd.as_std_mut(), worktree_path);
