@@ -204,3 +204,12 @@ Not verifiable in-sandbox: real `gh`/`ps`/router under the new profile (no neste
   proxmox, debian101, llm-gpu reachable; private keys still denied. `gh api user` works;
   router runnable. `/bin/ps` is setuid → nono refuses exec regardless of process_info_mode;
   `pgrep` works with allow_all (empty without).
+
+## Issue #1396 — tmux socket escape (2026-10-22)
+
+Sandboxed agents (any launch path, incl. Web Cockpit chat) could reach the host tmux server at
+`/private/tmp/tmux-$UID/default` (covered by the `/private/tmp` system write grant) and run
+`tmux new-window` unsandboxed. Fix: profile `filesystem.deny` on `/private/tmp/tmux-$UID` (macOS)
+and `/tmp/tmux-$UID` (Linux). Host spike: `tmux ls` / `tmux -S … new-window` → Operation not
+permitted, `/tmp` still writable, `claude -p` OK. Regression test
+`profile_denies_host_tmux_socket_issue_1396`. Not covered: custom TMUX_TMPDIR / -S sockets.
