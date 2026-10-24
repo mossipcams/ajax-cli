@@ -130,22 +130,30 @@ pub fn default_store() -> Option<PathBuf> {
 }
 
 /// Points `command` at the trusted git dirs, so git ignores the worktree's `.git` file.
-///
-/// Also disables fsmonitor at command-line config level (git >= 2.31), so repository-local
-/// config an agent plants cannot run a hook program. Ajax never needs fsmonitor.
 pub fn apply_env(command: &mut Command, trusted: &TrustedGit) {
     command
         .env("GIT_DIR", &trusted.git_dir)
         .env("GIT_COMMON_DIR", &trusted.common_dir)
-        .env("GIT_WORK_TREE", &trusted.work_tree)
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "core.fsmonitor")
-        .env("GIT_CONFIG_VALUE_0", "false");
+        .env("GIT_WORK_TREE", &trusted.work_tree);
 }
 
-/// Applies [`apply_env`] when `target` lies in a recorded worktree; otherwise leaves `command`
-/// unchanged.
+/// Disables hooks and fsmonitor at command-line config level (git >= 2.31).
+///
+/// A sandboxed agent can plant `.husky/` hooks or repository config that git would run during
+/// Ajax's own `switch`, `merge`, or `worktree add`, outside the sandbox. Ajax never needs either.
+pub fn disable_hooks(command: &mut Command) {
+    command
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_0", "core.hooksPath")
+        .env("GIT_CONFIG_VALUE_0", "/dev/null")
+        .env("GIT_CONFIG_KEY_1", "core.fsmonitor")
+        .env("GIT_CONFIG_VALUE_1", "false");
+}
+
+/// Applies [`disable_hooks`] unconditionally, then [`apply_env`] when `target` lies in a recorded
+/// worktree.
 pub fn harden(command: &mut Command, target: &Path) {
+    disable_hooks(command);
     if let Some(trusted) = default_store().and_then(|store| lookup(&store, target)) {
         apply_env(command, &trusted);
     }
@@ -417,5 +425,58 @@ mod tests {
             marker.exists(),
             "forged worktree link did not run fsmonitor; regression test does not exercise the exploit"
         );
+    }
+
+    /// A planted `core.hooksPath` hook must not run during Ajax's own `git switch`.
+    #[test]
+    fn disable_hooks_stops_planted_post_checkout_hook() {
+        let root = scratch("planted-hook");
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        fs::write(repo.join("README.md"), "init\n").unwrap();
+        git(&repo, &["add", "README.md"]);
+        git(&repo, &["commit", "-q", "-m", "init"]);
+
+        let hooks = root.join("evil-hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let marker = root.join("PWNED-hook");
+        let hook = hooks.join("post-checkout");
+        fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        git(
+            &repo,
+            &["config", "core.hooksPath", hooks.to_str().unwrap()],
+        );
+
+        let switch = |branch: &str| {
+            let mut command = Command::new("git");
+            command
+                .arg("-C")
+                .arg(&repo)
+                .args(["switch", "-q", "-c", branch]);
+            for (name, _) in env::vars_os() {
+                if name.to_string_lossy().starts_with("GIT_") {
+                    command.env_remove(name);
+                }
+            }
+            command
+        };
+
+        let mut exploited = switch("exploited");
+        assert!(exploited.status().unwrap().success());
+        assert!(
+            marker.exists(),
+            "planted post-checkout hook did not run; regression test does not exercise the exploit"
+        );
+        fs::remove_file(&marker).unwrap();
+
+        let mut defended = switch("defended");
+        disable_hooks(&mut defended);
+        assert!(defended.status().unwrap().success());
+        assert!(!marker.exists(), "disable_hooks still ran planted hook");
     }
 }

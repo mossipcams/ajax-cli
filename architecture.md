@@ -199,7 +199,9 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   rather than spawning agents directly. Host-side git on a task worktree must be
   pinned to the trusted record in `ajax-core` `adapters::trusted_git` (the
   process runner does this for direct `git` commands); never trust a worktree's
-  `.git` file.
+  `.git` file. Every Ajax-run git also gets `core.hooksPath=/dev/null` and
+  `core.fsmonitor=false` (`trusted_git::disable_hooks`), because hooks and
+  repository config are agent-writable.
 
 Detailed task-authority, registry, live-status, and Web Cockpit rules live in
 the focused docs below.

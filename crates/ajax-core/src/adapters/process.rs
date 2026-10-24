@@ -38,6 +38,7 @@ impl CommandRunner for ProcessCommandRunner {
         }
         if command_invokes_git(command) {
             clear_ambient_git_env(&mut process);
+            trusted_git::disable_hooks(&mut process);
         }
         if command.program == "git" {
             trusted_git::harden(&mut process, &git_target_dir(command));
