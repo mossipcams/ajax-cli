@@ -89,6 +89,22 @@
         "when": "macos"
       },
       {
+        "path": "$HOME/.docker",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.local/share/containers",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/Library/Containers/com.docker.docker",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.config/colima",
+        "when": "macos"
+      },
+      {
         "path": "/private/tmp/.s.PGSQL.5432",
         "when": "macos"
       }

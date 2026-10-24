@@ -405,6 +405,10 @@ mod tests {
             "$HOME/.colima",
             "$HOME/.lima",
             "$HOME/.rd",
+            "$HOME/.docker",
+            "$HOME/.local/share/containers",
+            "$HOME/Library/Containers/com.docker.docker",
+            "$HOME/.config/colima",
             "/private/tmp/.s.PGSQL.5432",
         ] {
             assert!(

@@ -294,8 +294,8 @@ This is verified on macOS only: on Linux, Landlock may not enforce a deny inside
 the granted `/tmp` or restrict connecting to a Unix socket, so do not rely on
 it there.
 
-Ajax also denies container-runtime sockets (OrbStack, Docker, Colima, Lima, and
-Rancher Desktop) and the default local Postgres socket on macOS. Socket connect
+Ajax also denies container-runtime sockets (OrbStack, Docker, Docker Desktop, Colima,
+Lima, Podman, and Rancher Desktop) and the default local Postgres socket on macOS. Socket connect
 is a network operation in Seatbelt, so a socket in an ungranted directory is
 still reachable unless it is denied. A reachable Docker API or Postgres
 superuser can run commands outside the sandbox. Agents can no longer use local
