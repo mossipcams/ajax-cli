@@ -42,7 +42,11 @@ if [[ -z "$(git log "origin/$BASE_BRANCH..HEAD" --oneline)" ]]; then
   exit 1
 fi
 
-git push --set-upstream origin "$BRANCH"
+git push origin "$BRANCH"
+# Sandboxed agents cannot write .git/config (#1409); upstream tracking is a convenience.
+if ! git branch --set-upstream-to="origin/$BRANCH" >/dev/null 2>&1; then
+  echo "note: could not record upstream for $BRANCH (.git/config not writable); push succeeded" >&2
+fi
 
 # `gh pr view <branch>` matches ANY state, so a previously merged or closed
 # PR for this branch name would make us short-circuit and never create a
