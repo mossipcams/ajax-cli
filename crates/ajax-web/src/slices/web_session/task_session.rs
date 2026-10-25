@@ -1,4 +1,5 @@
 use super::acp_slot::AcpSlot;
+use super::background_jobs::BackgroundJobs;
 use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
@@ -151,6 +152,7 @@ pub(crate) struct TaskSessionState {
     pub(super) acp: AcpSlot,
     pub(super) prompts: PromptQueue,
     pub(super) evidence: SessionEvidence,
+    pub(super) background: BackgroundJobs,
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
@@ -217,6 +219,9 @@ impl TaskSessionState {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
         for event in events {
+            if matches!(event, SessionServerEvent::TurnEnd { .. }) {
+                self.background.note_turn_ended();
+            }
             // Advance the dedupe checkpoint only for durable events.
             self.evidence
                 .should_skip_duplicate_spawn_error(self.generation, event);
@@ -391,6 +396,7 @@ pub(crate) fn spawn_task_session(
                 pending_transcript_error_snapshot: false,
                 transcript_corruption: None,
             },
+            background: BackgroundJobs::default(),
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
@@ -425,6 +431,7 @@ pub(crate) fn spawn_task_session(
                     if state.acp.client.is_some() {
                         state.pump();
                     }
+                    state.poll_background_jobs().await;
                 }
             }
         }

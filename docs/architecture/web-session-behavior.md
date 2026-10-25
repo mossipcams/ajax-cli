@@ -916,9 +916,25 @@ only the chat live head knew a turn was in flight.
   reopens a finished turn, `requires_action` without a pending request projects
   `Unknown`, and `idle` never marks a turn done. Message and thought chunks only
   move the activity timestamp. A reducer result of `Unknown` is not reported, so
-  it never overwrites prior live evidence. Child runs are tracked only from
-  explicit lineage events; the web session stream carries none today, so a
-  harness without them degrades to coarse `AgentRunning`. The host applies each
+  it never overwrites prior live evidence. Child runs come from explicit
+  lineage events, which the web session stream carries none of today, or from
+  host-detected background jobs. While the root turn is not running, the host
+  takes an unsandboxed `ps -A -o pid=,ppid=,comm=` snapshot, polled right after
+  `turn_end` and then every 2 s while a job is tracked, off the actor thread.
+  Every topmost shell
+  (`sh`, `bash`, `zsh`, `dash`, `fish` with no shell ancestor) in the subtree of
+  the session's recorded child pid is one job, whatever harness or router
+  started it. Each job is a completion-holding child run
+  `bg-<pid>-<start token>` (`ChildStarted`/`ChildEnded`) and ends only after 5 s
+  unseen, so a follow-up turn does not flash `Done`. While a job is held after
+  the root turn settles (`CompletedLocallyChildrenActive` /
+  `WaitingOnDelegated`), the host reports `AgentRunning` with summary
+  `Background work running` instead of `Done` or `WaitingForInput`. An
+  unavailable snapshot is no evidence and never ends a job. Known ceiling: a
+  harness that keeps an idle persistent shell reads as background work; only
+  Claude sessions have been verified. A harness without lineage events and
+  without background jobs still degrades to coarse `AgentRunning`. The host
+  applies each
   transition as task evidence at transcript-append time — not from the browser
   WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
   operator leaves chat mid-turn and the chat head cannot disagree with task truth.

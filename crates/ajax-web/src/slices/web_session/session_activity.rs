@@ -20,10 +20,11 @@ pub enum SessionActivity {
     CommandRunning,
     TestsRunning,
     AwaitingInput,
+    BackgroundRunning,
 }
 
 impl SessionActivity {
-    fn observation(self) -> LiveObservation {
+    pub(super) fn observation(self) -> LiveObservation {
         match self {
             Self::TurnStarted => {
                 LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working")
@@ -41,6 +42,9 @@ impl SessionActivity {
             }
             Self::AwaitingInput => {
                 LiveObservation::new(LiveStatusKind::WaitingForInput, "Waiting for input")
+            }
+            Self::BackgroundRunning => {
+                LiveObservation::new(LiveStatusKind::AgentRunning, "Background work running")
             }
         }
     }
@@ -113,7 +117,26 @@ impl SessionActivityReporter {
         let now = SystemTime::now();
         self.state
             .apply(acp_execution_map::execution_event(event, in_flight), now);
+        self.reduce_activity(now)
+    }
 
+    /// Apply background-job child events at `now`, then reduce as `activity_for_event` does.
+    pub(crate) fn activity_for_batch(
+        &mut self,
+        events: Vec<AcpExecutionEvent>,
+        now: SystemTime,
+    ) -> Option<SessionActivity> {
+        for event in events {
+            self.state.apply(event, now);
+        }
+        self.reduce_activity(now)
+    }
+
+    pub(crate) fn turn_running(&self) -> bool {
+        self.state.turn() == RootTurnState::Running
+    }
+
+    fn reduce_activity(&self, now: SystemTime) -> Option<SessionActivity> {
         let projection = reduce_agent_status(ReduceInput {
             now,
             primary_run_id: ROOT_RUN_ID.to_string(),
@@ -125,15 +148,23 @@ impl SessionActivityReporter {
             return None;
         }
 
-        let activity = match projection.live.kind {
-            LiveStatusKind::AgentRunning => SessionActivity::TurnStarted,
-            LiveStatusKind::CommandRunning => SessionActivity::CommandRunning,
-            LiveStatusKind::TestsRunning => SessionActivity::TestsRunning,
-            LiveStatusKind::WaitingForApproval => SessionActivity::AwaitingOperator,
-            LiveStatusKind::WaitingForInput => SessionActivity::AwaitingInput,
-            LiveStatusKind::Done => SessionActivity::TurnEnded,
-            LiveStatusKind::Blocked | LiveStatusKind::CommandFailed => SessionActivity::TurnFailed,
-            _ => return None,
+        let activity = match projection.phase {
+            // Checked before the kind: a held root reads as WaitingForInput, which must not show as the operator's turn.
+            ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated => {
+                SessionActivity::BackgroundRunning
+            }
+            _ => match projection.live.kind {
+                LiveStatusKind::AgentRunning => SessionActivity::TurnStarted,
+                LiveStatusKind::CommandRunning => SessionActivity::CommandRunning,
+                LiveStatusKind::TestsRunning => SessionActivity::TestsRunning,
+                LiveStatusKind::WaitingForApproval => SessionActivity::AwaitingOperator,
+                LiveStatusKind::WaitingForInput => SessionActivity::AwaitingInput,
+                LiveStatusKind::Done => SessionActivity::TurnEnded,
+                LiveStatusKind::Blocked | LiveStatusKind::CommandFailed => {
+                    SessionActivity::TurnFailed
+                }
+                _ => return None,
+            },
         };
         if self.last == Some(activity) {
             return None;

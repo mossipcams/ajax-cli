@@ -143,7 +143,9 @@ observations through the same `reduce_agent_status`; it never writes a status
 the reducer did not project, and a reducer `Unknown` is not applied. Running
 observations keep their specific kind through the reducer (`CommandRunning`,
 `TestsRunning`, otherwise `AgentRunning`); precedence, freshness, confidence,
-and child aggregation are unchanged.
+and child aggregation are unchanged. The ACP host also feeds host-detected
+background jobs as completion-holding children, so a settled turn with live
+background work projects `Background work running`, not done.
 
 See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
 client mapping matrix, and migration phases.

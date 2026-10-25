@@ -3,6 +3,7 @@ mod acp_execution_map;
 mod acp_map;
 mod acp_slot;
 pub(crate) mod acp_usage;
+mod background_jobs;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;
 mod execution_ownership;
@@ -16,6 +17,7 @@ mod orphan_sweep;
 mod output_content;
 mod prepare_session;
 mod process_identity;
+mod process_tree;
 mod prompt_content;
 mod prompt_queue;
 mod protocol;
@@ -391,7 +393,13 @@ mod execution_ownership_tests;
 mod orphan_sweep_tests;
 
 #[cfg(test)]
+mod background_jobs_tests;
+
+#[cfg(test)]
 mod process_identity_tests;
+
+#[cfg(test)]
+mod process_tree_tests;
 
 #[cfg(test)]
 mod session_activity_directory_tests;
