@@ -413,7 +413,7 @@ mod tests {
         let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
         let deny = profile["filesystem"]["deny"].as_array().unwrap();
         for path in [
-            "$HOME/.orbstack",
+            "$HOME/.orbstack/run",
             "/private/var/run/docker.sock",
             "$HOME/.colima",
             "$HOME/.lima",
@@ -429,6 +429,40 @@ mod tests {
                 "agents must not reach the host socket at {path}: a reachable Docker API or Postgres superuser can run commands outside the sandbox"
             );
         }
+    }
+
+    #[test]
+    fn profile_lets_ssh_read_orbstack_include_but_not_its_keys_issue_1423() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let read_file = profile["filesystem"]["read_file"].as_array().unwrap();
+        assert!(
+            read_file.contains(
+                &serde_json::json!({"path": "$HOME/.orbstack/ssh/config", "when": "macos"})
+            ),
+            "ssh aborts on an unreadable Include (#1423)"
+        );
+        // only the config file: ~/.orbstack/ssh also holds OrbStack's private key
+        for key in ["read", "allow", "read_file", "allow_file"] {
+            if let Some(entries) = profile["filesystem"][key].as_array() {
+                for entry in entries {
+                    let path = entry
+                        .get("path")
+                        .and_then(|p| p.as_str())
+                        .or_else(|| entry.as_str())
+                        .unwrap_or("");
+                    assert!(
+                        path == "$HOME/.orbstack/ssh/config"
+                            || !path.starts_with("$HOME/.orbstack"),
+                        "{key} grant {path} exposes ~/.orbstack beyond the ssh config"
+                    );
+                }
+            }
+        }
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        assert!(
+            !deny.contains(&serde_json::json!({"path": "$HOME/.orbstack", "when": "macos"})),
+            "a whole-dir ~/.orbstack deny breaks the ssh Include (#1423)"
+        );
     }
 
     #[test]
