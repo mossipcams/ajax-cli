@@ -48,8 +48,15 @@ describe("headView", () => {
       );
     });
 
-    it("lets a loaded idle server task win over a busy stream", () => {
-      expect(headState(null, null, true, { status: "idle", explanation: null })).toBe("idle");
+    it("busy stream + idle/done server -> working", () => {
+      expect(headState(null, null, true, { status: "idle", explanation: null })).toBe("working");
+      expect(headState(null, null, true, { status: "unknown" })).toBe("working");
+    });
+
+    it("busy stream + waiting server -> attention", () => {
+      expect(headState(null, null, true, { status: "waiting", explanation: "Waiting for approval" })).toBe(
+        "attention",
+      );
     });
 
     it("maps unknown and idle server tasks to idle when the stream is not busy", () => {
@@ -128,7 +135,7 @@ describe("headView", () => {
       expect(view.workingText).toBeNull();
     });
 
-    it("shows Ready for a loaded idle task even when the stream is busy", () => {
+    it("shows Working for a busy stream while the loaded task is still idle", () => {
       const view = buildHeadView({
         session: session(true),
         taskAttention: { status: "idle", explanation: null },
@@ -136,7 +143,7 @@ describe("headView", () => {
         activityAgeMs: 0,
         connected: true,
       });
-      expect(view.state).toBe("idle");
+      expect(view.state).toBe("working");
       expect(view.workingText).toBeNull();
     });
 

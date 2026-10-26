@@ -42,8 +42,9 @@ export function headStateLabel(state: HeadState, quiet: boolean): string {
 }
 
 /**
- * Server task status wins whenever it is loaded. The browser stream `busy`
- * is only a fallback for when task detail is unavailable.
+ * Server task status wins whenever it is running, waiting, or errored. A busy
+ * stream only stands in for an idle/done server status (the server has not
+ * caught up with a just-sent prompt), and is the fallback when detail is unavailable.
  */
 export function headState(
   decision: Decision | null,
@@ -55,7 +56,7 @@ export function headState(
   if (!taskAttention) return busy ? "working" : "idle";
   if (taskAttention.status === "running") return "working";
   if (taskAttention.status === "waiting" || taskAttention.status === "error") return "attention";
-  return "idle";
+  return busy ? "working" : "idle";
 }
 
 export function headTone(state: HeadState, taskAttention: ChatTaskAttention | null): string {

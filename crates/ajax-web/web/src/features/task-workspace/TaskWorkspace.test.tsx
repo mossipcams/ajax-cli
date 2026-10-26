@@ -307,6 +307,76 @@ describe("TaskWorkspace", () => {
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
   });
 
+  describe("session busy convergence", () => {
+    beforeEach(() => {
+      chatSurfaceCapture.stubSurface = true;
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      chatSurfaceCapture.stubSurface = false;
+    });
+
+    function chatTree(status: BrowserTaskDetail["status"], onMutated: () => void) {
+      return (
+        <TaskWorkspace
+          handle="web/fix-login"
+          mode="chat"
+          detail={readyDetail({ ...taskDetail, session_capable: true, status })}
+          orchestrationChat
+          onGo={vi.fn()}
+          onBack={vi.fn()}
+          onOpenDiff={vi.fn()}
+          onMutated={onMutated}
+        />
+      );
+    }
+
+    const emit = (busy: boolean) =>
+      act(() => {
+        chatSurfaceCapture.latest?.onSessionActivity?.({ model: "auto", busy });
+      });
+
+    it("refetches every second while the stream is busy and the server status is not running", () => {
+      const onMutated = vi.fn();
+      render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      const afterFlip = onMutated.mock.calls.length;
+
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 1);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 2);
+    });
+
+    it("stops interval refetches once the server status reports running", () => {
+      const onMutated = vi.fn();
+      const view = render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      act(() => vi.advanceTimersByTime(1000));
+
+      view.rerender(chatTree("running", onMutated));
+      const afterRunning = onMutated.mock.calls.length;
+      act(() => vi.advanceTimersByTime(3000));
+      expect(onMutated).toHaveBeenCalledTimes(afterRunning);
+    });
+
+    it("does not interval-refetch when the stream is not busy", () => {
+      const onMutated = vi.fn();
+      render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      emit(false);
+      const afterFlip = onMutated.mock.calls.length;
+
+      act(() => vi.advanceTimersByTime(3000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip);
+    });
+  });
+
   describe("Drop dismiss composer cleanup", () => {
     beforeEach(() => {
       vi.useFakeTimers();

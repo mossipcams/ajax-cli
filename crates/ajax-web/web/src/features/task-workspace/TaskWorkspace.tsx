@@ -20,6 +20,12 @@ import { shouldRedirectSessionToTerminal } from "./taskWorkspaceRouting";
 
 export type TaskWorkspaceMode = "chat" | "terminal";
 
+/**
+ * While the session stream is busy but the server task has not caught up to
+ * `running`, refetch task detail on this cadence until the server agrees.
+ */
+const SESSION_CONVERGE_MS = 1000;
+
 export interface TaskWorkspaceProps {
   handle: string;
   mode: TaskWorkspaceMode;
@@ -74,6 +80,15 @@ export default function TaskWorkspace({
     onGo(taskHash(handle));
   }, [mode, handle, detail.status, detail.data, onGo]);
 
+  const taskDetail = detail.data;
+  const sessionConverging = mode === "chat" && sessionBusy && taskDetail?.status !== "running";
+
+  useEffect(() => {
+    if (!sessionConverging) return;
+    const timer = setInterval(() => onMutated?.(), SESSION_CONVERGE_MS);
+    return () => clearInterval(timer);
+  }, [sessionConverging, onMutated]);
+
   useEffect(() => {
     registerDropComposerCleanup(clearComposerPresentationState);
     return () => registerDropComposerCleanup(null);
@@ -83,7 +98,6 @@ export default function TaskWorkspace({
     if (pendingConfirmAction === "drop") setDetailsOpen(false);
   }, [pendingConfirmAction]);
 
-  const taskDetail = detail.data;
   const actions = taskDetail ? visibleTaskActions(taskDetail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
 
