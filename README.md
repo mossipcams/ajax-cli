@@ -277,8 +277,10 @@ The agent can write only to:
 - its own agent state dirs (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`) and
   caches.
 
-Network is open. Of the keychain, only `login.keychain-db` and
-`metadata.keychain-db` are reachable, for agent OAuth. Codex's own sandbox is
+Network is open. The keychain directory (`~/Library/Keychains`) is
+read-write, so agents can save refreshed OAuth tokens; with only the
+keychain files reachable, Claude Code could not persist a rotated refresh
+token and the login was revoked. Codex's own sandbox is
 turned off under nono (for a binary named `codex`) because Seatbelt cannot
 nest; nono is the boundary. The `codex-acp` and `npx` ACP fallbacks cannot be passed
 that override; they need `sandbox_mode = "danger-full-access"` in

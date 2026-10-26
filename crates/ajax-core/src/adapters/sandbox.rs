@@ -18,6 +18,8 @@ const LOCAL_FILE: &str = "local.json";
 pub struct GitGrants {
     pub read: Vec<PathBuf>,
     pub read_write: Vec<PathBuf>,
+    /// Single files, emitted as `--allow-file`.
+    pub read_write_files: Vec<PathBuf>,
 }
 
 /// Sandbox is on unless `AJAX_SANDBOX` is `off`, `0`, or `false`.
@@ -144,12 +146,16 @@ impl LinkedWorktree {
                 self.common.join("refs"),
                 self.common.join("logs"),
             ],
+            read_write_files: vec![
+                self.common.join("packed-refs"),
+                self.common.join("packed-refs.lock"),
+            ],
         }
     }
 }
 
 /// Git grants for a linked worktree, or empty grants if `worktree` cannot be verified as one.
-// ponytail: main-checkout (non-linked) runs and packed-ref branch deletion get no .git write access; widen only with a hooks/config-safe grant.
+// ponytail: packed-ref data is granted (#1409), but `.git/config` and hooks stay read-only, so branch upstream config is recorded best-effort by scripts/gh-pr-create. Main-checkout (non-linked) runs still get no .git write access.
 pub fn git_grants(worktree: &Path) -> GitGrants {
     linked_worktree(worktree).map_or_else(GitGrants::default, |linked| linked.grants())
 }
@@ -196,12 +202,14 @@ fn linked_worktree(worktree: &Path) -> Option<LinkedWorktree> {
 
 /// Builds the nono command line that runs `program args...` inside the sandbox.
 // ponytail: codex-acp and npx-launched adapters are not rewritten; only a program named exactly `codex` gets the Seatbelt opt-out.
+#[allow(clippy::too_many_arguments)]
 pub fn wrap_argv(
     nono: &Path,
     profile: &Path,
     worktree: &Path,
     read: &[PathBuf],
     read_write: &[PathBuf],
+    read_write_files: &[PathBuf],
     program: &str,
     args: &[String],
 ) -> (String, Vec<String>) {
@@ -223,6 +231,10 @@ pub fn wrap_argv(
     }
     for path in read_write {
         argv.push("--allow".into());
+        argv.push(path.display().to_string());
+    }
+    for path in read_write_files {
+        argv.push("--allow-file".into());
         argv.push(path.display().to_string());
     }
     argv.push("--".into());
@@ -293,6 +305,7 @@ pub fn sandbox_command(
         cwd,
         &grants.read,
         &grants.read_write,
+        &grants.read_write_files,
         program,
         args,
     ))
@@ -429,6 +442,7 @@ mod tests {
                 PathBuf::from("/repo/.git"),
                 PathBuf::from("/cache/agent-events"),
             ],
+            &[PathBuf::from("/repo/.git-common/packed-refs")],
             "claude",
             &["--resume".to_string()],
         );
@@ -450,6 +464,8 @@ mod tests {
                 "/repo/.git",
                 "--allow",
                 "/cache/agent-events",
+                "--allow-file",
+                "/repo/.git-common/packed-refs",
                 "--",
                 "claude",
                 "--resume",
@@ -464,6 +480,7 @@ mod tests {
                 Path::new("/opt/nono"),
                 Path::new("/p.json"),
                 Path::new("/w"),
+                &[],
                 &[],
                 &[],
                 program,
@@ -498,6 +515,7 @@ mod tests {
                 Path::new("/opt/nono"),
                 Path::new("/p.json"),
                 Path::new("/w"),
+                &[],
                 &[],
                 &[],
                 program,
@@ -650,8 +668,22 @@ mod tests {
                     common.join("refs"),
                     common.join("logs"),
                 ],
+                read_write_files: vec![common.join("packed-refs"), common.join("packed-refs.lock"),],
             }
         );
+        // `.git/config` and hooks run code (#1387), so no grant may cover them.
+        let config = common.join("config");
+        let hooks = common.join("hooks");
+        for path in grants.read_write.iter().chain(&grants.read_write_files) {
+            assert!(
+                !path.starts_with(&config)
+                    && !config.starts_with(path)
+                    && !path.starts_with(&hooks)
+                    && !hooks.starts_with(path),
+                "grant {} covers .git/config or hooks",
+                path.display()
+            );
+        }
     }
 
     #[test]

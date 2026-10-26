@@ -274,6 +274,113 @@ fn save_context_accepts_concurrent_task_deletion_without_conflict() {
 }
 
 #[test]
+fn save_context_keeps_memory_deletion_when_disk_revision_moved_issue_1398() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-memory-deletion-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline
+        .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+        .unwrap();
+    baseline
+        .create_task(sample_task("web/fix-sidebar", "fix-sidebar", "Fix sidebar"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .delete_task(&TaskId::new("web/fix-sidebar"))
+        .unwrap();
+
+    let mut concurrent = baseline.clone();
+    concurrent
+        .get_task_mut(&TaskId::new("web/fix-sidebar"))
+        .expect("concurrent task")
+        .title = "Refreshed by web".to_string();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&concurrent)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    save_tracked_context(&paths, &mut tracked).expect("memory deletion persists");
+    let reloaded = load_context(&paths).expect("reload");
+
+    assert!(reloaded
+        .registry
+        .get_task(&TaskId::new("web/fix-sidebar"))
+        .is_none());
+    assert!(reloaded
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_some());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn save_context_keeps_concurrent_task_addition_when_memory_deleted_another() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-addition-deletion-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline
+        .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+        .unwrap();
+    baseline
+        .create_task(sample_task("web/fix-sidebar", "fix-sidebar", "Fix sidebar"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .delete_task(&TaskId::new("web/fix-sidebar"))
+        .unwrap();
+
+    let mut concurrent = baseline.clone();
+    concurrent
+        .create_task(sample_task("web/new-task", "new-task", "New task"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&concurrent)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    save_tracked_context(&paths, &mut tracked).expect("addition and deletion merge");
+    let reloaded = load_context(&paths).expect("reload");
+
+    assert!(reloaded
+        .registry
+        .get_task(&TaskId::new("web/new-task"))
+        .is_some());
+    assert!(reloaded
+        .registry
+        .get_task(&TaskId::new("web/fix-sidebar"))
+        .is_none());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn save_context_keeps_disk_task_when_memory_task_is_unchanged_from_baseline() {
     let root = std::env::temp_dir().join(format!(
         "ajax-context-unchanged-memory-{}-{}",
