@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const readline = require('readline');
+const childProcess = require('child_process');
 const loadFail = process.argv.includes('--load-fail');
 const noLoadSession = process.argv.includes('--no-load-session');
 const loadDelayMs = (() => {
@@ -55,6 +56,9 @@ const thoughtOnly = process.argv.includes('--thought-only');
 const toolOnly = process.argv.includes('--tool-only');
 const noAgentText = process.argv.includes('--no-agent-text');
 const promptFail = process.argv.includes('--prompt-fail');
+// Background-work tests: each prompt leaves one real shell running as a direct
+// child of this agent, so it sits in the session's process subtree.
+const backgroundShell = process.argv.includes('--background-shell');
 const sessionId = 'fake-sess-1';
 // ponytail: isolate fixture sidecar files under FAKE_ACP_STATE_DIR or a per-pid tmp dir
 // so verification does not litter the crate root when cwd is not the worktree.
@@ -674,6 +678,15 @@ function handleRequest(msg) {
     if (noAgentText) {
       send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
       return;
+    }
+    if (backgroundShell) {
+      // `; :` keeps sh from exec-ing sleep, so the shell stays in the process table.
+      // Spawned before the reply so the turn-end probe sees it.
+      const shell = childProcess.spawn('/bin/sh', ['-c', 'sleep 2; :'], {
+        detached: false,
+        stdio: 'ignore',
+      });
+      shell.unref();
     }
     const kinds = Array.isArray(params?.prompt)
       ? params.prompt.map((block) => block?.type || 'unknown').join(',')
