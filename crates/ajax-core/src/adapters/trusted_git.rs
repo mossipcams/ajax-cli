@@ -123,8 +123,8 @@ pub fn forget(store: &Path, work_tree: &Path) -> io::Result<()> {
 
 /// Trusted-worktree store, `$HOME/.config/ajax/nono/trusted-worktrees`.
 ///
-/// Sits under the Ajax profile dir and outside every sandbox grant, so the agent cannot rewrite
-/// records.
+/// Sits under the Ajax profile dir, which the sandbox profile denies to agents
+/// (`$HOME/.config/ajax/nono`), so the agent cannot rewrite records.
 pub fn default_store() -> Option<PathBuf> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono/trusted-worktrees"))
 }

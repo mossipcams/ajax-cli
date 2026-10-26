@@ -274,3 +274,13 @@ Shelved by Matt. The sandbox's job is preventing agent accidents, not containing
    memories/history from unsandboxed sessions.
 3. **Separate package caches:** sandbox-owned `CARGO_HOME` / npm cache so agents cannot poison caches
    the host builds from.
+
+## 2026-10-26: denylist profile
+
+Matt chose the denylist over sandbox-off, after rejecting worktree-only writes twice as too strict. The threat model stays accident prevention (see the 2026-10-22 shelving), so the profile now allows `$HOME` (and `/opt/homebrew` on macOS) and denies only credentials, Ajax state, and host-control sockets. Full plan and verification: `.planning/agent-plans/nono-denylist-profile.md`.
+
+- Credentials: nono's default deny list, plus OrbStack's private key `~/.orbstack/ssh/id_ed25519`.
+- Ajax state: `~/.config/ajax/nono`, both `config.toml` files, and both registry databases with their `-wal` and `-shm` files.
+- Host-control sockets: unchanged.
+- Non-linked (main) checkouts are no longer refused. `.git` is writable everywhere under the denylist, so the refusal only blocked main checkouts.
+- Accepted: agents can edit other repos, global tool installs, and `.git` hooks and config.

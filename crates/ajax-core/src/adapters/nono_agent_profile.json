@@ -1,5 +1,6 @@
 {
   "extends": "default",
+  "allow_parent_of_protected": true,
   "meta": {
     "name": "ajax-agent",
     "version": "1.0.0",
@@ -15,31 +16,77 @@
       "rust_runtime",
       "python_runtime",
       "nix_runtime",
-      "git_config",
-      "unlink_protection"
+      "git_config"
     ]
   },
   "filesystem": {
     "allow": [
-      "$HOME/.claude",
-      "$HOME/.cache/claude",
-      "$HOME/.local/state/claude",
-      "$HOME/.codex",
-      "$HOME/.pi",
-      "$HOME/.cursor",
-      "$HOME/.config/cursor",
-      "$HOME/.npm",
-      "$HOME/.cargo/registry",
-      "$HOME/.cargo/git",
+      {
+        "path": "$HOME",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.claude",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.cache/claude",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.local/state/claude",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.codex",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.pi",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.cursor",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.config/cursor",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.npm",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.cargo/registry",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.cargo/git",
+        "when": "linux"
+      },
+      {
+        "path": "/opt/homebrew",
+        "when": "macos"
+      },
       {
         "path": "$HOME/Library/Keychains",
         "when": "macos"
       }
     ],
     "allow_file": [
-      "$HOME/.claude.json",
-      "$HOME/.claude.json.lock",
-      "$HOME/.claude.lock",
+      {
+        "path": "$HOME/.claude.json",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.claude.json.lock",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.claude.lock",
+        "when": "linux"
+      },
       {
         "path": "$HOME/Library/Keychains/login.keychain-db",
         "when": "macos"
@@ -64,13 +111,13 @@
       }
     ],
     "read": [
-      "$HOME/.local/share/cursor-agent",
-      "$HOME/.local/share/claude"
-    ],
-    "read_file": [
       {
-        "path": "$HOME/.orbstack/ssh/config",
-        "when": "macos"
+        "path": "$HOME/.local/share/cursor-agent",
+        "when": "linux"
+      },
+      {
+        "path": "$HOME/.local/share/claude",
+        "when": "linux"
       }
     ],
     "deny": [
@@ -84,6 +131,10 @@
       },
       {
         "path": "$HOME/.orbstack/run",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.orbstack/ssh/id_ed25519",
         "when": "macos"
       },
       {
@@ -121,7 +172,20 @@
       {
         "path": "/private/tmp/.s.PGSQL.5432",
         "when": "macos"
-      }
+      },
+      "$HOME/.config/ajax/nono",
+      "$HOME/.config/ajax/config.toml",
+      "$HOME/.local/state/ajax/ajax.db",
+      "$HOME/.local/state/ajax/ajax.db-wal",
+      "$HOME/.local/state/ajax/ajax.db-shm",
+      "$HOME/.ajax-dev/config.toml",
+      "$HOME/.ajax-dev/ajax.db",
+      "$HOME/.ajax-dev/ajax.db-wal",
+      "$HOME/.ajax-dev/ajax.db-shm",
+      "$HOME/.pgpass",
+      "$HOME/.pypirc",
+      "$HOME/.cargo/credentials",
+      "$HOME/.cargo/credentials.toml"
     ]
   },
   "network": {

@@ -38,8 +38,8 @@ pub fn sandbox_enabled() -> bool {
 /// Writes the embedded profile to `dir/ajax-agent.json`, with `dir/local.json` merged in
 /// when present.
 ///
-/// `local.json` holds machine-specific grants and is user-owned: `dir` sits outside every
-/// sandbox grant, so agents cannot edit it. An identical existing profile is left alone.
+/// `local.json` holds machine-specific grants and is user-owned: the profile denies agents
+/// `dir`, so they cannot edit it. An identical existing profile is left alone.
 /// Otherwise the profile is written to a unique temp file in `dir` and renamed over the
 /// target, so a concurrent launch never reads a truncated profile.
 pub fn write_profile(dir: &Path) -> std::io::Result<PathBuf> {
@@ -98,7 +98,7 @@ fn merge_json(base: &mut serde_json::Value, extra: serde_json::Value) {
 /// Ajax-owned profile directory, `$HOME/.config/ajax/nono`.
 ///
 /// Not under `~/.cache`: that is writable inside the sandbox, so an agent could rewrite
-/// the next launch's policy. `~/.config/ajax` is verified ungranted.
+/// the next launch's policy. The profile allows `$HOME` but denies `$HOME/.config/ajax/nono`.
 pub fn default_profile_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono"))
 }
@@ -155,7 +155,7 @@ impl LinkedWorktree {
 }
 
 /// Git grants for a linked worktree, or empty grants if `worktree` cannot be verified as one.
-// ponytail: packed-ref data is granted (#1409), but `.git/config` and hooks stay read-only, so branch upstream config is recorded best-effort by scripts/gh-pr-create. Main-checkout (non-linked) runs still get no .git write access.
+// ponytail: the profile allows `$HOME`, so `.git` is writable under the denylist profile, including `.git/config` and hooks; these grants only add the linked worktree's git dirs and packed refs (#1409) to the explicit list. Branch upstream config is still recorded best-effort by scripts/gh-pr-create.
 pub fn git_grants(worktree: &Path) -> GitGrants {
     linked_worktree(worktree).map_or_else(GitGrants::default, |linked| linked.grants())
 }
@@ -260,13 +260,6 @@ pub fn sandbox_command(
 ) -> Result<(String, Vec<String>), String> {
     if !enabled {
         return Ok((program.to_string(), args.to_vec()));
-    }
-    let dot_git = cwd.join(".git");
-    if fs::symlink_metadata(&dot_git).is_ok_and(|meta| meta.file_type().is_dir()) {
-        return Err(format!(
-            "agent sandbox refuses a non-linked checkout: {} would be writable by the agent; run from a linked worktree or set AJAX_SANDBOX=off",
-            dot_git.display()
-        ));
     }
     let nono = nono()?;
     let dir = profile_dir.ok_or_else(|| {
@@ -432,16 +425,96 @@ mod tests {
     }
 
     #[test]
+    fn profile_sets_allow_parent_of_protected() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        assert_eq!(
+            profile["allow_parent_of_protected"],
+            serde_json::json!(true),
+            "nono refuses the $HOME grant because it contains ~/.nono, and every macOS launch fails without this flag"
+        );
+    }
+
+    #[test]
+    fn profile_omits_unlink_protection_group() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let include = profile["groups"]["include"].as_array().unwrap();
+        assert!(
+            !include.contains(&serde_json::json!("unlink_protection")),
+            "unlink_protection's unlink overrides let agents delete denied Ajax state such as ~/.ajax-dev/ajax.db-wal"
+        );
+    }
+
+    #[test]
+    fn profile_denies_credential_files_outside_nono_defaults() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        for path in [
+            "$HOME/.pgpass",
+            "$HOME/.pypirc",
+            "$HOME/.cargo/credentials",
+            "$HOME/.cargo/credentials.toml",
+        ] {
+            assert!(
+                deny.contains(&serde_json::json!(path)),
+                "the $HOME grant exposes the credential file {path}, which nono's deny_credentials group does not cover"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_allows_home_and_denies_ajax_state() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let allow = profile["filesystem"]["allow"].as_array().unwrap();
+        assert!(
+            allow.contains(&serde_json::json!({"path": "$HOME", "when": "macos"})),
+            "the denylist profile must grant $HOME on macOS"
+        );
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        for path in [
+            "$HOME/.config/ajax/nono",
+            "$HOME/.config/ajax/config.toml",
+            "$HOME/.local/state/ajax/ajax.db",
+            "$HOME/.local/state/ajax/ajax.db-wal",
+            "$HOME/.local/state/ajax/ajax.db-shm",
+            "$HOME/.ajax-dev/config.toml",
+            "$HOME/.ajax-dev/ajax.db",
+            "$HOME/.ajax-dev/ajax.db-wal",
+            "$HOME/.ajax-dev/ajax.db-shm",
+        ] {
+            assert!(
+                deny.contains(&serde_json::json!(path)),
+                "agents must not reach Ajax state at {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_does_not_deny_whole_ajax_dirs() {
+        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
+        let deny = profile["filesystem"]["deny"].as_array().unwrap();
+        // dev worktrees, agent events, and the ssh agent socket live under these dirs
+        for path in ["$HOME/.ajax-dev", "$HOME/.config/ajax"] {
+            assert!(
+                !deny.iter().any(|entry| {
+                    entry.as_str() == Some(path)
+                        || entry.get("path").and_then(|p| p.as_str()) == Some(path)
+                }),
+                "a whole-dir deny of {path} breaks dev worktrees, agent events and the ssh agent"
+            );
+        }
+    }
+
+    #[test]
     fn profile_lets_ssh_read_orbstack_include_but_not_its_keys_issue_1423() {
         let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let read_file = profile["filesystem"]["read_file"].as_array().unwrap();
+        // the `$HOME` grant covers the config; no explicit read_file entry is needed
+        let allow = profile["filesystem"]["allow"].as_array().unwrap();
         assert!(
-            read_file.contains(
-                &serde_json::json!({"path": "$HOME/.orbstack/ssh/config", "when": "macos"})
-            ),
+            allow.contains(&serde_json::json!({"path": "$HOME", "when": "macos"})),
             "ssh aborts on an unreadable Include (#1423)"
         );
-        // only the config file: ~/.orbstack/ssh also holds OrbStack's private key
+        // only the config file: ~/.orbstack/ssh also holds OrbStack's private key,
+        // which is denied explicitly below because the `$HOME` grant would expose it
         for key in ["read", "allow", "read_file", "allow_file"] {
             if let Some(entries) = profile["filesystem"][key].as_array() {
                 for entry in entries {
@@ -462,6 +535,12 @@ mod tests {
         assert!(
             !deny.contains(&serde_json::json!({"path": "$HOME/.orbstack", "when": "macos"})),
             "a whole-dir ~/.orbstack deny breaks the ssh Include (#1423)"
+        );
+        assert!(
+            deny.contains(
+                &serde_json::json!({"path": "$HOME/.orbstack/ssh/id_ed25519", "when": "macos"})
+            ),
+            "the $HOME grant would otherwise expose OrbStack's private key"
         );
     }
 
@@ -602,7 +681,10 @@ mod tests {
 
         let read = profile["filesystem"]["read"].as_array().unwrap();
         assert!(read.contains(&serde_json::json!("/opt/router")));
-        for grant in embedded["filesystem"]["read"].as_array().unwrap() {
+        for grant in embedded["filesystem"]["read"]
+            .as_array()
+            .map_or(&[][..], |v| v.as_slice())
+        {
             assert!(read.contains(grant), "lost embedded grant {grant}");
         }
         assert_eq!(
@@ -776,31 +858,6 @@ mod tests {
         std::os::unix::fs::symlink(other.join(".git"), linked.join(".git")).unwrap();
 
         assert_eq!(git_grants(&linked), GitGrants::default());
-    }
-
-    #[test]
-    fn sandbox_command_refuses_non_linked_checkout() {
-        let root = scratch("non-linked-refusal");
-        init_repo(&root);
-        let repo = root.join("repo");
-
-        let result = sandbox_command(
-            true,
-            || Ok(PathBuf::from("/opt/nono")),
-            Some(root.join("profile")),
-            &repo,
-            &[],
-            "claude",
-            &[],
-        );
-
-        let err = result.unwrap_err();
-        assert!(err.contains("non-linked checkout"), "{err}");
-        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
-        assert!(
-            !root.join("profile").exists(),
-            "profile written before refusal"
-        );
     }
 
     #[test]

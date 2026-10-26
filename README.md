@@ -269,13 +269,29 @@ Claude SDK, Cursor SDK, and Pi RPC sessions, and `ajax-cli supervise`. If `nono`
 is missing, the launch is refused; Ajax never falls back to running unsandboxed.
 Set `AJAX_SANDBOX=off` to disable the sandbox.
 
-The agent can write only to:
+On macOS, agents can read and write everything under `$HOME` (and
+`/opt/homebrew`), except:
 
-- its task worktree;
-- the worktree's own git admin dir plus the repo's `objects`, `refs` and `logs` (the rest of `.git`, including `hooks` and `config`, is read-only), so commits and new branches work from a linked worktree; deleting a packed branch and committing from a non-linked main checkout do not;
-- the Ajax agent-events dir;
-- its own agent state dirs (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`) and
-  caches.
+1. credentials: nono's default deny list (`~/.ssh` private keys, `~/.aws`,
+   `~/.gnupg`, `~/.kube`, `.netrc`, shell history and rc files, browser and
+   password stores), OrbStack's private key (`~/.orbstack/ssh/id_ed25519`),
+   and `~/.pgpass`, `~/.pypirc`, `~/.cargo/credentials` and
+   `~/.cargo/credentials.toml`, which nono's defaults do not cover;
+2. Ajax state: `~/.config/ajax/nono` (the profile and trusted-worktree
+   records), both `config.toml` files, and both registry databases
+   (`~/.local/state/ajax/ajax.db` and `~/.ajax-dev/ajax.db`) with their `-wal`
+   and `-shm` files. These denies cover the default and dev-profile paths only;
+   a custom `AJAX_HOME`/`AJAX_STATE` location is not denied;
+3. the host-control sockets described below.
+
+On Linux, nono uses Landlock, which cannot deny a path inside an allowed
+directory, so `$HOME` is not granted there. Linux keeps the earlier per-tool
+allowlist (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`, `~/.npm`, the cargo
+registry and git dirs, and the Claude and Cursor state files) and has no
+`$HOME`-wide denylist.
+
+The denylist prevents accidents, not a hostile agent, so agents can still edit
+other repos, global tool installs, and `.git` (including hooks and config).
 
 Network is open. The keychain directory (`~/Library/Keychains`) is
 read-write, so agents can save refreshed OAuth tokens; with only the
@@ -305,16 +321,14 @@ Docker. Loopback TCP, such as Postgres on `127.0.0.1:5432`, is not blocked by
 this. Secure those services with authentication.
 
 The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
-Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (outside every sandbox grant) when its content changes. Cursor
+Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (denied in the profile) when its content changes. Cursor
 login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
 
 At each sandboxed launch Ajax verifies the linked worktree and records its git
-admin dir and common dir under `~/.config/ajax/nono/trusted-worktrees/` (outside
-every sandbox grant). Host-side git that Ajax runs in that worktree is pinned to
+admin dir and common dir under `~/.config/ajax/nono/trusted-worktrees/` (denied
+in the profile). Host-side git that Ajax runs in that worktree is pinned to
 those paths with `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`, so an agent
-that rewrites the worktree's `.git` file cannot make Ajax run its git config. A
-sandboxed launch is refused in a non-linked checkout, because its `.git` would
-be agent-writable. Run from a linked worktree, or set `AJAX_SANDBOX=off`.
+that rewrites the worktree's `.git` file cannot make Ajax run its git config.
 
 By default agents cannot use `gh` (and so cannot `git push` over HTTPS through
 `gh auth git-credential`), and `pgrep` cannot see other processes. Grant those per
