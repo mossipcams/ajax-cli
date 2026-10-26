@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import TaskWorkspace from "./TaskWorkspace";
 import taskDetail from "@/fixtures/task-detail.json";
 import { writeOrchestrationChatEnabled } from "@/features/settings/public";
@@ -15,6 +16,21 @@ import {
 } from "@/features/chat/composer/public";
 import { commitConfirmedAction } from "@/features/task/taskMutations";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
+
+const chatSurfaceCapture = vi.hoisted(() => ({
+  latest: null as null | { onSessionActivity?: (activity: { model: string; busy: boolean }) => void },
+  stubSurface: false,
+}));
+
+vi.mock("@/features/chat/public", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/features/chat/public")>();
+  const CapturingChatSurface = (props: ComponentProps<typeof actual.ChatSurface>) => {
+    chatSurfaceCapture.latest = props;
+    if (chatSurfaceCapture.stubSurface) return <section data-testid="session-chat" />;
+    return <actual.ChatSurface {...props} />;
+  };
+  return { ...actual, ChatSurface: CapturingChatSurface };
+});
 
 class StubWebSocket {
   readyState = 1;
@@ -48,6 +64,7 @@ function confirmFromShell(
 describe("TaskWorkspace", () => {
   beforeEach(() => {
     localStorage.clear();
+    chatSurfaceCapture.stubSurface = false;
     writeOrchestrationChatEnabled(true);
     vi.stubGlobal(
       "WebSocket",
@@ -173,6 +190,51 @@ describe("TaskWorkspace", () => {
     expect(window.location.hash).not.toBe(sessionHash("web/fix-login"));
   });
 
+  it("refreshes task detail only when the session stream busy state changes", async () => {
+    chatSurfaceCapture.stubSurface = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ models: [{ id: "auto", label: "Auto" }] })),
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    const onMutated = vi.fn();
+    render(
+      <TaskWorkspace
+        handle="web/fix-login"
+        mode="chat"
+        detail={readyDetail({ ...taskDetail, session_capable: true })}
+        orchestrationChat
+        onGo={vi.fn()}
+        onBack={vi.fn()}
+        onOpenDiff={vi.fn()}
+        onMutated={onMutated}
+      />,
+    );
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    const emit = (busy: boolean) =>
+      act(() => {
+        chatSurfaceCapture.latest?.onSessionActivity?.({ model: "auto", busy });
+      });
+
+    emit(false);
+    const baseline = onMutated.mock.calls.length;
+    emit(true);
+    expect(onMutated).toHaveBeenCalledTimes(baseline + 1);
+    emit(true);
+    expect(onMutated).toHaveBeenCalledTimes(baseline + 1);
+    emit(false);
+    expect(onMutated).toHaveBeenCalledTimes(baseline + 2);
+  });
+
   it("opens one task details sheet from chat header Details", async () => {
     vi.stubGlobal(
       "fetch",
@@ -243,6 +305,76 @@ describe("TaskWorkspace", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("task-meta-details-trigger"));
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+  });
+
+  describe("session busy convergence", () => {
+    beforeEach(() => {
+      chatSurfaceCapture.stubSurface = true;
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      chatSurfaceCapture.stubSurface = false;
+    });
+
+    function chatTree(status: BrowserTaskDetail["status"], onMutated: () => void) {
+      return (
+        <TaskWorkspace
+          handle="web/fix-login"
+          mode="chat"
+          detail={readyDetail({ ...taskDetail, session_capable: true, status })}
+          orchestrationChat
+          onGo={vi.fn()}
+          onBack={vi.fn()}
+          onOpenDiff={vi.fn()}
+          onMutated={onMutated}
+        />
+      );
+    }
+
+    const emit = (busy: boolean) =>
+      act(() => {
+        chatSurfaceCapture.latest?.onSessionActivity?.({ model: "auto", busy });
+      });
+
+    it("refetches every second while the stream is busy and the server status is not running", () => {
+      const onMutated = vi.fn();
+      render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      const afterFlip = onMutated.mock.calls.length;
+
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 1);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 2);
+    });
+
+    it("stops interval refetches once the server status reports running", () => {
+      const onMutated = vi.fn();
+      const view = render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      act(() => vi.advanceTimersByTime(1000));
+
+      view.rerender(chatTree("running", onMutated));
+      const afterRunning = onMutated.mock.calls.length;
+      act(() => vi.advanceTimersByTime(3000));
+      expect(onMutated).toHaveBeenCalledTimes(afterRunning);
+    });
+
+    it("does not interval-refetch when the stream is not busy", () => {
+      const onMutated = vi.fn();
+      render(chatTree("idle", onMutated));
+      emit(false);
+      emit(true);
+      emit(false);
+      const afterFlip = onMutated.mock.calls.length;
+
+      act(() => vi.advanceTimersByTime(3000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip);
+    });
   });
 
   describe("Drop dismiss composer cleanup", () => {

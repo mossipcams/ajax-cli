@@ -277,7 +277,9 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
         );
       }
       if (/^\/api\/tasks\/[^/]+$/.test(path)) {
-        return new Response(JSON.stringify(routeMap["__detail__"]), {
+        const override = (globalThis as unknown as { __taskDetailOverride?: unknown })
+          .__taskDetailOverride;
+        return new Response(JSON.stringify(override ?? routeMap["__detail__"]), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -291,6 +293,19 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
       return real(input, init);
     };
   }, routes);
+}
+
+/**
+ * Swaps the task detail returned by `/api/tasks/:handle` for the rest of the
+ * page's life (until navigation). `null` restores the mockFetch `__detail__`.
+ */
+export async function setTaskDetailOverride(
+  page: Page,
+  detail: Record<string, unknown> | null,
+): Promise<void> {
+  await page.evaluate((value) => {
+    (globalThis as unknown as { __taskDetailOverride?: unknown }).__taskDetailOverride = value;
+  }, detail);
 }
 
 export async function mockTerminalWebSocket(

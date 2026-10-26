@@ -10,7 +10,9 @@ interface Props {
 }
 
 export default function LiveHead({ view, permission, actions, onStop }: Props) {
-  const quiet = view.state === "working" && view.activityAgeMs >= 60_000;
+  // Quiet means a live turn went silent. A server-running head with an idle stream
+  // (e.g. background work) must show its server explanation, never the quiet line.
+  const quiet = view.state === "working" && view.streamBusy === true && view.activityAgeMs >= 60_000;
   const showThinking = view.state === "working" && !view.hasActivity;
 
   return (
@@ -59,6 +61,11 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
           {showThinking ? (
             <p className="session-head-quiet" data-testid="session-head-idle">
               Thinking…
+            </p>
+          ) : null}
+          {view.workingText && view.streamBusy !== true ? (
+            <p className="session-head-quiet" data-testid="session-head-server-status">
+              {view.workingText}
             </p>
           ) : null}
           {quiet ? (

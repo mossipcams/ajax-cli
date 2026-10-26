@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource, WebAction } from "@/shared/lib/types";
 import {
   ChatSurface,
@@ -19,6 +19,12 @@ import {
 import { shouldRedirectSessionToTerminal } from "./taskWorkspaceRouting";
 
 export type TaskWorkspaceMode = "chat" | "terminal";
+
+/**
+ * While the session stream is busy but the server task has not caught up to
+ * `running`, refetch task detail on this cadence until the server agrees.
+ */
+const SESSION_CONVERGE_MS = 1000;
 
 export interface TaskWorkspaceProps {
   handle: string;
@@ -65,6 +71,7 @@ export default function TaskWorkspace({
   const detailsPanelId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const lastSessionBusyRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     if (mode !== "chat") return;
@@ -72,6 +79,15 @@ export default function TaskWorkspace({
     if (!shouldRedirectSessionToTerminal(handle, detail.data)) return;
     onGo(taskHash(handle));
   }, [mode, handle, detail.status, detail.data, onGo]);
+
+  const taskDetail = detail.data;
+  const sessionConverging = mode === "chat" && sessionBusy && taskDetail?.status !== "running";
+
+  useEffect(() => {
+    if (!sessionConverging) return;
+    const timer = setInterval(() => onMutated?.(), SESSION_CONVERGE_MS);
+    return () => clearInterval(timer);
+  }, [sessionConverging, onMutated]);
 
   useEffect(() => {
     registerDropComposerCleanup(clearComposerPresentationState);
@@ -82,17 +98,12 @@ export default function TaskWorkspace({
     if (pendingConfirmAction === "drop") setDetailsOpen(false);
   }, [pendingConfirmAction]);
 
-  const taskDetail = detail.data;
   const actions = taskDetail ? visibleTaskActions(taskDetail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
 
-  const taskAttention: ChatTaskAttention | null =
-    taskDetail?.status === "waiting" || taskDetail?.status === "error"
-      ? {
-          status: taskDetail.status,
-          explanation: taskDetail.status_explanation,
-        }
-      : null;
+  const taskAttention: ChatTaskAttention | null = taskDetail
+    ? { status: taskDetail.status, explanation: taskDetail.status_explanation }
+    : null;
 
   function handleDismiss() {
     clearComposerPresentationState(handle);
@@ -193,6 +204,9 @@ export default function TaskWorkspace({
           }
           onSessionActivity={({ busy }) => {
             setSessionBusy(busy);
+            const previousBusy = lastSessionBusyRef.current;
+            lastSessionBusyRef.current = busy;
+            if (previousBusy !== null && previousBusy !== busy) onMutated?.();
           }}
         />
         {detailsSheet}
