@@ -920,9 +920,9 @@ only the chat live head knew a turn was in flight.
   lineage events, which the web session stream carries none of today. Background
   work is one level, not a set of jobs: whether any topmost shell (`sh`, `bash`,
   `zsh`, `dash`, `fish`, with no shell ancestor) under the session's recorded child
-  pid is alive. The reporter reads that level when the root turn moves to `Settled`
-  or `Cancelled`, before it reduces the event, so a turn end reports
-  `Background work running` at once and never `Done` first. A `Failed` turn never
+  pid is alive. The reporter reads that level on every `turn_end` (the terminal
+  event), whether or not a turn start was observed, before it reduces the event, so a
+  turn end reports `Background work running` at once and never `Done` first. A `Failed` turn never
   reads the level and reports `Agent stopped`; an idle, never-run or running root
   never carries it. No process tree (no client, or no child pid) reads as clear,
   and an unavailable `ps` snapshot is no evidence. While held, the level is one

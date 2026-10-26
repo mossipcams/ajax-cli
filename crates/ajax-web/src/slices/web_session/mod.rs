@@ -396,6 +396,9 @@ mod orphan_sweep_tests;
 mod background_jobs_tests;
 
 #[cfg(test)]
+mod background_jobs_live_tests;
+
+#[cfg(test)]
 mod process_identity_tests;
 
 #[cfg(test)]
