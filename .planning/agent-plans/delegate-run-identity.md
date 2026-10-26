@@ -52,7 +52,7 @@ new turn to handle the result, and the debounce stops a "Response ready"
 flash (and a possible push) in that gap.
 
 1. **Detect** in the ACP host (unsandboxed). Take one `ps -A -o
-   pid=,ppid=,comm=` snapshot (macOS + Linux), shared across sessions. The host
+   pid=,ppid=,lstart=,comm=` snapshot (macOS + Linux), shared across sessions. The host
    already uses `ps` in `process_identity.rs`. Do it on `TurnEnd`, then every
    ~2 s from the session actor tick (`task_session.rs:404`) while any
    background job is tracked. Sessions with no background job cost nothing.

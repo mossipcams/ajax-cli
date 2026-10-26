@@ -219,9 +219,6 @@ impl TaskSessionState {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
         for event in events {
-            if matches!(event, SessionServerEvent::TurnEnd { .. }) {
-                self.background.note_turn_ended();
-            }
             // Advance the dedupe checkpoint only for durable events.
             self.evidence
                 .should_skip_duplicate_spawn_error(self.generation, event);

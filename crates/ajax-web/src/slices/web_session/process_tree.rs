@@ -6,9 +6,6 @@
 //! never identifies the harness or its binaries, so it works whichever agent or
 //! router started the job, and multicall binaries (Claude's grep runs as
 //! `claude` with argv `ugrep`) cannot be mistaken for a job.
-//!
-//! Nothing calls this module yet. Slice 2 of issue #1412 wires it into the
-//! session tick, so the public items allow dead code until then.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::{Command, Stdio};
@@ -20,21 +17,22 @@ use std::process::{Command, Stdio};
 const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "fish"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(super) struct ProcessEntry {
     pub(super) pid: u32,
     pub(super) ppid: u32,
+    /// Process start time as `ps` prints it, e.g. `Sat Oct 25 02:10:36 2026`.
+    /// Together with `pid` it identifies one process, even after the pid is reused.
+    pub(super) start: String,
     pub(super) comm: String,
 }
 
-/// Take one process-table snapshot via `ps -A -o pid=,ppid=,comm=`.
+/// Take one process-table snapshot via `ps -A -o pid=,ppid=,lstart=,comm=`.
 ///
 /// Returns `Some(parsed table)` only when the command ran and exited 0; every
 /// other outcome is `None`.
-#[allow(dead_code)]
 pub(super) fn snapshot() -> Option<Vec<ProcessEntry>> {
     let output = Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid=,comm="])
+        .args(["-A", "-o", "pid=,ppid=,lstart=,comm="])
         .stdin(Stdio::null())
         .output()
         .ok()?;
@@ -45,23 +43,32 @@ pub(super) fn snapshot() -> Option<Vec<ProcessEntry>> {
     Some(parse_ps(&stdout))
 }
 
-/// Parse `ps -o pid=,ppid=,comm=` output. Lines that do not start with two
-/// unsigned integers followed by a non-empty command are skipped.
-#[allow(dead_code)]
+/// Parse `ps -o pid=,ppid=,lstart=,comm=` output. Lines that do not start with two
+/// unsigned integers, five `lstart` tokens and a non-empty command are skipped.
 pub(super) fn parse_ps(output: &str) -> Vec<ProcessEntry> {
     output.lines().filter_map(parse_line).collect()
 }
 
+/// Parse one `pid ppid lstart comm` line. The five `lstart` tokens are rejoined
+/// with single spaces, so a padded day (`Oct  5`) reads the same as `Oct 5`. The
+/// command is the trimmed remainder, so it may contain spaces and paths.
 fn parse_line(line: &str) -> Option<ProcessEntry> {
     let (pid, rest) = split_token(line)?;
-    let (ppid, comm) = split_token(rest)?;
-    let comm = comm.trim();
+    let (ppid, mut rest) = split_token(rest)?;
+    let mut start = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let (token, next) = split_token(rest)?;
+        start.push(token);
+        rest = next;
+    }
+    let comm = rest.trim();
     if comm.is_empty() {
         return None;
     }
     Some(ProcessEntry {
         pid: pid.parse().ok()?,
         ppid: ppid.parse().ok()?,
+        start: start.join(" "),
         comm: comm.to_string(),
     })
 }
@@ -79,13 +86,12 @@ fn split_token(line: &str) -> Option<(&str, &str)> {
     }
 }
 
-/// Return the pids of every shell in the strict subtree of `root` that has no
-/// shell ancestor between it and `root`, sorted ascending.
+/// Return the entries of every shell in the strict subtree of `root` that has no
+/// shell ancestor between it and `root`, sorted ascending by pid.
 ///
 /// `root` is never returned, even when it is a shell. A ppid cycle terminates
 /// because each pid is visited at most once.
-#[allow(dead_code)]
-pub(super) fn background_shells(table: &[ProcessEntry], root: u32) -> Vec<u32> {
+pub(super) fn background_shells(table: &[ProcessEntry], root: u32) -> Vec<&ProcessEntry> {
     let mut children: HashMap<u32, Vec<&ProcessEntry>> = HashMap::new();
     for entry in table {
         children.entry(entry.ppid).or_default().push(entry);
@@ -95,18 +101,18 @@ pub(super) fn background_shells(table: &[ProcessEntry], root: u32) -> Vec<u32> {
     let mut queue = VecDeque::from([root]);
     let mut found = Vec::new();
     while let Some(pid) = queue.pop_front() {
-        for child in children.get(&pid).into_iter().flatten() {
+        for &child in children.get(&pid).into_iter().flatten() {
             if !visited.insert(child.pid) {
                 continue;
             }
             if is_shell(&child.comm) {
-                found.push(child.pid);
+                found.push(child);
             } else {
                 queue.push_back(child.pid);
             }
         }
     }
-    found.sort_unstable();
+    found.sort_unstable_by_key(|entry| entry.pid);
     found
 }
 

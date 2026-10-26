@@ -80,6 +80,11 @@ impl SessionEvidence {
         let Some(activity) = self.activity_reporter.activity_for_event(event) else {
             return;
         };
+        self.report(qualified_handle, activity);
+    }
+
+    /// Deliver one activity and commit it; on failure keep it pending for retry.
+    pub(super) fn report(&mut self, qualified_handle: &str, activity: SessionActivity) {
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {
                 self.activity_reporter.commit(activity);

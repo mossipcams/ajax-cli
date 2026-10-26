@@ -919,18 +919,23 @@ only the chat live head knew a turn was in flight.
   it never overwrites prior live evidence. Child runs come from explicit
   lineage events, which the web session stream carries none of today, or from
   host-detected background jobs. While the root turn is not running, the host
-  takes an unsandboxed `ps -A -o pid=,ppid=,comm=` snapshot, polled right after
-  `turn_end` and then every 2 s while a job is tracked, off the actor thread.
-  Every topmost shell
+  takes an unsandboxed `ps -A -o pid=,ppid=,lstart=,comm=` snapshot. Polling arms each
+  time the root turn stops, whatever ended it (turn end, error or cancel), and
+  once when the actor starts, so a restored session with background shells is
+  scanned once; it then polls every 2 s while a job is tracked. The actor awaits
+  that one scan on the blocking pool. Every topmost shell
   (`sh`, `bash`, `zsh`, `dash`, `fish` with no shell ancestor) in the subtree of
   the session's recorded child pid is one job, whatever harness or router
   started it. Each job is a completion-holding child run
   `bg-<pid>-<start token>` (`ChildStarted`/`ChildEnded`) and ends only after 5 s
-  unseen, so a follow-up turn does not flash `Done`. While a job is held after
-  the root turn settles (`CompletedLocallyChildrenActive` /
+  unseen, so a follow-up turn does not flash `Done`. Losing the client (no ACP
+  client, from detach, cancel-exit or close) ends every tracked job at once,
+  with no debounce, so the task leaves `Background work running`. While a job is
+  held after the root turn settles or is cancelled (`CompletedLocallyChildrenActive` /
   `WaitingOnDelegated`), the host reports `AgentRunning` with summary
-  `Background work running` instead of `Done` or `WaitingForInput`. An
-  unavailable snapshot is no evidence and never ends a job. Known ceiling: a
+  `Background work running` instead of `Done` or `WaitingForInput`. A failed
+  root turn is never masked: it reports `Agent stopped` even with a held job.
+  An unavailable snapshot is no evidence and never ends a job. Known ceiling: a
   harness that keeps an idle persistent shell reads as background work; only
   Claude sessions have been verified. A harness without lineage events and
   without background jobs still degrades to coarse `AgentRunning`. The host

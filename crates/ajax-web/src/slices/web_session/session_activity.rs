@@ -148,9 +148,15 @@ impl SessionActivityReporter {
             return None;
         }
 
-        let activity = match projection.phase {
+        let held = matches!(
+            projection.phase,
+            ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated
+        );
+        let activity = match (held, self.state.turn()) {
             // Checked before the kind: a held root reads as WaitingForInput, which must not show as the operator's turn.
-            ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated => {
+            // A failed root is never masked as background work.
+            (true, RootTurnState::Failed) => SessionActivity::TurnFailed,
+            (true, RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Idle) => {
                 SessionActivity::BackgroundRunning
             }
             _ => match projection.live.kind {

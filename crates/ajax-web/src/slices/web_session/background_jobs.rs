@@ -6,15 +6,15 @@
 //! sightings into `ChildStarted` / `ChildEnded` events, so the reducer holds the
 //! task at "Background work running" instead of "Response ready".
 //!
-//! The tracker is pure: it takes injected instants and run-id sets. Only
-//! [`TaskSessionState::poll_background_jobs`] runs `ps`, on the blocking pool.
+//! The tracker is pure: it takes injected instants and run-id sets, and
+//! [`BackgroundJobs::plan`] decides each tick. Only
+//! [`TaskSessionState::poll_background_jobs`] runs `ps`, on the blocking pool,
+//! and the actor awaits that one scan.
 
-use super::process_identity;
-use super::process_tree;
-use super::session_activity::{try_report_session_activity, SessionActivity};
+use super::process_tree::{self, ProcessEntry};
+use super::session_activity::SessionActivity;
 use super::task_session::TaskSessionState;
 use ajax_core::acp_execution_state::AcpExecutionEvent;
-use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -28,29 +28,81 @@ pub(super) const END_DEBOUNCE: Duration = Duration::from_secs(5);
 // Claude SDK `background_tasks_changed` message, where a harness exposes them.
 pub(super) const POLL_EVERY: Duration = Duration::from_secs(2);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct BackgroundJobs {
     /// Run id -> the last poll at which the job was seen live.
     tracked: BTreeMap<String, Instant>,
-    /// Start-time tokens for pids seen in recent scans, so `ps -p` runs once per new pid.
-    tokens: BTreeMap<u32, String>,
     last_poll: Option<Instant>,
-    /// Set when a turn ends; the next due poll then runs immediately.
+    /// Set when the root turn stops, and once at creation; the next due poll then runs immediately.
     poll_after_turn: bool,
+    /// Whether the root turn was running at the previous plan, to see it stop.
+    turn_was_running: bool,
+}
+
+impl Default for BackgroundJobs {
+    fn default() -> Self {
+        Self {
+            tracked: BTreeMap::new(),
+            last_poll: None,
+            poll_after_turn: true,
+            turn_was_running: false,
+        }
+    }
+}
+
+/// What one tick must do about background jobs.
+#[derive(Debug, PartialEq)]
+pub(super) enum PollPlan {
+    Skip,
+    /// The client is gone: every tracked job ends at once, without the debounce.
+    EndAll(Vec<AcpExecutionEvent>),
+    /// Scan the process subtree of this pid.
+    Scan(u32),
+}
+
+fn child_ended(run_id: String) -> AcpExecutionEvent {
+    AcpExecutionEvent::ChildEnded {
+        run_id,
+        completion_holding: true,
+    }
 }
 
 impl BackgroundJobs {
-    pub(super) fn note_turn_ended(&mut self) {
-        self.poll_after_turn = true;
-    }
-
     pub(super) fn is_tracking(&self) -> bool {
         !self.tracked.is_empty()
     }
 
-    /// Due when the root turn is not running, a turn just ended or jobs are
-    /// tracked, and either a turn just ended or `POLL_EVERY` has passed.
-    pub(super) fn poll_due(&self, turn_running: bool, now: Instant) -> bool {
+    /// Decide this tick. `root` is the child pid of the live client, `None` when
+    /// there is no client. A stop of the root turn arms the next poll.
+    pub(super) fn plan(&mut self, root: Option<u32>, turn_running: bool, now: Instant) -> PollPlan {
+        if self.turn_was_running && !turn_running {
+            self.poll_after_turn = true;
+        }
+        self.turn_was_running = turn_running;
+        let Some(root) = root else {
+            return self.end_all();
+        };
+        if !self.poll_due(turn_running, now) {
+            return PollPlan::Skip;
+        }
+        self.mark_polled(now);
+        PollPlan::Scan(root)
+    }
+
+    fn end_all(&mut self) -> PollPlan {
+        if self.tracked.is_empty() {
+            return PollPlan::Skip;
+        }
+        let events = std::mem::take(&mut self.tracked)
+            .into_keys()
+            .map(child_ended)
+            .collect();
+        PollPlan::EndAll(events)
+    }
+
+    /// Due when the root turn is not running, a turn just stopped or jobs are
+    /// tracked, and either a turn just stopped or `POLL_EVERY` has passed.
+    fn poll_due(&self, turn_running: bool, now: Instant) -> bool {
         if turn_running || !(self.poll_after_turn || self.is_tracking()) {
             return false;
         }
@@ -60,7 +112,7 @@ impl BackgroundJobs {
                 .is_none_or(|last| now.saturating_duration_since(last) >= POLL_EVERY)
     }
 
-    pub(super) fn mark_polled(&mut self, now: Instant) {
+    fn mark_polled(&mut self, now: Instant) {
         self.last_poll = Some(now);
         self.poll_after_turn = false;
     }
@@ -91,88 +143,59 @@ impl BackgroundJobs {
             .collect();
         for run_id in ended {
             self.tracked.remove(&run_id);
-            events.push(AcpExecutionEvent::ChildEnded {
-                run_id,
-                completion_holding: true,
-            });
+            events.push(child_ended(run_id));
         }
         events
     }
 }
 
-pub(super) fn run_id(pid: u32, token: &str) -> String {
-    format!("bg-{pid}-{token}")
+/// Run id for one shell. Its start time is part of the id, so a reused pid is a
+/// new job, and the spaces are replaced so the id stays one token.
+pub(super) fn run_id(pid: u32, start: &str) -> String {
+    format!("bg-{pid}-{}", start.replace(' ', "_"))
 }
 
-/// Map shell pids to run ids. `lookup` supplies a start token only for a pid
-/// not cached yet; a pid whose token cannot be read has already exited and is
-/// left out. Cache entries for pids absent from `pids` are dropped, so a reused
-/// pid cannot inherit a token from an earlier job.
-pub(super) fn run_ids(
-    tokens: &mut BTreeMap<u32, String>,
-    pids: &[u32],
-    mut lookup: impl FnMut(u32) -> Option<String>,
-) -> BTreeSet<String> {
-    tokens.retain(|pid, _| pids.contains(pid));
-    let mut ids = BTreeSet::new();
-    for &pid in pids {
-        let token = match tokens.entry(pid) {
-            Entry::Occupied(slot) => slot.get().clone(),
-            Entry::Vacant(slot) => match lookup(pid) {
-                Some(token) => slot.insert(token).clone(),
-                None => continue,
-            },
-        };
-        ids.insert(run_id(pid, &token));
-    }
-    ids
+/// Run ids for the topmost shells under `root` in one process-table snapshot.
+pub(super) fn run_ids(table: &[ProcessEntry], root: u32) -> BTreeSet<String> {
+    process_tree::background_shells(table, root)
+        .into_iter()
+        .map(|entry| run_id(entry.pid, &entry.start))
+        .collect()
 }
 
-/// Blocking: one process-table snapshot, then start-token lookups for new pids.
-/// `None` means the snapshot is unavailable (the sandbox denies `ps`). The caller
-/// must read that as no evidence, not as every job having ended.
-pub(super) fn scan(tokens: &mut BTreeMap<u32, String>, root: u32) -> Option<BTreeSet<String>> {
+/// Blocking: one process-table snapshot. `None` means the snapshot is unavailable
+/// (the sandbox denies `ps`). The caller must read that as no evidence, not as
+/// every job having ended.
+pub(super) fn scan(root: u32) -> Option<BTreeSet<String>> {
     let table = process_tree::snapshot()?;
-    let pids = process_tree::background_shells(&table, root);
-    Some(run_ids(tokens, &pids, |pid| {
-        process_identity::start_token(i64::from(pid))
-    }))
+    Some(run_ids(&table, root))
 }
 
 impl TaskSessionState {
-    /// Scan the session's process subtree when a poll is due, feed the tracker and
-    /// report any change through the same path as turn events.
+    /// Run this tick's background-job plan and report any change through the same
+    /// path as turn events.
     pub(super) async fn poll_background_jobs(&mut self) {
-        let Some(root) = self
-            .acp
-            .client
-            .as_ref()
-            .and_then(|client| client.child_pid())
-        else {
-            return;
+        let root = match self.acp.client.as_ref() {
+            None => None,
+            Some(client) => match client.child_pid() {
+                Some(pid) => Some(pid),
+                // A live client with no child pid has no process tree: no evidence.
+                None => return,
+            },
         };
         let now = Instant::now();
-        if !self
-            .background
-            .poll_due(self.evidence.activity_reporter.turn_running(), now)
-        {
-            return;
-        }
-        self.background.mark_polled(now);
-        let mut tokens = std::mem::take(&mut self.background.tokens);
-        let scanned = tokio::task::spawn_blocking(move || {
-            let live = scan(&mut tokens, root);
-            (tokens, live)
-        })
-        .await;
-        let Ok((tokens, live)) = scanned else {
-            return;
+        let turn_running = self.evidence.activity_reporter.turn_running();
+        let events = match self.background.plan(root, turn_running, now) {
+            PollPlan::Skip => return,
+            PollPlan::EndAll(events) => events,
+            PollPlan::Scan(pid) => {
+                let scanned = tokio::task::spawn_blocking(move || scan(pid)).await;
+                let Ok(Some(live)) = scanned else {
+                    return;
+                };
+                self.background.observe(&live, now)
+            }
         };
-        self.background.tokens = tokens;
-        let Some(live) = live else {
-            return;
-        };
-        let events = self.background.observe(&live, now);
         if events.is_empty() {
             return;
         }
@@ -188,20 +211,6 @@ impl TaskSessionState {
     fn report_background_activity(&mut self, activity: SessionActivity) {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
-        match try_report_session_activity(
-            &self.evidence.report_activity,
-            &self.qualified_handle,
-            activity,
-        ) {
-            Ok(()) => {
-                self.evidence.activity_reporter.commit(activity);
-                self.evidence.pending_activity_report = None;
-                self.evidence.activity_report_fault = None;
-            }
-            Err(error) => {
-                self.evidence.note_activity_report_failure(&error);
-                self.evidence.pending_activity_report = Some(activity);
-            }
-        }
+        self.evidence.report(&self.qualified_handle, activity);
     }
 }
