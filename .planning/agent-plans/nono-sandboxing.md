@@ -89,10 +89,13 @@ worktree plus the few paths Ajax and git need.
   `nono --version` at launch.
 - Claude auto-update fails in-sandbox (install dir is read-only). Acceptable:
   the agent cannot rewrite its own binary; update outside Ajax.
-- Keychain: profile grants ONLY `login.keychain-db` + `metadata.keychain-db`
-  (allow_file + bypass_protection; Claude/Codex OAuth). Narrower than nono's own
-  `claude_code_macos` group (whole Keychains dir), which we deliberately do not
-  include. Residual: the encrypted login keychain file is readable by agents.
+- Keychain: profile grants the whole `~/Library/Keychains` dir read-write
+  (allow + bypass_protection) because keychain writes need temp files in that
+  dir. Without it sandboxed Claude could not persist rotated OAuth refresh
+  tokens, the stale token was reused and the login revoked (`OAuth token
+  revoked`, first seen 2026-10-23). Residual: agents can read and modify any
+  keychain item file in that dir (items stay encrypted). Accepted under the
+  accident-prevention threat model.
 - Network is open (non-goal for phase 1); exfiltration of worktree contents is not prevented.
 - Default-on: `cargo run`/tests are unsandboxed via the `.cargo/config.toml`
   `[env]` opt-out; installed binaries (`cargo install`) are not affected by it.

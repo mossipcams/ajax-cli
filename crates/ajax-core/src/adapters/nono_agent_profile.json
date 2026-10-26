@@ -30,7 +30,11 @@
       "$HOME/.config/cursor",
       "$HOME/.npm",
       "$HOME/.cargo/registry",
-      "$HOME/.cargo/git"
+      "$HOME/.cargo/git",
+      {
+        "path": "$HOME/Library/Keychains",
+        "when": "macos"
+      }
     ],
     "allow_file": [
       "$HOME/.claude.json",
@@ -52,6 +56,10 @@
       },
       {
         "path": "$HOME/Library/Keychains/metadata.keychain-db",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/Library/Keychains",
         "when": "macos"
       }
     ],
