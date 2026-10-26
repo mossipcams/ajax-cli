@@ -59,6 +59,12 @@
       "$HOME/.local/share/cursor-agent",
       "$HOME/.local/share/claude"
     ],
+    "read_file": [
+      {
+        "path": "$HOME/.orbstack/ssh/config",
+        "when": "macos"
+      }
+    ],
     "deny": [
       {
         "path": "/private/tmp/tmux-$UID",
@@ -69,7 +75,7 @@
         "when": "linux"
       },
       {
-        "path": "$HOME/.orbstack",
+        "path": "$HOME/.orbstack/run",
         "when": "macos"
       },
       {
