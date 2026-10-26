@@ -261,13 +261,13 @@ function verifyCi(ci, fail, root) {
 
   const container = webE2e.container ?? {};
   if (
-    container.image !== "mcr.microsoft.com/playwright:v1.61.1-noble" &&
-    !/^mcr\.microsoft\.com\/playwright:v1\.61\.1-noble@sha256:[0-9a-f]{64}$/.test(
+    container.image !== "mcr.microsoft.com/playwright:v1.62.1-noble" &&
+    !/^mcr\.microsoft\.com\/playwright:v1\.62\.1-noble@sha256:[0-9a-f]{64}$/.test(
       container.image ?? "",
     )
   ) {
     fail(
-      "ci.yml web-e2e job must run in mcr.microsoft.com/playwright:v1.61.1-noble.",
+      "ci.yml web-e2e job must run in mcr.microsoft.com/playwright:v1.62.1-noble.",
     );
   }
 
