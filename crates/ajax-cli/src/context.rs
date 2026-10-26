@@ -341,6 +341,21 @@ fn merge_registries(
         }
     }
 
+    // #1398: honor deletions this writer made when the disk revision moved since load.
+    for baseline_task in baseline.list_tasks() {
+        if in_memory.get_task(&baseline_task.id).is_some() {
+            continue;
+        }
+        if merged
+            .get_task(&baseline_task.id)
+            .is_some_and(|disk_task| disk_task.created_at == baseline_task.created_at)
+        {
+            merged
+                .delete_task(&baseline_task.id)
+                .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+        }
+    }
+
     for event in in_memory.list_events() {
         if merged.get_task(&event.task_id).is_none() {
             continue;
