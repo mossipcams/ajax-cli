@@ -80,7 +80,7 @@ Found by the independent Codex review and checked by the parent against nono v0.
 - Added credential denies that nono's default list misses: `~/.pgpass`, `~/.pypirc`,
   `~/.cargo/credentials{,.toml}`, and OrbStack's private key `~/.orbstack/ssh/id_ed25519`.
 - The edited issue-1423 test now asserts the `$HOME` grant and the OrbStack key deny,
-  in place of the removed `read_file` grant.
+  in place of the removed `read_file` grant. Matt signed off on this edit (2026-10-26).
 - Known limit: Ajax-state denies cover the default and dev-profile paths only. A custom
   `AJAX_HOME`/`AJAX_STATE` location is not denied.
 
