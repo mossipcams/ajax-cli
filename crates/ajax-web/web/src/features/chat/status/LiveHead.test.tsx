@@ -6,6 +6,7 @@ import { buildHeadView, headState, headTone, isTaskLevelAttention } from "./head
 import { initialHeadViewForTests } from "./headView.testHelpers";
 import { parseServerFrame } from "../session/transport/parse";
 import { projectWireEvent } from "../session/projectWireInput";
+import type { ChatSessionView } from "../session/public";
 import { initialChatSessionReducerState, reduceChatSession } from "../session/reducer";
 
 const noop = vi.fn();
@@ -224,7 +225,48 @@ describe("LiveHead working quiet lines", () => {
     mountHead({ state: "working", tone: "running" });
     expect(screen.getByText("Working")).toBeInTheDocument();
   });
+
+  it("shows No recent activity with the Last update line for a busy stream gone quiet, even with a server explanation", () => {
+    const view = buildHeadView({
+      session: liveSession(true),
+      taskAttention: { status: "running", explanation: "Background work running" },
+      hasActivity: true,
+      activityAgeMs: 61_000,
+      connected: true,
+    });
+    render(<LiveHead view={view} permission={null} onStop={noop} />);
+    expect(screen.getByTestId("session-head-line")).toHaveTextContent("No recent activity");
+    expect(screen.queryByText("Background work running")).not.toBeInTheDocument();
+    expect(screen.getByTestId("session-head-activity-age")).toHaveTextContent("Last update 1m ago");
+  });
+
+  it("shows the server explanation, never the quiet line, when the stream is idle under running background work", () => {
+    const view = buildHeadView({
+      session: liveSession(false),
+      taskAttention: { status: "running", explanation: "Background work running" },
+      hasActivity: true,
+      activityAgeMs: 10 * 60_000,
+      connected: true,
+    });
+    render(<LiveHead view={view} permission={null} onStop={noop} />);
+    expect(screen.getByTestId("session-head-line")).toHaveTextContent("Background work running");
+    expect(screen.queryByText("No recent activity")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Last update/)).not.toBeInTheDocument();
+  });
 });
+
+function liveSession(busy: boolean): ChatSessionView {
+  return {
+    conversation: [],
+    turn: { busy, proseOpen: true },
+    permission: { decision: null, resolvedIds: [] },
+    elicitation: { decision: null, resolvedIds: [] },
+    usage: { context: null },
+    model: {},
+    revision: 0,
+  };
+}
 
 describe("buildHeadView", () => {
   it("derives task-level attention without BrowserTaskDetail", () => {

@@ -1,9 +1,14 @@
+import type { TaskStatus } from "@/shared/lib/types";
 import type { ChatSessionView, Decision, ElicitationDecision } from "../session/public";
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
+/**
+ * Server task status projected onto the head. TaskWorkspace passes the loaded
+ * task detail's status and explanation; `null` means detail is unavailable.
+ */
 export interface ChatTaskAttention {
-  status: "waiting" | "error";
+  status: TaskStatus;
   explanation?: string | null;
 }
 
@@ -19,6 +24,9 @@ export interface ChatHeadView {
   taskAttention: ChatTaskAttention | null;
   attentionText: string | null;
   showHeadLine: boolean;
+  workingText?: string | null;
+  /** Browser session stream `turn.busy`; gates the quiet ("No recent activity") state. */
+  streamBusy?: boolean;
 }
 
 const STATE_LABELS: Record<HeadState, string> = {
@@ -28,11 +36,17 @@ const STATE_LABELS: Record<HeadState, string> = {
   idle: "Ready",
 };
 
-export function headStateLabel(state: HeadState, quiet: boolean): string {
+export function headStateLabel(state: HeadState, quiet: boolean, workingText?: string | null): string {
   if (state === "working" && quiet) return "No recent activity";
+  if (state === "working" && workingText) return workingText;
+  if (state === "working") return STATE_LABELS.working;
   return STATE_LABELS[state];
 }
 
+/**
+ * Server task status wins whenever it is loaded. The browser stream `busy`
+ * is only a fallback for when task detail is unavailable.
+ */
 export function headState(
   decision: Decision | null,
   elicitation: ElicitationDecision | null,
@@ -40,8 +54,9 @@ export function headState(
   taskAttention: ChatTaskAttention | null,
 ): HeadState {
   if (decision || elicitation) return "decision";
-  if (busy) return "working";
-  if (taskAttention) return "attention";
+  if (!taskAttention) return busy ? "working" : "idle";
+  if (taskAttention.status === "running") return "working";
+  if (taskAttention.status === "waiting" || taskAttention.status === "error") return "attention";
   return "idle";
 }
 
@@ -87,6 +102,8 @@ export function buildHeadView(input: {
   );
   const tone = headTone(state, taskAttention);
   const taskLevel = isTaskLevelAttention(state, taskAttention, decision);
+  const workingText =
+    state === "working" && taskAttention?.explanation?.trim() ? taskAttention.explanation.trim() : null;
   return {
     state,
     tone,
@@ -99,5 +116,7 @@ export function buildHeadView(input: {
     taskAttention: taskLevel ? taskAttention : null,
     attentionText: taskLevel && taskAttention ? attentionText(taskAttention) : null,
     showHeadLine: !taskLevel || !connected,
+    workingText,
+    streamBusy: session.turn.busy,
   };
 }

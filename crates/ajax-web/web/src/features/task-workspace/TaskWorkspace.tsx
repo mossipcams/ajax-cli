@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource, WebAction } from "@/shared/lib/types";
 import {
   ChatSurface,
@@ -65,6 +65,7 @@ export default function TaskWorkspace({
   const detailsPanelId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
+  const lastSessionBusyRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     if (mode !== "chat") return;
@@ -86,13 +87,9 @@ export default function TaskWorkspace({
   const actions = taskDetail ? visibleTaskActions(taskDetail.actions) : [];
   const safeActions = actions.filter((action) => !action.destructive);
 
-  const taskAttention: ChatTaskAttention | null =
-    taskDetail?.status === "waiting" || taskDetail?.status === "error"
-      ? {
-          status: taskDetail.status,
-          explanation: taskDetail.status_explanation,
-        }
-      : null;
+  const taskAttention: ChatTaskAttention | null = taskDetail
+    ? { status: taskDetail.status, explanation: taskDetail.status_explanation }
+    : null;
 
   function handleDismiss() {
     clearComposerPresentationState(handle);
@@ -193,6 +190,9 @@ export default function TaskWorkspace({
           }
           onSessionActivity={({ busy }) => {
             setSessionBusy(busy);
+            const previousBusy = lastSessionBusyRef.current;
+            lastSessionBusyRef.current = busy;
+            if (previousBusy !== null && previousBusy !== busy) onMutated?.();
           }}
         />
         {detailsSheet}

@@ -141,6 +141,17 @@ fullscreen (`html.terminal-expanded`), the header Details control stays
 reachable without permanently reserving terminal band space. Diff Review remains swipe-left.
 The browser still does not own transcript/queue.
 
+The chat live head projects server task status, the same `status` and
+`status_explanation` the dashboard card shows, from the task detail that
+TaskWorkspace loads. A running task reads as working with the server explanation
+(for example "Background work running"), and a waiting or errored task reads as
+attention. Pending permission or elicitation decisions still take precedence. The
+session stream's `busy` flag never overrides a loaded server status. It only drives
+the head when task detail is unavailable. Each change of `busy` triggers an immediate
+task-detail refresh, so the head converges to server truth without waiting for the
+10 second terminal poll. The quiet `No recent activity` state applies only to a busy stream;
+a server-running head with an idle stream keeps its server explanation.
+
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
 `session_models` slice. Authenticated `GET /api/tasks/{handle}/session` WebSocket
