@@ -925,15 +925,15 @@ only the chat live head knew a turn was in flight.
   `Background work running` at once and never `Done` first. A `Failed` turn never
   reads the level and reports `Agent stopped`; an idle, never-run or running root
   never carries it. No process tree (no client, or no child pid) reads as clear,
-  and an unavailable `ps` snapshot is no evidence. While held, the level is one
+  and an unreadable process table is no evidence. While held, the level is one
   synthetic completion-holding child run (`background`) and reads as `AgentRunning`
   with summary `Background work running` instead of `Done` or `WaitingForInput`.
   The actor ticks every 2 s while held and clears the level after 5 s with no shell
   seen, after 30 s with no successful scan, at once when the client is lost, or
   when the turn is no longer finished. A failed read at turn end retries on the
-  ticks for 30 s. Every session shares one cached process table (`ps -A -o
-  pid=,ppid=,comm=`), so a turn end and a tick close together cost one `ps`. A
-  restored session with background shells is not scanned until a turn finishes.
+  ticks for 30 s. Every session shares one cached process table (read in-process
+  from the kernel, see `os_process.rs`), so a turn end and a tick close together
+  cost one read. A restored session with background shells is not scanned until a turn finishes.
   Known ceiling: a harness that keeps an idle persistent shell reads as background
   work; only Claude sessions have been verified. A harness without lineage events
   and without background shells still degrades to coarse `AgentRunning`. The host

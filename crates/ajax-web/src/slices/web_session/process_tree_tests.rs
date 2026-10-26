@@ -3,9 +3,9 @@
 //! harness `claude`, MCP servers, delegate chains and multicall `ugrep`.
 
 use super::process_tree::{
-    background_shells, cached_table, has_background_shell, is_shell, parse_ps, snapshot,
-    ProcessEntry,
+    background_shells, cached_table, has_background_shell, is_shell, snapshot, ProcessEntry,
 };
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -155,41 +155,6 @@ fn has_background_shell_is_true_only_when_a_shell_hangs_under_the_root() {
 }
 
 #[test]
-fn parse_ps_reads_pid_ppid_and_the_spaced_command() {
-    let output = "\
-  1     0 /sbin/launchd
-   42   1 /bin/zsh
-garbage line
-x 1 zsh
-7 abc zsh
-9 3 Google Chrome Helper (Renderer)
-8
-10 1   
-";
-
-    let parsed = parse_ps(output);
-
-    assert_eq!(
-        parsed,
-        vec![
-            entry(1, 0, "/sbin/launchd"),
-            entry(42, 1, "/bin/zsh"),
-            entry(9, 3, "Google Chrome Helper (Renderer)"),
-        ]
-    );
-}
-
-#[test]
-fn parse_ps_keeps_full_command_paths_with_spaces() {
-    let parsed = parse_ps("  42   1 /Applications/Google Chrome.app/Helper\n");
-
-    assert_eq!(
-        parsed,
-        vec![entry(42, 1, "/Applications/Google Chrome.app/Helper")]
-    );
-}
-
-#[test]
 fn is_shell_matches_basename_and_login_dash_only() {
     assert!(is_shell("zsh"));
     assert!(is_shell("-zsh"));
@@ -268,9 +233,44 @@ fn cached_table_does_not_cache_a_failed_snapshot() {
 
 #[test]
 fn snapshot_returns_table_containing_this_process() {
-    let entries = snapshot().expect("ps -A should succeed on this host");
+    let entries = snapshot().expect("the process table should be readable on this host");
     let own = std::process::id();
 
     assert!(!entries.is_empty());
-    assert!(entries.iter().any(|entry| entry.pid == own));
+    let own_entry = entries
+        .iter()
+        .find(|entry| entry.pid == own)
+        .expect("this process must be in the table");
+    assert_eq!(own_entry.ppid, std::os::unix::process::parent_id());
+}
+
+#[test]
+fn snapshot_lists_a_spawned_shell_as_a_child_of_this_process() {
+    // `read` is a shell builtin that blocks on stdin without forking, so the shell
+    // stays a shell with no child process. A `sleep` grandchild would survive
+    // kill() and keep the inherited handles open.
+    let mut child = Command::new("sh")
+        .args(["-c", "read _"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn sh helper");
+    let pid = child.id();
+
+    let snapshot_result = snapshot();
+    child.kill().expect("kill sh helper");
+    child.wait().expect("reap sh helper");
+
+    let entries = snapshot_result.expect("the process table should be readable on this host");
+    let found = entries
+        .iter()
+        .find(|entry| entry.pid == pid)
+        .expect("the spawned shell must be in the table");
+    assert_eq!(found.ppid, std::process::id());
+    assert!(
+        is_shell(&found.comm),
+        "comm {:?} must read as a shell",
+        found.comm
+    );
 }
