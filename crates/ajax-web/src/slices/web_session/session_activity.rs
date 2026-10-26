@@ -121,8 +121,9 @@ impl SessionActivityReporter {
         self.activity_for_event_with_probe(event, &mut || Some(false))
     }
 
-    /// Apply one root event. When it finishes a running turn, `probe` reads the
-    /// background level before the activity is reduced.
+    /// Apply one root event. Every turn end reads the background level before the
+    /// activity is reduced, whether or not a turn start was observed. A failed
+    /// turn is not finished, so it never reads the level.
     pub(crate) fn activity_for_event_with_probe(
         &mut self,
         event: &super::SessionServerEvent,
@@ -136,8 +137,9 @@ impl SessionActivityReporter {
         if self.turn_running() {
             self.set_background_child(false, now);
         }
-        if in_flight && self.turn_finished() && probe() == Some(true) {
-            self.set_background_child(true, now);
+        if matches!(event, super::SessionServerEvent::TurnEnd { .. }) && self.turn_finished() {
+            let held = probe() == Some(true);
+            self.set_background_child(held, now);
         }
         self.reduce_activity(now)
     }

@@ -345,6 +345,46 @@ fn a_new_turn_clears_the_level_before_the_next_turn_ends() {
 }
 
 #[test]
+fn a_turn_end_without_a_prompt_read_reads_the_level_and_reports_background() {
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    let at = Instant::now();
+    let probes = Cell::new(0);
+
+    let mut reported = Vec::new();
+    reported.extend(apply(&mut reporter, &turn_end(), &mut || {
+        probes.set(probes.get() + 1);
+        read_at_turn_end(&mut level, Some(true), at)
+    }));
+
+    assert_eq!(
+        probes.get(),
+        1,
+        "the turn end is the read, with no turn start seen"
+    );
+    assert_eq!(reported.first(), Some(&SessionActivity::BackgroundRunning));
+    assert!(reporter.background_held());
+}
+
+#[test]
+fn a_second_turn_end_without_a_prompt_clears_the_stale_level() {
+    let start = Instant::now();
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    turn_ended_with_shell(&mut level, &mut reporter, start);
+
+    let probes = Cell::new(0);
+    let ended = apply(&mut reporter, &turn_end(), &mut || {
+        probes.set(probes.get() + 1);
+        read_at_turn_end(&mut level, Some(false), start + POLL_EVERY)
+    });
+
+    assert_eq!(probes.get(), 1, "a repeated turn end reads the level again");
+    assert_eq!(ended, Some(SessionActivity::TurnEnded));
+    assert!(!reporter.background_held());
+}
+
+#[test]
 fn a_failed_level_read_never_reports_a_background_level_for_a_missing_root() {
     assert_eq!(probe(None, POLL_MAX_AGE), Some(false));
 }
