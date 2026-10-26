@@ -108,6 +108,13 @@
   display: none !important;
 }
 
+/* iOS Safari autosizes text per block unless told not to, so some blocks
+   render larger than the ramp says. Pin it globally. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html,
 body,
 #app {
