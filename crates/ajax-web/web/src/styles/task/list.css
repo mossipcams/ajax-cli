@@ -110,7 +110,7 @@
 .task-row-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 15.5px;
+  font-size: var(--text-body);
   font-weight: 400;
   letter-spacing: -0.01em;
   line-height: 1.35;
@@ -122,7 +122,7 @@
 
 .task-row-time {
   flex: none;
-  font-size: 12.5px;
+  font-size: var(--text-body-sm);
   color: #6f6f74;
   font-feature-settings: "tnum";
   white-space: nowrap;
@@ -146,7 +146,7 @@
   gap: 6px;
   white-space: nowrap;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   color: #8a8a8e;
 }
 
@@ -158,7 +158,7 @@
 
 .task-row-handle {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   color: #8a8a8e;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -187,7 +187,7 @@
 }
 
 .task-row-meta .task-row-status {
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   font-weight: 400;
   color: #8a8a8e;
 }
@@ -208,7 +208,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
   color: #c9c9cc;
-  font-size: 13px;
+  font-size: var(--text-body-sm);
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1.2;
