@@ -916,12 +916,30 @@ only the chat live head knew a turn was in flight.
   reopens a finished turn, `requires_action` without a pending request projects
   `Unknown`, and `idle` never marks a turn done. Message and thought chunks only
   move the activity timestamp. A reducer result of `Unknown` is not reported, so
-  it never overwrites prior live evidence. Child runs are tracked only from
-  explicit lineage events; the web session stream carries none today, so a
-  harness without them degrades to coarse `AgentRunning`. The host applies each
-  transition as task evidence at transcript-append time — not from the browser
-  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
-  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
+  it never overwrites prior live evidence. Child runs come from explicit
+  lineage events, which the web session stream carries none of today. Background
+  work is one level, not a set of jobs: whether any topmost shell (`sh`, `bash`,
+  `zsh`, `dash`, `fish`, with no shell ancestor) under the session's recorded child
+  pid is alive. The reporter reads that level when the root turn moves to `Settled`
+  or `Cancelled`, before it reduces the event, so a turn end reports
+  `Background work running` at once and never `Done` first. A `Failed` turn never
+  reads the level and reports `Agent stopped`; an idle, never-run or running root
+  never carries it. No process tree (no client, or no child pid) reads as clear,
+  and an unavailable `ps` snapshot is no evidence. While held, the level is one
+  synthetic completion-holding child run (`background`) and reads as `AgentRunning`
+  with summary `Background work running` instead of `Done` or `WaitingForInput`.
+  The actor ticks every 2 s while held and clears the level after 5 s with no shell
+  seen, after 30 s with no successful scan, at once when the client is lost, or
+  when the turn is no longer finished. A failed read at turn end retries on the
+  ticks for 30 s. Every session shares one cached process table (`ps -A -o
+  pid=,ppid=,comm=`), so a turn end and a tick close together cost one `ps`. A
+  restored session with background shells is not scanned until a turn finishes.
+  Known ceiling: a harness that keeps an idle persistent shell reads as background
+  work; only Claude sessions have been verified. A harness without lineage events
+  and without background shells still degrades to coarse `AgentRunning`. The host
+  applies each transition as task evidence at transcript-append time — not from the
+  browser WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when
+  the operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.

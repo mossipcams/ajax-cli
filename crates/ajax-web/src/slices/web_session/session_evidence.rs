@@ -72,14 +72,33 @@ impl SessionEvidence {
         self.flush_pending_activity_report(qualified_handle);
     }
 
+    #[cfg(test)]
     pub(super) fn report_activity_for_event(
         &mut self,
         qualified_handle: &str,
         event: &SessionServerEvent,
     ) {
-        let Some(activity) = self.activity_reporter.activity_for_event(event) else {
+        self.report_activity_for_event_with_probe(qualified_handle, event, &mut || Some(false));
+    }
+
+    /// `probe` reads the background level when the event finishes a running turn.
+    pub(super) fn report_activity_for_event_with_probe(
+        &mut self,
+        qualified_handle: &str,
+        event: &SessionServerEvent,
+        probe: &mut dyn FnMut() -> Option<bool>,
+    ) {
+        let Some(activity) = self
+            .activity_reporter
+            .activity_for_event_with_probe(event, probe)
+        else {
             return;
         };
+        self.report(qualified_handle, activity);
+    }
+
+    /// Deliver one activity and commit it; on failure keep it pending for retry.
+    pub(super) fn report(&mut self, qualified_handle: &str, activity: SessionActivity) {
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {
                 self.activity_reporter.commit(activity);
