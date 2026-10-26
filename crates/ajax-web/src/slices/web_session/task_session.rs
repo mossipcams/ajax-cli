@@ -1,5 +1,5 @@
 use super::acp_slot::AcpSlot;
-use super::background_jobs::BackgroundJobs;
+use super::background_jobs::{probe, BackgroundLevel, PROBE_MAX_AGE};
 use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
@@ -152,7 +152,7 @@ pub(crate) struct TaskSessionState {
     pub(super) acp: AcpSlot,
     pub(super) prompts: PromptQueue,
     pub(super) evidence: SessionEvidence,
-    pub(super) background: BackgroundJobs,
+    pub(super) background: BackgroundLevel,
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
@@ -218,12 +218,27 @@ impl TaskSessionState {
     pub(super) fn report_committed_events(&mut self, events: &[SessionServerEvent]) {
         self.evidence
             .flush_pending_activity_report(&self.qualified_handle);
+        let root = self
+            .acp
+            .client
+            .as_ref()
+            .and_then(|client| client.child_pid());
+        // ponytail: the turn-end read runs synchronously in the actor, on one cached `ps` that the
+        // tick usually shares. Upgrade path: harness-native background signals, where a harness exposes them.
+        let mut read_level = || {
+            let read = probe(root, PROBE_MAX_AGE);
+            self.background.record_turn_end(read, Instant::now());
+            read
+        };
         for event in events {
             // Advance the dedupe checkpoint only for durable events.
             self.evidence
                 .should_skip_duplicate_spawn_error(self.generation, event);
-            self.evidence
-                .report_activity_for_event(&self.qualified_handle, event);
+            self.evidence.report_activity_for_event_with_probe(
+                &self.qualified_handle,
+                event,
+                &mut read_level,
+            );
         }
     }
 
@@ -393,7 +408,7 @@ pub(crate) fn spawn_task_session(
                 pending_transcript_error_snapshot: false,
                 transcript_corruption: None,
             },
-            background: BackgroundJobs::default(),
+            background: BackgroundLevel::default(),
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),

@@ -917,32 +917,29 @@ only the chat live head knew a turn was in flight.
   `Unknown`, and `idle` never marks a turn done. Message and thought chunks only
   move the activity timestamp. A reducer result of `Unknown` is not reported, so
   it never overwrites prior live evidence. Child runs come from explicit
-  lineage events, which the web session stream carries none of today, or from
-  host-detected background jobs. While the root turn is not running, the host
-  takes an unsandboxed `ps -A -o pid=,ppid=,lstart=,comm=` snapshot. Polling arms each
-  time the root turn stops, whatever ended it (turn end, error or cancel), and
-  once when the actor starts, so a restored session with background shells is
-  scanned once; it then polls every 2 s while a job is tracked. The actor awaits
-  that one scan on the blocking pool. Every topmost shell
-  (`sh`, `bash`, `zsh`, `dash`, `fish` with no shell ancestor) in the subtree of
-  the session's recorded child pid is one job, whatever harness or router
-  started it. Each job is a completion-holding child run
-  `bg-<pid>-<start token>` (`ChildStarted`/`ChildEnded`) and ends only after 5 s
-  unseen, so a follow-up turn does not flash `Done`. Losing the client (no ACP
-  client, from detach, cancel-exit or close) ends every tracked job at once,
-  with no debounce, so the task leaves `Background work running`. While a job is
-  held after the root turn settles or is cancelled (`CompletedLocallyChildrenActive` /
-  `WaitingOnDelegated`), the host reports `AgentRunning` with summary
-  `Background work running` instead of `Done` or `WaitingForInput`. A failed
-  root turn is never masked: it reports `Agent stopped` even with a held job.
-  An unavailable snapshot is no evidence and never ends a job. Known ceiling: a
-  harness that keeps an idle persistent shell reads as background work; only
-  Claude sessions have been verified. A harness without lineage events and
-  without background jobs still degrades to coarse `AgentRunning`. The host
-  applies each
-  transition as task evidence at transcript-append time — not from the browser
-  WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when the
-  operator leaves chat mid-turn and the chat head cannot disagree with task truth.
+  lineage events, which the web session stream carries none of today. Background
+  work is one level, not a set of jobs: whether any topmost shell (`sh`, `bash`,
+  `zsh`, `dash`, `fish`, with no shell ancestor) under the session's recorded child
+  pid is alive. The reporter reads that level when the root turn moves to `Settled`
+  or `Cancelled`, before it reduces the event, so a turn end reports
+  `Background work running` at once and never `Done` first. A `Failed` turn never
+  reads the level and reports `Agent stopped`; an idle, never-run or running root
+  never carries it. No process tree (no client, or no child pid) reads as clear,
+  and an unavailable `ps` snapshot is no evidence. While held, the level is one
+  synthetic completion-holding child run (`background`) and reads as `AgentRunning`
+  with summary `Background work running` instead of `Done` or `WaitingForInput`.
+  The actor ticks every 2 s while held and clears the level after 5 s with no shell
+  seen, after 30 s with no successful scan, at once when the client is lost, or
+  when the turn is no longer finished. A failed read at turn end retries on the
+  ticks for 30 s. Every session shares one cached process table (`ps -A -o
+  pid=,ppid=,comm=`), so a turn end and a tick close together cost one `ps`. A
+  restored session with background shells is not scanned until a turn finishes.
+  Known ceiling: a harness that keeps an idle persistent shell reads as background
+  work; only Claude sessions have been verified. A harness without lineage events
+  and without background shells still degrades to coarse `AgentRunning`. The host
+  applies each transition as task evidence at transcript-append time — not from the
+  browser WebSocket flush — so dashboard, TUI, and `ajax status` stay aligned when
+  the operator leaves chat mid-turn and the chat head cannot disagree with task truth.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.

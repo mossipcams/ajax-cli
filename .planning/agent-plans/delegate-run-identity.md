@@ -73,6 +73,36 @@ flash (and a possible push) in that gap.
 5. **Recovery:** the rule is stateless, so after a host restart the first
    tick rediscovers live jobs from the process table.
 
+## Revision 5 (2026-10-26): root cause of the second review's bugs
+
+The second review of PR #1416 found six bugs: stuck on an Idle root, a live
+client with no child pid, a failed scan losing the post-turn arm, a sampled
+turn stop missing short turns, a locale/DST-dependent `lstart` id, and a stale
+level flashing at turn end. **Common root cause:** background work is a
+*level* (is any background shell alive right now?), but it was modelled as
+*edges*: a per-job tracked set mirrored into `AcpExecutionState` through
+`ChildStarted`/`ChildEnded`, armed by sampled turn transitions and
+consumed-on-use flags. Every bug was a missed or stale edge.
+
+**Level design (replaces the per-job tracker):**
+
+1. Read the level at the moment it is used. When an event moves the root turn
+   from running to finished (Settled or Cancelled, whatever event caused it),
+   the reporter calls a probe for the level *before* reducing. The turn end
+   is reported once and correctly, with no sampling and no cached level.
+2. The level exists only after a finished turn. A new turn clears it, and an
+   Idle (never-run) root, a Running root or a Failed root never carries
+   it. A Failed root still reports `TurnFailed`.
+3. There is one synthetic completion-holding child (`background`), present or
+   absent, with no per-job ids, so `lstart` is gone.
+4. The level is evidence with a TTL. While it is true, poll every 2 s. It ends
+   after 5 s with no shell seen, or after 30 s with no successful scan. A failed
+   probe at turn end reports the turn as done and retries on the next poll.
+5. No process tree (no client, or a client with no child pid) means level
+   false immediately.
+6. One process-wide cached `ps` table serves every session. `process_tree`
+   owns the single shell list.
+
 ## Decision for Matt: what counts as "background work"
 
 | Option | Holds status for | Risk |

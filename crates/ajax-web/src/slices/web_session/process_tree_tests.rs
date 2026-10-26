@@ -2,22 +2,24 @@
 //! `.planning/spikes/delegate-run-identity/census.md`: nono root, node sidecar,
 //! harness `claude`, MCP servers, delegate chains and multicall `ugrep`.
 
-use super::process_tree::{background_shells, parse_ps, snapshot, ProcessEntry};
+use super::process_tree::{
+    background_shells, cached_table, has_background_shell, is_shell, parse_ps, snapshot,
+    ProcessEntry,
+};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-const START: &str = "Sat Oct 25 02:10:36 2026";
-
-fn entry(pid: u32, ppid: u32, start: &str, comm: &str) -> ProcessEntry {
+fn entry(pid: u32, ppid: u32, comm: &str) -> ProcessEntry {
     ProcessEntry {
         pid,
         ppid,
-        start: start.to_string(),
         comm: comm.to_string(),
     }
 }
 
 fn table(rows: &[(u32, u32, &str)]) -> Vec<ProcessEntry> {
     rows.iter()
-        .map(|&(pid, ppid, comm)| entry(pid, ppid, START, comm))
+        .map(|&(pid, ppid, comm)| entry(pid, ppid, comm))
         .collect()
 }
 
@@ -139,28 +141,30 @@ fn results_are_sorted_by_pid() {
 }
 
 #[test]
-fn background_shells_carry_the_start_time_from_the_snapshot() {
-    let t = vec![
-        entry(1, 0, START, "nono"),
-        entry(20, 1, "Sun Oct 26 09:00:00 2026", "zsh"),
-    ];
+fn has_background_shell_is_true_only_when_a_shell_hangs_under_the_root() {
+    let with_shell = table(&[(1, 0, "nono"), (2, 1, "node"), (3, 2, "zsh")]);
+    let shell_under_harness_only = table(&sdk_session_rows());
+    let shell_in_other_session = table(&[(1, 0, "nono"), (100, 0, "nono"), (101, 100, "zsh")]);
+    let root_is_only_shell = table(&[(1, 0, "zsh")]);
 
-    let shells = background_shells(&t, 1);
-
-    assert_eq!(shells.len(), 1);
-    assert_eq!(shells[0].start, "Sun Oct 26 09:00:00 2026");
+    assert!(has_background_shell(&with_shell, 1));
+    assert!(!has_background_shell(&shell_under_harness_only, 10));
+    assert!(!has_background_shell(&shell_in_other_session, 1));
+    assert!(!has_background_shell(&root_is_only_shell, 1));
+    assert!(!has_background_shell(&[], 1));
 }
 
 #[test]
-fn parse_ps_handles_leading_spaces_spaced_comm_and_skips_garbage() {
+fn parse_ps_reads_pid_ppid_and_the_spaced_command() {
     let output = "\
-  1     0 Sat Oct 25 02:10:36 2026 /sbin/launchd
-   42   1 Sat Oct 25 02:10:37 2026 /bin/zsh
+  1     0 /sbin/launchd
+   42   1 /bin/zsh
 garbage line
-x 1 Sat Oct 25 02:10:36 2026 zsh
-7 abc Sat Oct 25 02:10:36 2026 zsh
-9 3 Sat Oct 25 02:10:38 2026 Google Chrome Helper (Renderer)
-8 1
+x 1 zsh
+7 abc zsh
+9 3 Google Chrome Helper (Renderer)
+8
+10 1   
 ";
 
     let parsed = parse_ps(output);
@@ -168,43 +172,98 @@ x 1 Sat Oct 25 02:10:36 2026 zsh
     assert_eq!(
         parsed,
         vec![
-            entry(1, 0, "Sat Oct 25 02:10:36 2026", "/sbin/launchd"),
-            entry(42, 1, "Sat Oct 25 02:10:37 2026", "/bin/zsh"),
-            entry(
-                9,
-                3,
-                "Sat Oct 25 02:10:38 2026",
-                "Google Chrome Helper (Renderer)"
-            ),
+            entry(1, 0, "/sbin/launchd"),
+            entry(42, 1, "/bin/zsh"),
+            entry(9, 3, "Google Chrome Helper (Renderer)"),
         ]
     );
 }
 
 #[test]
-fn parse_ps_collapses_a_padded_day_and_keeps_spaces_in_the_command() {
-    let parsed =
-        parse_ps("  42   1 Sat Oct  5 02:10:36 2026 /Applications/Google Chrome.app/Helper\n");
+fn parse_ps_keeps_full_command_paths_with_spaces() {
+    let parsed = parse_ps("  42   1 /Applications/Google Chrome.app/Helper\n");
 
     assert_eq!(
         parsed,
-        vec![entry(
-            42,
-            1,
-            "Sat Oct 5 02:10:36 2026",
-            "/Applications/Google Chrome.app/Helper"
-        )]
+        vec![entry(42, 1, "/Applications/Google Chrome.app/Helper")]
     );
 }
 
 #[test]
-fn parse_ps_skips_lines_with_six_tokens_or_no_command() {
-    let parsed = parse_ps(
-        "8 1 Sat Oct 25 02:10:36\n\
-         9 1 Sat Oct 25 02:10:36 2026\n\
-         10 1 Sat Oct 25 02:10:36 2026   \n",
-    );
+fn is_shell_matches_basename_and_login_dash_only() {
+    assert!(is_shell("zsh"));
+    assert!(is_shell("-zsh"));
+    assert!(is_shell("/bin/dash"));
+    assert!(is_shell("/usr/local/bin/-fish"));
+    assert!(is_shell("fish"));
+    assert!(is_shell("sh"));
+    assert!(!is_shell("claude"));
+    assert!(!is_shell("/Users/matt/.local/bin/claude"));
+    assert!(!is_shell(""));
+}
 
-    assert_eq!(parsed, Vec::new());
+#[test]
+fn cached_table_reuses_the_same_arc_within_max_age() {
+    let cache = Mutex::new(None);
+    let base = Instant::now();
+    let mut loads = 0;
+    let mut load = || {
+        loads += 1;
+        Some(vec![entry(1, 0, "nono")])
+    };
+
+    let first = cached_table(&cache, base, Duration::from_secs(60), &mut load).expect("loaded");
+    let second = cached_table(
+        &cache,
+        base + Duration::from_secs(59),
+        Duration::from_secs(60),
+        &mut load,
+    )
+    .expect("cached");
+
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+    assert_eq!(loads, 1);
+}
+
+#[test]
+fn cached_table_reloads_once_the_copy_is_older_than_max_age() {
+    let cache = Mutex::new(None);
+    let base = Instant::now();
+    let mut loads = 0;
+    let mut load = || {
+        loads += 1;
+        Some(vec![entry(1, 0, "nono")])
+    };
+
+    let first = cached_table(&cache, base, Duration::from_secs(2), &mut load).expect("loaded");
+    let later = cached_table(
+        &cache,
+        base + Duration::from_secs(2),
+        Duration::from_secs(2),
+        &mut load,
+    )
+    .expect("reloaded");
+
+    assert!(!std::sync::Arc::ptr_eq(&first, &later));
+    assert_eq!(loads, 2);
+}
+
+#[test]
+fn cached_table_does_not_cache_a_failed_snapshot() {
+    let cache = Mutex::new(None);
+    let base = Instant::now();
+    let mut loads = 0;
+    let mut failing = || {
+        loads += 1;
+        None
+    };
+
+    assert!(cached_table(&cache, base, Duration::from_secs(60), &mut failing).is_none());
+    assert!(cached_table(&cache, base, Duration::from_secs(60), &mut failing).is_none());
+    assert_eq!(loads, 2);
+
+    let recovered = || Some(vec![entry(1, 0, "nono")]);
+    assert!(cached_table(&cache, base, Duration::from_secs(60), recovered).is_some());
 }
 
 #[test]

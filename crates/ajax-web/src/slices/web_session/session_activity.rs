@@ -11,6 +11,8 @@ use ajax_core::{
 use std::time::SystemTime;
 
 const ROOT_RUN_ID: &str = "acp-session";
+/// The one synthetic completion-holding child that carries the background level.
+const BACKGROUND_RUN_ID: &str = "background";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionActivity {
     TurnStarted,
@@ -105,35 +107,86 @@ pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
 #[derive(Debug, Default)]
 pub(crate) struct SessionActivityReporter {
     state: ajax_core::acp_execution_state::AcpExecutionState,
+    /// Whether the background child is applied to `state`.
+    background: bool,
     last: Option<SessionActivity>,
 }
 
 impl SessionActivityReporter {
+    #[cfg(test)]
     pub(crate) fn activity_for_event(
         &mut self,
         event: &super::SessionServerEvent,
     ) -> Option<SessionActivity> {
-        let in_flight = self.state.turn() == RootTurnState::Running;
+        self.activity_for_event_with_probe(event, &mut || Some(false))
+    }
+
+    /// Apply one root event. When it finishes a running turn, `probe` reads the
+    /// background level before the activity is reduced.
+    pub(crate) fn activity_for_event_with_probe(
+        &mut self,
+        event: &super::SessionServerEvent,
+        probe: &mut dyn FnMut() -> Option<bool>,
+    ) -> Option<SessionActivity> {
+        let in_flight = self.turn_running();
         let now = SystemTime::now();
         self.state
             .apply(acp_execution_map::execution_event(event, in_flight), now);
-        self.reduce_activity(now)
-    }
-
-    /// Apply background-job child events at `now`, then reduce as `activity_for_event` does.
-    pub(crate) fn activity_for_batch(
-        &mut self,
-        events: Vec<AcpExecutionEvent>,
-        now: SystemTime,
-    ) -> Option<SessionActivity> {
-        for event in events {
-            self.state.apply(event, now);
+        // A running root turn never carries the background level.
+        if self.turn_running() {
+            self.set_background_child(false, now);
+        }
+        if in_flight && self.turn_finished() && probe() == Some(true) {
+            self.set_background_child(true, now);
         }
         self.reduce_activity(now)
     }
 
     pub(crate) fn turn_running(&self) -> bool {
         self.state.turn() == RootTurnState::Running
+    }
+
+    /// True when the root turn has settled or been cancelled. Failed is not finished here.
+    pub(crate) fn turn_finished(&self) -> bool {
+        matches!(
+            self.state.turn(),
+            RootTurnState::Settled | RootTurnState::Cancelled
+        )
+    }
+
+    pub(crate) fn background_held(&self) -> bool {
+        self.background
+    }
+
+    /// Hold or release the background level, then reduce. The level exists only
+    /// after a finished turn, so `held` is ignored otherwise.
+    pub(crate) fn set_background(
+        &mut self,
+        held: bool,
+        now: SystemTime,
+    ) -> Option<SessionActivity> {
+        self.set_background_child(held && self.turn_finished(), now);
+        self.reduce_activity(now)
+    }
+
+    fn set_background_child(&mut self, held: bool, now: SystemTime) {
+        if held == self.background {
+            return;
+        }
+        let run_id = BACKGROUND_RUN_ID.to_string();
+        let event = if held {
+            AcpExecutionEvent::ChildStarted {
+                run_id,
+                completion_holding: true,
+            }
+        } else {
+            AcpExecutionEvent::ChildEnded {
+                run_id,
+                completion_holding: true,
+            }
+        };
+        self.state.apply(event, now);
+        self.background = held;
     }
 
     fn reduce_activity(&self, now: SystemTime) -> Option<SessionActivity> {
@@ -156,7 +209,7 @@ impl SessionActivityReporter {
             // Checked before the kind: a held root reads as WaitingForInput, which must not show as the operator's turn.
             // A failed root is never masked as background work.
             (true, RootTurnState::Failed) => SessionActivity::TurnFailed,
-            (true, RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Idle) => {
+            (true, RootTurnState::Settled | RootTurnState::Cancelled) => {
                 SessionActivity::BackgroundRunning
             }
             _ => match projection.live.kind {
@@ -180,8 +233,9 @@ impl SessionActivityReporter {
 
     pub(crate) fn commit(&mut self, activity: SessionActivity) {
         if activity == SessionActivity::TurnStarted && self.state.turn() != RootTurnState::Running {
-            self.state
-                .apply(AcpExecutionEvent::PromptAccepted, SystemTime::now());
+            let now = SystemTime::now();
+            self.state.apply(AcpExecutionEvent::PromptAccepted, now);
+            self.set_background_child(false, now);
         }
         self.last = Some(activity);
     }

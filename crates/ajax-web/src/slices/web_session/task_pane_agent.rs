@@ -1,10 +1,9 @@
+use super::process_tree::is_shell;
 use ajax_core::{
     adapters::{acp_launch_for_agent, CommandRunner, CommandSpec},
     models::{AgentClient, Task},
 };
 use std::path::Path;
-
-const SHELL_COMMANDS: &[&str] = &["zsh", "bash", "fish", "sh"];
 
 pub(crate) fn tmux_task_pane_runs_live_agent(runner: &mut impl CommandRunner, task: &Task) -> bool {
     let Some(expected) = live_pane_basenames(task.selected_agent) else {
@@ -15,7 +14,7 @@ pub(crate) fn tmux_task_pane_runs_live_agent(runner: &mut impl CommandRunner, ta
         return false;
     };
     let observed = process_basename(&foreground);
-    if observed.is_empty() || is_shell_command(observed) {
+    if observed.is_empty() || is_shell(observed) {
         return false;
     }
     expected.contains(&observed)
@@ -61,10 +60,6 @@ fn process_basename(value: &str) -> &str {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("")
-}
-
-fn is_shell_command(name: &str) -> bool {
-    SHELL_COMMANDS.contains(&name)
 }
 
 #[cfg(test)]
