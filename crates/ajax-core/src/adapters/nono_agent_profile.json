@@ -75,6 +75,46 @@
       {
         "path": "/tmp/tmux-$UID",
         "when": "linux"
+      },
+      {
+        "path": "$HOME/.orbstack",
+        "when": "macos"
+      },
+      {
+        "path": "/private/var/run/docker.sock",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.colima",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.lima",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.rd",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.docker",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.local/share/containers",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/Library/Containers/com.docker.docker",
+        "when": "macos"
+      },
+      {
+        "path": "$HOME/.config/colima",
+        "when": "macos"
+      },
+      {
+        "path": "/private/tmp/.s.PGSQL.5432",
+        "when": "macos"
       }
     ]
   },
