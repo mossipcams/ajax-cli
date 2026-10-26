@@ -36,10 +36,8 @@ const STATE_LABELS: Record<HeadState, string> = {
   idle: "Ready",
 };
 
-export function headStateLabel(state: HeadState, quiet: boolean, workingText?: string | null): string {
+export function headStateLabel(state: HeadState, quiet: boolean): string {
   if (state === "working" && quiet) return "No recent activity";
-  if (state === "working" && workingText) return workingText;
-  if (state === "working") return STATE_LABELS.working;
   return STATE_LABELS[state];
 }
 

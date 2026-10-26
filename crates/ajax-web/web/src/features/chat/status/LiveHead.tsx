@@ -29,7 +29,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
           />
           {}
           {view.connected ? (
-            <span className="session-head-label">{headStateLabel(view.state, quiet, view.workingText)}</span>
+            <span className="session-head-label">{headStateLabel(view.state, quiet)}</span>
           ) : (
             <span
               className="session-head-label session-head-offline"
@@ -61,6 +61,11 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
           {showThinking ? (
             <p className="session-head-quiet" data-testid="session-head-idle">
               Thinking…
+            </p>
+          ) : null}
+          {view.workingText && view.streamBusy !== true ? (
+            <p className="session-head-quiet" data-testid="session-head-server-status">
+              {view.workingText}
             </p>
           ) : null}
           {quiet ? (

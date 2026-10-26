@@ -69,20 +69,12 @@ describe("headView", () => {
   });
 
   describe("headStateLabel", () => {
-    it("shows the server explanation as the working line", () => {
-      expect(headStateLabel("working", false, "Running tests")).toBe("Running tests");
+    it("shows Working for working without quiet", () => {
+      expect(headStateLabel("working", false)).toBe("Working");
     });
 
-    it("falls back to Working when there is no server explanation", () => {
-      expect(headStateLabel("working", false, null)).toBe("Working");
-    });
-
-    it("shows No recent activity for quiet working without an explanation", () => {
-      expect(headStateLabel("working", true, null)).toBe("No recent activity");
-    });
-
-    it("prefers No recent activity over the server explanation when quiet", () => {
-      expect(headStateLabel("working", true, "Background work running")).toBe("No recent activity");
+    it("shows No recent activity for quiet working", () => {
+      expect(headStateLabel("working", true)).toBe("No recent activity");
     });
 
     it("shows Ready for idle", () => {

@@ -149,8 +149,11 @@ attention. Pending permission or elicitation decisions still take precedence. Th
 session stream's `busy` flag never overrides a loaded server status. It only drives
 the head when task detail is unavailable. Each change of `busy` triggers an immediate
 task-detail refresh, so the head converges to server truth without waiting for the
-10 second terminal poll. The quiet `No recent activity` state applies only to a busy stream;
-a server-running head with an idle stream keeps its server explanation.
+10 second terminal poll. The head label stays `Working` for a server-running task. The server
+explanation is shown as the detail line under it only when the stream is idle (for example
+"Background work running"); a busy stream shows live activity instead. The quiet `No recent
+activity` state applies only to a busy stream, so a server-running head with an idle stream
+never shows it.
 
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the

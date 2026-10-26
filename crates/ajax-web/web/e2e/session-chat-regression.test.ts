@@ -3,6 +3,7 @@ import {
   COCKPIT_FIXTURE,
   DETAIL_FIXTURE,
   mockFetch,
+  setTaskDetailOverride,
   sessionEventJson,
   sessionResumeCursor,
   sessionSnapshotJson,
@@ -144,6 +145,15 @@ for (const harness of HARNESSES) {
   });
 }
 
+// What the real server reports for the task while a prompt is held in flight.
+const HELD_TURN_DETAIL = {
+  ...DETAIL_FIXTURE,
+  agent: "Cursor",
+  session_capable: true,
+  status: "running",
+  status_explanation: "Agent working",
+};
+
 async function mockHeldTurn(page: Page) {
   let nextCursor = 0;
 
@@ -163,7 +173,7 @@ async function mockHeldTurn(page: Page) {
     }
     send({ type: "turn_end", stopReason: "end_turn" });
 
-    socket.onMessage((message) => {
+    socket.onMessage(async (message) => {
       if (typeof message !== "string") return;
       const event = JSON.parse(message) as {
         type?: string;
@@ -171,6 +181,8 @@ async function mockHeldTurn(page: Page) {
         clientMessageId?: string;
       };
       if (event.type === "prompt" && event.text) {
+        // Flip the detail before the turn is visible so the busy-change reload sees it.
+        await setTaskDetailOverride(page, HELD_TURN_DETAIL);
         if (event.clientMessageId) {
           send({ type: "prompt_accepted", clientMessageId: event.clientMessageId });
         }
@@ -182,7 +194,10 @@ async function mockHeldTurn(page: Page) {
         });
         return;
       }
-      if (event.type === "cancel") send({ type: "turn_end", stopReason: "cancelled" });
+      if (event.type === "cancel") {
+        await setTaskDetailOverride(page, null);
+        send({ type: "turn_end", stopReason: "cancelled" });
+      }
     });
   });
 }
@@ -388,6 +403,28 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
   await expect(page.getByTestId("session-note-info")).toContainText("Stopped");
   await expect(page.getByTestId("session-queued")).toHaveCount(0);
   await expect(page.getByTestId("session-message-user").last()).toContainText("And then deploy");
+});
+
+test("chat head shows server background work while the stream is idle", async ({ page }) => {
+  await mockFetch(page, {
+    __detail__: {
+      ...DETAIL_FIXTURE,
+      agent: "Cursor",
+      session_capable: true,
+      status: "running",
+      status_explanation: "Background work running",
+    },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+  });
+  await mockInlineTranscriptSession(page, 2);
+
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-chat")).toBeVisible();
+  await expect(page.getByTestId("session-head")).toContainText("Working");
+  await expect(page.getByTestId("session-head")).toContainText("Background work running");
+  await expect(page.getByTestId("session-head")).not.toContainText("Ready");
 });
 
 async function mockTypedTurn(page: Page) {

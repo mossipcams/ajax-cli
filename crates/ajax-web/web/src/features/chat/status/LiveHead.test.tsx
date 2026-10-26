@@ -226,6 +226,19 @@ describe("LiveHead working quiet lines", () => {
     expect(screen.getByText("Working")).toBeInTheDocument();
   });
 
+  it("shows Working without the server line while a busy stream is live", () => {
+    const view = buildHeadView({
+      session: liveSession(true),
+      taskAttention: { status: "running", explanation: "Agent working" },
+      hasActivity: true,
+      activityAgeMs: 0,
+      connected: true,
+    });
+    render(<LiveHead view={view} permission={null} onStop={noop} />);
+    expect(screen.getByTestId("session-head-line")).toHaveTextContent("Working");
+    expect(screen.queryByTestId("session-head-server-status")).not.toBeInTheDocument();
+  });
+
   it("shows No recent activity with the Last update line for a busy stream gone quiet, even with a server explanation", () => {
     const view = buildHeadView({
       session: liveSession(true),
@@ -236,11 +249,12 @@ describe("LiveHead working quiet lines", () => {
     });
     render(<LiveHead view={view} permission={null} onStop={noop} />);
     expect(screen.getByTestId("session-head-line")).toHaveTextContent("No recent activity");
+    expect(screen.queryByTestId("session-head-server-status")).not.toBeInTheDocument();
     expect(screen.queryByText("Background work running")).not.toBeInTheDocument();
     expect(screen.getByTestId("session-head-activity-age")).toHaveTextContent("Last update 1m ago");
   });
 
-  it("shows the server explanation, never the quiet line, when the stream is idle under running background work", () => {
+  it("shows Working plus the server explanation line, never the quiet line, when the stream is idle under running background work", () => {
     const view = buildHeadView({
       session: liveSession(false),
       taskAttention: { status: "running", explanation: "Background work running" },
@@ -249,7 +263,8 @@ describe("LiveHead working quiet lines", () => {
       connected: true,
     });
     render(<LiveHead view={view} permission={null} onStop={noop} />);
-    expect(screen.getByTestId("session-head-line")).toHaveTextContent("Background work running");
+    expect(screen.getByTestId("session-head-line")).toHaveTextContent("Working");
+    expect(screen.getByTestId("session-head-server-status")).toHaveTextContent("Background work running");
     expect(screen.queryByText("No recent activity")).not.toBeInTheDocument();
     expect(screen.queryByTestId("session-head-activity-age")).not.toBeInTheDocument();
     expect(screen.queryByText(/Last update/)).not.toBeInTheDocument();
