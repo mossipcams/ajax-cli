@@ -1,41 +1,4 @@
 #[test]
-fn declined_cockpit_mismatch_confirmation_does_not_mutate_intent() {
-    let mut context = sample_context_with_named_checkout_mismatch();
-    let item = cockpit_item("web/fix-login", "repair");
-    let event_count_before = context
-        .registry
-        .events_for_task(&TaskId::new("task-1"))
-        .len();
-    let mut retained_plan = None;
-    let outcome = cockpit_actions::cockpit_action_outcome(
-        &item,
-        &mut context,
-        false,
-        &mut retained_plan,
-    )
-    .unwrap();
-    assert!(matches!(
-        outcome,
-        ajax_tui::ActionOutcome::Confirm(ref message)
-            if message == "press enter again to adopt branch fix/pane-stuck (expected ajax/fix-login)"
-    ));
-    assert_eq!(
-        context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .unwrap()
-            .branch,
-        "ajax/fix-login"
-    );
-    assert_eq!(
-        context
-            .registry
-            .events_for_task(&TaskId::new("task-1"))
-            .len(),
-        event_count_before
-    );
-}
-#[test]
 fn pending_cockpit_drop_reconciles_missing_substrate_before_registry_removal() {
     let mut context = sample_context();
     let task = context

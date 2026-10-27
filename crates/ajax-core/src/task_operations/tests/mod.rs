@@ -266,30 +266,6 @@ mod suite_3;
 mod suite_4;
 mod suite_5;
 
-pub(super) fn context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {
-    let mut context = context_with_reviewable_task();
-    let task = context
-        .registry
-        .get_task_mut(&TaskId::new("web/fix-login"))
-        .unwrap();
-    task.add_side_flag(SideFlag::BranchMissing);
-    task.git_status = Some(GitStatus {
-        worktree_exists: true,
-        branch_exists: false,
-        current_branch: Some("fix/pane-stuck".to_string()),
-        dirty: false,
-        ahead: 0,
-        behind: 0,
-        merged: false,
-        untracked_files: 0,
-        unpushed_commits: 0,
-        conflicted: false,
-        last_commit: None,
-    });
-    task.refresh_runtime_projection();
-    context
-}
-
 pub(super) fn sweep_success_runner_outputs(
     context: &CommandContext<InMemoryRegistry>,
 ) -> Vec<CommandOutput> {

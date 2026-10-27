@@ -24,7 +24,6 @@ async fn action_endpoint_executes_bridge_action_and_returns_cockpit() {
             task_handle: "web/fix-login".to_string(),
             action: "review".to_string(),
             confirmed: false,
-            branch_adoption: None,
         })
     );
 }

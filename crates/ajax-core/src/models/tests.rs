@@ -757,3 +757,27 @@ fn step_receipt_identity_is_stable_for_idempotent_steps() {
         }
     );
 }
+
+#[test]
+fn git_refresh_follows_renamed_branch_but_not_base_or_detached() {
+    let mut task = sample_task();
+    let original = task.branch.clone();
+
+    task.apply_git_status(git_status_for_checkout(
+        true,
+        Some(&task.base_branch.clone()),
+    ));
+    assert_eq!(task.branch, original);
+    assert!(task.has_checkout_mismatch());
+
+    task.apply_git_status(git_status_for_checkout(true, None));
+    assert_eq!(task.branch, original);
+    assert!(task.has_checkout_mismatch());
+
+    let mut renamed = git_status_for_checkout(true, Some("fix/web/login"));
+    renamed.branch_exists = false;
+    task.apply_git_status(renamed);
+    assert_eq!(task.branch, "fix/web/login");
+    assert!(!task.has_checkout_mismatch());
+    assert!(!task.has_missing_branch());
+}

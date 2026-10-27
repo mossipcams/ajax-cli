@@ -1347,7 +1347,7 @@ override headline status from them. The browser may style the first returned
 action as prominent; it does not receive or invent a separate `primary_action`
 contract. Dashboard task rows (`features/task/TaskList.tsx`,
 `styles/task/list.css`) keep the `drop` action behind the full-width
-row (Repair appears in Web Cockpit only as a confirmed branch adoption, `Adopt <observed branch>`, when the worktree is on another named branch); left swipe exposes `Drop` at `--task-row-reveal-width` (158px) via
+row (with `Repair` excluded from Web Cockpit actions); left swipe exposes `Drop` at `--task-row-reveal-width` (158px) via
 `useSwipeReveal` on `.task-row-wrap` (touchstart inside `.task-row-reveal` is
 ignored). Swipe right on the wrap closes a revealed row (offset returns to 0);
 only one row may be revealed at a time; a settled reveal auto-hides after 10s
@@ -1356,11 +1356,7 @@ status, attention, and relative time only — not Fix CI/Drop/Repair chips.
 Confirmation taps use `.task-row.is-revealed { pointer-events: none }` so the
 revealed `ActionBar` receives the hit. Close animations honor
 `prefers-reduced-motion` via the global motion stylesheet. Drop and other
-actions remain on task details/workspace. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
-expose the exact expected/observed branch pair from core; the browser retains
-that payload between activations and resubmits it unchanged. Core alone
-revalidates the pair and mutates task truth; stale or altered evidence is
-rejected.
+actions remain on task details/workspace.
 
 ### `ajax-web::slices::operate`
 
@@ -1382,10 +1378,7 @@ route dispatches the `resume` operation (acknowledging attention through core,
 exactly like Enter in the native Cockpit) before mounting Ajax Chat or Ajax
 Terminal. The browser renders no separate resume control; the implicit
 open=resume acknowledgment is best-effort and never derives task truth in
-JavaScript. Confirmed operator
-actions must echo the exact `branch_adoption` plan core attached to the action;
-the slice forwards that payload to core without recomputing branch policy or
-comparing branches in the browser.
+JavaScript.
 
 #### Operation failure envelopes
 

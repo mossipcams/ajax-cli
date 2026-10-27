@@ -688,24 +688,7 @@ fn context_with_detached_checkout_mismatch() -> CommandContext<InMemoryRegistry>
 }
 
 #[test]
-fn checkout_mismatch_repair_plans_confirmed_branch_adoption_or_blocks_detached() {
-    let named_context = context_with_named_checkout_mismatch();
-    let named_plan = plan_task_command_operation(
-        &named_context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        OpenMode::Attach,
-    )
-    .unwrap();
-
-    assert_eq!(named_plan.title, "repair task: web/fix-login");
-    assert!(named_plan.commands.is_empty());
-    assert!(named_plan.blocked_reasons.is_empty());
-    assert!(named_plan.requires_confirmation);
-    let adoption = named_plan.branch_adoption.as_ref().unwrap();
-    assert_eq!(adoption.expected_branch, "ajax/fix-login");
-    assert_eq!(adoption.observed_branch, "fix/pane-stuck");
-
+fn checkout_mismatch_repair_blocks_detached_worktree() {
     let detached_context = context_with_detached_checkout_mismatch();
     let detached_plan = plan_task_command_operation(
         &detached_context,
@@ -716,9 +699,8 @@ fn checkout_mismatch_repair_plans_confirmed_branch_adoption_or_blocks_detached()
     .unwrap();
 
     assert!(detached_plan.commands.is_empty());
-    assert!(detached_plan.branch_adoption.is_none());
     assert_eq!(
         detached_plan.blocked_reasons,
-        vec!["cannot adopt a detached worktree; switch to a branch and refresh"]
+        vec!["Worktree detached; expected ajax/fix-login; check out a task branch and refresh"]
     );
 }
