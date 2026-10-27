@@ -77,3 +77,33 @@ test("build and install complete before stop_tmux_session", () => {
   const stopBlock = script.indexOf("stop_tmux_session");
   assert.ok(installBlock >= 0 && stopBlock > installBlock);
 });
+
+test("background mode supervises the server via launchd web service install", () => {
+  assert.match(
+    script,
+    /"\$bin_path" --profile "\$PROFILE" web service install --host "\$HOST" --port "\$PORT"/,
+  );
+  assert.match(script, /LAUNCHD_LABEL="com\.ajax\.web\.\$\{PROFILE\}"/);
+  assert.match(
+    script,
+    /SERVICE_LOG="\$HOME\/Library\/Logs\/ajax-web-\$\{PROFILE\}\.log"/,
+  );
+  assert.doesNotMatch(script, /tmux new-session/);
+  assert.doesNotMatch(script, /tmux is required/);
+});
+
+test("launchd job is booted out before the previous pid is killed", () => {
+  assert.match(
+    script,
+    /stop_launchd_job\(\) \{\n  launchctl bootout "gui\/\$\(id -u\)\/\$LAUNCHD_LABEL"/,
+  );
+  assert.match(script, /stop_tmux_session\nstop_launchd_job\nstop_pid_file\n/);
+});
+
+test("stop_tmux_session is a legacy cleanup that tolerates a missing tmux", () => {
+  assert.match(
+    script,
+    /stop_tmux_session\(\) \{\n  if ! command -v tmux >\/dev\/null 2>&1; then\n    return 0\n  fi/,
+  );
+  assert.match(script, /tmux has-session -t "\$TMUX_SESSION"/);
+});

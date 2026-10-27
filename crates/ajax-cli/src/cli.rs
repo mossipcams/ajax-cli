@@ -2,6 +2,7 @@ use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::ffi::OsString;
 
+use crate::web_service::{DEFAULT_WEB_HOST, DEFAULT_WEB_PORT};
 use crate::CliError;
 
 pub enum ParsedArgs {
@@ -218,17 +219,38 @@ fn state_command() -> Command {
 fn web_command() -> Command {
     Command::new("web")
         .about("Serve the Ajax mobile web cockpit")
-        .arg(
-            Arg::new("host")
-                .long("host")
-                .value_name("HOST")
-                .default_value("0.0.0.0"),
+        .args_conflicts_with_subcommands(true)
+        .args(web_bind_args())
+        .subcommand(web_service_command())
+}
+
+fn web_bind_args() -> [Arg; 2] {
+    [
+        Arg::new("host")
+            .long("host")
+            .value_name("HOST")
+            .default_value(DEFAULT_WEB_HOST),
+        Arg::new("port")
+            .long("port")
+            .value_name("PORT")
+            .default_value(DEFAULT_WEB_PORT),
+    ]
+}
+
+fn web_service_command() -> Command {
+    Command::new("service")
+        .about("Run the web cockpit as a macOS launchd service for this profile")
+        .subcommand_required(true)
+        .subcommand(
+            Command::new("install")
+                .about("Install and load the launchd job (starts at login, restarts on failure)")
+                .args(web_bind_args()),
         )
-        .arg(
-            Arg::new("port")
-                .long("port")
-                .value_name("PORT")
-                .default_value("8787"),
+        .subcommand(Command::new("uninstall").about("Unload and remove the launchd job"))
+        .subcommand(Command::new("start").about("Load the launchd job and start the server"))
+        .subcommand(Command::new("stop").about("Unload the launchd job and stop the server"))
+        .subcommand(
+            Command::new("status").about("Show whether the launchd job is installed and running"),
         )
 }
 

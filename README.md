@@ -57,8 +57,25 @@ serves on `0.0.0.0:8788` and uses the isolated dev runtime profile. Use
 `--no-web` to keep Native Cockpit terminal-only.
 
 Persistent Web Cockpit deployments should run `ajax-cli web` under a
-host-native supervisor such as launchd, `systemd --user`, tmux, or another
-service manager. Ajax does not provide its own daemon manager.
+host-native supervisor. On macOS, use the launchd service below. Ajax does not
+provide its own daemon manager beyond that.
+
+On macOS, `ajax-cli web service` manages a launchd user agent
+(`com.ajax.web.<profile>`) that starts at login and restarts after exits:
+
+```sh
+ajax-cli [--profile P] web service install [--host H] [--port N]
+ajax-cli [--profile P] web service start
+ajax-cli [--profile P] web service stop
+ajax-cli [--profile P] web service status
+ajax-cli [--profile P] web service uninstall
+```
+
+`install` is idempotent: it replaces the job and starts it using the invoking
+binary. `stop` stays stopped until `start` or the next login. Logs are in
+`~/Library/Logs/ajax-web-<profile>.log`. Re-run `install` after changing `PATH`
+or toolchains, because the job captures `PATH` at install time. See
+[Server supervision](docs/architecture/web-cockpit.md#server-supervision-launchd).
 
 WireGuard or an equivalent private network is the access boundary for Web
 Cockpit. Public internet exposure is unsupported. Bind the server to a trusted

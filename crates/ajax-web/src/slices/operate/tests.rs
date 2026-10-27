@@ -1,7 +1,9 @@
 use super::{format_execution_outputs, operate, operate_error_code, OperateError, OperateRequest};
 use ajax_core::remediation;
 use ajax_core::{
-    adapters::{CommandOutput, RecordingCommandRunner},
+    adapters::{
+        CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+    },
     commands::{CommandContext, CommandError},
     config::{Config, ManagedRepo},
     models::{
@@ -636,6 +638,151 @@ fn start_task_orchestration_chat_provisions_each_acp_harness() {
                 .all(|command| !(command.program == "tmux"
                     && command.args.first() == Some(&"send-keys".to_string()))),
             "{agent} must not also launch interactively in tmux"
+        );
+    }
+}
+
+fn start_chat_task(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    agent: &str,
+    orchestration_chat: bool,
+) {
+    super::start_task(
+        context,
+        runner,
+        super::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: agent.to_string(),
+            request_id: String::new(),
+            orchestration_chat,
+            model: None,
+        },
+    )
+    .unwrap();
+}
+
+fn is_tmux_command(command: &CommandSpec) -> bool {
+    command.program == "tmux"
+}
+
+/// Simulates a host where the `tmux` binary is not installed: every `tmux`
+/// spawn fails with the same error the OS reports for a missing executable.
+struct TmuxMissingRunner {
+    inner: RecordingCommandRunner,
+}
+
+impl CommandRunner for TmuxMissingRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        if is_tmux_command(command) {
+            return Err(CommandRunError::SpawnFailed(
+                "No such file or directory (os error 2)".to_string(),
+            ));
+        }
+        self.inner.run(command)
+    }
+}
+
+#[test]
+fn start_task_orchestration_chat_issues_no_tmux_commands_for_every_acp_harness() {
+    for agent in ["codex", "claude", "pi", "cursor"] {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        start_chat_task(&mut context, &mut runner, agent, true);
+
+        assert!(
+            runner
+                .commands()
+                .iter()
+                .all(|command| !is_tmux_command(command)),
+            "{agent} chat provisioning must not invoke tmux, got {:?}",
+            runner
+                .commands()
+                .iter()
+                .filter(|command| is_tmux_command(command))
+                .map(|command| &command.args)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            runner.commands().iter().any(|command| {
+                command.program == "git"
+                    && command.args.first().map(String::as_str) == Some("-C")
+                    && command.args.iter().any(|arg| arg == "worktree")
+                    && command.args.iter().any(|arg| arg == "add")
+            }),
+            "{agent} chat provisioning must still create a worktree"
+        );
+
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("task created")
+            .clone();
+        assert!(
+            task.skip_interactive_agent(),
+            "{agent} should be persisted as chat"
+        );
+
+        let mut terminal_context = context_with_managed_repo();
+        let mut terminal_runner = RecordingCommandRunner::default();
+        start_chat_task(&mut terminal_context, &mut terminal_runner, agent, false);
+        let terminal_task = terminal_context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("terminal task created");
+        assert_eq!(
+            task.lifecycle_status, terminal_task.lifecycle_status,
+            "{agent} chat task should reach the same post-start lifecycle as a terminal task"
+        );
+    }
+}
+
+#[test]
+fn start_task_orchestration_chat_succeeds_when_tmux_is_not_installed() {
+    for agent in ["codex", "claude", "pi", "cursor"] {
+        let mut context = context_with_managed_repo();
+        let mut runner = TmuxMissingRunner {
+            inner: RecordingCommandRunner::default(),
+        };
+
+        start_chat_task(&mut context, &mut runner, agent, true);
+
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("task created")
+            .clone();
+        assert!(
+            task.skip_interactive_agent(),
+            "{agent} should be persisted as chat"
+        );
+
+        ajax_core::runtime_refresh::refresh_runtime_context(&mut context, &mut runner)
+            .expect("refresh succeeds without tmux");
+
+        let refreshed = context
+            .registry
+            .get_task(&task.id)
+            .expect("chat task survives refresh");
+        assert!(
+            !refreshed.has_side_flag(SideFlag::TmuxMissing),
+            "{agent} chat task must not be flagged tmux-missing without tmux"
+        );
+        assert!(
+            !refreshed.has_side_flag(SideFlag::TaskWindowMissing),
+            "{agent} chat task must not be flagged task-window-missing without tmux"
+        );
+        assert_eq!(
+            refreshed.runtime_projection.observation_error, None,
+            "{agent} chat task must not record a tmux probe error"
         );
     }
 }

@@ -7,6 +7,8 @@ const RESTART_DELAY: Duration = Duration::from_millis(400);
 const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
 const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";
 const RESTART_PORT_ENV: &str = "AJAX_WEB_RESTART_PORT";
+const SUPERVISOR_ENV: &str = "AJAX_WEB_SUPERVISOR";
+const LAUNCHD_SUPERVISOR: &str = "launchd";
 pub const AJAX_PROFILE_ENV: &str = "AJAX_PROFILE";
 pub const DEV_PROFILE: &str = "dev";
 pub const STABLE_PROFILE: &str = "stable";
@@ -20,7 +22,12 @@ const MAIN_CHECKOUT_DIR: &str = "ajax-cli";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartLaunch {
     Respawn,
-    Script { path: String, args: Vec<String> },
+    /// Under launchd with no restart script: exit and let KeepAlive respawn.
+    Exit,
+    Script {
+        path: String,
+        args: Vec<String>,
+    },
 }
 
 pub fn restart_launch_from_env(
@@ -46,9 +53,23 @@ pub fn restart_launch_from_env(
     RestartLaunch::Respawn
 }
 
+pub fn restart_launch_for_supervisor(
+    supervisor_env: Option<&str>,
+    script_env: Option<&str>,
+    profile_env: Option<&str>,
+    port_env: Option<&str>,
+) -> RestartLaunch {
+    let plan = restart_launch_from_env(script_env, profile_env, port_env);
+    if supervisor_env == Some(LAUNCHD_SUPERVISOR) && plan == RestartLaunch::Respawn {
+        return RestartLaunch::Exit;
+    }
+    plan
+}
+
 #[cfg(not(test))]
 fn restart_launch() -> RestartLaunch {
-    restart_launch_from_env(
+    restart_launch_for_supervisor(
+        std::env::var(SUPERVISOR_ENV).ok().as_deref(),
         std::env::var(RESTART_SCRIPT_ENV).ok().as_deref(),
         std::env::var(RESTART_PROFILE_ENV).ok().as_deref(),
         std::env::var(RESTART_PORT_ENV).ok().as_deref(),
@@ -79,6 +100,7 @@ pub fn schedule_process_restart() {
 fn launch_restart(plan: RestartLaunch) -> Result<(), String> {
     match plan {
         RestartLaunch::Respawn => respawn_current_process(),
+        RestartLaunch::Exit => Ok(()),
         RestartLaunch::Script { path, args } => spawn_restart_script(&path, &args),
     }
 }
@@ -295,7 +317,42 @@ pub fn schedule_test_in_stable() {
 
 #[cfg(test)]
 mod tests {
-    use super::{restart_launch_from_env, schedule_process_restart, RestartLaunch};
+    use super::{
+        restart_launch_for_supervisor, restart_launch_from_env, schedule_process_restart,
+        RestartLaunch,
+    };
+
+    #[test]
+    fn restart_launch_exits_under_launchd_without_script() {
+        assert_eq!(
+            restart_launch_for_supervisor(Some("launchd"), None, Some("dev"), Some("8788")),
+            RestartLaunch::Exit
+        );
+        assert_eq!(
+            restart_launch_for_supervisor(Some("launchd"), Some(""), None, None),
+            RestartLaunch::Exit
+        );
+    }
+
+    #[test]
+    fn restart_launch_keeps_script_and_respawn_outside_launchd() {
+        assert_eq!(
+            restart_launch_for_supervisor(
+                Some("launchd"),
+                Some("/repo/scripts/dev-web-restart.sh"),
+                None,
+                None,
+            ),
+            RestartLaunch::Script {
+                path: "/repo/scripts/dev-web-restart.sh".to_string(),
+                args: Vec::new(),
+            }
+        );
+        assert_eq!(
+            restart_launch_for_supervisor(None, None, None, None),
+            RestartLaunch::Respawn
+        );
+    }
 
     #[test]
     fn schedule_process_restart_is_no_op_in_tests() {
@@ -352,6 +409,7 @@ mod tests {
         assert_eq!(super::RESTART_SCRIPT_ENV, "AJAX_WEB_RESTART_SCRIPT");
         assert_eq!(super::RESTART_PROFILE_ENV, "AJAX_WEB_RESTART_PROFILE");
         assert_eq!(super::RESTART_PORT_ENV, "AJAX_WEB_RESTART_PORT");
+        assert_eq!(super::SUPERVISOR_ENV, "AJAX_WEB_SUPERVISOR");
     }
 
     #[test]

@@ -326,9 +326,10 @@ Chat" test).
 - Known gaps, stated as such: image/audio prompt blocks are not forwarded (a placeholder line is sent); sub-agent (nested tool) traffic is dropped; effort levels are a fixed list.
 
 Harness binaries are resolved through `adapters::program`: the server's own
-`PATH`, then the operator's login shell. `ajax-cli web` runs under tmux or a
-service manager, so a version manager moving `codex` or an adapter between node
-versions would otherwise make a harness silently invisible — which the catalog
+`PATH`, then the operator's login shell. `ajax-cli web` runs under launchd
+(`ajax-cli web service`) or another service manager, so a version manager
+moving `codex` or an adapter between node versions would otherwise make a
+harness silently invisible — which the catalog
 then reported as "no models". Each mapping also names the harness CLI that *could*
 serve ACP natively (`codex`, `claude`, `pi`), and the host prefers that CLI as
 soon as its `--help` advertises an `acp` subcommand — asked rather than
@@ -631,11 +632,30 @@ runs with the same host authority as SQLite, configured repos, worktrees, tmux
 sessions, agent CLIs, and host process state. Docker is no longer part of the
 Ajax Web Cockpit architecture, and no Docker-based web runtime is supported.
 
-Ajax does not implement its own daemon manager. Persistent Web Cockpit
-deployments may run the host-native `ajax-cli web` process under an external
-host supervisor such as launchd, `systemd --user`, tmux, or another service
-manager. The supervised process remains host-native and retains live-control
-authority over the selected Ajax runtime profile.
+### Server supervision (launchd)
+
+Persistent Web Cockpit deployments run the host-native `ajax-cli web` process
+as a macOS launchd user agent via `ajax-cli [--profile P] web service
+install|uninstall|start|stop|status`. The job is `com.ajax.web.<profile>` in
+`~/Library/LaunchAgents`, managed in the `gui/<uid>` domain:
+
+- `RunAtLoad` starts it at login; `KeepAlive` respawns it after any exit,
+  including crashes and self-restart. `ThrottleInterval` is 10s.
+- `install` is an idempotent replace-and-start using the invoking binary.
+  `stop` boots the job out, so it stays stopped until `start` or the next login.
+  `uninstall` removes the plist.
+- Logs go to `~/Library/Logs/ajax-web-<profile>.log`.
+- `PATH` is captured at install time, so re-run `install` after changing PATH
+  or toolchains. The plist embeds only `--profile`, not `--home`, `--config`,
+  or `--state` overrides.
+- The plist sets `AJAX_WEB_SUPERVISOR=launchd`. With that set and no restart
+  script, a self-restart exits and launchd respawns the server rather than
+  spawning an unsupervised replacement.
+
+The supervised process remains host-native and retains live-control authority
+over the selected Ajax runtime profile. `systemd --user` or another service
+manager remains possible for non-macOS hosts; Ajax does not implement its own
+daemon manager.
 
 WireGuard or an equivalent private network is the Web Cockpit access boundary.
 Mutable routes accept callers that can reach the private listener. Public
@@ -1039,9 +1059,11 @@ Flow:
    `AJAX_STABLE_MAIN_WORKTREE`). The operator's current branch/checkout is
    never reset. pid files and logs stay at `REPO_ROOT/.ajax-dev-web`.
 4. Build (`npm ci`, `web:build`, `cargo install --force` into `~/.cargo/bin`)
-   finishes **before** the script stops tmux session `ajax-web-stable`. A stale
-   pid file after stop warns and continues instead of aborting.
-5. Cutover stops the old tmux session and starts the new binary. If
+   finishes **before** the script boots out launchd job `com.ajax.web.stable`.
+   A stale pid file after stop warns and continues instead of aborting.
+5. Cutover boots out the old launchd job (and removes any legacy tmux session
+   `ajax-web-stable` from before the launchd supervisor) and starts the new
+   binary via `web service install`. If
    `start_web` fails, the script restores the previous `~/.cargo/bin/ajax-cli`
    snapshot taken before `--force` install and retries so `:8787` is not left
    empty.
