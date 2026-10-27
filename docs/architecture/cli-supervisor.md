@@ -60,7 +60,8 @@ the current directory.
 
 `__agent-runtime` wraps the tmux agent in nono via `ajax-core`
 `adapters::sandbox`, granting the git common dir and the agent-events dir
-read-write.
+read-write. The profile already allows `$HOME` under the denylist, so these
+explicit grants are belt-and-braces.
 
 Startup behavior should stay inside normal CLI parsing and dispatch. Bare
 invocations may choose a default operator surface, and flags may select runtime
