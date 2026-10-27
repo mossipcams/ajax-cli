@@ -514,3 +514,20 @@ fn temp_config(name: &str) -> ServiceConfig {
         ..service_config()
     }
 }
+
+#[test]
+fn forwarded_env_includes_model_router_override() {
+    let env = forwarded_env(
+        "stable",
+        "8787",
+        env_from(&[(
+            "AJAX_MODEL_ROUTER",
+            "/Users/matt/Projects/ajax-model-router",
+        )]),
+    );
+
+    assert!(env.contains(&(
+        "AJAX_MODEL_ROUTER".to_string(),
+        "/Users/matt/Projects/ajax-model-router".to_string()
+    )));
+}

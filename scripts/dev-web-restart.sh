@@ -164,8 +164,8 @@ restore_model_router_symlinks() {
   local candidate installer
   if [[ -z "$router" ]]; then
     for candidate in \
-      "${HOME}/Desktop/Projects/ajax-model-router" \
-      "/Users/matt/Desktop/Projects/ajax-model-router"; do
+      "${HOME}/Projects/ajax-model-router" \
+      "/Users/matt/Projects/ajax-model-router"; do
       if [[ -x "${candidate}/scripts/install-symlinks" ]]; then
         router="$candidate"
         break

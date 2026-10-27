@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 install_router_links() {
-  router="${AJAX_MODEL_ROUTER:-$HOME/Desktop/Projects/ajax-model-router}"
+  router="${AJAX_MODEL_ROUTER:-$HOME/Projects/ajax-model-router}"
   installer="$router/scripts/install-symlinks"
   if [[ -x "$installer" ]]; then
     "$installer" --target "$ROOT" --force
