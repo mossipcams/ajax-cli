@@ -153,3 +153,96 @@ async fn free_control_lane_applies_activity_synchronously() {
     );
     assert!(deferred.lock().unwrap().is_empty());
 }
+
+#[derive(Clone)]
+struct DivergedDiskBridge {
+    disk: ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    reloaded: bool,
+}
+
+impl crate::runtime::RuntimeBridge<super::tests::OkRunner> for DivergedDiskBridge {
+    fn refresh_cockpit(
+        &mut self,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+        _tier: ajax_core::runtime_refresh::RefreshTier,
+        _deliver_notifications: bool,
+    ) -> Result<bool, crate::WebError> {
+        Ok(false)
+    }
+
+    fn execute_operate(
+        &mut self,
+        _request: crate::slices::operate::OperateRequest,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+    ) -> Result<crate::slices::operate::OperateOutcome, crate::runtime::ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn execute_start_task(
+        &mut self,
+        _request: crate::slices::operate::StartTaskRequest,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+    ) -> Result<crate::slices::operate::OperateOutcome, crate::runtime::ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn persist_registry_snapshot(
+        &mut self,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    ) -> Result<(), crate::WebError> {
+        if self.reloaded {
+            Ok(())
+        } else {
+            Err(crate::WebError::CommandFailed(
+                "state conflict for web/fix-login: disk and in-memory task facts diverged"
+                    .to_string(),
+            ))
+        }
+    }
+
+    fn reload_registry_from_disk(
+        &mut self,
+        context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    ) -> Result<bool, crate::WebError> {
+        *context = self.disk.clone();
+        self.reloaded = true;
+        Ok(true)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn activity_report_recovers_when_disk_diverged_from_memory() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let bridge = DivergedDiskBridge {
+        disk: context.clone(),
+        reloaded: false,
+    };
+    let state = super::WebAppState::new(
+        context,
+        super::tests::OkRunner,
+        bridge,
+        super::tests::scratch_dir("diverged-activity"),
+    );
+
+    let state_for_report = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_report
+            .report_task_session_activity("web/fix-login", SessionActivity::CommandRunning)
+    })
+    .await
+    .expect("report worker should not panic");
+
+    assert_eq!(result, Ok(()));
+    let guard = state.shared();
+    let live = guard
+        .context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .and_then(|task| task.live_status.as_ref().map(|status| status.kind));
+    assert_eq!(live, Some(LiveStatusKind::CommandRunning));
+}
