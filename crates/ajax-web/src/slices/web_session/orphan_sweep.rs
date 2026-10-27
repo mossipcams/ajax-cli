@@ -15,6 +15,7 @@
 //! The sweep never fails startup, attach, or prompt admission: every error is
 //! logged with `tracing::warn` and the run moves on.
 
+use super::os_process;
 use super::process_identity::{judge, start_token, Verdict};
 use super::startup_recovery::RecoveryResult;
 use ajax_core::registry::{ExecutionCommit, RunUpdate, SqliteRegistryStore};
@@ -194,36 +195,13 @@ fn clear_child_identity(store: &SqliteRegistryStore, run_id: &str, pid: i64) -> 
     }
 }
 
-/// `kill -0` succeeds for zombies too; consult `ps` so unreaped exits read as gone.
+/// Whether `pid` is still running. An exited child that has not been reaped is
+/// a zombie: it still exists, but it has already stopped, so it reads as gone.
 fn pid_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    let exists = Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
-    if !exists {
-        return false;
-    }
-    Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            let stat = String::from_utf8(output.stdout)
-                .ok()
-                .map(|s| s.trim().to_owned())
-                .filter(|s| !s.is_empty())?;
-            Some(!stat.starts_with('Z'))
-        })
-        .unwrap_or(false)
+    os_process::exists(pid) && !os_process::is_zombie(pid)
 }
 
 /// Best-effort signal to a pid; `true` when the signal was sent.

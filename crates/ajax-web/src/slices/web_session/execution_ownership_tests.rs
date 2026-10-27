@@ -240,21 +240,6 @@ fn unreadable_store_reports_stored_session_unreadable() {
 }
 
 #[test]
-fn holder_is_dead_only_on_positive_evidence() {
-    use super::execution_ownership::holder_is_dead;
-
-    // Exit 1 with empty stdout is the only positive evidence of death.
-    assert!(holder_is_dead(Some(1), true));
-
-    // Everything else — including probes that never ran — means alive.
-    assert!(!holder_is_dead(Some(0), false));
-    assert!(!holder_is_dead(Some(0), true));
-    assert!(!holder_is_dead(Some(1), false));
-    assert!(!holder_is_dead(Some(2), true));
-    assert!(!holder_is_dead(None, true));
-}
-
-#[test]
 fn lost_lease_is_detected_by_heartbeat_and_blocks_ensure_owner() {
     let dir = test_support::scratch_dir("exec-ownership-lost-heartbeat");
     let first_storage = SessionStorage::under(dir.clone());

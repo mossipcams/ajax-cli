@@ -224,31 +224,19 @@ fn random_boot_id() -> String {
     }
 }
 
+/// Whether a lease holder is still running. Existence only, so a zombie holder
+/// counts as alive; without positive evidence of death the holder is kept,
+/// since taking over a live owner is the worse failure.
 fn process_alive(pid: i64) -> bool {
-    // ponytail: shells out to `ps -p`; use /proc or libc if this ever shows up in a profile
     #[cfg(unix)]
-    match std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "pid="])
-        .stdin(std::process::Stdio::null())
-        .output()
     {
-        Ok(output) => !holder_is_dead(output.status.code(), output.stdout.is_empty()),
-        // The probe itself failed to start: no positive evidence of death, so keep
-        // the holder alive (taking over a live owner is the worse failure).
-        Err(_) => true,
+        super::os_process::exists(pid)
     }
     #[cfg(not(unix))]
     {
         let _ = pid;
         true
     }
-}
-
-/// `ps -p` exits 1 with empty stdout when the process does not exist; every
-/// other outcome (exit 0, other codes, signals, a probe that never ran) means
-/// we have no positive evidence of death, so the holder counts as alive.
-pub(super) fn holder_is_dead(exit_code: Option<i32>, stdout_empty: bool) -> bool {
-    exit_code == Some(1) && stdout_empty
 }
 
 fn now_unix_ms() -> i64 {

@@ -180,6 +180,7 @@ dependencies = [
  "futures",
  "getrandom 0.4.3",
  "jsonwebtoken",
+ "nix 0.31.3",
  "portable-pty",
  "rcgen",
  "rustls",
