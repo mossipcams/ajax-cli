@@ -159,7 +159,7 @@ pub(super) fn test_restore_timeout_override_ms() -> Option<u64> {
 }
 
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(45);
-pub(super) const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
+pub(crate) const RESTORE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(super) fn restore_handshake_timeout() -> Duration {
     #[cfg(test)]

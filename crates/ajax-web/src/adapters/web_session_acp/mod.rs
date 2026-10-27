@@ -160,7 +160,7 @@ pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, Se
 #[cfg(test)]
 pub(crate) use client::{
     set_test_acp_command, with_test_acp_extra_args, with_test_acp_program,
-    with_test_handshake_timeout,
+    with_test_handshake_timeout, with_test_restore_timeout, RESTORE_HANDSHAKE_TIMEOUT,
 };
 #[cfg(test)]
 pub(crate) use cursor_sdk_spawn::with_test_cursor_sdk_module;

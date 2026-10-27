@@ -248,6 +248,10 @@ impl TaskSessionState {
         }
 
         let events = self.filter_events_for_log(events);
+        self.commit_with_backlog(events)
+    }
+
+    fn commit_with_backlog(&mut self, events: Vec<SessionServerEvent>) -> Result<(), SessionError> {
         let mut filtered = std::mem::take(&mut self.unpersisted);
         filtered.extend(events);
         if filtered.is_empty() {
@@ -277,6 +281,29 @@ impl TaskSessionState {
         self.log.mark_superseded(&cursors);
         self.log.append(filtered);
         Ok(())
+    }
+
+    pub(super) fn retry_unpersisted_backlog(&mut self) {
+        if self.unpersisted.is_empty() || self.prompts.active_prompt.is_some() {
+            return;
+        }
+        let _ = self.commit_with_backlog(Vec::new());
+    }
+
+    pub(super) fn flush_unpersisted_backlog(&mut self) {
+        if self.unpersisted.is_empty() {
+            return;
+        }
+        if self
+            .prompts
+            .active_prompt
+            .as_ref()
+            .is_some_and(|active| active.terminal.is_some())
+        {
+            try_finalize_active_prompt(self);
+        } else {
+            let _ = self.commit_with_backlog(Vec::new());
+        }
     }
 
     fn is_idle(&self) -> bool {
@@ -441,6 +468,7 @@ pub(crate) fn spawn_task_session(
                     if state.acp.client.is_some() {
                         state.pump();
                     }
+                    state.retry_unpersisted_backlog();
                     state.poll_background_jobs().await;
                 }
             }
@@ -448,6 +476,7 @@ pub(crate) fn spawn_task_session(
         state
             .evidence
             .retry_pending_activity_report(&state.qualified_handle);
+        state.flush_unpersisted_backlog();
         if close_on_exit {
             state.prompts.queued.clear();
             state.prompts.prompt_ledger.remove_queued();

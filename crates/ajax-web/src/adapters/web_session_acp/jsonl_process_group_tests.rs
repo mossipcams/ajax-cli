@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord, FAIL_READER_SPAWN, LAST_SPAWNED_PID};
 
 fn pid_alive(pid: u64) -> bool {
     Command::new("kill")
@@ -77,5 +77,29 @@ fn dropping_the_process_also_kills_its_grandchildren() {
     assert!(
         gone,
         "grandchild {grandchild} survived dropping JsonlProcess: the child must run in its own process group and the group must be killed"
+    );
+}
+
+#[test]
+fn failed_reader_thread_start_kills_and_reaps_the_child() {
+    FAIL_READER_SPAWN.with(|fail| fail.set(true));
+    let result = JsonlProcess::spawn_unsandboxed(
+        Path::new("sh"),
+        &["-c".to_string(), "exec sleep 300".to_string()],
+        &std::env::temp_dir(),
+    );
+    let pid = u64::from(LAST_SPAWNED_PID.with(std::cell::Cell::get));
+
+    assert!(
+        result.is_err(),
+        "spawn must fail when a reader thread cannot start"
+    );
+    let alive = pid_alive(pid);
+    if alive {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+    assert!(
+        !alive,
+        "child {pid} survived a failed reader-thread start: it must be killed and reaped before spawn returns"
     );
 }

@@ -454,6 +454,7 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 "failed appends must not reach the log: {events:?}"
             );
 
+            let fail_terminal = ForcePersistFailGuard::enable();
             directory
                 .cancel(handle, true)
                 .expect("cancel accepted for retry");
@@ -464,7 +465,6 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 "turn must not complete while the backlog is unpersisted"
             );
 
-            let fail_terminal = ForcePersistFailGuard::enable();
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
                 .expect("chmod state dir writable");
             let (pending, _) = directory.read_from(handle, 0);

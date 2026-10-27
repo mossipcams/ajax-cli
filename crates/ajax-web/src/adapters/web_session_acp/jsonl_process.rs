@@ -8,6 +8,15 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static FAIL_READER_SPAWN: Cell<bool> = const { Cell::new(false) };
+    pub(super) static LAST_SPAWNED_PID: Cell<u32> = const { Cell::new(0) };
+}
+
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
 
 const DROP_GRACE: Duration = Duration::from_secs(2);
@@ -45,25 +54,20 @@ impl JsonlProcess {
             .stderr(Stdio::piped());
         super::process_group::own_group(&mut command);
         let mut child = command.spawn()?;
+        #[cfg(test)]
+        LAST_SPAWNED_PID.with(|pid| pid.set(child.id()));
 
         let stdin = child.stdin.take().expect("stdin was piped");
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
 
         let (sender, records) = mpsc::channel::<JsonlRecord>();
-        std::thread::Builder::new()
-            .name("jsonl-stdout".to_owned())
-            .spawn(move || {
-                read_stdout_lines(stdout, &sender);
-            })?;
-
         let stderr_tail: Arc<Mutex<Vec<u8>>> = Arc::default();
-        let tail_guard = Arc::clone(&stderr_tail);
-        std::thread::Builder::new()
-            .name("jsonl-stderr".to_owned())
-            .spawn(move || {
-                drain_stderr(stderr, &tail_guard);
-            })?;
+        if let Err(error) = spawn_reader_threads(stdout, stderr, sender, Arc::clone(&stderr_tail)) {
+            super::process_group::kill_tree(&mut child);
+            let _ = child.wait();
+            return Err(error);
+        }
 
         Ok(Self {
             stdin: Some(stdin),
@@ -179,6 +183,29 @@ impl Drop for JsonlProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+fn spawn_reader_threads(
+    stdout: impl Read + Send + 'static,
+    stderr: impl Read + Send + 'static,
+    sender: mpsc::Sender<JsonlRecord>,
+    stderr_tail: Arc<Mutex<Vec<u8>>>,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_READER_SPAWN.with(|fail| fail.replace(false)) {
+        return Err(io::Error::other("injected reader thread spawn failure"));
+    }
+    std::thread::Builder::new()
+        .name("jsonl-stdout".to_owned())
+        .spawn(move || {
+            read_stdout_lines(stdout, &sender);
+        })?;
+    std::thread::Builder::new()
+        .name("jsonl-stderr".to_owned())
+        .spawn(move || {
+            drain_stderr(stderr, &stderr_tail);
+        })?;
+    Ok(())
 }
 
 fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<JsonlRecord>) {
