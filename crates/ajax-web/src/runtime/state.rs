@@ -2,7 +2,9 @@ use crate::adapters::http::{
     json_response, operation_response_with_request_id, response_from_web_error, Response,
 };
 use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
-use crate::runtime::operation_outcomes::now_unix_secs;
+use crate::runtime::operation_outcomes::{
+    now_unix_secs, PendingOutcomeWrite, MAX_OUTCOME_AGE_SECS,
+};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
@@ -387,6 +389,20 @@ impl<C, B> WebAppState<C, B> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Records a finished operation's outcome, then writes it with the
+    /// operations lock already released so disk I/O never blocks other requests.
+    pub(crate) fn finish_operation(
+        &self,
+        request_id: Option<&str>,
+        task_key: &str,
+        response: &Response,
+    ) {
+        let pending = self.operations().finish(request_id, task_key, response);
+        if let Some(pending) = pending {
+            pending.persist();
+        }
+    }
+
     pub fn new(
         context: CommandContext<InMemoryRegistry>,
         runner: C,
@@ -591,7 +607,13 @@ pub(crate) enum GateRejection {
 }
 
 impl OperationCoordinator {
+    /// An outcome older than the replay window is treated as absent, in memory
+    /// as well as on disk, so a long-lived host cannot replay it indefinitely.
     pub(crate) fn completed_response(&self, request_id: &str) -> Option<Response> {
+        let completed_at = *self.completed_at.get(request_id)?;
+        if now_unix_secs().saturating_sub(completed_at) > MAX_OUTCOME_AGE_SECS {
+            return None;
+        }
         self.completed.get(request_id).cloned()
     }
 
@@ -626,17 +648,27 @@ impl OperationCoordinator {
         Ok(())
     }
 
-    pub(crate) fn finish(&mut self, request_id: Option<&str>, task_key: &str, response: &Response) {
+    /// Releases the in-flight markers and records the outcome. The returned
+    /// write must be persisted by the caller after the operations lock is dropped.
+    pub(crate) fn finish(
+        &mut self,
+        request_id: Option<&str>,
+        task_key: &str,
+        response: &Response,
+    ) -> Option<PendingOutcomeWrite> {
         self.in_flight_tasks.remove(task_key);
-        if let Some(request_id) = request_id {
-            self.in_flight_requests.remove(request_id);
-            self.store_completed_response(request_id.to_string(), response.clone());
-        }
+        let request_id = request_id?;
+        self.in_flight_requests.remove(request_id);
+        self.store_completed_response(request_id.to_string(), response.clone())
     }
 
-    pub(crate) fn store_completed_response(&mut self, request_id: String, response: Response) {
+    pub(crate) fn store_completed_response(
+        &mut self,
+        request_id: String,
+        response: Response,
+    ) -> Option<PendingOutcomeWrite> {
         self.remember_completed_response(request_id, response, now_unix_secs());
-        self.persist_completed_responses();
+        self.pending_write()
     }
 
     pub(crate) fn remember_completed_response(

@@ -375,6 +375,11 @@ pub(super) fn submit_prompt(
         if let Some(entry) = state.prompts.prompt_ledger.entry(&client_message_id) {
             match entry.phase {
                 PromptPhase::Interrupted => {
+                    // Acknowledge here too, so the ack does not depend on the
+                    // recovery rows surviving the restart (#1434).
+                    state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+                        client_message_id: client_message_id.clone(),
+                    }])?;
                     return Err(SessionError::operator(format!(
                         "prompt {client_message_id} was interrupted and was not executed"
                     )));

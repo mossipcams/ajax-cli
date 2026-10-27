@@ -120,7 +120,10 @@ fn adopt_stored_session(
     state.log = super::transcript::TranscriptLog::from_events(events, dropped);
     state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     match recover_prompt_ledger(state) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            state.stored_loaded = true;
+            Ok(())
+        }
         Err(error) => {
             // Stay cold so the next attempt loads the stored transcript again.
             state.log = super::transcript::TranscriptLog::default();
@@ -343,7 +346,10 @@ pub(super) async fn clear_session_context(
 ) -> Result<u64, SessionError> {
     let model = state.acp.model.clone();
     let agent = state.agent;
-    if state.log.events.is_empty() && state.log.dropped == 0 {
+    // Only a cold actor takes a holder here: a warm /clear runs under the holder
+    // its attach already took, and a second one would never be released (#1432).
+    let cold = !state.stored_loaded;
+    if cold {
         load_cold_session(state, agent)?;
     }
     // Operator reset: retry transcript writes instead of staying blocked.
@@ -401,7 +407,9 @@ pub(super) async fn clear_session_context(
             message: error.clone(),
         }]);
     }
-    state.acquire_holder();
+    if cold {
+        state.acquire_holder();
+    }
     Ok(state.generation)
 }
 

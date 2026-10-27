@@ -1,16 +1,17 @@
 use super::state::OperationCoordinator;
 use crate::adapters::http::Response;
+use crate::util::write_private_file;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::{self, ErrorKind},
-    path::Path,
+    io::ErrorKind,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const OUTCOMES_FILE: &str = "operation-outcomes.json";
-const MAX_OUTCOME_AGE_SECS: u64 = 24 * 60 * 60;
+pub(crate) const MAX_OUTCOME_AGE_SECS: u64 = 24 * 60 * 60;
 const JSON_CONTENT_TYPE: &str = "application/json; charset=utf-8";
 
 #[derive(Serialize, Deserialize)]
@@ -82,12 +83,10 @@ impl OperationCoordinator {
         coordinator
     }
 
-    /// Writes every completed outcome to the state file. A failed write is
-    /// reported and leaves the in-memory outcomes in place.
-    pub(crate) fn persist_completed_responses(&self) {
-        let Some(path) = &self.store_path else {
-            return;
-        };
+    /// Captures every completed outcome as the bytes to write to the state
+    /// file. The caller persists them after releasing the operations lock.
+    pub(crate) fn pending_write(&self) -> Option<PendingOutcomeWrite> {
+        let path = self.store_path.clone()?;
         let entries = self
             .completed_request_ids
             .iter()
@@ -102,21 +101,27 @@ impl OperationCoordinator {
                 })
             })
             .collect();
-        let bytes = match serde_json::to_vec(&StoredOutcomes { entries }) {
-            Ok(bytes) => bytes,
+        match serde_json::to_vec(&StoredOutcomes { entries }) {
+            Ok(bytes) => Some(PendingOutcomeWrite { path, bytes }),
             Err(error) => {
                 eprintln!("could not serialize {OUTCOMES_FILE}: {error}");
-                return;
+                None
             }
-        };
-        if let Err(error) = write_atomically(path, &bytes) {
-            eprintln!("could not write {OUTCOMES_FILE}: {error}");
         }
     }
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path)
+/// Outcome bytes captured under the operations lock, written once it is released.
+pub(crate) struct PendingOutcomeWrite {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl PendingOutcomeWrite {
+    /// A failed write is reported and leaves the in-memory outcomes in place.
+    pub(crate) fn persist(self) {
+        if let Err(error) = write_private_file(&self.path, &self.bytes) {
+            eprintln!("could not write {OUTCOMES_FILE}: {error}");
+        }
+    }
 }

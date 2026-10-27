@@ -156,6 +156,9 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
+    /// True once the stored transcript and prompt ledger have been adopted. A
+    /// cold actor (false) must load them before it writes to the log (#1432).
+    pub(super) stored_loaded: bool,
     // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
     pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
@@ -412,6 +415,7 @@ pub(crate) fn spawn_task_session(
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
+            stored_loaded: false,
             unpersisted: Vec::new(),
             stream_normalizer: StreamNormalizer::default(),
             last_released: None,

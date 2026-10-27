@@ -82,3 +82,42 @@ fn begin_failure_without_client_message_id_has_no_ack() {
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0], SessionServerEvent::Error { .. }));
 }
+
+#[test]
+fn resent_interrupted_prompt_is_acknowledged_directly() {
+    let dir = scratch_dir("prompt-ack-resend-interrupted");
+    let handle = "web/prompt-ack-resend-interrupted";
+    let script = fake_acp_fixture();
+
+    let mut ledger = PromptLedger::default();
+    ledger.upsert_queued(
+        "interrupted-2".to_string(),
+        "hold".to_string(),
+        "hold".to_string(),
+        Vec::new(),
+    );
+    assert!(ledger.mark_dispatching("interrupted-2"));
+    prompt_ledger::persist(&dir, handle, &ledger).expect("seed ledger");
+
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let (recovered, _) = directory.read_from(handle, 0);
+        assert_eq!(ack_count(&recovered, "interrupted-2"), 1);
+
+        let error = directory
+            .submit_prompt_with_id(handle, "interrupted-2".to_string(), "hold".to_string())
+            .expect_err("a resent interrupted prompt is refused");
+        assert!(error.contains("interrupted"), "{error}");
+        let (events, _) = directory.read_from(handle, 0);
+        assert_eq!(
+            ack_count(&events, "interrupted-2"),
+            2,
+            "the resend itself must acknowledge the prompt"
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

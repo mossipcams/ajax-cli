@@ -135,6 +135,10 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   the stored ACP session id and starts a clean child; Start fresh explicitly
   clears it, performs one `session/new`, and appends `Context cleared.`. No
   fresh session is created behind an existing transcript without that action.
+  On a cold actor (its stored transcript not yet loaded), Start fresh loads the
+  stored transcript before it writes, so the note is appended after the existing
+  rows, never over them. An in-session `/clear` on a loaded actor does not take
+  an extra holder, so it cannot keep the slot from idle eviction.
 - Live slash commands follow ACP `available_commands_update`: after `session/new`
   and any later replacement, the host stores the complete advertised list and
   exposes it on the snapshot as `availableCommands` (`name`, `description`,
@@ -291,7 +295,12 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
 - After `ajax-web` restart or TaskSession slot recreation, **queued** ledger rows
   reload into the in-memory host FIFO. **Dispatching** rows recovered from disk
   become **interrupted**: the host emits one typed `error` event and does not
-  automatically retry the prompt.
+  automatically retry the prompt. Each recovered prompt is acknowledged with
+  `PromptAccepted` immediately before its typed error, so the browser outbox
+  drops it instead of resending it on reconnect. Resending an interrupted
+  `clientMessageId` is refused with the same error and acknowledged again with
+  `PromptAccepted`, so the acknowledgement does not depend on the recovery rows
+  surviving.
 - After a host restart, queued prompts are dispatched headlessly in order, one chat at a time, once the host holds the execution lease; a dispatching prompt is never resent (it is marked interrupted).
 - Ledger persist failure rejects the submit before acknowledgement or ACP dispatch.
 - The live `TaskSession` actor owns prompt terminal transitions and FIFO
@@ -571,8 +580,9 @@ whole transcript inside `session/load` before responding.
   a fresh session or append that note.
 - A prompt that was dispatching when the host died is shown as interrupted
   (`Prompt <id> was interrupted by host restart and was not retried.`) and is
-  never resent automatically; queued prompts survive and dispatch in order. See
-  `docs/architecture/durable-execution.md`.
+  never resent automatically; queued prompts survive and dispatch in order. The
+  recovery sequence is `PromptAccepted` for the prompt, then the typed error
+  note, in that order. See `docs/architecture/durable-execution.md`.
 - Transcript events are appended as database rows; the only in-place
   rewrite is a superseded streamed message version becoming an empty marker
   (see `docs/architecture/durable-execution.md`). Bounded retention (2000
