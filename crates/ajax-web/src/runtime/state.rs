@@ -35,6 +35,10 @@ pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
 pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
     "Could not save the session model. Try again in a moment.";
+const CONTROL_LANE_BUSY_ERROR: &str = "control lane busy; session activity report deferred";
+/// Session activity reports that found the control lane busy, in arrival order.
+pub(crate) type DeferredActivityReports =
+    Mutex<VecDeque<(String, crate::slices::web_session::SessionActivity)>>;
 
 pub(crate) fn moonshine_provider_from_config(config: &Config) -> Arc<Mutex<MoonshineProvider>> {
     Arc::new(Mutex::new(MoonshineProvider::new(
@@ -245,7 +249,16 @@ where
         let _lane = self
             .control_lane
             .try_lock()
-            .map_err(|_| "control lane busy; session activity report deferred".to_string())?;
+            .map_err(|_| CONTROL_LANE_BUSY_ERROR.to_string())?;
+        self.record_task_session_activity_under_lane(handle, activity)
+    }
+
+    /// Applies a session activity report; the caller must already hold the control lane.
+    fn record_task_session_activity_under_lane(
+        &self,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> Result<(), String> {
         let (mut context, runner, bridge, base_revision) = {
             let guard = self.shared();
             (
@@ -270,15 +283,96 @@ where
         )
     }
 
+    /// Reports session activity without dropping it when the control lane is busy (#1472).
+    /// Reports queue behind any already-deferred ones so they apply in arrival order; a
+    /// drainer thread applies the queue once the lane frees. Returns true once accepted.
+    pub(crate) fn report_or_defer_task_session_activity(
+        &self,
+        deferred: &Arc<DeferredActivityReports>,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> bool
+    where
+        C: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        let mut queue = deferred
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if queue.is_empty() {
+            match self.report_task_session_activity(handle, activity) {
+                Ok(()) => return true,
+                Err(error) if error == CONTROL_LANE_BUSY_ERROR => {}
+                Err(error) => {
+                    tracing::warn!(
+                        target: "ajax_web",
+                        handle,
+                        ?activity,
+                        %error,
+                        "session activity report failed"
+                    );
+                    return false;
+                }
+            }
+        }
+        let was_empty = queue.is_empty();
+        queue.push_back((handle.to_string(), activity));
+        if was_empty {
+            self.spawn_deferred_activity_drainer(Arc::clone(deferred));
+        }
+        true
+    }
+
+    /// Applies queued reports on a std thread holding the control lane. Uses `blocking_lock`
+    /// here, never on the session actor, so the actor never waits on the lane (#1472).
+    fn spawn_deferred_activity_drainer(&self, deferred: Arc<DeferredActivityReports>)
+    where
+        C: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        let state = self.clone();
+        std::thread::spawn(move || {
+            let _lane = state.control_lane.blocking_lock();
+            loop {
+                let next = deferred
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front();
+                let Some((handle, activity)) = next else {
+                    break;
+                };
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    state.record_task_session_activity_under_lane(&handle, activity)
+                })) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(
+                        target: "ajax_web",
+                        handle = %handle,
+                        ?activity,
+                        %error,
+                        "deferred session activity report failed"
+                    ),
+                    Err(_) => tracing::warn!(
+                        target: "ajax_web",
+                        handle = %handle,
+                        ?activity,
+                        "deferred session activity report panicked"
+                    ),
+                }
+            }
+        });
+    }
+
     fn wire_session_activity_reporter(&self)
     where
         C: Send + Sync + 'static,
         B: Send + Sync + 'static,
     {
         let state = self.clone();
+        let deferred: Arc<DeferredActivityReports> = Arc::new(Mutex::new(VecDeque::new()));
         self.task_session_directory
             .set_report_session_activity(Arc::new(move |handle, activity| {
-                state.report_task_session_activity(handle, activity).is_ok()
+                state.report_or_defer_task_session_activity(&deferred, handle, activity)
             }));
     }
 

@@ -1544,6 +1544,13 @@ Runtime coordination contract (implemented):
   state when refresh, notify, action, or start work already holds the control
   lane; they do not cache that fallback response. Later polls use the normal
   refresh path when the lane is available or the cache TTL expires.
+- Session activity reports from chat session actors try the control lane
+  without waiting. When the lane is busy the report is deferred to a FIFO
+  queue that a dedicated thread applies under the lane once it frees; later
+  reports queue behind deferred ones so they apply in arrival order (#1472).
+  The session actor never waits on the lane (#1083). Non-lane failures
+  (missing task, unsaved registry) still fail the report so the chat
+  surfaces them.
 
 The control lane (`control_lane`) is acquired by the cockpit refresh path and,
 after operation admission, by the action and task-start handlers, pinned by two
