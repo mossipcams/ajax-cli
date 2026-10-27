@@ -127,6 +127,15 @@ pub fn new_task_plan_with_observation<R: Registry>(
     }
 
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
+    if let Some(task) = context.registry.list_tasks().into_iter().find(|task| {
+        task.lifecycle_status != LifecycleStatus::Removed && task.tmux_session == tmux_session
+    }) {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "tmux session already claimed by task {}: {tmux_session}",
+            task.qualified_handle()
+        )]));
+    }
+
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);

@@ -475,7 +475,7 @@ pub fn observe_task_pull_requests(
     github: &GithubChecksAdapter,
 ) -> Result<Vec<PullRequestRef>, DiffReviewError> {
     let worktree = task.worktree_path.display().to_string();
-    let command = github.pr_list(&worktree, &task.branch);
+    let command = github.pr_list(&worktree, task.pr_head_branch());
     let live = match GithubChecksAdapter::parse_pr_list(&runner.run(&command)) {
         Ok(prs) => prs,
         Err(_reason) => return Ok(stored_pull_requests(task)),
@@ -532,7 +532,7 @@ pub fn project_task_diff(
                 title: format!("#{number}"),
                 url: String::new(),
                 state: PullRequestState::Open,
-                head_ref: task.branch.clone(),
+                head_ref: task.pr_head_branch().to_string(),
                 head_sha: None,
             })
         });

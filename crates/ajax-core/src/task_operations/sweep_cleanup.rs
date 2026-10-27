@@ -6,7 +6,9 @@ use crate::{
     registry::Registry,
 };
 
-use crate::task_operations::drop_task::{complete_drop_task_operation, DropTaskCompletion};
+use crate::task_operations::drop_task::{
+    complete_drop_task_operation, drop_cleanup_resource_is_already_missing, DropTaskCompletion,
+};
 
 pub fn execute_sweep_cleanup_operation<R: Registry>(
     context: &mut CommandContext<R>,
@@ -59,7 +61,10 @@ pub fn execute_sweep_cleanup_operation<R: Registry>(
             let output = runner
                 .run(command)
                 .map_err(|error| (CommandError::CommandRun(error), state_changed))?;
-            if output.status_code != 0 {
+            // A resource that is already gone (e.g. a stale cached tmux status) is success.
+            let already_missing = output.status_code != 0
+                && drop_cleanup_resource_is_already_missing(command, &output);
+            if output.status_code != 0 && !already_missing {
                 return Err((
                     CommandError::CommandRun(CommandRunError::NonZeroExit {
                         program: command.program.clone(),

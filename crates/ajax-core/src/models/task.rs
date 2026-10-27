@@ -188,15 +188,34 @@ impl Task {
     }
 
     pub fn has_missing_substrate(&self) -> bool {
+        self.has_missing_git_substrate() || self.has_missing_non_branch_substrate()
+    }
+
+    /// Missing substrate other than the expected branch: the worktree, tmux,
+    /// and task window (the latter two ignored for chat tasks).
+    pub fn has_missing_non_branch_substrate(&self) -> bool {
         let ignores_tmux = self.skip_interactive_agent();
-        self.has_missing_git_substrate()
+        self.has_missing_worktree()
             || self.side_flags().any(|flag| {
-                flag.is_missing_substrate()
+                flag != SideFlag::BranchMissing
+                    && flag.is_missing_substrate()
                     && !(ignores_tmux
                         && matches!(flag, SideFlag::TmuxMissing | SideFlag::TaskWindowMissing))
             })
             || self.runtime_health_missing_substrate(ignores_tmux)
             || self.live_reports_unrefuted_missing_substrate(ignores_tmux)
+    }
+
+    /// A worktree on another named branch that repair can adopt. Holds even
+    /// when the expected branch is gone, as after a rename.
+    pub fn has_adoptable_branch_move(&self) -> bool {
+        self.git_status.as_ref().is_some_and(|status| {
+            status.worktree_exists
+                && status
+                    .current_branch
+                    .as_deref()
+                    .is_some_and(|current| !current.is_empty() && current != self.branch)
+        })
     }
 
     fn runtime_health_missing_substrate(&self, ignores_tmux: bool) -> bool {
@@ -231,6 +250,19 @@ impl Task {
         self.git_status.as_ref().is_some_and(|status| {
             status.worktree_exists && status.current_branch.as_deref() != Some(self.branch.as_str())
         })
+    }
+
+    /// Branch whose PRs belong to this task: the worktree's observed branch when
+    /// it was switched or renamed away from `branch` (as `gh-pr-create` requires),
+    /// otherwise `branch`.
+    pub fn pr_head_branch(&self) -> &str {
+        self.git_status
+            .as_ref()
+            .and_then(|status| status.current_branch.as_deref())
+            .filter(|current| {
+                !current.is_empty() && *current != self.branch && *current != self.base_branch
+            })
+            .unwrap_or(&self.branch)
     }
 
     pub fn checkout_mismatch_explanation(&self) -> Option<String> {

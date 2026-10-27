@@ -240,6 +240,9 @@ missing substrate, flags, agent state, or live status, and it never fabricates
 shell/process state. Reviewable and mergeable lifecycle also remain intact so
 their valid Review or Ship capabilities survive acknowledgment.
 
+Green CI promotes a Reviewable task to Mergeable. A later failed CI run on the
+same PR demotes it back to Reviewable, so Ship is not offered on red CI.
+
 Web Cockpit terminal input is a second attention acknowledgment source. The PTY
 adapter (`ajax-web::adapters::terminal_pty`) reports only validated input
 frames, binary or JSON `input`, through an injected sink; it never mutates

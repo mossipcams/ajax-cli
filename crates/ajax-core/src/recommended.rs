@@ -183,9 +183,10 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
-    if !task.has_missing_substrate()
-        && (task.has_checkout_mismatch()
-            || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch)
+    if is_adoptable_branch_move(task)
+        || (!task.has_missing_substrate()
+            && (task.has_checkout_mismatch()
+                || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch))
     {
         return vec![
             OperatorAction::Repair,
@@ -210,6 +211,10 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         } else {
             Vec::new()
         };
+    let ci_failed = task
+        .live_status
+        .as_ref()
+        .is_some_and(|status| status.kind == LiveStatusKind::CiFailed);
     actions.extend(
         [
             (TaskOperation::Open, OperatorAction::Resume),
@@ -219,6 +224,7 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         ]
         .into_iter()
         .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
+        .filter(|(_, action)| !(ci_failed && *action == OperatorAction::Ship))
         .map(|(_, action)| action),
     );
     actions.dedup();
@@ -229,35 +235,56 @@ fn has_only_shell_substrate_gap(task: &Task) -> bool {
     !task.has_missing_git_substrate()
 }
 
+/// Repair adopts the observed branch, so a renamed or switched branch is
+/// recoverable even when the expected branch no longer exists.
+fn is_adoptable_branch_move(task: &Task) -> bool {
+    task.has_adoptable_branch_move() && !task.has_missing_non_branch_substrate()
+}
+
 fn task_is_known_invalid(task: &Task) -> bool {
-    task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::TaskWindowMissing)
+    if is_adoptable_branch_move(task) {
+        return false;
+    }
+    // Chat tasks run without a tmux session or task window by design; mirror
+    // the exemption in `Task::has_missing_substrate`.
+    let ignores_tmux = task.skip_interactive_agent();
+    (!ignores_tmux
+        && (task.has_side_flag(SideFlag::TmuxMissing)
+            || task.has_side_flag(SideFlag::TaskWindowMissing)))
         || task.has_side_flag(SideFlag::WorktreeMissing)
         || task.has_side_flag(SideFlag::BranchMissing)
-        || task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists)
+        || (!ignores_tmux
+            && task
+                .tmux_status
+                .as_ref()
+                .is_some_and(|status| !status.exists))
         || task
             .git_status
             .as_ref()
             .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
-        || task
-            .task_window_status
-            .as_ref()
-            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+        || (!ignores_tmux
+            && task
+                .task_window_status
+                .as_ref()
+                .is_some_and(|status| !status.exists || !status.points_at_expected_path))
         || task
             .live_status
             .as_ref()
             .is_some_and(|live| match live.kind {
-                LiveStatusKind::TmuxMissing => !task
-                    .tmux_status
-                    .as_ref()
-                    .is_some_and(|status| status.exists),
-                LiveStatusKind::TaskWindowMissing => !task
-                    .task_window_status
-                    .as_ref()
-                    .is_some_and(|status| status.exists && status.points_at_expected_path),
+                LiveStatusKind::TmuxMissing => {
+                    !ignores_tmux
+                        && !task
+                            .tmux_status
+                            .as_ref()
+                            .is_some_and(|status| status.exists)
+                }
+                LiveStatusKind::TaskWindowMissing => {
+                    !ignores_tmux
+                        && !task
+                            .task_window_status
+                            .as_ref()
+                            .is_some_and(|status| status.exists && status.points_at_expected_path)
+                }
                 LiveStatusKind::WorktreeMissing => !task
                     .git_status
                     .as_ref()
@@ -494,6 +521,56 @@ mod tests {
     }
 
     #[test]
+    fn switched_branch_offers_adoption_when_expected_branch_still_exists() {
+        let mut t = clean_reviewable_task("fix-login");
+        t.git_status.as_mut().unwrap().current_branch = Some("fix/web/login".to_string());
+
+        let plan = operator_action(&t);
+
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Repair),
+            "switched branch should offer adoption repair: {:?}",
+            plan.available_actions
+        );
+        assert_ne!(plan.available_actions, vec![OperatorAction::Drop]);
+    }
+
+    #[test]
+    fn renamed_branch_offers_adoption_when_expected_branch_is_gone() {
+        let mut t = clean_reviewable_task("fix-login");
+        let status = t.git_status.as_mut().unwrap();
+        status.current_branch = Some("fix/web/login".to_string());
+        status.branch_exists = false;
+        t.add_side_flag(SideFlag::BranchMissing);
+
+        let plan = operator_action(&t);
+
+        assert_eq!(
+            plan.available_actions,
+            vec![
+                OperatorAction::Repair,
+                OperatorAction::Resume,
+                OperatorAction::Drop,
+            ]
+        );
+        assert_ne!(plan.action, OperatorAction::Drop);
+    }
+
+    #[test]
+    fn detached_worktree_with_expected_branch_gone_stays_drop_only() {
+        let mut t = clean_reviewable_task("fix-login");
+        let status = t.git_status.as_mut().unwrap();
+        status.current_branch = None;
+        status.branch_exists = false;
+        t.add_side_flag(SideFlag::BranchMissing);
+
+        let plan = operator_action(&t);
+
+        assert_eq!(plan.action, OperatorAction::Drop);
+        assert_eq!(plan.available_actions, vec![OperatorAction::Drop]);
+    }
+
+    #[test]
     fn operator_actions_hide_ship_when_git_substrate_is_missing() {
         for mark_missing_git_substrate in [
             |task: &mut Task| task.git_status.as_mut().unwrap().worktree_exists = false,
@@ -599,6 +676,31 @@ mod tests {
             "shell runtime health should not hide ship: {:?}",
             plan.available_actions
         );
+    }
+
+    #[test]
+    fn chat_task_without_tmux_session_or_window_is_not_invalid() {
+        let mut t = clean_reviewable_task("chat");
+        t.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: t.tmux_session.clone(),
+        });
+        t.task_window_status = Some(TaskWindowStatus {
+            exists: false,
+            window_name: t.task_window.clone(),
+            current_path: t.worktree_path.clone(),
+            points_at_expected_path: false,
+        });
+        t.set_skip_interactive_agent(true);
+
+        let plan = operator_action(&t);
+
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Ship),
+            "chat task without tmux should still offer ship: {:?}",
+            plan.available_actions
+        );
+        assert_ne!(plan.action, OperatorAction::Drop);
     }
 
     #[test]

@@ -126,7 +126,7 @@ impl GithubChecksAdapter {
     }
 
     pub fn local_diff(&self, worktree_path: &str, base_branch: &str) -> CommandSpec {
-        let range = format!("{base_branch}...HEAD");
+        let range = format!("origin/{base_branch}...HEAD");
         CommandSpec::new("git", ["diff", &range])
             .with_cwd(worktree_path)
             .with_timeout(GH_PR_CHECKS_TIMEOUT)
@@ -658,7 +658,7 @@ mod tests {
 
         assert_eq!(
             spec,
-            CommandSpec::new("git", ["diff", "main...HEAD"])
+            CommandSpec::new("git", ["diff", "origin/main...HEAD"])
                 .with_cwd("/worktrees/ajax-fix-login")
                 .with_timeout(GH_PR_CHECKS_TIMEOUT)
         );

@@ -4,12 +4,31 @@ use crate::{
 };
 use std::path::Path;
 
+/// Matches a `git worktree list` path against a task's configured worktree path.
+///
+/// Git prints the resolved real path, so a configured path that goes through a symlink
+/// only matches after both sides are canonicalised. Raw equality is the fallback when
+/// either path cannot be canonicalised (for example, a worktree that no longer exists).
+pub fn worktree_path_matches(listed: &str, expected: &Path) -> bool {
+    let listed = Path::new(listed);
+    if listed == expected {
+        return true;
+    }
+    match (
+        std::fs::canonicalize(listed),
+        std::fs::canonicalize(expected),
+    ) {
+        (Ok(listed), Ok(expected)) => listed == expected,
+        _ => false,
+    }
+}
+
 pub fn worktree_matches_task_intent(
     worktree: &GitWorktree,
     expected_path: &Path,
     expected_branch: &str,
 ) -> bool {
-    Path::new(&worktree.path) == expected_path
+    worktree_path_matches(&worktree.path, expected_path)
         && worktree
             .branch
             .as_deref()
@@ -48,7 +67,9 @@ mod tests {
 
     use crate::{
         adapters::git::GitWorktree,
-        analysis::git_evidence::{interpret_git_status, worktree_matches_task_intent},
+        analysis::git_evidence::{
+            interpret_git_status, worktree_matches_task_intent, worktree_path_matches,
+        },
         models::{GitStatus, SideFlag, Task},
     };
     use std::path::Path;
@@ -211,6 +232,48 @@ mod tests {
         let interpreted = interpret_git_status("", None, false);
 
         assert_eq!(interpreted, None);
+    }
+
+    #[test]
+    fn worktree_path_matches_symlinked_configured_path_against_canonical_listing() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-worktree-path-1462-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let real = root.join("real");
+        let link = root.join("link");
+        let unrelated = root.join("unrelated");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let canonical_listing = std::fs::canonicalize(&real).unwrap().display().to_string();
+        let unrelated_listing = std::fs::canonicalize(&unrelated)
+            .unwrap()
+            .display()
+            .to_string();
+
+        let symlinked = worktree_path_matches(&canonical_listing, &link);
+        let unrelated_match = worktree_path_matches(&unrelated_listing, &link);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(symlinked);
+        assert!(!unrelated_match);
+    }
+
+    #[test]
+    fn worktree_path_matches_falls_back_to_raw_equality_for_nonexistent_paths() {
+        assert!(worktree_path_matches(
+            "/no/such/ajax-1462/worktree",
+            Path::new("/no/such/ajax-1462/worktree")
+        ));
+        assert!(!worktree_path_matches(
+            "/no/such/ajax-1462/worktree",
+            Path::new("/no/such/ajax-1462/other")
+        ));
     }
 
     struct WorktreeMatchCase {

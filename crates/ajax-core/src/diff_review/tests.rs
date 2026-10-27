@@ -473,3 +473,63 @@ fn assess_diff_judgment_flags_permission_widen_and_deleted_workflow() {
         flag.kind == DiffFlagKind::DeletedCheckPath && flag.path == ".github/workflows/ci.yml"
     }));
 }
+
+struct HeadRecordingRunner {
+    commands: Vec<CommandSpec>,
+}
+
+impl CommandRunner for HeadRecordingRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        self.commands.push(command.clone());
+        ok("[]")
+    }
+}
+
+fn pr_list_head(runner: &HeadRecordingRunner) -> Option<String> {
+    runner.commands.iter().find_map(|c| {
+        let head = c.args.iter().position(|arg| arg == "--head")?;
+        c.args.get(head + 1).cloned()
+    })
+}
+
+fn task_on_worktree_branch(current_branch: Option<&str>) -> Task {
+    let mut task = sample_task();
+    task.git_status = Some(crate::models::GitStatus {
+        worktree_exists: true,
+        branch_exists: true,
+        current_branch: current_branch.map(str::to_string),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    task
+}
+
+#[test]
+fn observe_task_pull_requests_uses_observed_branch_when_worktree_is_switched() {
+    let mut task = task_on_worktree_branch(Some("fix/web/login"));
+    let mut runner = HeadRecordingRunner { commands: vec![] };
+    let github = GithubChecksAdapter::new("gh");
+
+    super::observe_task_pull_requests(&mut task, &mut runner, &github).expect("observe");
+
+    assert_eq!(pr_list_head(&runner).as_deref(), Some("fix/web/login"));
+}
+
+#[test]
+fn observe_task_pull_requests_uses_task_branch_when_worktree_is_on_it_or_unknown() {
+    for current_branch in [Some("ajax/fix-login"), None] {
+        let mut task = task_on_worktree_branch(current_branch);
+        let mut runner = HeadRecordingRunner { commands: vec![] };
+        let github = GithubChecksAdapter::new("gh");
+
+        super::observe_task_pull_requests(&mut task, &mut runner, &github).expect("observe");
+
+        assert_eq!(pr_list_head(&runner).as_deref(), Some("ajax/fix-login"));
+    }
+}
