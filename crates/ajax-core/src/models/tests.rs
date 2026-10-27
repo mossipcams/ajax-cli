@@ -500,6 +500,18 @@ fn task_checkout_mismatch_requires_present_observed_worktree() {
 }
 
 #[test]
+fn pr_head_branch_never_uses_the_base_branch_observed_in_the_worktree() {
+    let mut task = acknowledgment_task();
+    assert_eq!(task.pr_head_branch(), "ajax/fix-login");
+
+    task.git_status = Some(git_status_for_checkout(true, Some("main")));
+    assert_eq!(task.pr_head_branch(), "ajax/fix-login");
+
+    task.git_status = Some(git_status_for_checkout(true, Some("ajax/other")));
+    assert_eq!(task.pr_head_branch(), "ajax/other");
+}
+
+#[test]
 fn task_status_updates_refresh_runtime_projection_health() {
     let mut task = sample_task();
 

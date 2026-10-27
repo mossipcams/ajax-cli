@@ -66,7 +66,33 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     agent_status_source: &impl AgentStatusSource,
     tier: RefreshTier,
 ) -> Result<bool, CommandError> {
-    let mut tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
+    let tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
+    let mut changed =
+        refresh_runtime_substrate(context, runner, agent_status_source, tier, tasks.clone())?;
+    // Runs after the probe gate and tmux early returns so that a merged PR still
+    // reaches Merged when no task needed a live-substrate probe (#1456).
+    if tier == RefreshTier::Full {
+        ci_monitor::refresh_ci_monitor(
+            context,
+            runner,
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            &tasks,
+            &mut changed,
+        );
+    }
+    Ok(changed)
+}
+
+fn refresh_runtime_substrate<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    agent_status_source: &impl AgentStatusSource,
+    tier: RefreshTier,
+    mut tasks: Vec<Task>,
+) -> Result<bool, CommandError> {
     let should_probe_tasks = tasks.iter().any(should_probe_live_substrate);
     if !should_probe_tasks {
         return Ok(false);
@@ -548,19 +574,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         )?;
     }
 
-    if tier == RefreshTier::Full {
-        ci_monitor::refresh_ci_monitor(
-            context,
-            runner,
-            SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            &tasks,
-            &mut changed,
-        );
-    }
-
     Ok(changed)
 }
 
@@ -621,6 +634,7 @@ fn should_probe_live_substrate(task: &Task) -> bool {
             | LifecycleStatus::Active
             | LifecycleStatus::Waiting
             | LifecycleStatus::Reviewable
+            | LifecycleStatus::Mergeable
             | LifecycleStatus::Removing
             | LifecycleStatus::TeardownIncomplete
     ) || has_recoverable_error_live_status(task)

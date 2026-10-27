@@ -300,6 +300,63 @@ fn failed_git_evidence_refresh_preserves_existing_missing_flags() {
 }
 
 #[test]
+fn refresh_git_substrate_matches_worktree_whose_configured_path_goes_through_symlink() {
+    // git worktree list prints the resolved real path, so a symlinked configured path must
+    // still be recognised as present (#1462).
+    let root = std::env::temp_dir().join(format!(
+        "ajax-symlink-1462-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let real = root.join("real");
+    let link = root.join("link");
+    std::fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let canonical = std::fs::canonicalize(&real).unwrap();
+
+    let mut context = context_with_tasks();
+    let task_id = TaskId::new("task-1");
+    {
+        let task = context.registry.get_task_mut(&task_id).unwrap();
+        task.worktree_path = link;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+    }
+    let mut runner = QueuedRunner::new(vec![
+        output(
+            0,
+            &format!(
+                "worktree {}\nHEAD 1111111\nbranch refs/heads/ajax/fix-login\n\n",
+                canonical.display()
+            ),
+        ),
+        output(0, "ajax/fix-login\n"),
+    ]);
+
+    let result = refresh_git_substrate_evidence(&mut context, &mut runner);
+    let _ = std::fs::remove_dir_all(&root);
+    result.unwrap();
+
+    let task = context.registry.get_task(&task_id).unwrap();
+    assert!(task.git_status.as_ref().unwrap().worktree_exists);
+    assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+}
+
+#[test]
 fn confirmed_cleanup_deletes_existing_unmerged_branch() {
     let mut context = context_with_cleanable_task();
     let task = context

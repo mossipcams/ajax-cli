@@ -1,5 +1,5 @@
 use super::{load_state, pending_notification, reduce_report, refresh_ci_monitor, CiAttemptStatus};
-use crate::runtime_refresh::tests::{context_with_active_task, task_fixture};
+use crate::runtime_refresh::tests::{context_with_active_task, task_fixture, TASK_BRANCH};
 use crate::{
     adapters::{
         CiChecksReport, CiChecksState, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
@@ -355,4 +355,213 @@ fn refresh_polls_active_checks_and_records_pass() {
         load_state(&task0(&ctx.registry)).status,
         CiAttemptStatus::Passed
     );
+}
+
+#[test]
+fn red_ci_demotes_mergeable_task_so_ship_is_not_offered() {
+    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    let failure =
+        r#"[{"name":"CI","state":"FAILURE","link":"https://github.test/actions/runs/1"}]"#;
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .lifecycle_status = crate::models::LifecycleStatus::Reviewable;
+    let mut runner = MonitorRunner {
+        prs: open.into(),
+        checks: success.into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert_eq!(
+        task0(&ctx.registry).lifecycle_status,
+        crate::models::LifecycleStatus::Mergeable
+    );
+
+    runner.checks = failure.into();
+    tick(&mut ctx, &mut runner, 1300, &mut changed);
+    let task = task0(&ctx.registry);
+    assert_eq!(
+        load_state(&task).status,
+        CiAttemptStatus::Failed,
+        "red CI must be observed"
+    );
+    assert_eq!(
+        task.lifecycle_status,
+        crate::models::LifecycleStatus::Reviewable
+    );
+    assert!(
+        !crate::recommended::available_operator_actions(&task)
+            .contains(&crate::models::OperatorAction::Ship),
+        "red CI must not offer Ship"
+    );
+}
+
+#[test]
+fn red_ci_under_approval_gate_still_withholds_ship() {
+    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    let failure =
+        r#"[{"name":"CI","state":"FAILURE","link":"https://github.test/actions/runs/1"}]"#;
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .lifecycle_status = crate::models::LifecycleStatus::Reviewable;
+    let mut runner = MonitorRunner {
+        prs: open.into(),
+        checks: success.into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert_eq!(
+        task0(&ctx.registry).lifecycle_status,
+        crate::models::LifecycleStatus::Mergeable
+    );
+
+    let task = ctx
+        .registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap();
+    crate::live::apply_observation(
+        task,
+        crate::live::LiveObservation::new(
+            crate::live::LiveStatusKind::WaitingForApproval,
+            "approval needed",
+        ),
+    );
+
+    runner.checks = failure.into();
+    tick(&mut ctx, &mut runner, 1300, &mut changed);
+    let task = task0(&ctx.registry);
+    assert_eq!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(crate::live::LiveStatusKind::WaitingForApproval),
+        "the approval gate keeps the live status while CI is red"
+    );
+    assert_eq!(
+        task.lifecycle_status,
+        crate::models::LifecycleStatus::Reviewable
+    );
+    assert!(
+        !crate::recommended::available_operator_actions(&task)
+            .contains(&crate::models::OperatorAction::Ship),
+        "stored red CI must withhold Ship even when another live status masks CiFailed"
+    );
+}
+
+fn pr_list_head(runner: &MonitorRunner) -> Option<String> {
+    runner
+        .commands
+        .iter()
+        .filter(|c| c.program == "gh" && c.args.get(1).is_some_and(|arg| arg == "list"))
+        .find_map(|c| {
+            let head = c.args.iter().position(|arg| arg == "--head")?;
+            c.args.get(head + 1).cloned()
+        })
+}
+
+#[test]
+fn pr_discovery_uses_observed_branch_when_worktree_is_switched() {
+    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"fix/web/login","headRefOid":"aaa"}]"#;
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .git_status
+        .as_mut()
+        .unwrap()
+        .current_branch = Some("fix/web/login".into());
+    let mut runner = MonitorRunner {
+        prs: open.into(),
+        checks: success.into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert_eq!(pr_list_head(&runner).as_deref(), Some("fix/web/login"));
+}
+
+#[test]
+fn pr_discovery_uses_task_branch_when_worktree_is_on_it_or_unknown() {
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    for current_branch in [Some(TASK_BRANCH.to_string()), None] {
+        let mut changed = false;
+        let mut ctx = context_with_active_task();
+        reset_monitor(&mut ctx);
+        ctx.registry
+            .get_task_mut(&crate::models::TaskId::new("task-1"))
+            .unwrap()
+            .git_status
+            .as_mut()
+            .unwrap()
+            .current_branch = current_branch;
+        let mut runner = MonitorRunner {
+            prs: "[]".into(),
+            checks: success.into(),
+            commands: vec![],
+        };
+        tick(&mut ctx, &mut runner, 1000, &mut changed);
+        assert_eq!(pr_list_head(&runner).as_deref(), Some("ajax/fix-login"));
+    }
+}
+
+#[test]
+fn pr_discovery_never_queries_the_base_branch_when_worktree_is_on_it() {
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .git_status
+        .as_mut()
+        .unwrap()
+        .current_branch = Some("main".into());
+    let mut runner = MonitorRunner {
+        prs: "[]".into(),
+        checks: success.into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert_eq!(pr_list_head(&runner).as_deref(), Some("ajax/fix-login"));
+}
+
+#[test]
+fn retiring_a_task_without_ci_state_leaves_it_unchanged() {
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .lifecycle_status = crate::models::LifecycleStatus::Cleanable;
+    let before = task0(&ctx.registry);
+    let mut runner = MonitorRunner {
+        prs: "[]".into(),
+        checks: "[]".into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert!(
+        !changed,
+        "retiring a task with no CI state must not report a change"
+    );
+    assert_eq!(task0(&ctx.registry), before);
+    assert!(!task0(&ctx.registry)
+        .metadata
+        .contains_key(crate::agent_notification::CI_MONITOR_STATE_KEY));
 }

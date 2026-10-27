@@ -117,3 +117,49 @@ fn sweep_cleanup_operation_executes_candidates_and_reports_partial_failure_state
         LifecycleStatus::Cleanable
     );
 }
+
+#[test]
+fn sweep_cleanup_treats_missing_tmux_session_as_already_removed_and_continues() {
+    let mut context = context_with_two_cleanable_tasks();
+    for handle in ["web/fix-login", "web/fix-sidebar"] {
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(handle))
+            .expect("candidate task");
+        task.lifecycle_status = LifecycleStatus::Merged;
+    }
+    // The stale cached tmux status is what makes the plan include kill-session.
+    context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("first candidate")
+        .tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+    let trash_sweeps = crate::commands::sweep_trash_commands(&context);
+    let first_plan = crate::commands::clean_task_plan(&context, "web/fix-login").unwrap();
+    let kill_session_index = first_plan
+        .commands
+        .iter()
+        .position(|command| {
+            command.program == "tmux"
+                && command.args.first().map(String::as_str) == Some("kill-session")
+        })
+        .expect("first candidate should plan a kill-session command");
+    let mut outputs = sweep_success_runner_outputs(&context);
+    // Outputs are ordered: trash sweeps, shared list-sessions, then each candidate's plan.
+    outputs[trash_sweeps.len() + 1 + kill_session_index] =
+        output(1, "", "can't find session: ajax-web-fix-login");
+    let mut runner = RecordingQueuedRunner::new(outputs);
+
+    let (_outputs, state_changed) =
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
+
+    assert!(state_changed);
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_none());
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/fix-sidebar"))
+        .is_none());
+}

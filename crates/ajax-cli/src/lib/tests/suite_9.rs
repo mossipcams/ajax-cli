@@ -443,7 +443,7 @@ fn diff_execute_uses_injected_runner() {
     .unwrap();
     assert_eq!(
         runner.commands(),
-        &[CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
+        &[CommandSpec::new("git", ["diff", "--stat", "origin/main...HEAD"])
             .with_cwd("/tmp/worktrees/web-fix-login")]
     );
 }

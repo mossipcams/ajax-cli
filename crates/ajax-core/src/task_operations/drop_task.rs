@@ -526,7 +526,10 @@ fn mark_observed_drop_failure<R: Registry>(
     )
 }
 
-fn drop_cleanup_resource_is_already_missing(command: &CommandSpec, output: &CommandOutput) -> bool {
+pub(super) fn drop_cleanup_resource_is_already_missing(
+    command: &CommandSpec,
+    output: &CommandOutput,
+) -> bool {
     if output.status_code == 0 {
         return false;
     }

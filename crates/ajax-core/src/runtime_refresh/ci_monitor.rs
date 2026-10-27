@@ -139,7 +139,10 @@ fn discover_open_pr(
         .last_pr_discovery_at
         .is_none_or(|at| now.saturating_sub(at) >= DISCOVERY_INTERVAL_SECS);
     if due {
-        let command = github.pr_list(&task.worktree_path.display().to_string(), &task.branch);
+        let command = github.pr_list(
+            &task.worktree_path.display().to_string(),
+            task.pr_head_branch(),
+        );
         match GithubChecksAdapter::parse_pr_list(&runner.run(&command)) {
             Ok(prs) => {
                 task.metadata.insert(
@@ -200,6 +203,11 @@ fn retire(task: &mut Task) {
     let mut state = load_state(task);
     retire_attempt(task, &mut state);
     state.last_pr_discovery_at = None;
+    // A task with no stored CI state has nothing to retire; writing the default
+    // state here would mark a quiet refresh as changed.
+    if state == CiMonitorState::default() && !task.metadata.contains_key(CI_MONITOR_STATE_KEY) {
+        return;
+    }
     store_state(task, &state);
 }
 
@@ -294,6 +302,9 @@ fn apply_failed(task: &mut Task, state: &mut CiMonitorState, previous: &CiMonito
         );
     }
     state.status = CiAttemptStatus::Failed;
+    if task.lifecycle_status == crate::models::LifecycleStatus::Mergeable {
+        let _ = crate::lifecycle::mark_reviewable(task);
+    }
     let first_episode = previous.episode_id.is_none();
     let distinct_rerun = previous.saw_pending_after_failure
         && !state.check_identities.is_empty()

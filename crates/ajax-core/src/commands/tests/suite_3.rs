@@ -136,8 +136,10 @@ fn diff_task_plan_summarizes_branch_diff_in_task_worktree() {
     assert_eq!(plan.title, "diff task: web/fix-login");
     assert_eq!(
         plan.commands,
-        vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
-            .with_cwd("/tmp/worktrees/web-fix-login")]
+        vec![
+            CommandSpec::new("git", ["diff", "--stat", "origin/main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")
+        ]
     );
 }
 
@@ -150,8 +152,10 @@ fn diff_use_case_module_summarizes_branch_diff_in_task_worktree() {
     assert_eq!(plan.title, "diff task: web/fix-login");
     assert_eq!(
         plan.commands,
-        vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
-            .with_cwd("/tmp/worktrees/web-fix-login")]
+        vec![
+            CommandSpec::new("git", ["diff", "--stat", "origin/main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")
+        ]
     );
 }
 
@@ -177,6 +181,143 @@ fn diff_task_plan_blocks_missing_worktree() {
 
     assert!(plan.commands.is_empty());
     assert_eq!(plan.blocked_reasons, vec!["task worktree is missing"]);
+}
+
+/// Removes its directory when dropped, so temp repos are cleaned up even when an
+/// assertion fails.
+struct TempRepoRoot(std::path::PathBuf);
+
+impl TempRepoRoot {
+    fn new(tag: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TempRepoRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args([
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git failed to spawn");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn run_planned(spec: &CommandSpec) -> String {
+    let output = std::process::Command::new(&spec.program)
+        .args(&spec.args)
+        .current_dir(
+            spec.cwd
+                .as_deref()
+                .expect("planned diff must run in a worktree"),
+        )
+        .output()
+        .expect("planned diff failed to spawn");
+    assert!(
+        output.status.success(),
+        "planned diff failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// #1454: Review and Diff Review must measure the task against origin/<base>.
+/// The local base lags origin when Ajax never fetches it, so diffing against the
+/// local branch counted every upstream commit as the task's own change.
+#[test]
+fn diff_commands_ignore_upstream_commits_missing_from_local_base_1454() {
+    let root = TempRepoRoot::new("ajax-1454");
+    let origin = root.0.join("origin.git");
+    let repo = root.0.join("repo");
+    let upstream = root.0.join("upstream");
+    let worktree = root.0.join("task");
+    let origin_str = origin.to_str().unwrap();
+    let repo_str = repo.to_str().unwrap();
+    let upstream_str = upstream.to_str().unwrap();
+    let worktree_str = worktree.to_str().unwrap();
+
+    git_in(&root.0, &["init", "--bare", origin_str]);
+    git_in(&root.0, &["init", repo_str]);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    git_in(&repo, &["add", "README.md"]);
+    git_in(&repo, &["commit", "-m", "base"]);
+    git_in(&repo, &["remote", "add", "origin", origin_str]);
+    git_in(&repo, &["push", "origin", "main"]);
+
+    git_in(&root.0, &["clone", origin_str, upstream_str]);
+    std::fs::write(upstream.join("upstream.txt"), "upstream\n").unwrap();
+    git_in(&upstream, &["add", "upstream.txt"]);
+    git_in(&upstream, &["commit", "-m", "upstream"]);
+    git_in(&upstream, &["push", "origin", "main"]);
+
+    // Local main stays at "base" while origin/main moves ahead, as on a stale checkout.
+    git_in(&repo, &["fetch", "origin"]);
+    git_in(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "ajax/fix-login",
+            worktree_str,
+            "origin/main",
+        ],
+    );
+    std::fs::write(worktree.join("task.txt"), "task\n").unwrap();
+    git_in(&worktree, &["add", "task.txt"]);
+    git_in(&worktree, &["commit", "-m", "task"]);
+
+    let mut context = context_with_tasks();
+    context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap()
+        .worktree_path = worktree.clone();
+
+    let plan = diff_task_plan(&context, "web/fix-login").unwrap();
+    let stat = run_planned(&plan.commands[0]);
+    let stat_paths: Vec<&str> = stat
+        .lines()
+        .filter_map(|line| line.split_once(" | ").map(|(path, _)| path.trim()))
+        .collect();
+    assert_eq!(stat_paths, vec!["task.txt"], "{stat}");
+
+    let github = crate::adapters::GithubChecksAdapter::new("gh");
+    let review = run_planned(&github.local_diff(worktree_str, "main"));
+    let review_files: Vec<&str> = review
+        .lines()
+        .filter(|line| line.starts_with("diff --git"))
+        .collect();
+    assert_eq!(
+        review_files,
+        vec!["diff --git a/task.txt b/task.txt"],
+        "{review}"
+    );
 }
 
 #[test]
@@ -219,8 +360,10 @@ fn checkout_mismatch_keeps_open_check_and_review_available() {
     assert!(diff_plan.blocked_reasons.is_empty());
     assert_eq!(
         diff_plan.commands,
-        vec![CommandSpec::new("git", ["diff", "--stat", "main...HEAD"])
-            .with_cwd("/tmp/worktrees/web-fix-login")]
+        vec![
+            CommandSpec::new("git", ["diff", "--stat", "origin/main...HEAD"])
+                .with_cwd("/tmp/worktrees/web-fix-login")
+        ]
     );
 }
 

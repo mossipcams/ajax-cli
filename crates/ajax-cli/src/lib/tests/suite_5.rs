@@ -530,7 +530,7 @@ fn review_command_renders_diff_summary_plan() {
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(lines[0], "diff task: web/fix-login");
     assert!(lines.iter().any(|line| {
-        *line == "$ (cd /tmp/worktrees/web-fix-login && git diff --stat main...HEAD)"
+        *line == "$ (cd /tmp/worktrees/web-fix-login && git diff --stat origin/main...HEAD)"
     }));
 }
 #[test]

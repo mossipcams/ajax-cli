@@ -197,6 +197,7 @@ fn generic_transition_allowed(from: LifecycleStatus, to: LifecycleStatus) -> boo
             | (LifecycleStatus::Waiting, LifecycleStatus::Reviewable)
             | (LifecycleStatus::Waiting, LifecycleStatus::Error)
             | (LifecycleStatus::Reviewable, LifecycleStatus::Mergeable)
+            | (LifecycleStatus::Mergeable, LifecycleStatus::Reviewable)
             | (LifecycleStatus::Reviewable, LifecycleStatus::Merged)
             | (LifecycleStatus::Reviewable, LifecycleStatus::Error)
             | (LifecycleStatus::Mergeable, LifecycleStatus::Merged)
@@ -268,6 +269,7 @@ mod tests {
     #[case(LifecycleStatus::TeardownIncomplete, LifecycleStatus::Removed)]
     #[case(LifecycleStatus::Merged, LifecycleStatus::Removed)]
     #[case(LifecycleStatus::Cleanable, LifecycleStatus::Removed)]
+    #[case(LifecycleStatus::Mergeable, LifecycleStatus::Reviewable)]
     fn generic_lifecycle_transition_matrix_allows_valid_edges(
         #[case] from: LifecycleStatus,
         #[case] to: LifecycleStatus,

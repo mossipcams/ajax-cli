@@ -208,3 +208,156 @@ fn issue_1355_tmux_missing_applied_on_kind_transition() {
         "observed_at must be re-stamped for the new episode"
     );
 }
+
+// #1457: Mergeable tasks were never probed, so their agent status observations
+// (e.g. a new turn after CI turned green) were never folded.
+#[test]
+fn issue_1457_idle_mergeable_task_folds_turn_started_observation() {
+    let mut context = context_with_active_task();
+    {
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Mergeable;
+        task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
+        task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::now(),
+            RuntimeObservationSource::TmuxProbe,
+        );
+    }
+    let cache = ObsSource::new(vec![lifecycle_obs(ActivityKind::Working, 1, 120)]);
+    let mut runner = HealthyRefreshRunner::default();
+
+    refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+        .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert_eq!(
+        task.agent_status,
+        AgentRuntimeStatus::Running,
+        "a TurnStarted observation must fold into the Mergeable task's agent status"
+    );
+    assert_eq!(
+        task.lifecycle_status,
+        LifecycleStatus::Active,
+        "the agent running observation must move Mergeable back to Active"
+    );
+}
+
+const MERGED_PR_JSON: &str = r#"[{"number":42,"title":"Fix login","url":"https://example.test/pull/42","state":"MERGED","headRefName":"ajax/fix-login","headRefOid":"2222222"}]"#;
+
+// #1456: the CI/PR monitor (the only path that moves a task to Merged when its PR
+// merges) used to run only after the tmux probe, so a failed list-sessions returned
+// early and skipped it.
+struct TmuxSessionsFailRunner {
+    prs: String,
+}
+
+impl CommandRunner for TmuxSessionsFailRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        let (status_code, stdout, stderr) = match command.program.as_str() {
+            "gh" => (0, self.prs.clone(), String::new()),
+            _ if arg(&command.args, 0) == "list-sessions" => (1, String::new(), "boom".to_string()),
+            _ => (0, runtime_stdout(&command.args).to_string(), String::new()),
+        };
+        Ok(CommandOutput {
+            status_code,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+#[test]
+fn issue_1456_full_refresh_monitors_merged_pr_when_tmux_probe_fails() {
+    let mut context = context_with_active_task();
+    {
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Mergeable;
+        task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
+        task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
+        task.metadata
+            .remove(crate::agent_notification::CI_MONITOR_STATE_KEY);
+    }
+    let mut runner = TmuxSessionsFailRunner {
+        prs: MERGED_PR_JSON.to_string(),
+    };
+
+    refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new(TASK_ID))
+            .unwrap()
+            .lifecycle_status,
+        LifecycleStatus::Merged,
+        "a Full refresh must run the CI monitor even when the tmux probe fails"
+    );
+}
+
+// #1456: when no task is probe-eligible the refresh used to return before the CI
+// monitor. Merged/Cleanable tasks are retired by the monitor (CI evidence cleared).
+fn context_with_merged_task_holding_ci_failure() -> CommandContext<InMemoryRegistry> {
+    let mut context = context_with_active_task();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new(TASK_ID))
+        .unwrap();
+    task.lifecycle_status = LifecycleStatus::Merged;
+    crate::runtime_refresh::ci_monitor::store_state(
+        task,
+        &crate::runtime_refresh::ci_monitor::CiMonitorState {
+            pr_number: Some(42),
+            head_sha: Some("2222222".into()),
+            status: crate::runtime_refresh::ci_monitor::CiAttemptStatus::Failed,
+            episode_id: Some("ci-failed:task-1:42:2222222:run-1".into()),
+            ..Default::default()
+        },
+    );
+    context
+}
+
+#[test]
+fn issue_1456_full_refresh_runs_ci_monitor_when_no_task_is_probe_eligible() {
+    let mut context = context_with_merged_task_holding_ci_failure();
+    let mut runner = HealthyRefreshRunner::default();
+
+    refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        crate::runtime_refresh::ci_monitor::load_state(task)
+            .episode_id
+            .is_none(),
+        "a Full refresh must run the CI monitor, which retires the Merged task's CI evidence"
+    );
+}
+
+#[test]
+fn issue_1456_live_refresh_does_not_run_ci_monitor_when_no_task_is_probe_eligible() {
+    let mut context = context_with_merged_task_holding_ci_failure();
+    let mut runner = HealthyRefreshRunner::default();
+
+    refresh_runtime_context_with_tier(
+        &mut context,
+        &mut runner,
+        &NoAgentStatusSource,
+        RefreshTier::Live,
+    )
+    .unwrap();
+
+    let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+    assert!(
+        crate::runtime_refresh::ci_monitor::load_state(task)
+            .episode_id
+            .is_some(),
+        "the Live tier must keep skipping the CI monitor"
+    );
+}

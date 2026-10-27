@@ -55,7 +55,7 @@ pub use teardown::{
 
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
-    analysis::git_evidence::interpret_git_status,
+    analysis::git_evidence::{interpret_git_status, worktree_path_matches},
     config::Config,
     models::{GitStatus, LifecycleStatus, SideFlag, Task},
     registry::Registry,
@@ -67,7 +67,7 @@ use projection::{
     is_visible_task, task_card, task_summary, CockpitProjection, CockpitResponse, CockpitView,
     InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
 };
-use std::{collections::BTreeSet, path::Path, time::Duration, time::SystemTime};
+use std::{collections::BTreeSet, time::Duration, time::SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -394,9 +394,9 @@ fn refresh_git_substrate_by_repo<R: Registry>(
             .collect::<BTreeSet<_>>();
 
         for task in repo_tasks {
-            let path_worktree = worktrees
-                .iter()
-                .find(|worktree| Path::new(&worktree.path) == task.worktree_path.as_path());
+            let path_worktree = worktrees.iter().find(|worktree| {
+                worktree_path_matches(&worktree.path, task.worktree_path.as_path())
+            });
             let worktree_exists = path_worktree.is_some();
             let branch_exists = branches.contains(&task.branch);
             let current_branch = path_worktree.and_then(|worktree| worktree.branch.clone());

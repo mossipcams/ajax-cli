@@ -688,12 +688,36 @@ fn live_refresh_does_not_probe_generic_error_task_without_live_attention() {
         current_path: task.worktree_path.clone(),
         points_at_expected_path: true,
     });
+    let before = task.clone();
 
     let mut runner = CountingLiveRefreshRunner::default();
 
     let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
-    assert!(!changed);
+    // The CI monitor's PR discovery is the only write this task may receive (#1456):
+    // its empty `gh pr list` answer is recorded as a probe error ("ci_probe_error").
+    let after = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(after.lifecycle_status, before.lifecycle_status);
+    assert_eq!(after.live_status, before.live_status);
+    assert_eq!(after.tmux_status, before.tmux_status);
+    assert_eq!(after.task_window_status, before.task_window_status);
+    assert_eq!(after.runtime_projection, before.runtime_projection);
+    let metadata_changes: Vec<&String> = after
+        .metadata
+        .keys()
+        .chain(before.metadata.keys())
+        .filter(|key| before.metadata.get(*key) != after.metadata.get(*key))
+        .collect();
+    assert!(
+        metadata_changes.iter().all(|key| matches!(
+            key.as_str(),
+            ajax_core::diff_review::AJAX_PULL_REQUESTS_KEY
+                | ajax_core::agent_notification::CI_MONITOR_STATE_KEY
+                | "ci_probe_error"
+        )),
+        "unexpected metadata writes: {metadata_changes:?}"
+    );
+    assert_eq!(changed, !metadata_changes.is_empty());
     assert!(!runner.commands.iter().any(
         |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
     ));

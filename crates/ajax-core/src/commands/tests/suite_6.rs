@@ -355,3 +355,56 @@ fn execute_plan_reports_nonzero_command_cwd() {
         })
     );
 }
+
+#[test]
+fn new_task_plan_blocks_when_derived_tmux_session_is_claimed_by_another_task() {
+    let config = Config {
+        repos: vec![
+            ManagedRepo::new("ajax", "/Users/matt/projects/ajax", "main"),
+            ManagedRepo::new("ajax-cli", "/Users/matt/projects/ajax-cli", "main"),
+        ],
+        ..Config::default()
+    };
+    let mut registry = InMemoryRegistry::default();
+    registry
+        .create_task(Task::new(
+            TaskId::new("ajax/cli-fix"),
+            "ajax",
+            "cli-fix",
+            "CLI fix",
+            "ajax/cli-fix",
+            "main",
+            "/tmp/worktrees/ajax-cli-fix",
+            "ajax-ajax-cli-fix",
+            "task",
+            AgentClient::Codex,
+        ))
+        .unwrap();
+    let mut context = CommandContext::new(config, registry);
+    let request = NewTaskRequest {
+        repo: "ajax-cli".to_string(),
+        title: "fix".to_string(),
+        agent: "codex".to_string(),
+        skip_interactive_agent: false,
+        model: None,
+    };
+
+    let error = new_task_plan(&context, request.clone()).unwrap_err();
+
+    let CommandError::PlanBlocked(reasons) = error else {
+        panic!("expected PlanBlocked, got {error:?}");
+    };
+    assert_eq!(reasons.len(), 1);
+    assert!(
+        reasons[0].contains("ajax-ajax-cli-fix"),
+        "reason should name the claimed session: {reasons:?}"
+    );
+
+    context
+        .registry
+        .get_task_mut(&TaskId::new("ajax/cli-fix"))
+        .unwrap()
+        .lifecycle_status = LifecycleStatus::Removed;
+
+    assert!(new_task_plan(&context, request).is_ok());
+}

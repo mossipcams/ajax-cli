@@ -1,13 +1,14 @@
 use super::{CommandContext, CommandError};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    analysis::git_evidence::worktree_path_matches,
     models::{
         sync_open_attempts, AgentRuntimeStatus, LifecycleStatus, SideFlag, StepReceipt,
         StepReceiptStatus, Task, TaskOperationKind, TmuxStatus,
     },
     registry::{Registry, RegistryEventKind},
 };
-use std::{collections::BTreeSet, path::Path};
+use std::collections::BTreeSet;
 
 use crate::commands::lookup::{find_task, task_repo_path};
 
@@ -325,7 +326,7 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
     };
     let path_matched_worktree = parsed_worktrees
         .iter()
-        .find(|worktree| Path::new(&worktree.path) == task.worktree_path.as_path());
+        .find(|worktree| worktree_path_matches(&worktree.path, task.worktree_path.as_path()));
     let worktree = match worktrees_output {
         ObservationOutput::Output(_) => state_from_bool(path_matched_worktree.is_some()),
         ObservationOutput::Unsupported => task
