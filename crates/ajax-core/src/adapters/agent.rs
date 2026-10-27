@@ -5,9 +5,6 @@ pub const CURSOR_DEFAULT_MODEL: &str = "cursor-grok-4.6-high";
 
 pub const CURSOR_DEFAULT_SPAWN_MODEL: &str = "grok-4.6";
 
-/// Default model for the `pi` harness, expressed as the `provider/modelId`
-/// pair that pi's model config option enumerates (custom OpenAI-compatible
-/// provider `local` at 127.0.0.1:18000/v1).
 pub const PI_DEFAULT_MODEL: &str = "local/swift-1.5-qwen-3.8-27b";
 
 const CURSOR_EFFORT_SUFFIXES: [&str; 6] = ["xhigh", "high", "medium", "low", "none", "max"];

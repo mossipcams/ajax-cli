@@ -195,8 +195,6 @@ async fn forward_monitor_events(
         }
 
         let event = match drain_deadline {
-            // After cancel, keep forwarding what the observer sends while it terminates the child
-            // (its terminal `Exited`), until the raw channel closes or the deadline passes.
             Some(deadline) => match tokio::time::timeout_at(deadline, raw_receiver.recv()).await {
                 Ok(event) => event,
                 Err(_) => break,
@@ -219,7 +217,6 @@ async fn forward_monitor_events(
                 eprintln!("ajax supervisor: failed to append event log: {error}");
             }
         }
-        // Bound the send too once draining: a full consumer channel must not hang cancellation.
         let sent = match drain_deadline {
             Some(deadline) => matches!(
                 tokio::time::timeout_at(deadline, events.send(event)).await,
@@ -770,7 +767,6 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
         let _ = fs::remove_file(script);
     }
 
-    /// Waits until the script writes its pid to `path`. The script writes it only after installing its trap.
     async fn wait_for_pid_file(path: &std::path::Path) {
         for _ in 0..400 {
             if fs::read_to_string(path).is_ok_and(|text| text.trim().parse::<u32>().is_ok()) {
@@ -842,7 +838,6 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
     #[tokio::test]
     async fn event_forwarder_cancel_bounds_send_to_stalled_consumer() {
         let (raw_events, raw_receiver) = mpsc::channel(4);
-        // Capacity 1 and never drained: the second forwarded event has nowhere to go.
         let (events, _stalled_consumer) = mpsc::channel(1);
         let (cancel, cancel_rx) = watch::channel(false);
         let forwarder = tokio::spawn(super::forward_monitor_events(
@@ -852,7 +847,6 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
             cancel_rx,
         ));
 
-        // The forwarder has not run yet (current-thread runtime), so it observes cancel first.
         raw_events
             .send(MonitorEvent::Process(ProcessEvent::Started {
                 pid: Some(1),

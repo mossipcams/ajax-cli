@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Validate exploratory outputs, enforce read-only source, and support fixtures.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";

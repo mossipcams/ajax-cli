@@ -11,11 +11,6 @@ fn run_git(args: &[&str]) -> std::process::Output {
 
 #[test]
 fn drop_delete_branch_step_reports_git_stdout_diagnostics_when_deletion_is_blocked() {
-    // #1260: `git branch -D` reports blocked deletions on stdout ("error: cannot
-    // delete branch ... used by worktree at ...") with empty stderr. The drop's
-    // delete-branch step must exit non-zero and re-emit that diagnostic on stderr;
-    // before the fix the step exited 0 while the local branch survived (silent
-    // partial failure) or persisted "sh exited with status 1:" without context.
     let root = std::env::temp_dir().join(format!(
         "ajax-drop-1260-{}-{}",
         std::process::id(),
@@ -52,9 +47,6 @@ fn drop_delete_branch_step_reports_git_stdout_diagnostics_when_deletion_is_block
         "git commit failed"
     );
 
-    // Give the repo a bare origin (no matching remote ref) so the script's push leg
-    // reports "remote ref does not exist" and tolerates it; without this the push
-    // fails with an unrelated fatal that masks the silent-success defect.
     let origin_path = root.join("origin.git");
     assert!(
         run_git(&["init", "--bare", origin_path.to_str().unwrap()])
@@ -73,7 +65,6 @@ fn drop_delete_branch_step_reports_git_stdout_diagnostics_when_deletion_is_block
     .status
     .success());
 
-    // Check out the task branch in a second worktree so `git branch -D` is blocked.
     let blocked_str = blocked_checkout.to_str().unwrap();
     assert!(
         run_git(&[
@@ -149,15 +140,9 @@ fn drop_delete_branch_step_reports_git_stdout_diagnostics_when_deletion_is_block
 
 #[test]
 fn failed_delete_branch_step_persists_stdout_detail_when_stderr_is_empty() {
-    // #1260: a non-zero drop step with empty stderr persisted the detail "sh exited
-    // with status 1:" with nothing after the colon. Captured stdout now fills that
-    // gap in the recorded drop failure metadata.
     let mut context = context_with_cleanable_task();
     let task_id = TaskId::new("web/fix-login");
 
-    // The worktree step succeeds; the delete-branch step exits 1 carrying its
-    // diagnostic only on stdout (as real git does for blocked deletions). Steps run
-    // in worktree -> branch -> tmux order after the four plan-observation slots.
     let mut outputs = present_drop_observation_outputs();
     outputs.push(output(0, "", ""));
     outputs.push(output(

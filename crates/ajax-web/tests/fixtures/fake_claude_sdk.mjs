@@ -1,35 +1,3 @@
-// Fake @anthropic-ai/claude-agent-sdk for the claude_sdk_sidecar tests.
-//
-// Exports `query({prompt, options})` returning an object that is BOTH an
-// async iterable of SDK messages and a control surface: interrupt(),
-// setModel(m), applyFlagSettings(s), supportedModels(), supportedCommands(),
-// initializationResult(), getContextUsage(opts), close(). The `prompt`
-// argument is the sidecar's open async iterable of user messages; each user
-// message plays a scripted turn into ONE internal async queue that the
-// iterator drains. Message shapes mirror real SDK output (see
-// .planning/packets/claude-agent-sdk-pi-rpc/claude-sdk-prompt.jsonl and
-// claude-sdk-toolcall.jsonl), trimmed of hook_* noise. Text scripts:
-//   - contains "SLOW": stream text_delta every 40ms until interrupt(),
-//     then a user "[Request interrupted by user]" message and a result with
-//     subtype error_during_execution / terminal_reason aborted_streaming;
-//   - contains "PUMP_FAIL": emits one stream_event, then makes the iterator
-//     THROW (no result is emitted) to simulate an SDK message-pump failure;
-//   - contains "EXHAUST": emits one stream_event, then ends the iterator
-//     early with no result to simulate stream exhaustion mid-turn;
-//   - contains "TASKS": TaskCreate alpha / TaskCreate beta (task ids arrive
-//     via the user messages' top-level tool_use_result.task), then TaskUpdate
-//     alpha in_progress and completed, then a result success;
-//   - contains "TOOL": calls options.canUseTool, then assistant tool_use /
-//     user tool_result / result success;
-//   - otherwise: system/init (first turn only), stream_event, assistant,
-//   - contains "ASK": calls options.hooks.PreToolUse[0].hooks[0] (the
-//     AskUserQuestion PreToolUse hook) with a fixed Red/Blue question and
-//     reports the hook's return value in the result text;
-//     result success.
-// Every control-method call is also pushed as {type:'fake_call', method,
-// args} so tests can observe the sidecar's dispatch. The initial `query()`
-// call is recorded as fake_call 'queryOptions' with its options.
-
 const SLOW_TICK_MS = 40;
 const MODELS = [
   { value: "default", displayName: "Default" },
@@ -357,9 +325,6 @@ export function query({ prompt, options = {} }) {
   };
 }
 
-// Session lookup used by the sidecar's fail-closed resume check: `undefined`
-// when the session is missing, throws for boom- ids (lookup failure),
-// otherwise a small metadata object echoing the project directory.
 export async function getSessionInfo(sessionId, options) {
   if (sessionId?.startsWith("missing-")) return undefined;
   if (sessionId?.startsWith("boom-")) throw new Error("lookup exploded");

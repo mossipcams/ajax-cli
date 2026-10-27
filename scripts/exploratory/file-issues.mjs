@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// File duplicate-aware GitHub Defect issues for confirmed exploratory findings.
 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";

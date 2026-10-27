@@ -165,7 +165,6 @@ export function useSessionConnection({
         const next = projectWireEvent(normalizeEvent(event));
         return next ? [next] : [];
       });
-      // A replayed transcript can reset the view, so re-send a present fault on every replay.
       if (
         transcript.transcriptError !== undefined ||
         transcript.promptsBlocked ||
@@ -191,8 +190,6 @@ export function useSessionConnection({
       setState("connecting");
       transportRef.current?.dispose();
       transportRef.current = undefined;
-      // The resume cursor is already past any text still waiting on a frame
-      // (frames stop while the page is hidden), so it will not be replayed.
       buffer?.flushAll();
       buffer = new MessageBuffer((event) => dispatchWireEvent(dispatch, event));
       const transport = connectWebSessionTransport(

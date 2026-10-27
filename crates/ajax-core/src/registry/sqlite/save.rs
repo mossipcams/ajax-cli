@@ -74,8 +74,6 @@ pub(crate) fn save_registry(
         .map(|task| task.id.clone())
         .collect::<BTreeSet<_>>();
 
-    // A task dropped by this save takes its chat runs with it, so a recreated task
-    // with the same handle starts empty whichever surface performed the drop.
     for task_id in persisted_task_ids
         .iter()
         .filter(|task_id| !live_task_ids.contains(&TaskId::new(task_id.as_str())))

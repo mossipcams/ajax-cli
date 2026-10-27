@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-/**
- * Fast, slice-local verification for agentic edits.
- *
- * Usage:
- *   node scripts/verify-slice.mjs <name>
- *   npm run verify:slice -- repair
- *
- * Names:
- *   start|resume|review|repair|ship|drop_task|sweep_cleanup  → ajax-core slice
- *   operate|cockpit|terminal|install                         → ajax-web slice
- *   cli|core|web|arch|supervisor|tui                         → crate / arch suite
- */
 
 import { spawnSync } from "node:child_process";
 
@@ -96,7 +84,6 @@ if (name === "supervisor") {
 if (CORE_SLICES.has(name)) {
   cargoCheck("ajax-core");
   architectureTests("ajax-core");
-  // Match the slice name in test paths/binary filters; also run task_operations suite.
   nextest(
     "ajax-core",
     `test(task_operations) | test(${name}) | test(architecture)`,

@@ -412,7 +412,6 @@ describe("useSessionConnection", () => {
 
   it("#1188 keeps a streamed reply that was still buffered when the socket reconnects", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    // A hidden page never runs the frame that would flush the buffer.
     vi.stubGlobal("requestAnimationFrame", () => 1);
     vi.stubGlobal("cancelAnimationFrame", () => {});
 

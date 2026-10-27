@@ -1,5 +1,3 @@
-//! nono sandbox wrapping for agent processes.
-
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -13,16 +11,13 @@ const PROFILE_JSON: &str = include_str!("nono_agent_profile.json");
 const PROFILE_FILE: &str = "ajax-agent.json";
 const LOCAL_FILE: &str = "local.json";
 
-/// Git paths a sandboxed linked worktree needs in order to commit.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct GitGrants {
     pub read: Vec<PathBuf>,
     pub read_write: Vec<PathBuf>,
-    /// Single files, emitted as `--allow-file`.
     pub read_write_files: Vec<PathBuf>,
 }
 
-/// Sandbox is on unless `AJAX_SANDBOX` is `off`, `0`, or `false`.
 pub fn sandbox_enabled_from(value: Option<&str>) -> bool {
     !matches!(
         value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
@@ -30,18 +25,10 @@ pub fn sandbox_enabled_from(value: Option<&str>) -> bool {
     )
 }
 
-/// Reads `AJAX_SANDBOX` from the environment.
 pub fn sandbox_enabled() -> bool {
     sandbox_enabled_from(env::var("AJAX_SANDBOX").ok().as_deref())
 }
 
-/// Writes the embedded profile to `dir/ajax-agent.json`, with `dir/local.json` merged in
-/// when present.
-///
-/// `local.json` holds machine-specific grants and is user-owned: the profile denies agents
-/// `dir`, so they cannot edit it. An identical existing profile is left alone.
-/// Otherwise the profile is written to a unique temp file in `dir` and renamed over the
-/// target, so a concurrent launch never reads a truncated profile.
 pub fn write_profile(dir: &Path) -> std::io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
     let content = profile_content(dir)?;
@@ -81,7 +68,6 @@ fn profile_content(dir: &Path) -> std::io::Result<String> {
     serde_json::to_string_pretty(&profile).map_err(invalid)
 }
 
-// ponytail: objects merge, arrays append, scalars replace; enough for adding grants.
 fn merge_json(base: &mut serde_json::Value, extra: serde_json::Value) {
     use serde_json::Value;
     match (base, extra) {
@@ -95,16 +81,10 @@ fn merge_json(base: &mut serde_json::Value, extra: serde_json::Value) {
     }
 }
 
-/// Ajax-owned profile directory, `$HOME/.config/ajax/nono`.
-///
-/// Not under `~/.cache`: that is writable inside the sandbox, so an agent could rewrite
-/// the next launch's policy. The profile allows `$HOME` but denies `$HOME/.config/ajax/nono`.
 pub fn default_profile_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono"))
 }
 
-/// Finds `nono` on `PATH`, then at fixed install locations, since launchd and tmux
-/// often run with a minimal `PATH`.
 pub fn resolve_nono() -> Result<PathBuf, String> {
     let on_path = env::var_os("PATH").and_then(|paths| {
         env::split_paths(&paths)
@@ -129,7 +109,6 @@ pub fn resolve_nono() -> Result<PathBuf, String> {
         })
 }
 
-/// A linked worktree whose `.git` file and admin dir were verified against each other.
 #[derive(Debug, PartialEq, Eq)]
 struct LinkedWorktree {
     gitdir: PathBuf,
@@ -154,15 +133,11 @@ impl LinkedWorktree {
     }
 }
 
-/// Git grants for a linked worktree, or empty grants if `worktree` cannot be verified as one.
-// ponytail: the profile allows `$HOME`, so `.git` is writable under the denylist profile, including `.git/config` and hooks; these grants only add the linked worktree's git dirs and packed refs (#1409) to the explicit list. Branch upstream config is still recorded best-effort by scripts/gh-pr-create.
 pub fn git_grants(worktree: &Path) -> GitGrants {
     linked_worktree(worktree).map_or_else(GitGrants::default, |linked| linked.grants())
 }
 
 fn linked_worktree(worktree: &Path) -> Option<LinkedWorktree> {
-    // A symlinked `.git` could point at another worktree's admin dir, which passes the
-    // back-link check below. Only a regular `.git` file is a linked worktree.
     let dot_git = worktree.join(".git");
     if !fs::symlink_metadata(&dot_git).ok()?.file_type().is_file() {
         return None;
@@ -200,8 +175,6 @@ fn linked_worktree(worktree: &Path) -> Option<LinkedWorktree> {
     Some(LinkedWorktree { gitdir, common })
 }
 
-/// Builds the nono command line that runs `program args...` inside the sandbox.
-// ponytail: codex-acp and npx-launched adapters are not rewritten; only a program named exactly `codex` gets the Seatbelt opt-out.
 #[allow(clippy::too_many_arguments)]
 pub fn wrap_argv(
     nono: &Path,
@@ -247,8 +220,6 @@ pub fn wrap_argv(
     (nono.display().to_string(), argv)
 }
 
-/// Wraps `program args...` in nono when enabled; otherwise returns it unchanged without
-/// resolving nono.
 pub fn sandbox_command(
     enabled: bool,
     nono: impl FnOnce() -> Result<PathBuf, String>,
@@ -304,8 +275,6 @@ pub fn sandbox_command(
     ))
 }
 
-/// [`sandbox_command`] with `AJAX_SANDBOX`, the `nono` lookup, and the profile dir taken
-/// from the environment.
 pub fn sandbox_command_from_env(
     cwd: &Path,
     extra_read_write: &[PathBuf],
@@ -359,7 +328,6 @@ mod tests {
         assert!(status.success(), "git {args:?} failed in {}", dir.display());
     }
 
-    /// Creates `root/repo` with one commit and returns its canonical common dir.
     fn init_repo(root: &Path) -> PathBuf {
         let repo = root.join("repo");
         fs::create_dir_all(&repo).unwrap();
@@ -492,7 +460,6 @@ mod tests {
     fn profile_does_not_deny_whole_ajax_dirs() {
         let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
         let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        // dev worktrees, agent events, and the ssh agent socket live under these dirs
         for path in ["$HOME/.ajax-dev", "$HOME/.config/ajax"] {
             assert!(
                 !deny.iter().any(|entry| {
@@ -507,14 +474,11 @@ mod tests {
     #[test]
     fn profile_lets_ssh_read_orbstack_include_but_not_its_keys_issue_1423() {
         let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        // the `$HOME` grant covers the config; no explicit read_file entry is needed
         let allow = profile["filesystem"]["allow"].as_array().unwrap();
         assert!(
             allow.contains(&serde_json::json!({"path": "$HOME", "when": "macos"})),
             "ssh aborts on an unreadable Include (#1423)"
         );
-        // only the config file: ~/.orbstack/ssh also holds OrbStack's private key,
-        // which is denied explicitly below because the `$HOME` grant would expose it
         for key in ["read", "allow", "read_file", "allow_file"] {
             if let Some(entries) = profile["filesystem"][key].as_array() {
                 for entry in entries {
@@ -787,7 +751,6 @@ mod tests {
                 read_write_files: vec![common.join("packed-refs"), common.join("packed-refs.lock"),],
             }
         );
-        // `.git/config` and hooks run code (#1387), so no grant may cover them.
         let config = common.join("config");
         let hooks = common.join("hooks");
         for path in grants.read_write.iter().chain(&grants.read_write_files) {

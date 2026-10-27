@@ -54,7 +54,6 @@ describe("useChatScroll", () => {
   }
 
   it("sticks to live edge on first paint", () => {
-    // Reversed coords: the live edge is scrollTop = 0.
     const { thread } = mountScroll();
     expect(thread.scrollTop).toBe(0);
     expect(transcriptAtLiveEdge(thread, PIN_THRESHOLD_PX)).toBe(true);
@@ -66,7 +65,6 @@ describe("useChatScroll", () => {
     const { onThreadScroll } = view.result.current;
 
     act(() => {
-      // Reversed: distance from the live edge is negative scrollTop.
       thread.scrollTop = -20;
       onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
     });
@@ -124,7 +122,6 @@ describe("useChatScroll", () => {
       windowGeneration: 0,
     });
 
-    // Reversed coords: the operator is reading 180px away from the live edge.
     stubScrollMetrics(thread, 1200, 400, -180);
     act(() => {
       view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
@@ -146,8 +143,6 @@ describe("useChatScroll", () => {
       });
     });
 
-    // Earlier rows grow beyond the history edge, so the existing negative
-    // offset continues to identify the same read position.
     expect(thread.scrollTop).toBe(-180);
   });
 
@@ -163,7 +158,6 @@ describe("useChatScroll", () => {
       windowGeneration: 0,
     });
 
-    // Pinned at the live edge in a window that fits (scrollTop = 0).
     stubScrollMetrics(thread, 300, 400, 0);
     expect(transcriptAtLiveEdge(thread, PIN_THRESHOLD_PX)).toBe(true);
     expect(view.result.current.behind).toBe(false);
@@ -184,7 +178,6 @@ describe("useChatScroll", () => {
       });
     });
 
-    // Earlier rows grow away from the pinned live edge.
     expect(thread.scrollTop).toBe(0);
   });
 
@@ -228,14 +221,11 @@ describe("useChatScroll", () => {
     };
     const { view, thread } = mountScroll("s1", 0, historyScroll);
 
-    // Reversed coords (SH=1200, CH=400): live edge = 0, history edge = -800,
-    // preload band is [-800, -600]. Mid-history scroll arms the loader.
     stubScrollMetrics(thread, 1200, 400, -400);
     act(() => {
       view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
     });
 
-    // Inside the band at the history edge with cooldown elapsed loads.
     stubScrollMetrics(thread, 1200, 400, -750);
     act(() => {
       vi.setSystemTime(AUTO_LOAD_COOLDOWN_MS + 10);
@@ -263,10 +253,6 @@ describe("useChatScroll", () => {
     };
     const { view, thread } = mountScroll("s1", 0, historyScroll);
 
-    // Fast flick straight into the preload band (history edge -800, band is
-    // [-800, -600]): no scroll away from the edge happened beforehand, so the
-    // loader must already be armed. At t=0 the initial cooldown also blocks; a
-    // real scroll arrives after it.
     stubScrollMetrics(thread, 1200, 400, -750);
     act(() => {
       view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
@@ -294,14 +280,10 @@ describe("useChatScroll", () => {
         return windowGeneration;
       },
     };
-    // Non-overflowing tail (scrollHeight 300 < clientHeight 400).
     const { view, thread } = mountScroll("s1", 0, historyScroll, [300, 400, 0]);
 
-    // First paint auto-loads one page without any user interaction.
     expect(revealEarlier).toHaveBeenCalledOnce();
 
-    // The prepend overflows the viewport (500 > 400); the generation bump
-    // re-runs the fill effect and it must stop, keeping the live-edge pin.
     Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 500 });
     act(() => {
       view.rerender({

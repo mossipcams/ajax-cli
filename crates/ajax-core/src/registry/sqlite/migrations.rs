@@ -10,9 +10,6 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
         return Err(RegistrySnapshotError::LegacySqlitePayloadSchema);
     }
     if user_version == SQLITE_SCHEMA_VERSION {
-        // Already at the current schema: keep this a read-only open. Skipping
-        // `create_current_schema` and the `user_version` rewrite avoids a write
-        // transaction on every open (which bumped the file change counter).
         return ensure_agent_runs_columns(connection);
     }
     if user_version == 2 {
@@ -51,8 +48,6 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotErr
         .map_err(database_error)
 }
 
-/// Version 10 only adds the durable execution tables; existing rows are
-/// untouched by `create_current_schema`.
 fn migrate_v9_to_v10(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     create_current_schema(connection)?;
     connection
@@ -60,8 +55,6 @@ fn migrate_v9_to_v10(connection: &Connection) -> Result<(), RegistrySnapshotErro
         .map_err(database_error)
 }
 
-/// Repairs `agent_runs` databases created by earlier builds of this unreleased
-/// schema 10, which may predate the trailing columns.
 fn ensure_agent_runs_columns(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     for (column, ddl) in [
         (
@@ -536,7 +529,6 @@ mod tests {
 
     static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
 
-    /// SQLite header field 7 (bytes 24..28, big-endian), bumped by every write transaction.
     fn file_change_counter(path: &std::path::Path) -> u32 {
         let bytes = std::fs::read(path).expect("read database file");
         u32::from_be_bytes([bytes[24], bytes[25], bytes[26], bytes[27]])
@@ -550,7 +542,6 @@ mod tests {
             std::process::id()
         ));
 
-        // First open migrates the fresh database up to the current schema.
         {
             let store = SqliteRegistryStore::new(path.clone());
             assert_eq!(store.current_revision().expect("initial revision"), 0);

@@ -63,15 +63,15 @@ describe("CursorSignIn", () => {
     fireEvent.click(screen.getByTestId("cursor-sign-in"));
     expect(api.startCursorLogin).toHaveBeenCalledOnce();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0); // let the start request resolve; interval is now live
+      await vi.advanceTimersByTimeAsync(0);
     });
-    vi.advanceTimersByTime(2000); // fire the first poll
+    vi.advanceTimersByTime(2000);
 
     const link = await screen.findByTestId("cursor-sign-in-link");
     expect(link).toHaveAttribute("href", AUTH_URL);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    expect(phaseSpy).toHaveBeenCalledTimes(2); // mount resume check + one poll
+    expect(phaseSpy).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("cursor-sign-in")).toBeDisabled();
   });
 
@@ -87,7 +87,7 @@ describe("CursorSignIn", () => {
       });
     const phaseSpy = vi
       .spyOn(api, "fetchCursorLoginPhase")
-      .mockResolvedValueOnce({ phase: "idle" }) // mount resume check
+      .mockResolvedValueOnce({ phase: "idle" })
       .mockResolvedValueOnce({ phase: "waiting", url: AUTH_URL })
       .mockResolvedValueOnce({ phase: "verifying" })
       .mockResolvedValueOnce({ phase: "succeeded", email: "op@example.com", expiresAtMs: null })
@@ -99,21 +99,19 @@ describe("CursorSignIn", () => {
     fireEvent.click(screen.getByTestId("cursor-sign-in"));
     expect(api.startCursorLogin).toHaveBeenCalledOnce();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0); // let the start request resolve; interval is now live
+      await vi.advanceTimersByTimeAsync(0);
     });
-    // Fire the three polls one at a time so each async poll settles before
-    // the next fires (avoids load-timing flake under fake timers).
-    await vi.advanceTimersByTimeAsync(2000); // poll 1: waiting
-    await vi.advanceTimersByTimeAsync(2000); // poll 2: verifying
-    await vi.advanceTimersByTimeAsync(2000); // poll 3: succeeded
-    await vi.advanceTimersByTimeAsync(0); // let post-success refresh settle
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(screen.getByText("Signed in as op@example.com")).toBeInTheDocument();
-    expect(statusSpy).toHaveBeenCalledTimes(2); // initial load + post-success refresh
+    expect(statusSpy).toHaveBeenCalledTimes(2);
     const callsAfterSuccess = phaseSpy.mock.calls.length;
-    expect(callsAfterSuccess).toBe(4); // mount + 3 polls (waiting, verifying, succeeded)
+    expect(callsAfterSuccess).toBe(4);
 
-    await vi.advanceTimersByTimeAsync(10000); // polling must be stopped by now
+    await vi.advanceTimersByTimeAsync(10000);
     expect(phaseSpy).toHaveBeenCalledTimes(callsAfterSuccess);
   });
 
@@ -152,9 +150,9 @@ describe("CursorSignIn", () => {
 
     fireEvent.click(screen.getByTestId("cursor-sign-in"));
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0); // let the start request resolve; interval is now live
+      await vi.advanceTimersByTimeAsync(0);
     });
-    vi.advanceTimersByTime(2000); // fire one poll so the interval is live
+    vi.advanceTimersByTime(2000);
     await screen.findByTestId("cursor-sign-in-link");
     const callsBeforeUnmount = phaseSpy.mock.calls.length;
 
@@ -184,7 +182,7 @@ describe("CursorSignIn", () => {
     expect(await screen.findByText("Sign-in failed: could not start sign-in")).toBeInTheDocument();
     expect(screen.getByTestId("cursor-sign-in")).toBeEnabled();
 
-    const callsAfterFailure = phaseSpy.mock.calls.length; // only the mount resume check
+    const callsAfterFailure = phaseSpy.mock.calls.length;
     await vi.advanceTimersByTimeAsync(6000);
     expect(phaseSpy).toHaveBeenCalledTimes(callsAfterFailure);
   });
@@ -200,7 +198,7 @@ describe("CursorSignIn", () => {
     expect(await screen.findByText("Sign-in failed: node missing")).toBeInTheDocument();
     expect(screen.getByTestId("cursor-sign-in")).toBeEnabled();
 
-    const callsAfterStart = phaseSpy.mock.calls.length; // only the mount resume check
+    const callsAfterStart = phaseSpy.mock.calls.length;
     await vi.advanceTimersByTimeAsync(6000);
     expect(phaseSpy).toHaveBeenCalledTimes(callsAfterStart);
   });

@@ -1,6 +1,3 @@
-//! Neutral ACP execution facts folded into provider lifecycle observations.
-//! Transport adapters supply events and time; this module performs no I/O.
-
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
@@ -37,14 +34,11 @@ pub enum ToolKind {
 pub enum ToolStatus {
     #[default]
     Pending,
-    /// The provider's `in_progress` status.
     Running,
     Completed,
     Failed,
 }
 
-/// Missing update fields retain their previous values. Invocation text is
-/// classified on arrival and is not retained in execution state.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ToolCallFields {
     pub kind: Option<ToolKind>,
@@ -60,8 +54,6 @@ pub enum ChildState {
     WaitingInput,
 }
 
-/// Facts only: adapters normalize protocol spellings and reject malformed
-/// payloads as `Unknown`. Children require explicit provider lineage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AcpExecutionEvent {
     PromptAccepted,
@@ -117,11 +109,9 @@ struct ChildRun {
     completion_holding: bool,
 }
 
-/// A flat execution snapshot, independent of sessions, registries and transport.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AcpExecutionState {
     turn: RootTurnState,
-    // Supporting root evidence, including an uncorrelated requires_action.
     provider_state: Option<ProviderState>,
     tools: BTreeMap<String, ToolCall>,
     requests: BTreeMap<String, ActivityKind>,
@@ -233,15 +223,12 @@ impl AcpExecutionState {
             tool.status = status;
         }
         if let Some(invocation) = fields.command {
-            // The command is authoritative: it may set or clear the flag.
             tool.is_tests = Self::is_tests_invocation(&invocation);
         } else if let Some(title) = fields.title {
-            // A bare title may only establish the flag, never clear it.
             tool.is_tests |= Self::is_tests_invocation(&title);
         }
     }
 
-    /// Reuse the core recognizer through its public, pure entry point.
     fn is_tests_invocation(invocation: &str) -> bool {
         live_observation_from_event(&MonitorEvent::Agent(AgentEvent::ToolCall {
             name: invocation.to_string(),

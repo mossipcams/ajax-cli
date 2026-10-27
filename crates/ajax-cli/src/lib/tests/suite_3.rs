@@ -520,7 +520,6 @@ fn live_refresh_records_nonzero_session_listing_as_probe_failure() {
         Some("tmux list-sessions probe failed: exited with status 1")
     );
     assert_eq!(runner.commands.first(), Some(&tmux_live_commands()[0]));
-    // The CI monitor's gh calls follow the tmux probe on every Full refresh (#1456).
     assert!(runner.commands[1..]
         .iter()
         .all(|command| command.program == "gh"));
@@ -530,7 +529,6 @@ fn live_refresh_skips_cleanable_tasks_without_tmux_probe() {
     let mut context = cleanable_context();
     let mut runner = QueuedRunner::new(Vec::new());
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
-    // Retiring the stale CI state for PR 42 is the change; Cleanable tasks never reach gh (#1456).
     assert!(changed);
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
     let stored: serde_json::Value = serde_json::from_str(

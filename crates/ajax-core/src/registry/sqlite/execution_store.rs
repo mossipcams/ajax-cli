@@ -1,9 +1,3 @@
-//! Durable execution persistence on top of the registry SQLite store.
-//!
-//! The pure domain model lives in [`crate::execution`]; this module only maps
-//! it onto the `agent_runs`, `execution_tasks`, `prompt_submissions`,
-//! `execution_checkpoints`, and `execution_events` tables.
-
 use std::{collections::HashSet, error::Error, fmt};
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -16,7 +10,6 @@ use crate::execution::{
 };
 use crate::registry::RegistrySnapshotError;
 
-/// A new agent run to record in `agent_runs`.
 #[derive(Clone, Debug)]
 pub struct NewRun {
     pub run_id: String,
@@ -26,7 +19,6 @@ pub struct NewRun {
     pub created_unix_ms: i64,
 }
 
-/// A new execution task inserted in state `Pending`.
 #[derive(Clone, Debug)]
 pub struct NewExecutionTask {
     pub task_exec_id: String,
@@ -34,30 +26,24 @@ pub struct NewExecutionTask {
     pub kind: String,
 }
 
-/// A prompt submission; a repeat `(run_id, idempotency_key)` is admitted once.
 #[derive(Clone, Debug)]
 pub struct NewPrompt {
     pub idempotency_key: String,
     pub task_exec_id: String,
     pub content_json: String,
 }
-/// An in-place content update for an already-admitted queued prompt.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptContentUpdate {
     pub idempotency_key: String,
     pub content_json: String,
 }
 
-/// Replaces the `payload_json` of an existing event row of this run in the
-/// same transaction. Sequence numbers are never changed or reused; a `seq`
-/// that no longer exists (e.g. pruned) is a no-op.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EventRewrite {
     pub seq: u64,
     pub payload: String,
 }
 
-/// A state transition applied to an existing execution task.
 #[derive(Clone, Debug)]
 pub struct TaskTransition {
     pub task_exec_id: String,
@@ -65,7 +51,6 @@ pub struct TaskTransition {
     pub outcome_json: Option<String>,
 }
 
-/// A new checkpoint intent for the next version of a task.
 #[derive(Clone, Debug)]
 pub struct CheckpointIntent {
     pub task_exec_id: String,
@@ -75,64 +60,46 @@ pub struct CheckpointIntent {
     pub intent_json: String,
 }
 
-/// A checkpoint result recorded on the task's highest-version open checkpoint.
 #[derive(Clone, Debug)]
 pub struct CheckpointResult {
     pub task_exec_id: String,
     pub result_json: String,
 }
 
-/// Optional in-place updates to the run row. Each field is tri-state: absent
-/// means "leave unchanged", `Some(outer)` means "apply the inner value" (which
-/// may be `None` to clear a nullable column).
 #[derive(Clone, Debug, Default)]
 pub struct RunUpdate {
     pub harness: Option<String>,
     pub native_session_id: Option<Option<String>>,
     pub capabilities_json: Option<String>,
     pub model: Option<String>,
-    /// `(child_pid, child_pgid)`; the inner `None` clears both.
     pub child: Option<Option<(i64, i64)>>,
-    /// Start-time token of the child process recorded with `child`; the inner
-    /// `None` clears it. Callers set both together.
     pub child_started: Option<Option<String>>,
     pub owner_boot_id: Option<Option<String>>,
 }
 
-/// Everything a single durable execution commit may contain. Fill only what is
-/// needed; all sections are applied in one transaction.
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionCommit {
     pub run_id: String,
-    /// Required lease boot ID; overrides the store's default fence when set.
     pub owner_fence: Option<String>,
     pub new_tasks: Vec<NewExecutionTask>,
     pub prompts: Vec<NewPrompt>,
     pub transitions: Vec<TaskTransition>,
     pub cancel_requests: Vec<String>,
     pub prompt_content_updates: Vec<PromptContentUpdate>,
-    /// Idempotency keys whose stored `content_json` is wiped to `'{}'`; allowed in any task state.
     pub prompt_content_clears: Vec<String>,
     pub checkpoint_intents: Vec<CheckpointIntent>,
     pub checkpoint_results: Vec<CheckpointResult>,
-    /// Event payloads (JSON) appended with consecutive per-run sequence numbers.
     pub events: Vec<String>,
-    /// Existing event rows whose `payload_json` is replaced in this transaction.
     pub event_rewrites: Vec<EventRewrite>,
     pub run_update: Option<RunUpdate>,
 }
 
-/// Receipt for a committed execution commit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommitReceipt {
-    /// Sequence numbers assigned to the commit's events, in order.
     pub event_seqs: Vec<u64>,
-    /// Duplicate idempotency keys that caused the entire commit to be skipped.
     pub duplicate_prompts: Vec<String>,
 }
 
-/// Failure of [`SqliteRegistryStore::commit_execution`]. Any variant rolls the
-/// whole commit back.
 #[derive(Debug)]
 pub enum ExecutionCommitError {
     Fenced,
@@ -247,7 +214,6 @@ fn children_allow_completion_for(
 }
 
 impl SqliteRegistryStore {
-    /// Records a new agent run. Event sequencing starts at 1 for the run.
     pub fn create_run(&self, run: &NewRun) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -266,9 +232,6 @@ impl SqliteRegistryStore {
         Ok(())
     }
 
-    /// Applies an entire [`ExecutionCommit`] in a single transaction. Any error
-    /// rolls everything back: no task, prompt, checkpoint, or event row and no
-    /// `next_event_seq` advance survive. Any duplicate prompt skips the whole commit.
     pub fn commit_execution(
         &self,
         commit: &ExecutionCommit,
@@ -304,7 +267,6 @@ impl SqliteRegistryStore {
                 other => ExecutionCommitError::Store(database_error(other)),
             })?;
 
-        // A duplicate admission makes the entire commit a no-op, including events.
         let mut duplicate_prompts = Vec::new();
         let mut keys_in_commit = HashSet::new();
         for prompt in &commit.prompts {
@@ -321,7 +283,6 @@ impl SqliteRegistryStore {
             });
         }
 
-        // 1. New execution tasks, inserted in state Pending.
         for task in &commit.new_tasks {
             transaction.execute(
                 "INSERT INTO execution_tasks (task_exec_id, run_id, parent_id, kind, state) \
@@ -336,7 +297,6 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // 2. Prompt submissions.
         for prompt in &commit.prompts {
             task_state(&transaction, &commit.run_id, &prompt.task_exec_id)?;
             transaction.execute(
@@ -346,7 +306,6 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // 3. Checkpoint results on each task's highest-version open checkpoint.
         for result in &commit.checkpoint_results {
             task_state(&transaction, &commit.run_id, &result.task_exec_id)?;
             let version: Option<i64> = transaction.query_row(
@@ -365,7 +324,6 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // 4. State transitions validated against the pure domain model.
         for task_transition in &commit.transitions {
             let from = task_state(&transaction, &commit.run_id, &task_transition.task_exec_id)?;
             transition(from, task_transition.to).map_err(|_| {
@@ -404,7 +362,6 @@ impl SqliteRegistryStore {
                 params![task_exec_id],
             )?;
         }
-        // In-place content updates on prompts whose tasks are still queued.
         for update in &commit.prompt_content_updates {
             let task_exec_id: Option<String> = transaction
                 .query_row(
@@ -428,7 +385,6 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // Clear stored prompt content for the given keys, in any task state.
         for key in &commit.prompt_content_clears {
             let updated = transaction.execute(
                 "UPDATE prompt_submissions SET content_json = '{}' \
@@ -440,7 +396,6 @@ impl SqliteRegistryStore {
             }
         }
 
-        // 5. New checkpoint intents on the next version of each task.
         for intent in &commit.checkpoint_intents {
             task_state(&transaction, &commit.run_id, &intent.task_exec_id)?;
             let existing_version: i64 = transaction.query_row(
@@ -466,7 +421,6 @@ impl SqliteRegistryStore {
             )?;
         }
 
-        // 6. In-place run updates.
         if let Some(run_update) = &commit.run_update {
             if let Some(harness) = &run_update.harness {
                 transaction.execute(
@@ -517,7 +471,6 @@ impl SqliteRegistryStore {
             }
         }
 
-        // 7. Events with consecutive per-run sequence numbers.
         let mut event_seqs = Vec::with_capacity(commit.events.len());
         let mut next_seq = start_seq;
         for payload in &commit.events {
@@ -540,7 +493,6 @@ impl SqliteRegistryStore {
             params![commit.run_id, next_seq],
         )?;
 
-        // 8. In-place payload rewrites of existing event rows; seqs never change.
         for rewrite in &commit.event_rewrites {
             let Ok(seq) = i64::try_from(rewrite.seq) else {
                 continue;
@@ -561,7 +513,6 @@ impl SqliteRegistryStore {
         })
     }
 
-    /// Returns the run's events with `seq > after_seq`, ordered by `seq`.
     pub fn execution_events_since(
         &self,
         run_id: &str,
@@ -589,7 +540,6 @@ impl SqliteRegistryStore {
         .collect()
     }
 
-    /// Returns the current state of an execution task, or `None` if unknown.
     pub fn execution_task_state(
         &self,
         task_exec_id: &str,

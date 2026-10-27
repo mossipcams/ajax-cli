@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Assemble the Cursor Agent prompt from charter + mission + oracles + memory.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

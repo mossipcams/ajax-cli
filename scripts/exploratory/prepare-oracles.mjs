@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-// Build exploration oracles (open bugs, recent commits, routes, memory hints).
 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { memoryPath, readJson, repoRoot, resultsDir, writeJson } from "./lib.mjs";
 
-// Static list matching crates/ajax-web/web/src/shared/lib/routes.ts (do not parse TS).
 export const ROUTES = [
   "#/",
   "#/settings",
@@ -16,17 +14,16 @@ export const ROUTES = [
   "#/t/<handle>/diff?pr=N",
 ];
 
-// Defect neighborhood from routes.test.ts + known routing bugs (#810, #818, #821, #811, #835).
 export const BOUNDARY_HASHES = [
-  "#/garbage", // unknown hash → dashboard (#routes.test.ts)
-  "#/t/", // empty task handle → dashboard (#810 slash-only)
-  "#/t/%2F", // encoded slash-only handle
-  "#/p/", // empty project → dashboard
-  "#/p/%20", // whitespace-only project (#821)
-  "#/t/missing%2Ftask-id", // task that does not exist (#835 class)
-  "#/t/demo%2Fexploratory-test-task-alpha/diff/", // trailing slash on diff (#818)
-  "#/t/demo%2Fexploratory-test-task-alpha/diff/extra", // nested path after /diff (#811)
-  "#/t/demo%2Fexploratory-test-task-alpha/diff?pr=1", // diff with pr query
+  "#/garbage",
+  "#/t/",
+  "#/t/%2F",
+  "#/p/",
+  "#/p/%20",
+  "#/t/missing%2Ftask-id",
+  "#/t/demo%2Fexploratory-test-task-alpha/diff/",
+  "#/t/demo%2Fexploratory-test-task-alpha/diff/extra",
+  "#/t/demo%2Fexploratory-test-task-alpha/diff?pr=1",
 ];
 
 const WEB_LOG_PATHS = [

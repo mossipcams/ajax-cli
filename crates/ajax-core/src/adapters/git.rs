@@ -133,12 +133,6 @@ impl GitAdapter {
     ) -> CommandSpec {
         let local_flag = if force { "-D" } else { "-d" };
         let script = if branch.starts_with("ajax/") {
-            // `git branch -d/-D` reports both success and failure on stdout
-            // (e.g. "fatal: cannot delete branch ... used by worktree at ...").
-            // Capture the delete output into a variable so a blocked local deletion is
-            // re-emitted on stderr instead of vanishing; without this the push leg can
-            // tolerate a missing remote ref and exit 0 while the local branch survives.
-            // See issue #1260.
             format!(
                 concat!(
                     "ref=\"refs/heads/$2\"; ",
@@ -153,9 +147,6 @@ impl GitAdapter {
                 local_flag = local_flag
             )
         } else {
-            // A missing local branch is already the desired end state, so skip the
-            // delete instead of letting the failed existence probe surface as a bare
-            // `sh exited with status 1` with empty stderr.
             format!(
                 "ref=\"refs/heads/$2\"; git -C \"$1\" show-ref --verify --quiet \"$ref\" || exit 0; del_err=$(git -C \"$1\" branch {local_flag} \"$2\" 2>&1) || {{ printf '%s\\n' \"$del_err\" >&2; exit 1; }}"
             )

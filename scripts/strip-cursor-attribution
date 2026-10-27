@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Filter Cursor attribution lines from commit messages and PR bodies.
-# Reads stdin, writes stdout.
 set -euo pipefail
 awk '
   /^Made with Cursor[[:space:]]*$/ { next }

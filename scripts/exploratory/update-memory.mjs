@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-// Merge agent memory-delta into the durable exploration corpus.
-// Cache restore failure is fine: missing memory starts empty.
 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";

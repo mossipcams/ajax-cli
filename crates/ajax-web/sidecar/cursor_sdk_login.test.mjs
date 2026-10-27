@@ -1,9 +1,3 @@
-// node:test coverage for cursor_sdk_login.mjs, driven against a fake @cursor/sdk
-// written to a throwaway mkdtemp dir. The fake login blocks until a `release`
-// file appears next to the fake module (polled every 20ms) and rejects on
-// signal abort. Each test spawns a fresh sidecar with HOME set to an mkdtemp
-// dir so the real home is never read.
-
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -129,7 +123,7 @@ class LoginRun {
   }
 
   lines() {
-    return this.stdoutLines.map((line) => JSON.parse(line)); // keep the JSON-only invariant hot
+    return this.stdoutLines.map((line) => JSON.parse(line));
   }
 
   typeLines(type) {
@@ -158,7 +152,6 @@ class LoginRun {
             resolvePromise(true);
           }
         } catch {
-          // partial line mid-parse is not the predicate yet
         }
       };
       const onExit = () => {
@@ -187,12 +180,10 @@ class LoginRun {
     try {
       this.proc.stdin.end();
     } catch {
-      // already dead
     }
     try {
       this.proc.kill();
     } catch {
-      // already dead
     }
   }
 
@@ -207,7 +198,6 @@ test("login publishes the url while login is still blocked, before release", asy
   const run = new LoginRun({ args: ["--mode", "login", "--store-path", join(home, "auth.json")] });
   try {
     await run.waitFor(() => run.typeLines("url").length > 0, "url line");
-    // The url arrived while the fake login is still blocked on the release file.
     assert.equal(run.typeLines("verifying").length, 0);
     assert.equal(run.typeLines("succeeded").length + run.typeLines("failed").length, 0);
     const urlLine = run.typeLines("url")[0];
@@ -267,7 +257,6 @@ test("login with a Cursor.me rejection emits failed, exits 1, and never touches 
     assert.equal(run.typeLines("succeeded").length, 0);
     assert.equal(await run.exitCode(), 1);
 
-    // The pre-seeded store must be byte-identical: save was never called.
     assert.equal(readFileSync(storePath, "utf8"), seeded);
   } finally {
     run.assertNoLeak();
@@ -283,7 +272,6 @@ test("cancelling a blocked login via stdin close emits failed 'cancelled' and le
   const run = new LoginRun({ args: ["--mode", "login", "--store-path", storePath] });
   try {
     await run.waitFor(() => run.typeLines("url").length > 0, "url line");
-    // Close stdin while the fake login is still blocked: this must cancel it.
     run.proc.stdin.end();
     await run.waitFor(() => run.typeLines("failed").length > 0, "failed line");
     const failed = run.typeLines("failed")[0];
@@ -299,7 +287,6 @@ test("cancelling a blocked login via stdin close emits failed 'cancelled' and le
 });
 
 test("status: no store -> present false; valid store -> valid true; me rejection -> valid false", async () => {
-  // (a) No store at all: HOME points at an empty temp dir and --store-path is omitted.
   const emptyHome = mkdtempSync(join(tmpdir(), "cursor-login-home-"));
   const fakeDirA = mkdtempSync(join(tmpdir(), "cursor-login-fake-"));
   writeFileSync(join(fakeDirA, "fake_cursor_sdk.mjs"), fakeSdkSource);
@@ -313,7 +300,6 @@ test("status: no store -> present false; valid store -> valid true; me rejection
     assert.ok(!`${stdoutText}${stderrText}`.includes(FAKE_KEY));
   }
 
-  // (b) Valid store: status must report present:true, valid:true.
   const homeB = mkdtempSync(join(tmpdir(), "cursor-login-home-"));
   const storeB = join(homeB, "auth.json");
   writeFileSync(storeB, JSON.stringify({ version: 1, apiKey: FAKE_KEY, email: "op@example.com", apiKeyExpiresAtMs: 4102444800000 }));
@@ -329,7 +315,6 @@ test("status: no store -> present false; valid store -> valid true; me rejection
     assert.ok(!`${stdoutText}${stderrText}`.includes(FAKE_KEY));
   }
 
-  // (c) FAKE_ME_REJECT=1: same store, but me() rejects -> valid:false with an error.
   {
     const proc = spawn(process.execPath, [SIDECAR, "--mode", "status", "--store-path", storeB, "--sdk-module", join(fakeDirB, "fake_cursor_sdk.mjs")], {
       env: { ...process.env, HOME: homeB, FAKE_ME_REJECT: "1" },
@@ -356,17 +341,14 @@ test("cancelling during Cursor.me verification never saves and emits a single fa
     await run.waitFor(() => run.typeLines("url").length > 0, "url line");
     run.release();
     await run.waitFor(() => run.typeLines("verifying").length > 0, "verifying line");
-    // Close stdin while Cursor.me is blocked; then release me so the flow reaches the pre-save check.
     run.proc.stdin.end();
     writeFileSync(join(run.fakeDir, "meRelease"), "1");
     await run.waitFor(() => run.typeLines("failed").length > 0, "failed line");
     const failed = run.typeLines("failed")[0];
     assert.equal(failed.error, "cancelled");
-    // Exactly one terminal line in total, and it is the cancellation.
     assert.equal(run.typeLines("succeeded").length + run.typeLines("failed").length, 1);
     assert.equal(await run.exitCode(), 1);
 
-    // The pre-seeded store must be byte-identical: save was never called.
     assert.equal(readFileSync(storePath, "utf8"), seeded);
   } finally {
     run.assertNoLeak();
@@ -380,7 +362,6 @@ test("status ignores cancellation: closing stdin immediately still yields exactl
   writeFileSync(storePath, JSON.stringify({ version: 1, apiKey: FAKE_KEY, email: "op@example.com", apiKeyExpiresAtMs: 4102444800000 }));
   const run = new LoginRun({ args: ["--mode", "status", "--store-path", storePath] });
   try {
-    // Close stdin immediately, before the sidecar has emitted anything.
     run.proc.stdin.end();
     await run.waitFor(() => run.typeLines("status").length > 0, "status line");
     assert.equal(run.lines().length, 1);
@@ -404,7 +385,6 @@ test("FAKE_LEAKY: SDK console output carrying the key is redacted and login stil
     assert.equal(succeeded.email, "op@example.com");
     assert.equal(await run.exitCode(), 0);
   } finally {
-    // No stdout or stderr byte sequence may contain the key.
     run.assertNoLeak();
     run.close();
   }
@@ -423,15 +403,12 @@ test("FAKE_THROW_UNCAUGHT: uncaught throw becomes one redacted failed line, non-
     const failed = run.typeLines("failed")[0];
     assert.ok(failed.error.includes("<redacted>"), `expected <redacted> in: ${failed.error}`);
     assert.ok(!failed.error.includes(FAKE_KEY), `key leaked into failed line: ${failed.error}`);
-    // Exactly one terminal line in total, and it is the redacted failure.
     assert.equal(run.typeLines("succeeded").length + run.typeLines("failed").length, 1);
     const code = await run.exitCode();
     assert.notEqual(code, 0);
 
-    // The pre-seeded store must be byte-identical: save was never called.
     assert.equal(readFileSync(storePath, "utf8"), seeded);
   } finally {
-    // No output anywhere (stdout or stderr) may contain the key.
     run.assertNoLeak();
     run.close();
   }

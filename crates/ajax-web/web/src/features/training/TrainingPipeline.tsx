@@ -8,8 +8,6 @@ interface PipelineStep {
   isDone: (pipeline: trainingApi.TrainingPipeline, championRunId: string | null) => boolean;
 }
 
-// Generate has no flag of its own: a pipeline exists only once its dataset run
-// exists, so generation is always complete when a pipeline is reported.
 const PIPELINE_STEPS: PipelineStep[] = [
   { label: "Generate", job: null, isDone: () => true },
   { label: "Validate", job: "validate", isDone: (pipeline) => pipeline.validated },

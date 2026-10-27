@@ -31,9 +31,6 @@ export function transcriptScrollBottom(
   scrollHeight: number,
   clientHeight: number,
 ): number {
-  // Reversed coords (flex-direction: column-reverse): scrollTop = 0 is the live
-  // edge and expected negative values measure distance away from it. Clamp into
-  // the valid reversed range before inverting so unclamped inputs stay sound.
   const maxScroll = Math.max(0, scrollHeight - clientHeight);
   return -Math.min(0, Math.max(scrollTop, -maxScroll));
 }
@@ -55,10 +52,6 @@ export function transcriptAtLiveEdge(
 }
 
 export function pinTranscriptToLiveEdge(thread: HTMLDivElement): void {
-  // Reversed coords: the live edge is scrollTop = 0. WebKit can settle a
-  // column-reverse write at -1 when content crosses a subpixel boundary, so
-  // verify each read-back and re-pin small residuals. Beyond the band we stop
-  // to preserve reader intent (the scroll listener owns unpinning).
   for (let attempt = 0; attempt < LIVE_EDGE_PIN_MAX_ATTEMPTS; attempt += 1) {
     thread.scrollTop = 0;
     if (thread.scrollTop === 0) return;
@@ -91,8 +84,6 @@ export function restoreTranscriptGeometry(
     return;
   }
   if (before.scrollTop === undefined || before.scrollHeight === undefined) return;
-  // Reversed coords: distance from the live edge grows by any content added
-  // above the viewport, so scrollTop moves further negative by the delta.
   const heightDelta = node.scrollHeight - before.scrollHeight;
   node.scrollTop = before.scrollTop - heightDelta;
 }

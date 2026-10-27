@@ -1,5 +1,3 @@
-// Shared paths and helpers for CI-only Ajax Web exploratory testing.
-
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";

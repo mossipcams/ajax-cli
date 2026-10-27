@@ -208,14 +208,12 @@ fn run_agent_runtime_sandboxed(
     }
 }
 
-/// nono inputs for the agent launch. Production reads them from the environment; tests inject them.
 struct SandboxInputs<N> {
     enabled: bool,
     nono: N,
     profile_dir: Option<PathBuf>,
 }
 
-/// The program and args to exec: the agent as-is, or wrapped in nono when sandboxed.
 fn agent_command(
     sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
     cwd: &Path,
@@ -610,7 +608,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exit_code, 0);
-        // Index remains after exit so settle hooks can resolve identity.
         assert!(cwd_index_path(&events_dir, &cwd).is_file());
 
         fs::remove_dir_all(cache_root).unwrap();

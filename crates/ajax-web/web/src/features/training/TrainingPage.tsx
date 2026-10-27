@@ -34,8 +34,6 @@ export default function TrainingPage({ onBack }: Props) {
   const champion = catalog.evals?.champion ?? null;
   const championRunId = champion?.run_id ?? null;
 
-  // A run that finishes (running -> not running) refreshes the catalog right away
-  // so new evals and promotions show without waiting for the next 15s poll.
   const wasRunningRef = useRef(false);
   const previousEvalsRef = useRef<trainingApi.TrainingEvalProgress[]>([]);
   useEffect(() => {

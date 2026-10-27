@@ -185,7 +185,6 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
     if is_adoptable_branch_move(task) {
-        // Resume rejects a task whose expected branch is gone; adopt it first.
         return if task.has_missing_branch() {
             vec![OperatorAction::Repair, OperatorAction::Drop]
         } else {
@@ -223,8 +222,6 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         } else {
             Vec::new()
         };
-    // A live status such as WaitingForApproval can mask CiFailed, so the stored
-    // attempt is consulted as well.
     let ci_failed = task
         .live_status
         .as_ref()
@@ -250,8 +247,6 @@ fn has_only_shell_substrate_gap(task: &Task) -> bool {
     !task.has_missing_git_substrate()
 }
 
-/// Repair adopts the observed branch, so a renamed or switched branch is
-/// recoverable even when the expected branch no longer exists.
 fn is_adoptable_branch_move(task: &Task) -> bool {
     task.has_adoptable_branch_move() && !task.has_missing_non_branch_substrate()
 }
@@ -260,8 +255,6 @@ fn task_is_known_invalid(task: &Task) -> bool {
     if is_adoptable_branch_move(task) {
         return false;
     }
-    // Chat tasks run without a tmux session or task window by design; mirror
-    // the exemption in `Task::has_missing_substrate`.
     let ignores_tmux = task.skip_interactive_agent();
     (!ignores_tmux
         && (task.has_side_flag(SideFlag::TmuxMissing)

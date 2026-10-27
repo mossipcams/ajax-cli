@@ -13,10 +13,6 @@ export function useTrainingStatus(enabled: boolean): UseTrainingStatus {
   const [status, setStatus] = useState<TrainingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlightRef = useRef(false);
-  // A manual refresh arriving while a fetch is in flight queues exactly one
-  // follow-up so post-action state always lands instead of waiting for the
-  // next 3s poll (at most one queued; a follow-up after a failure is left to
-  // the next scheduled poll, so an unreachable host keeps its cadence).
   const refetchQueuedRef = useRef(false);
 
   const load = useCallback(async () => {

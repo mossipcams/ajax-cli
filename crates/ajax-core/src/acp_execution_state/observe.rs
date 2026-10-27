@@ -1,5 +1,3 @@
-//! Projection half: lifecycle activity and observation sampling for a folded state.
-
 use std::time::SystemTime;
 
 use super::{AcpExecutionState, ChildState, ProviderState, RootTurnState, ToolKind, ToolStatus};
@@ -13,7 +11,6 @@ impl AcpExecutionState {
             RootTurnState::Settled | RootTurnState::Cancelled => return Some(ActivityKind::Done),
             RootTurnState::Idle | RootTurnState::Running => {}
         }
-        // Match reducer wait precedence when multiple requests are open.
         if self
             .requests
             .values()
@@ -41,18 +38,12 @@ impl AcpExecutionState {
         Some(kind)
     }
 
-    /// Sample the folded state using the canonical lifecycle confidence and
-    /// expiry policy. `now` is supplied by the caller, just as for canonical
-    /// snapshots; message timestamps never establish activity by themselves.
-    /// A root Done is local completion evidence: the reducer holds the final
-    /// Done projection while any completion-holding child remains open.
     pub fn observations(&self, root_run_id: &str, now: SystemTime) -> Vec<StatusObservation> {
         let mut observations = Vec::new();
         if let Some(kind) = self.root_activity() {
             observations.extend(observation(kind, root_run_id, None, now));
         }
         for (run_id, child) in &self.children {
-            // A child cannot masquerade as the root if an adapter supplies bad lineage.
             if run_id == root_run_id {
                 continue;
             }

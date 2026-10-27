@@ -238,7 +238,6 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     expect(geo.appViewportPosition).not.toBe("fixed");
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
     expect(geo.gapTranscriptComposer - during.gapTranscriptComposer).toBeLessThan(20);
-    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
     expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
     expect(geo.threadScrollHeight).toBeGreaterThanOrEqual(beforeOpen.scrollHeight);
   });
@@ -253,8 +252,6 @@ test.describe("Session chat keyboard geometry (#877)", () => {
       ) as HTMLElement | undefined;
       if (!mid) throw new Error("expected mid-history Line 41 message");
 
-      // Reversed column container: offsetTop is not directly mappable to the
-      // negative scrollTop range, so adjust from measured viewport positions.
       const threadRect0 = thread.getBoundingClientRect();
       const midRect0 = mid.getBoundingClientRect();
       const desiredTop = threadRect0.top + Math.floor(thread.clientHeight / 3);
@@ -315,7 +312,6 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await seedTranscript(page, 80);
     const thread = page.getByTestId("session-thread");
     await thread.evaluate((el) => {
-      // Reversed container: scroll offset toward history is negative.
       const target = -Math.min(480, el.scrollHeight - el.clientHeight - 120);
       el.scrollTop = target;
       el.dispatchEvent(new Event("scroll", { bubbles: false }));
@@ -374,7 +370,6 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     const geo = await readGeometry(page);
     expect(geo.surfacePaddingBottom).toBe(0);
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
-    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
     expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
   });
 
@@ -390,7 +385,6 @@ test.describe("Session chat keyboard geometry (#877)", () => {
     await page.waitForTimeout(200);
     const geo = await readGeometry(page);
     expect(geo.gapTranscriptComposer).toBeLessThan(8);
-    // Reversed-container live edge: scrollTop is 0 at the live edge and negative toward history.
     expect(geo.threadScrollTop).toBeGreaterThanOrEqual(-48);
   });
 

@@ -110,9 +110,9 @@ describe("session-expiry recovery", () => {
     await firstApi.fetchCockpit();
     expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
 
-    navigate = vi.fn(); // fresh mock so the counts restart for the reloaded module
+    navigate = vi.fn();
     vi.resetModules();
-    api = await import("./api"); // fresh page load: in-memory guard is reset
+    api = await import("./api");
     expiredFetch();
     await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
     expect(navigate).toHaveBeenCalledTimes(1);

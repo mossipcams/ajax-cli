@@ -20,10 +20,6 @@ import { shouldRedirectSessionToTerminal } from "./taskWorkspaceRouting";
 
 export type TaskWorkspaceMode = "chat" | "terminal";
 
-/**
- * While the session stream is busy but the server task has not caught up to
- * `running`, refetch task detail on this cadence until the server agrees.
- */
 const SESSION_CONVERGE_MS = 1000;
 
 export interface TaskWorkspaceProps {

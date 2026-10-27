@@ -1,4 +1,3 @@
-// #1145: Codex exposes reasoning/Fast only after selecting a supporting model.
 const fs = require('node:fs');
 const readline = require('node:readline');
 

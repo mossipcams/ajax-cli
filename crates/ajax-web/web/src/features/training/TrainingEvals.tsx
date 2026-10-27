@@ -23,7 +23,6 @@ function createdMs(evalRow: trainingApi.TrainingEval): number {
 
 const EVAL_PAGE_SIZE = 20;
 
-// Percentage-point gap between an eval and the champion's rate for the same suite.
 function championDeltaPoints(
   evalRow: trainingApi.TrainingEval,
   champion: trainingApi.TrainingChampion | null,

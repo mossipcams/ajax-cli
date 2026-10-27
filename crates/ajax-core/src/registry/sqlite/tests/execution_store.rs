@@ -482,7 +482,6 @@ fn run_update_commits_harness_when_provided() {
         vec![vec![Value::Text("claude".into())]]
     );
 
-    // An absent `harness` leaves the stored value unchanged.
     store.commit_execution(&commit()).unwrap();
     assert_eq!(
         rows(&store.open().unwrap(), "SELECT harness FROM agent_runs"),
@@ -686,7 +685,6 @@ fn fenced_and_duplicate_commits_do_not_apply_event_rewrites() {
         ..commit()
     });
 
-    // A fenced commit fails before any section runs, so nothing is rewritten.
     assert!(matches!(
         store.commit_execution(&ExecutionCommit {
             owner_fence: Some("other-boot".into()),
@@ -699,7 +697,6 @@ fn fenced_and_duplicate_commits_do_not_apply_event_rewrites() {
         Err(ExecutionCommitError::Fenced)
     ));
 
-    // A duplicate prompt makes the whole commit a no-op, rewrites included.
     let retry = apply(ExecutionCommit {
         prompts: vec![prompt("task")],
         events: vec!["{}".into()],

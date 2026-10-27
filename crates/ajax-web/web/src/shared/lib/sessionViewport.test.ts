@@ -103,8 +103,6 @@ describe("sessionViewport", () => {
       },
       set(value: number) {
         writeIndex += 1;
-        // Simulate WebKit column-reverse rounding: the stored value is what
-        // the browser settles at after each programmatic write.
         stored = value === 0 ? settlesAt(writeIndex) : value;
       },
     });
@@ -112,7 +110,6 @@ describe("sessionViewport", () => {
   }
 
   it("re-pins a subpixel -1 live-edge drift on WebKit until it reads back 0", () => {
-    // First scrollTop = 0 write rounds to -1; the second settles exactly at 0.
     const { node, writes } = webkitRoundingThread((i) => (i === 0 ? -1 : 0));
     pinTranscriptToLiveEdge(node);
     expect(node.scrollTop).toBe(0);
@@ -120,7 +117,6 @@ describe("sessionViewport", () => {
   });
 
   it("does not force-pinning when drift exceeds the correction band (reader intent)", () => {
-    // A write settles at -20: beyond LIVE_EDGE_PIN_BAND_PX, so no re-pin loop.
     const { node, writes } = webkitRoundingThread(() => -20);
     pinTranscriptToLiveEdge(node);
     expect(node.scrollTop).toBe(-20);

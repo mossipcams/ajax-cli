@@ -23,7 +23,6 @@ EVAL_RESULTS = Path("/srv/llm/lfm/runs/sayso-promotion")
 RUN_ID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
 STAGES = ("validated", "canary_passed", "dataset_promoted", "trained", "final_eval_passed")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
-# Fixed argv per job; nothing here is caller-controlled.
 JOBS = {
     "generate": ["./sayso", "generate"],
     "lfm-train": ["./sayso", "train"],
@@ -213,7 +212,7 @@ def count_rows(path):
         f.seek(offset)
         for chunk in iter(lambda: f.read(1 << 20), b""):
             rows += chunk.count(b"\n")
-    tmp = cache.with_suffix(f".{os.getpid()}.tmp")  # per-process: concurrent status calls raced on a shared tmp
+    tmp = cache.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps({"path": str(path), "offset": size, "rows": rows}))
     os.replace(tmp, cache)
     return rows
@@ -227,7 +226,7 @@ def generation(j):
         return None
     rows = count_rows(files[-1]) if files else 0
     m = re.search(r"^count:\s*(\d+)", GEN_YAML.read_text(), re.M) if GEN_YAML.is_file() else None
-    try:  # written by the generator: {"phase": str, "done": int, "total": int|null}
+    try:
         p = json.loads(GEN_PROGRESS.read_text()) if running else {}
     except (OSError, ValueError):
         p = {}
@@ -252,7 +251,6 @@ def status():
                    "progress": None, "log_tail": [], "external": True}
     eval_progress = evals_in_flight()
     up = runtime_up()
-    # ponytail device heuristic: GPU lock wins; evals use CPU; generation uses GPU only with the runtime up.
     st = state()
     if st.startswith("train:"):
         device = "gpu"
@@ -327,7 +325,7 @@ def dataset_select(rid):
     if busy():
         die(3, "busy")
     STATE.mkdir(parents=True, exist_ok=True)
-    tmp = (STATE / "current.json").with_suffix(f".{os.getpid()}.tmp")  # per-process: concurrent calls raced on a shared tmp
+    tmp = (STATE / "current.json").with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps({"run_id": rid}))
     os.replace(tmp, STATE / "current.json")
     print(json.dumps({"ok": True, "run_id": rid}))
@@ -365,7 +363,7 @@ def evals():
     if EVAL_RESULTS.is_dir():
         for summary in EVAL_RESULTS.glob("*/*/summary.json"):
             s = read_obj(summary)
-            m = read_obj(summary.parent / "metadata.json")  # sibling required
+            m = read_obj(summary.parent / "metadata.json")
             if s is None or m is None:
                 continue
             label = Path(m.get("checkpoint") or "").name
@@ -376,7 +374,7 @@ def evals():
                         "total": sm.get("total"), "passed": sm.get("passed"), "pass_rate": sm.get("overall_pass_rate"),
                         "promotion_passed": pr.get("passed"), "failures": pr.get("failures") or [],
                         "category_pass_rate": sm.get("category_pass_rate") or {}})
-    out.sort(key=lambda e: e["created_at"] or "", reverse=True)  # newest first, missing created_at last
+    out.sort(key=lambda e: e["created_at"] or "", reverse=True)
     print(json.dumps({"evals": out[:200], "champion": champion()}))
 
 def busy():

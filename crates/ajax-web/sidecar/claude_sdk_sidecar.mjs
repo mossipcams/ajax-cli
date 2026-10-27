@@ -1,31 +1,3 @@
-// Claude Agent SDK sidecar speaking Pi-style JSONL framing.
-//
-// Protocol (same framing as the Pi RPC child, so the existing Rust
-// `JsonlProcess` can drive this process unchanged):
-//   stdin:  one JSON command per LF-terminated line: {"id", "type", ...}.
-//           Lines are split on "\n" ONLY (U+2028/U+2029 are NOT separators);
-//           one optional preceding "\r" is stripped. A line that is not valid
-//           JSON is answered with {"type":"response","command":"parse",
-//           "success":false,"error":...} and no id.
-//   stdout: (a) responses {"id","type":"response","command","success":true,
-//               "data":{...}} or {"id",...,"success":false,"error":"text"};
-//           (b) events: every SDK message the query yields, forwarded
-//               verbatim as one JSON line each (their own `type`: system,
-//               stream_event, assistant, user, result, ...).
-//   stderr: diagnostics only. Never write non-protocol text to stdout.
-//
-// Commands: init {cwd, model?, resume?, sessionId?, settingSources?} (must be
-// first), prompt {message}, abort, set_model {model}, set_effort {level},
-// get_context_usage, shutdown. stdin EOF behaves like shutdown (no response).
-// Permissions run in dangerous mode (permissionMode "bypassPermissions" +
-// allowDangerouslySkipPermissions; canUseTool stays as an always-allow
-// fallback) and MCP form elicitations are forwarded to the host as
-// `elicitation_request` events answered by `elicitation_response` commands;
-// url-mode and secret-looking elicitations are declined, and any elicitation
-// still pending on abort/shutdown resolves as cancelled.
-// Claude runs with the `claude_code` system prompt preset (systemPrompt
-// {type:'preset', preset:'claude_code'}).
-
 import { randomUUID } from "node:crypto";
 import { argv, exit, stderr, stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
@@ -33,9 +5,6 @@ import { pathToFileURL } from "node:url";
 const OPTIONAL_CALL_TIMEOUT_MS = 15_000;
 const SHUTDOWN_PUMP_TIMEOUT_MS = 5_000;
 const DRAIN_FALLBACK_MS = 2_000;
-
-// ---------------------------------------------------------------------------
-// Output plumbing: one JSON object per line, and exit only after draining.
 
 let pendingWrites = 0;
 let wantExit = false;
@@ -63,9 +32,6 @@ function respond(command, id, success, payload) {
 function fail(command, id, message) {
   respond(command, id, false, message);
 }
-
-// ---------------------------------------------------------------------------
-// Long-lived streaming input queue (stays OPEN until end()).
 
 function makeInput() {
   const queued = [];
@@ -106,12 +72,6 @@ function makeInput() {
   };
 }
 
-// ---------------------------------------------------------------------------
-// SDK module loading. The sidecar never resolves a module itself: the host
-// resolves the Claude Agent SDK from a trusted location and passes its absolute
-// path as an explicit `--sdk-module`, which is exclusive: if it cannot load,
-// init fails instead of silently loading anything else.
-
 function flagValue(name) {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] : undefined;
@@ -122,10 +82,8 @@ async function resolveSdk() {
   const specs = [];
   const fromArg = flagValue("--sdk-module");
   if (fromArg) {
-    // Explicit override: try only this module, never fall back to the SDK.
     specs.push({ spec: fromArg, via: "argv --sdk-module", file: true });
   } else {
-    // The sidecar never resolves a module itself; the host resolves the SDK and passes it.
     return {
       mod: null,
       error:
@@ -146,9 +104,6 @@ async function resolveSdk() {
   return { mod: null, error: `no loadable claude-agent-sdk module; tried: ${tried.join("; ")}` };
 }
 
-// ---------------------------------------------------------------------------
-// Session state, permissions, and the message pump.
-
 const state = {
   initialized: false,
   sessionId: null,
@@ -166,8 +121,6 @@ async function canUseTool(_toolName, input) {
   return { behavior: "allow", updatedInput: input };
 }
 
-// Property-name markers (compared against the name lowercased with `-` and
-// `_` removed) that mark an elicitation schema as secret-sensitive.
 const SECRET_MARKERS = ["password", "secret", "token", "apikey", "authcode", "otp"];
 
 function normalisePropertyName(name) {
@@ -202,14 +155,6 @@ async function onElicitation(request) {
   }
   return forwardElicitation(request.message ?? "", schema);
 }
-
-// Issue #1358: under permissionMode "bypassPermissions" canUseTool is never
-// consulted, so the SDK auto-answers AskUserQuestion ("The user did not
-// answer the questions"). A PreToolUse hook intercepts it instead: it builds
-// an elicitation form from the questions, forwards it through the SAME
-// pendingElicitations path as MCP elicitations (so `elicitation_response`
-// commands and cancelPendingElicitations on abort/shutdown already work),
-// then injects the answers back into the tool input (deny when declined).
 
 async function askUserQuestionHook(input) {
   const questions = Array.isArray(input?.tool_input?.questions) ? input.tool_input.questions : [];
@@ -302,10 +247,6 @@ async function optional(fn, fallback) {
   }
 }
 
-// Issue #1274: a pump that throws — or an iterator that ends/exhausts — while
-// a prompt is in flight must NOT leave the session busy and healthy-looking.
-// Every lost turn is ended with a synthesized error `result` so the host
-// surfaces it; the sidecar itself stays alive for subsequent prompts.
 function reportLostTurn(message) {
   if (state.inflightPrompts === 0) return;
   state.inflightPrompts = 0;
@@ -321,12 +262,6 @@ function reportLostTurn(message) {
   });
 }
 
-// Issue #1357 (slice A): the Claude Agent SDK hides its todo tools unless
-// CLAUDE_CODE_ENABLE_TODO_TOOLS=1, and with them enabled Claude manages tasks
-// via TaskCreate/TaskUpdate. The task ids only appear in the TaskCreate tool
-// result, so track main-loop tasks here and mirror every change of the
-// ordered list as an `ajax_plan` line AFTER forwarding the SDK message that
-// caused it (slice B maps ajax_plan to the plan panel).
 function emitPlan() {
   writeLine({
     type: "ajax_plan",
@@ -360,7 +295,6 @@ function applyTaskUpdate(input) {
 }
 
 function trackPlanMessage(message) {
-  // Main loop only: ignore sub-agent messages (parent_tool_use_id set).
   if (!message || message.parent_tool_use_id != null) return;
   const content = Array.isArray(message?.message?.content) ? message.message.content : [];
   if (message.type === "assistant") {
@@ -407,9 +341,6 @@ function startPump(query) {
   })();
 }
 
-// ---------------------------------------------------------------------------
-// Command handlers.
-
 async function handleInit(cmd) {
   if (state.initialized) return fail("init", cmd.id, "already initialized");
   if (typeof cmd.cwd !== "string" || !cmd.cwd) {
@@ -417,8 +348,6 @@ async function handleInit(cmd) {
   }
   const { mod, error } = await resolveSdk();
   if (!mod) return fail("init", cmd.id, error);
-  // Resume fails closed: verify the session exists before resuming. A lookup
-  // that throws or times out is NOT proof of absence; degrade and resume.
   if (typeof cmd.resume === "string" && cmd.resume && typeof mod.getSessionInfo === "function") {
     let notFound = false;
     try {
@@ -615,9 +544,6 @@ function dispatch(cmd) {
     fail(type, cmd?.id ?? null, error?.message ?? String(error));
   });
 }
-
-// ---------------------------------------------------------------------------
-// stdin: LF-only line splitting (never U+2028/U+2029).
 
 function handleLine(rawLine) {
   let line = rawLine;

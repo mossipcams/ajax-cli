@@ -28,9 +28,7 @@ export type ConversationItem =
       text: string;
       contentBlocks?: OutputContentBlock[];
       messageId?: string;
-      /** Browser-assigned id of an optimistic prompt; present only on optimistic prompts. */
       clientMessageId?: string;
-      /** True until the host accepts the optimistic prompt with its clientMessageId. */
       pending?: boolean;
     }
   | { kind: "note"; id: string; tone: "info" | "error"; text: string }
@@ -96,16 +94,13 @@ export interface ChatModelState {
 
 export interface ChatSessionView {
   conversation: ConversationItem[];
-  /** Earliest loaded event cursor and the server retention floor; hasEarlierOnServer is `from > floor`. */
   serverHistory?: { from: number; floor: number };
   turn: ChatTurnState;
   permission: ChatPermissionState;
   elicitation: ChatElicitationState;
   usage: ChatUsageState;
   model: ChatModelState;
-  /** Host-reported transcript fault; present only while set. */
   transcriptError?: string;
-  /** Present only while the durability fault blocks prompts. */
   promptsBlocked?: boolean;
   revision: number;
 }

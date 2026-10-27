@@ -158,7 +158,6 @@ fn observe_branch_state(
         .unwrap()
         .clone();
     task.branch = branch.to_string();
-    // Order matches observation: tmux sessions, worktrees, local branches, remote branches.
     let mut runner = ScriptedObservationRunner {
         outputs: VecDeque::from([
             CommandOutput {
@@ -191,8 +190,6 @@ fn observe_branch_state(
 
 #[test]
 fn drop_observation_counts_remote_refs_only_for_ajax_branches() {
-    // A stale origin tracking ref for a non-ajax branch is not removable by
-    // delete_branch_substrate, so it must not keep the branch observed as present.
     assert_eq!(
         observe_branch_state(
             "fix/sandbox/denylist-profile",
@@ -201,7 +198,6 @@ fn drop_observation_counts_remote_refs_only_for_ajax_branches() {
         ),
         ResourceState::Absent
     );
-    // An ajax/ branch that exists only on the remote is still removable, so it stays present.
     assert_eq!(
         observe_branch_state(
             "ajax/fix-login",

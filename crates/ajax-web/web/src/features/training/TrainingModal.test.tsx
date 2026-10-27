@@ -70,11 +70,6 @@ afterEach(() => {
 describe("TrainingModal", () => {
 
   it("locks the training modal as a vertical-only scroll owner (no horizontal drag pan)", () => {
-    // Defect lock — training page horizontal press-and-drag panned the page:
-    // overflow-y:auto alone implies overflow-x:auto, so a touch drag starting
-    // in the modal scrolled it sideways. The shell must be non-scrollable
-    // horizontally and vertical-pan-only; unit tests cannot simulate native
-    // touch pan, so the stylesheet declaration is the focused regression lock.
     const css = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), "../../styles/settings.css"),
       "utf8",
@@ -102,7 +97,6 @@ describe("TrainingModal", () => {
       );
       openModal();
 
-      // Loading is a designed skeleton, not plain "Loading…" text.
       expect(screen.getByTestId("training-loading")).toBeTruthy();
       expect(screen.queryByRole("button", { name: "Unsloth train" })).toBeNull();
 
@@ -121,13 +115,11 @@ describe("TrainingModal", () => {
     openModal();
     const hero = await screen.findByTestId("training-hero");
     expect(hero).toHaveTextContent("Idle");
-    // The raw host state stays in the DOM (tooltip/aria) but is visually hidden.
     const raw = screen.getByTestId("training-raw-state");
     expect(raw).toHaveClass("training-sr-only");
     expect(raw).toHaveTextContent("idle");
     expect(hero).toHaveAttribute("title", "idle");
 
-    // Primary CTA is obvious; secondary jobs are also reachable.
     const primary = screen.getAllByRole("button", { name: "Unsloth train" });
     expect(primary.length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Data generation" })).toBeTruthy();
@@ -162,19 +154,16 @@ describe("TrainingModal", () => {
     };
     openModal();
     const hero = await screen.findByTestId("training-hero");
-    // Headline is human; the raw host state is tooltip/aria only.
     expect(hero).toHaveTextContent("Unsloth train running");
     expect(hero).toHaveAttribute("title", "train:lfm-train");
     expect(screen.getByTestId("training-raw-state")).toHaveClass(
       "training-sr-only",
     );
 
-    // Loss is formatted to 2 decimals; the raw 4-decimal value is never shown.
     const loss = screen.getByTestId("training-loss");
     expect(loss).toHaveTextContent("1.23");
     expect(hero).not.toHaveTextContent("1.2345");
 
-    // ETA is a prominent stat, not prose.
     const eta = screen.getByTestId("training-eta");
     expect(eta).toHaveTextContent("~6 min");
     expect(eta.closest(".is-prominent")).toBeTruthy();
@@ -183,7 +172,6 @@ describe("TrainingModal", () => {
     expect(step).toHaveTextContent("step 30 / 100");
     expect(screen.getByRole("progressbar", { name: "lfm-train progress" })).toBeTruthy();
 
-    // Stop sits beside the stats in the hero.
     const stop = screen.getByRole("button", { name: "Stop run" });
     expect(stop.closest(".training-hero-body")).toBeTruthy();
 
@@ -200,8 +188,6 @@ describe("TrainingModal", () => {
     expect(await screen.findByTestId("training-generation-rows")).toHaveTextContent("40 / 100");
     expect(screen.getByRole("progressbar", { name: "Data generation progress" })).toBeTruthy();
 
-    // The generation hero renders while the job runs; the rows stat drops the
-    // denominator when the host reports no target.
     statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 7, target: null, running: true } };
     await act(async () => {
       vi.advanceTimersByTime(3000);
@@ -212,8 +198,6 @@ describe("TrainingModal", () => {
   it("shows a live training job from the host state when no run object is sent", async () => {
     statusRoute.body = { ...idleStatus, state: "train:lfm 123 456 1700000000", run: null };
     openModal();
-    // The hero headline carries the human label from the host state; the live
-    // block beneath it reports that no run object has supplied progress yet.
     expect(await screen.findByTestId("training-state")).toHaveTextContent(
       "Training in progress: lfm",
     );
@@ -227,7 +211,6 @@ describe("TrainingModal", () => {
     statusRoute.body = { ...idleStatus, active_profile: "llama", profiles: ["llama", "unsloth"] };
     openModal();
 
-    // Profile switch is two-step through the shared confirm bar.
     fireEvent.click(await screen.findByRole("button", { name: /unsloth/ }));
     expect(postCalls).toHaveLength(0);
     const confirm = await screen.findByTestId("training-confirm");
@@ -238,8 +221,6 @@ describe("TrainingModal", () => {
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
 
-    // Primary job start uses the same bar (jobs section keeps its own button;
-    // the idle hero may mirror it, so pick any match explicitly).
     fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[1] ?? screen.getAllByRole("button", { name: "Unsloth train" })[0]);
     expect(postCalls).toHaveLength(1);
     const jobConfirm = await screen.findByTestId("training-confirm");
@@ -290,8 +271,6 @@ describe("TrainingModal", () => {
   });
 
   it("labels the in-flight action instead of silently disabling everything", async () => {
-    // Delegate GETs to the existing per-route mock; let POSTs hang so the start
-    // request stays in flight while we assert.
     const routeMock = globalThis.fetch as unknown as FetchMock;
 
     openModal();
@@ -304,7 +283,6 @@ describe("TrainingModal", () => {
       const busyButton = await screen.findByRole("button", { name: /Starting/ });
       expect(busyButton).toHaveAttribute("aria-busy", "true");
     } finally {
-      // Restore the per-route mock so POSTs don't hang for later tests.
       vi.stubGlobal("fetch", routeMock);
     }
   });
@@ -317,7 +295,6 @@ describe("TrainingModal", () => {
     const cancel = await screen.findByRole("button", { name: "Cancel" });
     fireEvent.click(cancel);
 
-    // No request, and the confirm bar is gone — picker is back in its default state.
     expect(postCalls).toHaveLength(0);
     expect(screen.queryByTestId("training-confirm")).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
@@ -348,13 +325,11 @@ describe("TrainingModal", () => {
 
       await screen.findByTestId("training-state");
 
-      // Train start goes in flight via the confirm bar; user closes before it resolves.
       fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
       fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
-      // Fail the abandoned POST after close; act() lets its catch flush.
       await act(async () => {
         settlePost(
           new Response(JSON.stringify({ ok: false, error: "boom" }), {
@@ -364,7 +339,6 @@ describe("TrainingModal", () => {
         );
       });
 
-      // Reopening must not show a stale error banner for the abandoned action.
       open = true;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
@@ -397,7 +371,6 @@ describe("TrainingModal", () => {
       const view = render(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
 
-      // Start goes in flight; the user closes the dialog before it resolves.
       fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
       fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
@@ -409,14 +382,11 @@ const calls = (routeMock as unknown as {
       const statusCalls = () => calls.filter((call) => String(call[0]).includes("/status")).length;
       const countBefore = statusCalls();
 
-      // The abandoned POST completes successfully after close; no follow-up
-      // status fetch may fire while the dialog is closed.
       await act(async () => {
         settlePost(jsonResponse({ ok: true }));
       });
       expect(statusCalls()).toBe(countBefore);
 
-      // Reopening still loads fresh data.
       open = true;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
       await screen.findByTestId("training-state");
@@ -493,7 +463,6 @@ const calls = (routeMock as unknown as {
       openModal();
       fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
       const confirm = await screen.findByRole("button", { name: "Confirm" });
-      // Click twice before React renders the disabled state to exercise the ref guard.
       act(() => {
         confirm.click();
         confirm.click();
@@ -517,10 +486,8 @@ const calls = (routeMock as unknown as {
     );
     try {
       openModal();
-      // The idle hero mirrors the primary train button; use the jobs-section one.
       fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
       const confirm = await screen.findByRole("button", { name: "Confirm" });
-      // Two synchronous clicks before the start promise resolves: only one request may leave.
       act(() => {
         confirm.click();
         confirm.click();
@@ -531,7 +498,6 @@ const calls = (routeMock as unknown as {
       await act(async () => resolveStart());
       await waitFor(() => expect(screen.queryByTestId("training-confirm")).toBeNull());
 
-      // A later, separately confirmed action must still go through.
       fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
       const nextConfirm = await screen.findByRole("button", { name: "Confirm" });
       expect(nextConfirm).toBeEnabled();
