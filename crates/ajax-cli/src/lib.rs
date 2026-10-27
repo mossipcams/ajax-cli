@@ -16,6 +16,7 @@ mod snapshot_dispatch;
 mod supervise;
 mod tmux_task_session;
 mod web_backend;
+mod web_service;
 
 #[cfg(test)]
 pub(crate) use ajax_core::task_operations::operator_dispatch::TaskCommandKind;
@@ -127,6 +128,13 @@ pub fn run_with_args(
             subcommand.get_flag("json"),
         );
     }
+    if let Some(service) = web_service::service_subcommand(&matches) {
+        return web_service::run_web_service_command(
+            service,
+            &paths.runtime_paths.profile,
+            &web_service::explicit_path_args(&matches),
+        );
+    }
 
     let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
@@ -182,6 +190,15 @@ pub fn run_with_args_to_writer(
     ajax_core::logging::init_to_logs_dir(&paths.runtime_paths.logs_dir);
     let command = matches.subcommand().map(|(name, _)| name).unwrap_or("none");
     let profile = paths.runtime_paths.profile.clone();
+
+    if let Some(service) = web_service::service_subcommand(&matches) {
+        let output = web_service::run_web_service_command(
+            service,
+            &profile,
+            &web_service::explicit_path_args(&matches),
+        )?;
+        return write_command_output(writer, &output);
+    }
 
     let mut tracked = match load_tracked_context_for_matches(&paths, &matches) {
         Ok(tracked) => tracked,

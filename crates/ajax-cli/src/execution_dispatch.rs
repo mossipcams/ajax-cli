@@ -1,3 +1,4 @@
+use crate::web_service::{DEFAULT_WEB_HOST, DEFAULT_WEB_PORT};
 use ajax_core::adapters::{CommandRunError, CommandRunner};
 use ajax_core::commands::CommandError;
 use ajax_core::commands::OpenMode;
@@ -101,11 +102,11 @@ pub(crate) fn render_matches_mut(
             let host = subcommand
                 .get_one::<String>("host")
                 .map(String::as_str)
-                .unwrap_or("0.0.0.0");
+                .unwrap_or(DEFAULT_WEB_HOST);
             let port = subcommand
                 .get_one::<String>("port")
                 .map(String::as_str)
-                .unwrap_or("8787")
+                .unwrap_or(DEFAULT_WEB_PORT)
                 .parse::<u16>()
                 .map_err(|_| {
                     CliError::CommandFailed(format!(
@@ -113,7 +114,7 @@ pub(crate) fn render_matches_mut(
                         subcommand
                             .get_one::<String>("port")
                             .map(String::as_str)
-                            .unwrap_or("8787")
+                            .unwrap_or(DEFAULT_WEB_PORT)
                     ))
                 })?;
             serve_mobile_web(host, port, context, runner)?;
@@ -338,11 +339,11 @@ pub(crate) fn render_matches_mut_with_paths(
         let host = subcommand
             .get_one::<String>("host")
             .map(String::as_str)
-            .unwrap_or("0.0.0.0");
+            .unwrap_or(DEFAULT_WEB_HOST);
         let port = subcommand
             .get_one::<String>("port")
             .map(String::as_str)
-            .unwrap_or("8787")
+            .unwrap_or(DEFAULT_WEB_PORT)
             .parse::<u16>()
             .map_err(|_| {
                 CliError::CommandFailed(format!(
@@ -350,7 +351,7 @@ pub(crate) fn render_matches_mut_with_paths(
                     subcommand
                         .get_one::<String>("port")
                         .map(String::as_str)
-                        .unwrap_or("8787")
+                        .unwrap_or(DEFAULT_WEB_PORT)
                 ))
             })?;
         serve_mobile_web_with_paths(host, port, context, runner, paths)?;

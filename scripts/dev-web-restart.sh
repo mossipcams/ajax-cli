@@ -22,7 +22,8 @@ dedicated detached main worktree to origin/main (branch tip, not a release
 tag), run npm web:build from that tree, install ajax-cli into ~/.cargo/bin
 (unless --no-install), reinstall client agent hooks when agent_hooks.rs
 changed, stop the previous managed web server for the selected profile, and
-start ajax-cli web in a durable tmux session. Never resets the host checkout.
+start ajax-cli web as launchd job com.ajax.web.<profile>. Never resets the host
+checkout.
 
 With --worktree PATH: skip git sync, build/install from PATH (uncommitted
 changes included), install into .ajax-dev-web/bin, and restart only the
@@ -41,8 +42,8 @@ Environment:
   AJAX_STABLE_MAIN_WORKTREE  Dedicated main worktree for Test in Stable
                              (default: ~/.ajax-dev/worktrees/<repo-basename>-main)
 
-Background mode uses tmux session ajax-web-<profile>.
-Logs: <host-clone>/.ajax-dev-web/<profile>-web.log
+Background mode runs under launchd job com.ajax.web.<profile> (ajax web service ...).
+Background logs: ~/Library/Logs/ajax-web-<profile>.log
 EOF
 }
 
@@ -103,12 +104,42 @@ fi
 PID_FILE="$RUN_DIR/${PROFILE}-web.pid"
 LOG_FILE="$RUN_DIR/${PROFILE}-web.log"
 TMUX_SESSION="ajax-web-${PROFILE}"
+LAUNCHD_LABEL="com.ajax.web.${PROFILE}"
+SERVICE_LOG="$HOME/Library/Logs/ajax-web-${PROFILE}.log"
 SLOT_BIN_DIR="$RUN_DIR/bin"
 SLOT_BIN="$SLOT_BIN_DIR/ajax-cli"
 SLOT_BIN_PREV="$SLOT_BIN_DIR/ajax-cli.prev"
 CARGO_BIN_DIR="$RUN_DIR/cargo-bin"
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/ajax-cli"
 CARGO_BIN_PREV="$CARGO_BIN_DIR/ajax-cli.prev"
+
+RESTART_LOCK="$RUN_DIR/${PROFILE}-restart.lock"
+
+release_restart_lock() {
+  rm -rf "$RESTART_LOCK"
+}
+
+acquire_restart_lock() {
+  local holder
+  mkdir -p "$RUN_DIR"
+  if ! mkdir "$RESTART_LOCK" 2>/dev/null; then
+    holder="$(cat "$RESTART_LOCK/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+      echo "restart already in progress for ${PROFILE} (pid $holder)" >&2
+      exit 1
+    fi
+    echo "warning: stale restart lock $RESTART_LOCK (pid ${holder:-unknown} not running); taking over" >&2
+    rm -rf "$RESTART_LOCK"
+    if ! mkdir "$RESTART_LOCK" 2>/dev/null; then
+      echo "restart already in progress for ${PROFILE}" >&2
+      exit 1
+    fi
+  fi
+  echo "$$" >"$RESTART_LOCK/pid"
+  trap release_restart_lock EXIT
+}
+
+acquire_restart_lock
 
 ensure_main_worktree() {
   echo "Fetching origin/main from $REPO_ROOT ..."
@@ -297,6 +328,10 @@ stop_pid_file() {
   rm -f "$PID_FILE"
 }
 
+stop_launchd_job() {
+  launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+}
+
 stop_tmux_session() {
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
@@ -314,19 +349,15 @@ start_web() {
 
   if [[ "$FOREGROUND" -eq 1 ]]; then
     echo "Starting ${cmd_display[*]} (foreground) ..."
+    release_restart_lock
     exec "$bin_path" --profile "$PROFILE" web --host "$HOST" --port "$PORT"
   fi
 
-  if ! command -v tmux >/dev/null 2>&1; then
-    echo "tmux is required for background web restarts (nohup exits when the launcher session ends)" >&2
-    exit 1
-  fi
-
-  echo "Starting ${cmd_display[*]} (tmux session $TMUX_SESSION) ..."
-  : >"$LOG_FILE"
-  if ! tmux new-session -d -s "$TMUX_SESSION" -c "$REPO_ROOT" \
-    "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"; then
-    echo "tmux new-session failed for $TMUX_SESSION" >&2
+  echo "Starting ${cmd_display[*]} (launchd job $LAUNCHD_LABEL) ..."
+  mkdir -p "$(dirname "$SERVICE_LOG")"
+  echo "=== dev-web-restart $(date '+%F %T') starting ${PROFILE} ===" >>"$SERVICE_LOG"
+  if ! (cd "$REPO_ROOT" && "$bin_path" --profile "$PROFILE" web service install --host "$HOST" --port "$PORT"); then
+    echo "launchd install failed for $LAUNCHD_LABEL" >&2
     return 1
   fi
 
@@ -392,31 +423,34 @@ if [[ -z "$OLD_PID" ]]; then
   OLD_PID="$(/usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | /usr/bin/head -1 || true)"
 fi
 stop_tmux_session
+stop_launchd_job
 stop_pid_file
 stop_listener "$PORT"
 
 if ! start_web "$BIN_PATH"; then
-  echo "${PROFILE} web failed to start; see $LOG_FILE" >&2
-  tail -20 "$LOG_FILE" >&2 || true
-  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  echo "${PROFILE} web failed to start; see $SERVICE_LOG" >&2
+  tail -20 "$SERVICE_LOG" >&2 || true
+  stop_launchd_job
   if restore_previous_binary; then
     echo "Retrying previous ${PROFILE} web binary ..."
     stop_tmux_session
+    stop_launchd_job
     stop_pid_file
     if start_web "$RESTORE_BIN"; then
-      echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
+      echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), launchd $LAUNCHD_LABEL)"
       echo "  URL:  https://127.0.0.1:$PORT"
-      echo "  Log:  $LOG_FILE"
+      echo "  Log:  $SERVICE_LOG"
       exit 1
     fi
   elif restore_previous_cargo_bin; then
     echo "Retrying previous ${PROFILE} web binary ..."
     stop_tmux_session
+    stop_launchd_job
     stop_pid_file
     if start_web "$CARGO_BIN"; then
-      echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
+      echo "${PROFILE} web restored previous artifact (pid $(cat "$PID_FILE"), launchd $LAUNCHD_LABEL)"
       echo "  URL:  https://127.0.0.1:$PORT"
-      echo "  Log:  $LOG_FILE"
+      echo "  Log:  $SERVICE_LOG"
       exit 1
     fi
   fi
@@ -425,20 +459,22 @@ fi
 
 NEW_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 if [[ -n "$OLD_PID" && -n "$NEW_PID" && "$OLD_PID" == "$NEW_PID" ]]; then
-  echo "${PROFILE} web restart did not replace process (still pid $OLD_PID); see $LOG_FILE" >&2
+  echo "${PROFILE} web restart did not replace process (still pid $OLD_PID); see $SERVICE_LOG" >&2
   exit 1
 fi
 
 if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
-    echo "${PROFILE} web started but /api/health failed; see $LOG_FILE" >&2
-    tail -20 "$LOG_FILE" >&2 || true
+    echo "${PROFILE} web started but /api/health failed; see $SERVICE_LOG" >&2
+    tail -20 "$SERVICE_LOG" >&2 || true
     if restore_previous_binary; then
       stop_tmux_session
+      stop_launchd_job
       stop_pid_file
       start_web "$RESTORE_BIN" || true
     elif restore_previous_cargo_bin; then
       stop_tmux_session
+      stop_launchd_job
       stop_pid_file
       start_web "$CARGO_BIN" || true
     fi
@@ -446,6 +482,6 @@ if command -v curl >/dev/null 2>&1; then
   fi
 fi
 
-echo "${PROFILE} web running (pid $(cat "$PID_FILE"), tmux $TMUX_SESSION)"
+echo "${PROFILE} web running (pid $(cat "$PID_FILE"), launchd $LAUNCHD_LABEL)"
 echo "  URL:  https://127.0.0.1:$PORT"
-echo "  Log:  $LOG_FILE"
+echo "  Log:  $SERVICE_LOG"
