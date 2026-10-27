@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod runtime;
 pub mod slices;
+mod util;
 
 #[cfg(test)]
 mod architecture;

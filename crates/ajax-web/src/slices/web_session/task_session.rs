@@ -81,6 +81,9 @@ pub(crate) enum TaskSessionCommand {
     },
     ClearContext {
         worktree_path: PathBuf,
+        /// Whether the caller still needs a holder taken for its attach
+        /// (restore-recovery Start fresh) rather than running under one.
+        take_holder: bool,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
     AttachSnapshot {
@@ -156,6 +159,9 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
+    /// True once the stored transcript and prompt ledger have been adopted. A
+    /// cold actor (false) must load them before it writes to the log (#1432).
+    pub(super) stored_loaded: bool,
     // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
     pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
@@ -412,6 +418,7 @@ pub(crate) fn spawn_task_session(
             generation: 0,
             holders: HolderCount(0),
             log: TranscriptLog::default(),
+            stored_loaded: false,
             unpersisted: Vec::new(),
             stream_normalizer: StreamNormalizer::default(),
             last_released: None,
@@ -560,9 +567,11 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         }
         TaskSessionCommand::ClearContext {
             worktree_path,
+            take_holder,
             reply,
         } => {
-            let result = task_session_spawn::clear_session_context(state, &worktree_path).await;
+            let result =
+                task_session_spawn::clear_session_context(state, &worktree_path, take_holder).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {

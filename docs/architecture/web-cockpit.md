@@ -497,7 +497,9 @@ Orchestration chat transcripts, the stored session id and model, prompt
 ownership and idempotency, and dispatch checkpoints persist in the registry
 database tables described in `docs/architecture/durable-execution.md`, not in
 tmux; legacy `web-session/<encoded-handle>.jsonl` and `.prompt-ledger.json`
-files are imported once on first use. The
+files are imported once on first use. Completed mutation `request_id` outcomes
+are persisted to `<state_dir>/operation-outcomes.json` (bounded count, 24 h) so
+a retry after a web host restart replays the original outcome. The
 `web_session` slice owns per-task session runtimes (`TaskSessionDirectory` +
 one `TaskSession` Tokio command loop per handle): FIFO prompt queueing,
 request-ID-correlated one-in-flight turns, durable terminal-before-next

@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::operation_outcomes::now_unix_secs;
 
 #[test]
 fn operation_coordinator_prunes_completed_request_ids() {
@@ -771,4 +772,173 @@ async fn dev_deploy_status_and_reject_non_ajax_paths() {
         .as_str()
         .unwrap_or_default()
         .contains("ajax-cli"));
+}
+
+fn completed_outcome_response() -> Response {
+    Response {
+        status_code: 201,
+        content_type: "application/json; charset=utf-8",
+        body: br#"{"ok":true,"request_id":"req-restart"}"#.to_vec(),
+    }
+}
+
+fn finish_request_before_restart(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut coordinator = OperationCoordinator::load_persistent(dir);
+    assert!(coordinator
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    coordinator
+        .finish(
+            Some("req-restart"),
+            "task-restart",
+            &completed_outcome_response(),
+        )
+        .expect("a request with a request_id persists its outcome")
+        .persist();
+}
+
+#[test]
+fn completed_request_id_outcome_replays_after_coordinator_restart() {
+    let dir = scratch_dir("operation-outcomes-restart");
+    finish_request_before_restart(&dir);
+
+    let mut restarted = OperationCoordinator::load_persistent(&dir);
+    let Err(GateRejection::Replay(replayed)) =
+        restarted.try_begin(Some("req-restart"), "task-restart")
+    else {
+        panic!("a retry after restart must replay the original outcome");
+    };
+    let original = completed_outcome_response();
+    assert_eq!(replayed.status_code, original.status_code);
+    assert_eq!(replayed.content_type, original.content_type);
+    assert_eq!(replayed.body, original.body);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn completed_request_id_outcome_older_than_a_day_is_not_replayed_after_restart() {
+    let dir = scratch_dir("operation-outcomes-age");
+    finish_request_before_restart(&dir);
+
+    let path = dir.join("operation-outcomes.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    stored["entries"][0]["completed_at"] = serde_json::json!(now - 25 * 60 * 60);
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let mut restarted = OperationCoordinator::load_persistent(&dir);
+    assert!(restarted
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn corrupt_operation_outcomes_file_loads_as_empty() {
+    let dir = scratch_dir("operation-outcomes-corrupt");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("operation-outcomes.json"), b"{not json").unwrap();
+
+    let mut coordinator = OperationCoordinator::load_persistent(&dir);
+    assert!(coordinator.completed_response("req-restart").is_none());
+    assert!(coordinator
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn completed_outcome_older_than_a_day_is_not_replayed_in_memory() {
+    let mut coordinator = OperationCoordinator::default();
+    coordinator.remember_completed_response(
+        "req-old".to_string(),
+        completed_outcome_response(),
+        now_unix_secs() - 25 * 60 * 60,
+    );
+
+    assert!(coordinator.completed_response("req-old").is_none());
+    assert!(coordinator.try_begin(Some("req-old"), "task-old").is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn persisted_operation_outcomes_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch_dir("operation-outcomes-mode");
+    finish_request_before_restart(&dir);
+    let path = dir.join("operation-outcomes.json");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let mut coordinator = OperationCoordinator::load_persistent(&dir);
+    coordinator
+        .store_completed_response("req-second".to_string(), completed_outcome_response())
+        .expect("a store path is configured")
+        .persist();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn older_outcome_snapshot_does_not_overwrite_newer_on_disk() {
+    let dir = scratch_dir("operation-outcomes-stale-snapshot");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut coordinator = OperationCoordinator::load_persistent(&dir);
+    let older = coordinator
+        .store_completed_response("req-older".to_string(), completed_outcome_response())
+        .expect("a store path is configured");
+    let newer = coordinator
+        .store_completed_response("req-newer".to_string(), completed_outcome_response())
+        .expect("a store path is configured");
+
+    newer.persist();
+    older.persist();
+
+    let restarted = OperationCoordinator::load_persistent(&dir);
+    assert!(restarted.completed_response("req-newer").is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn completed_request_replays_through_a_second_app_state_on_the_same_dir() {
+    let dir = scratch_dir("operation-outcomes-wiring");
+    let first = WebAppState::load_or_create(
+        context_with_task(),
+        OkRunner,
+        TestBridge::default(),
+        dir.clone(),
+    )
+    .unwrap();
+    assert!(first
+        .operations()
+        .try_begin(Some("req-wiring"), "task-wiring")
+        .is_ok());
+    first.finish_operation(
+        Some("req-wiring"),
+        "task-wiring",
+        &completed_outcome_response(),
+    );
+    drop(first);
+
+    let second = WebAppState::load_or_create(
+        context_with_task(),
+        OkRunner,
+        TestBridge::default(),
+        dir.clone(),
+    )
+    .unwrap();
+    let Err(GateRejection::Replay(replayed)) = second
+        .operations()
+        .try_begin(Some("req-wiring"), "task-wiring")
+    else {
+        panic!("a restarted app state must replay the completed request");
+    };
+    assert_eq!(replayed.body, completed_outcome_response().body);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

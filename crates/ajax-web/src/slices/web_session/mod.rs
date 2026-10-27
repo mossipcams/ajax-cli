@@ -436,6 +436,9 @@ mod task_session_tests;
 mod task_session_reliability_tests;
 
 #[cfg(test)]
+mod prompt_ack_tests;
+
+#[cfg(test)]
 mod task_session_durability_tests;
 
 #[cfg(test)]

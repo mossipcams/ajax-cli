@@ -2,6 +2,9 @@ use crate::adapters::http::{
     json_response, operation_response_with_request_id, response_from_web_error, Response,
 };
 use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
+use crate::runtime::operation_outcomes::{
+    now_unix_secs, PendingOutcomeWrite, MAX_OUTCOME_AGE_SECS,
+};
 use crate::{
     adapters::{
         browser_session::BrowserSession, cloudflare_access::CloudflareAccessConfig,
@@ -417,6 +420,20 @@ impl<C, B> WebAppState<C, B> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Records a finished operation's outcome, then writes it with the
+    /// operations lock already released so disk I/O never blocks other requests.
+    pub(crate) fn finish_operation(
+        &self,
+        request_id: Option<&str>,
+        task_key: &str,
+        response: &Response,
+    ) {
+        let pending = self.operations().finish(request_id, task_key, response);
+        if let Some(pending) = pending {
+            pending.persist();
+        }
+    }
+
     pub fn new(
         context: CommandContext<InMemoryRegistry>,
         runner: C,
@@ -506,6 +523,7 @@ impl<C, B> WebAppState<C, B> {
         let stt_phrase_end_silence_ms = context.config.stt.phrase_end_silence_ms;
         let stt_pause_grace_period_ms = context.config.stt.pause_grace_period_ms;
         let stt_language = context.config.stt.language.clone();
+        let operations = OperationCoordinator::load_persistent(&state_dir);
         let state_dir = Arc::new(state_dir);
         let task_session_directory = TaskSessionDirectory::new(storage);
         task_session_directory.prune_stale_persisted(&owned_session_handles(&context));
@@ -517,7 +535,7 @@ impl<C, B> WebAppState<C, B> {
                 revision: 0,
                 cockpit_cache: None,
             })),
-            operations: Arc::new(Mutex::new(OperationCoordinator::default())),
+            operations: Arc::new(Mutex::new(operations)),
             control_lane: Arc::new(tokio::sync::Mutex::new(())),
             state_dir,
             push,
@@ -608,9 +626,15 @@ where
 #[derive(Default)]
 pub(crate) struct OperationCoordinator {
     pub(crate) completed: HashMap<String, Response>,
+    pub(crate) completed_at: HashMap<String, u64>,
     pub(crate) completed_request_ids: VecDeque<String>,
     pub(crate) in_flight_requests: BTreeSet<String>,
     pub(crate) in_flight_tasks: BTreeSet<String>,
+    pub(crate) store_path: Option<PathBuf>,
+    /// Sequence number of the newest outcome snapshot captured for persistence.
+    pub(crate) write_seq: u64,
+    /// Sequence number of the newest snapshot written; held only for the write.
+    pub(crate) persisted_seq: Arc<Mutex<u64>>,
 }
 
 pub(crate) enum GateRejection {
@@ -619,7 +643,13 @@ pub(crate) enum GateRejection {
 }
 
 impl OperationCoordinator {
+    /// An outcome older than the replay window is treated as absent, in memory
+    /// as well as on disk, so a long-lived host cannot replay it indefinitely.
     pub(crate) fn completed_response(&self, request_id: &str) -> Option<Response> {
+        let completed_at = *self.completed_at.get(request_id)?;
+        if now_unix_secs().saturating_sub(completed_at) > MAX_OUTCOME_AGE_SECS {
+            return None;
+        }
         self.completed.get(request_id).cloned()
     }
 
@@ -654,15 +684,35 @@ impl OperationCoordinator {
         Ok(())
     }
 
-    pub(crate) fn finish(&mut self, request_id: Option<&str>, task_key: &str, response: &Response) {
+    /// Releases the in-flight markers and records the outcome. The returned
+    /// write must be persisted by the caller after the operations lock is dropped.
+    pub(crate) fn finish(
+        &mut self,
+        request_id: Option<&str>,
+        task_key: &str,
+        response: &Response,
+    ) -> Option<PendingOutcomeWrite> {
         self.in_flight_tasks.remove(task_key);
-        if let Some(request_id) = request_id {
-            self.in_flight_requests.remove(request_id);
-            self.store_completed_response(request_id.to_string(), response.clone());
-        }
+        let request_id = request_id?;
+        self.in_flight_requests.remove(request_id);
+        self.store_completed_response(request_id.to_string(), response.clone())
     }
 
-    pub(crate) fn store_completed_response(&mut self, request_id: String, response: Response) {
+    pub(crate) fn store_completed_response(
+        &mut self,
+        request_id: String,
+        response: Response,
+    ) -> Option<PendingOutcomeWrite> {
+        self.remember_completed_response(request_id, response, now_unix_secs());
+        self.pending_write()
+    }
+
+    pub(crate) fn remember_completed_response(
+        &mut self,
+        request_id: String,
+        response: Response,
+        completed_at: u64,
+    ) {
         if self
             .completed
             .insert(request_id.clone(), response)
@@ -671,10 +721,12 @@ impl OperationCoordinator {
             self.completed_request_ids
                 .retain(|completed_id| completed_id != &request_id);
         }
+        self.completed_at.insert(request_id.clone(), completed_at);
         self.completed_request_ids.push_back(request_id);
         while self.completed_request_ids.len() > MAX_COMPLETED_OPERATIONS {
             if let Some(oldest_request_id) = self.completed_request_ids.pop_front() {
                 self.completed.remove(&oldest_request_id);
+                self.completed_at.remove(&oldest_request_id);
             }
         }
     }

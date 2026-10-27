@@ -31,6 +31,19 @@ pub(super) fn interrupted_by_restart_event(prompt_id: &str) -> SessionServerEven
     }
 }
 
+/// Events appended for a prompt cut off by a host restart: the `PromptAccepted`
+/// a normal accept sends, so the browser outbox drops the prompt instead of
+/// resending it on every reconnect (#1434), then the transcript note. Each
+/// prompt is interrupted once, so each gets exactly one acknowledgement.
+pub(super) fn interrupted_by_restart_events(prompt_id: &str) -> Vec<SessionServerEvent> {
+    vec![
+        SessionServerEvent::PromptAccepted {
+            client_message_id: prompt_id.to_string(),
+        },
+        interrupted_by_restart_event(prompt_id),
+    ]
+}
+
 /// For every run whose `owner_boot_id` differs from `current_boot_id`: load the
 /// prompt ledger, apply [`crate::adapters::web_session_store::prompt_ledger::PromptLedger::recover_after_restart`],
 /// and when any prompt was `Dispatching`, persist the interrupted ledger together
@@ -96,7 +109,7 @@ pub(crate) fn recover_interrupted_prompts(
 
         let events: Vec<SessionServerEvent> = interrupted
             .iter()
-            .map(|id| interrupted_by_restart_event(id))
+            .flat_map(|id| interrupted_by_restart_events(id))
             .collect();
         match ledger_module::try_persist_with_events(store, state_dir, &handle, &ledger, &events) {
             Ok(()) => result.recovered_handles.push(handle),

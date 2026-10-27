@@ -304,7 +304,7 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
     }
     let mut recovery_events = Vec::new();
     for id in interrupted {
-        recovery_events.push(super::startup_recovery::interrupted_by_restart_event(&id));
+        recovery_events.extend(super::startup_recovery::interrupted_by_restart_events(&id));
     }
     state.prompts.queued.clear();
     for entry in queued_entries {
@@ -375,6 +375,11 @@ pub(super) fn submit_prompt(
         if let Some(entry) = state.prompts.prompt_ledger.entry(&client_message_id) {
             match entry.phase {
                 PromptPhase::Interrupted => {
+                    // Acknowledge here too, so the ack does not depend on the
+                    // recovery rows surviving the restart (#1434).
+                    state.append_to_log(vec![SessionServerEvent::PromptAccepted {
+                        client_message_id: client_message_id.clone(),
+                    }])?;
                     return Err(SessionError::operator(format!(
                         "prompt {client_message_id} was interrupted and was not executed"
                     )));
@@ -465,6 +470,7 @@ pub(super) fn submit_prompt(
                 state,
                 (!client_message_id.is_empty()).then_some(client_message_id),
                 error.clone(),
+                false,
             );
             return Err(SessionError::protocol(error));
         }
@@ -513,22 +519,44 @@ pub(super) fn dispatch_queued_prompt(
                 state,
                 (!next.client_message_id.is_empty()).then_some(next.client_message_id.clone()),
                 format!("queued prompt failed: {error}"),
+                true,
             );
             Ok(())
         }
     }
 }
 
+/// Events for a prompt whose begin failed. A prompt that was never accepted gets
+/// the same `PromptAccepted` a normal accept sends, so the browser outbox drops it
+/// instead of resending it on every reconnect (#1434). `acknowledged` is true for
+/// queued prompts, which were accepted when they were queued.
+pub(super) fn begin_failure_events(
+    client_message_id: Option<&str>,
+    message: String,
+    acknowledged: bool,
+) -> Vec<SessionServerEvent> {
+    let mut events = Vec::new();
+    if let Some(client_message_id) = client_message_id.filter(|_| !acknowledged) {
+        events.push(SessionServerEvent::PromptAccepted {
+            client_message_id: client_message_id.to_string(),
+        });
+    }
+    events.push(SessionServerEvent::Error { message });
+    events
+}
+
 fn retain_begin_failure(
     state: &mut TaskSessionState,
     client_message_id: Option<String>,
     message: String,
+    acknowledged: bool,
 ) {
+    let events = begin_failure_events(client_message_id.as_deref(), message, acknowledged);
     let mut active = ActivePrompt::new(0, client_message_id);
     active.capture_terminal(PromptTerminal {
         request_id: 0,
         outcome: PromptTerminalOutcome::Failed,
-        events: vec![SessionServerEvent::Error { message }],
+        events,
     });
     state.prompts.active_prompt = Some(active);
     try_finalize_active_prompt(state);

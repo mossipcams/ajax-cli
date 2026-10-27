@@ -485,3 +485,33 @@ fn reattached_session_survives_idle_cap_while_held() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn in_session_clear_does_not_leak_a_holder() {
+    let dir = scratch_dir("evict-clear-holder");
+    let handle = "web/evict-clear-holder";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        directory
+            .runtime_handle()
+            .block_on(directory.inner().clear_context(handle, &dir))
+            .expect("in-session clear");
+        // The attach's holder is the only one: a warm /clear must not add a holder.
+        assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 1);
+
+        directory.release(handle);
+        let snapshot = directory.eviction_snapshot(handle).expect("snapshot");
+        assert_eq!(snapshot.holders, 0);
+        assert!(
+            snapshot.evictable,
+            "a released, cleared slot must be evictable"
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}

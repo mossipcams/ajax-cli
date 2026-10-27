@@ -532,9 +532,7 @@ where
                 (response, durable)
             },
         );
-        state
-            .operations()
-            .finish(Some(&request_id), &task_key, &response);
+        state.finish_operation(Some(&request_id), &task_key, &response);
         response
     })
     .await
@@ -543,11 +541,7 @@ where
             WebError::CommandFailed(format!("task start worker failed: {error}")),
             Some(&error_request_id),
         );
-        state_for_finish.operations().finish(
-            Some(&error_request_id),
-            &task_key_for_finish,
-            &response,
-        );
+        state_for_finish.finish_operation(Some(&error_request_id), &task_key_for_finish, &response);
         response
     });
     response.into_axum_response()
@@ -652,9 +646,7 @@ where
                 Err(error) => (response_from_web_error(error, request_id.as_deref()), false),
             },
         );
-        state
-            .operations()
-            .finish(request_id.as_deref(), &task_key, &response);
+        state.finish_operation(request_id.as_deref(), &task_key, &response);
         response
     })
     .await
@@ -663,7 +655,7 @@ where
             WebError::CommandFailed(format!("operation worker failed: {error}")),
             error_request_id.as_deref(),
         );
-        state_for_finish.operations().finish(
+        state_for_finish.finish_operation(
             error_request_id.as_deref(),
             &task_key_for_finish,
             &response,

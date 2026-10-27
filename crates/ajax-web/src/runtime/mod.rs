@@ -35,6 +35,7 @@ use crate::adapters::http::{
 
 mod bridge;
 mod headless;
+mod operation_outcomes;
 mod state;
 mod task_routes;
 use task_routes::{
@@ -814,7 +815,8 @@ pub(crate) use crate::adapters::cloudflare_access::CloudflareAccessConfig;
 pub(crate) use bridge::operation_success_response;
 #[cfg(test)]
 pub(crate) use state::{
-    CockpitCacheEntry, OperationCoordinator, BROWSER_CONNECTED_TTL, COCKPIT_REFRESH_CACHE_TTL,
+    CockpitCacheEntry, GateRejection, OperationCoordinator, BROWSER_CONNECTED_TTL,
+    COCKPIT_REFRESH_CACHE_TTL,
 };
 #[cfg(test)]
 pub(crate) use task_routes::websocket_origin_allowed;

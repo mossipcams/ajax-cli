@@ -540,12 +540,31 @@ impl TaskSessionDirectory {
         }
     }
 
+    /// In-session /clear: the attached socket already holds the slot.
     pub async fn clear_context(&self, handle: &str, worktree_path: &Path) -> Result<u64, String> {
+        self.clear_context_with_holder(handle, worktree_path, false)
+            .await
+    }
+
+    /// Restore-recovery Start fresh: the caller attaches afterwards and releases on exit.
+    pub async fn start_fresh(&self, handle: &str, worktree_path: &Path) -> Result<(), String> {
+        self.clear_context_with_holder(handle, worktree_path, true)
+            .await
+            .map(|_| ())
+    }
+
+    async fn clear_context_with_holder(
+        &self,
+        handle: &str,
+        worktree_path: &Path,
+        take_holder: bool,
+    ) -> Result<u64, String> {
         if self.has_live_entry(handle) {
             let tx = self.command_tx(handle)?;
             let worktree_path = worktree_path.to_path_buf();
             send_command(&tx, |reply| TaskSessionCommand::ClearContext {
                 worktree_path,
+                take_holder,
                 reply,
             })
             .await?
@@ -553,10 +572,6 @@ impl TaskSessionDirectory {
         } else {
             clear_stored_session_id(&self.storage, handle).map(|()| 0)
         }
-    }
-
-    pub async fn start_fresh(&self, handle: &str, worktree_path: &Path) -> Result<(), String> {
-        self.clear_context(handle, worktree_path).await.map(|_| ())
     }
 
     pub async fn attach_snapshot(
