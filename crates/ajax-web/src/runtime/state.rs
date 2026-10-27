@@ -599,6 +599,10 @@ pub(crate) struct OperationCoordinator {
     pub(crate) in_flight_requests: BTreeSet<String>,
     pub(crate) in_flight_tasks: BTreeSet<String>,
     pub(crate) store_path: Option<PathBuf>,
+    /// Sequence number of the newest outcome snapshot captured for persistence.
+    pub(crate) write_seq: u64,
+    /// Sequence number of the newest snapshot written; held only for the write.
+    pub(crate) persisted_seq: Arc<Mutex<u64>>,
 }
 
 pub(crate) enum GateRejection {

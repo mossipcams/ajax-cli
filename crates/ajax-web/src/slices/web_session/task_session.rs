@@ -81,6 +81,9 @@ pub(crate) enum TaskSessionCommand {
     },
     ClearContext {
         worktree_path: PathBuf,
+        /// Whether the caller still needs a holder taken for its attach
+        /// (restore-recovery Start fresh) rather than running under one.
+        take_holder: bool,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
     AttachSnapshot {
@@ -564,9 +567,11 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         }
         TaskSessionCommand::ClearContext {
             worktree_path,
+            take_holder,
             reply,
         } => {
-            let result = task_session_spawn::clear_session_context(state, &worktree_path).await;
+            let result =
+                task_session_spawn::clear_session_context(state, &worktree_path, take_holder).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {

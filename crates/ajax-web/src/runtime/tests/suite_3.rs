@@ -886,6 +886,26 @@ fn persisted_operation_outcomes_are_owner_only() {
 }
 
 #[test]
+fn older_outcome_snapshot_does_not_overwrite_newer_on_disk() {
+    let dir = scratch_dir("operation-outcomes-stale-snapshot");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut coordinator = OperationCoordinator::load_persistent(&dir);
+    let older = coordinator
+        .store_completed_response("req-older".to_string(), completed_outcome_response())
+        .expect("a store path is configured");
+    let newer = coordinator
+        .store_completed_response("req-newer".to_string(), completed_outcome_response())
+        .expect("a store path is configured");
+
+    newer.persist();
+    older.persist();
+
+    let restarted = OperationCoordinator::load_persistent(&dir);
+    assert!(restarted.completed_response("req-newer").is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn completed_request_replays_through_a_second_app_state_on_the_same_dir() {
     let dir = scratch_dir("operation-outcomes-wiring");
     let first = WebAppState::load_or_create(

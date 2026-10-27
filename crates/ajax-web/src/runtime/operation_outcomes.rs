@@ -7,6 +7,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -84,8 +85,10 @@ impl OperationCoordinator {
     }
 
     /// Captures every completed outcome as the bytes to write to the state
-    /// file. The caller persists them after releasing the operations lock.
-    pub(crate) fn pending_write(&self) -> Option<PendingOutcomeWrite> {
+    /// file, tagged with a sequence number so a stale snapshot is never written
+    /// over a newer one. The caller persists them after releasing the
+    /// operations lock.
+    pub(crate) fn pending_write(&mut self) -> Option<PendingOutcomeWrite> {
         let path = self.store_path.clone()?;
         let entries = self
             .completed_request_ids
@@ -102,7 +105,15 @@ impl OperationCoordinator {
             })
             .collect();
         match serde_json::to_vec(&StoredOutcomes { entries }) {
-            Ok(bytes) => Some(PendingOutcomeWrite { path, bytes }),
+            Ok(bytes) => {
+                self.write_seq += 1;
+                Some(PendingOutcomeWrite {
+                    path,
+                    bytes,
+                    seq: self.write_seq,
+                    persisted_seq: Arc::clone(&self.persisted_seq),
+                })
+            }
             Err(error) => {
                 eprintln!("could not serialize {OUTCOMES_FILE}: {error}");
                 None
@@ -115,11 +126,23 @@ impl OperationCoordinator {
 pub(crate) struct PendingOutcomeWrite {
     path: PathBuf,
     bytes: Vec<u8>,
+    seq: u64,
+    persisted_seq: Arc<Mutex<u64>>,
 }
 
 impl PendingOutcomeWrite {
-    /// A failed write is reported and leaves the in-memory outcomes in place.
+    /// Writes under the persisted-sequence lock, so writers never share the
+    /// `<file>.tmp` path and a snapshot older than the last one persisted is
+    /// skipped. A failed write is reported and leaves the in-memory outcomes in place.
     pub(crate) fn persist(self) {
+        let mut persisted = self
+            .persisted_seq
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if self.seq <= *persisted {
+            return;
+        }
+        *persisted = self.seq;
         if let Err(error) = write_private_file(&self.path, &self.bytes) {
             eprintln!("could not write {OUTCOMES_FILE}: {error}");
         }

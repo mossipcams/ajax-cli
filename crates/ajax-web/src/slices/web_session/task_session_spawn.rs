@@ -343,13 +343,14 @@ pub(super) async fn reset_harness_context(
 pub(super) async fn clear_session_context(
     state: &mut TaskSessionState,
     worktree_path: &Path,
+    take_holder: bool,
 ) -> Result<u64, SessionError> {
     let model = state.acp.model.clone();
     let agent = state.agent;
-    // Only a cold actor takes a holder here: a warm /clear runs under the holder
-    // its attach already took, and a second one would never be released (#1432).
-    let cold = !state.stored_loaded;
-    if cold {
+    // Only the caller knows whether it still needs a holder: restore-recovery
+    // Start fresh attaches afterwards, while an in-session /clear already runs
+    // under the holder its attach took, and a second one would never be released.
+    if !state.stored_loaded {
         load_cold_session(state, agent)?;
     }
     // Operator reset: retry transcript writes instead of staying blocked.
@@ -407,7 +408,7 @@ pub(super) async fn clear_session_context(
             message: error.clone(),
         }]);
     }
-    if cold {
+    if take_holder {
         state.acquire_holder();
     }
     Ok(state.generation)

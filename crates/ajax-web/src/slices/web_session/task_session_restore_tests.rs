@@ -432,6 +432,41 @@ fn stored_event_json(dir: &std::path::Path, handle: &str) -> Vec<String> {
 }
 
 #[test]
+fn start_fresh_after_dead_slot_restore_failure_holds_the_slot_until_release() {
+    let dir = scratch_dir("start-fresh-dead-slot-holder");
+    let script = fake_acp_fixture();
+    let handle = "web/start-fresh-dead-slot-holder";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        directory.release(handle);
+        directory.kill_host_for_test(handle);
+
+        with_test_acp_extra_args(&["--load-fail"], || {
+            directory
+                .acquire_typed(handle, &dir, "auto", AgentClient::Cursor)
+                .expect_err("restore must fail");
+        });
+        assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 0);
+
+        directory.start_fresh(handle, &dir).expect("start fresh");
+        assert_eq!(
+            directory.eviction_snapshot(handle).unwrap().holders,
+            1,
+            "start fresh must hold the slot while the socket is attached"
+        );
+
+        directory.release(handle);
+        assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 0);
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn start_fresh_after_cold_restore_failure_keeps_stored_history_issue_1432() {
     let dir = scratch_dir("start-fresh-cold-restore-failure");
     let script = fake_acp_fixture();
