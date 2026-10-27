@@ -59,7 +59,17 @@ const promptFail = process.argv.includes('--prompt-fail');
 // Background-work tests: each prompt leaves one real shell running as a direct
 // child of this agent, so it sits in the session's process subtree.
 const backgroundShell = process.argv.includes('--background-shell');
+// Like an SDK-initiated turn: the turn ends first, then a shell starts after it.
+const backgroundShellAfterTurn = process.argv.includes('--background-shell-after-turn');
 const sessionId = 'fake-sess-1';
+// `; :` keeps sh from exec-ing sleep, so the shell stays in the process table as a direct child.
+function spawnBackgroundShell(script) {
+  const shell = childProcess.spawn('/bin/sh', ['-c', script], {
+    detached: false,
+    stdio: 'ignore',
+  });
+  shell.unref();
+}
 // ponytail: isolate fixture sidecar files under FAKE_ACP_STATE_DIR or a per-pid tmp dir
 // so verification does not litter the crate root when cwd is not the worktree.
 const configuredStateRoot = process.env.FAKE_ACP_STATE_DIR;
@@ -680,13 +690,8 @@ function handleRequest(msg) {
       return;
     }
     if (backgroundShell) {
-      // `; :` keeps sh from exec-ing sleep, so the shell stays in the process table.
       // Spawned before the reply so the turn-end probe sees it.
-      const shell = childProcess.spawn('/bin/sh', ['-c', 'sleep 2; :'], {
-        detached: false,
-        stdio: 'ignore',
-      });
-      shell.unref();
+      spawnBackgroundShell('sleep 2; :');
     }
     const kinds = Array.isArray(params?.prompt)
       ? params.prompt.map((block) => block?.type || 'unknown').join(',')
@@ -697,6 +702,10 @@ function handleRequest(msg) {
       replayUpdate(kinds === 'text' ? 'pong' : `prompt:${kinds}`);
     }
     send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
+    if (backgroundShellAfterTurn) {
+      // Spawned after the reply, so the turn has already ended when the shell starts.
+      setTimeout(() => spawnBackgroundShell('sleep 12; :'), 1000);
+    }
     return;
   }
   if (method === 'session/cancel') {
