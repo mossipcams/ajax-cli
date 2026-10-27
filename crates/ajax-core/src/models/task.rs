@@ -286,13 +286,18 @@ impl Task {
     }
 
     pub fn apply_git_status(&mut self, mut status: GitStatus) {
-        // The worktree is the truth: agents rename branches (gh-pr-create requires
-        // it), so follow a named non-base checkout instead of flagging a mismatch
-        // the operator has to adopt by hand. Base and detached stay mismatches.
+        // Agents rename their branch (gh-pr-create requires it), so follow a rename
+        // instead of flagging a mismatch the operator has to adopt by hand. Only a
+        // true rename qualifies: the task branch is gone, and `git branch -m` refuses
+        // existing names, so this never claims a shared or another task's branch
+        // (which Drop would then delete). Base, detached, and plain checkouts of
+        // other branches stay mismatches.
         if let Some(current) = status
             .current_branch
             .as_deref()
-            .filter(|current| status.worktree_exists && !current.is_empty())
+            .filter(|current| {
+                status.worktree_exists && !status.branch_exists && !current.is_empty()
+            })
             .filter(|current| *current != self.branch && *current != self.base_branch)
         {
             self.branch = current.to_string();

@@ -759,7 +759,7 @@ fn step_receipt_identity_is_stable_for_idempotent_steps() {
 }
 
 #[test]
-fn git_refresh_follows_renamed_branch_but_not_base_or_detached() {
+fn git_refresh_follows_renamed_branch_but_not_base_detached_or_checkout() {
     let mut task = sample_task();
     let original = task.branch.clone();
 
@@ -771,6 +771,11 @@ fn git_refresh_follows_renamed_branch_but_not_base_or_detached() {
     assert!(task.has_checkout_mismatch());
 
     task.apply_git_status(git_status_for_checkout(true, None));
+    assert_eq!(task.branch, original);
+    assert!(task.has_checkout_mismatch());
+
+    // Task branch still exists: a plain checkout of another branch, not a rename.
+    task.apply_git_status(git_status_for_checkout(true, Some("develop")));
     assert_eq!(task.branch, original);
     assert!(task.has_checkout_mismatch());
 
