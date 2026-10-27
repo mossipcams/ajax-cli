@@ -1,9 +1,9 @@
 pub(super) use super::{
     api_access_policy, axum_app, browser_session_json_response, log_web_listening,
     operation_success_response, operator_input_sink, refresh_cockpit_and_cache,
-    websocket_origin_allowed, ActionFailure, ApiAccess, CockpitCacheEntry, OperationCoordinator,
-    RefreshTier, Response, RuntimeBridge, TlsListener, WebAppState, BROWSER_CONNECTED_TTL,
-    COCKPIT_REFRESH_CACHE_TTL,
+    websocket_origin_allowed, ActionFailure, ApiAccess, CockpitCacheEntry, GateRejection,
+    OperationCoordinator, RefreshTier, Response, RuntimeBridge, TlsListener, WebAppState,
+    BROWSER_CONNECTED_TTL, COCKPIT_REFRESH_CACHE_TTL,
 };
 
 use crate::slices::operate::{operate, OperateError, OperateOutcome, OperateRequest};

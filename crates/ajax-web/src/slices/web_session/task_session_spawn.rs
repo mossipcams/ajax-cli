@@ -94,12 +94,10 @@ pub(super) async fn acquire(
     state.acp.model = model.to_string();
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
-    state.log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.generation = 0;
     state.last_released = None;
     state.acp.acp_alive = false;
-    match recover_prompt_ledger(state) {
+    match adopt_stored_session(state, stored.events, stored.dropped) {
         Ok(()) => finish_first_acquire(state, &report, model),
         Err(error) => {
             if let Some(client) = state.acp.client.take() {
@@ -109,6 +107,42 @@ pub(super) async fn acquire(
             Err(error)
         }
     }
+}
+
+/// Adopts the stored transcript, normalizer seed and prompt ledger into a cold
+/// actor. Acquire and Start fresh both go through here so neither appends to a
+/// log that has not loaded the rows it would otherwise overwrite (#1432).
+fn adopt_stored_session(
+    state: &mut TaskSessionState,
+    events: Vec<SessionServerEvent>,
+    dropped: usize,
+) -> Result<(), SessionError> {
+    state.log = super::transcript::TranscriptLog::from_events(events, dropped);
+    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
+    match recover_prompt_ledger(state) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Stay cold so the next attempt loads the stored transcript again.
+            state.log = super::transcript::TranscriptLog::default();
+            state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&[]);
+            Err(error)
+        }
+    }
+}
+
+/// Start fresh on a cold actor: its first acquire failed before the stored
+/// transcript loaded, so load it before anything is written to the log.
+fn load_cold_session(state: &mut TaskSessionState, agent: AgentClient) -> Result<(), SessionError> {
+    let stored = web_session_store::try_load::<SessionServerEvent>(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
+        &state.qualified_handle,
+        agent_client_name(agent),
+    )
+    .map_err(unreadable_session)?;
+    state.evidence.transcript_corruption =
+        web_session_store::corruption_warning(stored.corrupt_lines);
+    adopt_stored_session(state, stored.events, stored.dropped)
 }
 
 pub(crate) struct ApplyConfigOptionResult {
@@ -309,6 +343,9 @@ pub(super) async fn clear_session_context(
 ) -> Result<u64, SessionError> {
     let model = state.acp.model.clone();
     let agent = state.agent;
+    if state.log.events.is_empty() && state.log.dropped == 0 {
+        load_cold_session(state, agent)?;
+    }
     // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
     state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
@@ -364,6 +401,7 @@ pub(super) async fn clear_session_context(
             message: error.clone(),
         }]);
     }
+    state.acquire_holder();
     Ok(state.generation)
 }
 

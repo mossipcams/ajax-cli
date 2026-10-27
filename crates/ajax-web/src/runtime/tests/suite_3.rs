@@ -772,3 +772,78 @@ async fn dev_deploy_status_and_reject_non_ajax_paths() {
         .unwrap_or_default()
         .contains("ajax-cli"));
 }
+
+fn completed_outcome_response() -> Response {
+    Response {
+        status_code: 201,
+        content_type: "application/json; charset=utf-8",
+        body: br#"{"ok":true,"request_id":"req-restart"}"#.to_vec(),
+    }
+}
+
+fn finish_request_before_restart(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut coordinator = OperationCoordinator::load_persistent(dir);
+    assert!(coordinator
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    coordinator.finish(
+        Some("req-restart"),
+        "task-restart",
+        &completed_outcome_response(),
+    );
+}
+
+#[test]
+fn completed_request_id_outcome_replays_after_coordinator_restart() {
+    let dir = scratch_dir("operation-outcomes-restart");
+    finish_request_before_restart(&dir);
+
+    let mut restarted = OperationCoordinator::load_persistent(&dir);
+    let Err(GateRejection::Replay(replayed)) =
+        restarted.try_begin(Some("req-restart"), "task-restart")
+    else {
+        panic!("a retry after restart must replay the original outcome");
+    };
+    let original = completed_outcome_response();
+    assert_eq!(replayed.status_code, original.status_code);
+    assert_eq!(replayed.content_type, original.content_type);
+    assert_eq!(replayed.body, original.body);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn completed_request_id_outcome_older_than_a_day_is_not_replayed_after_restart() {
+    let dir = scratch_dir("operation-outcomes-age");
+    finish_request_before_restart(&dir);
+
+    let path = dir.join("operation-outcomes.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    stored["entries"][0]["completed_at"] = serde_json::json!(now - 25 * 60 * 60);
+    std::fs::write(&path, serde_json::to_vec(&stored).unwrap()).unwrap();
+
+    let mut restarted = OperationCoordinator::load_persistent(&dir);
+    assert!(restarted
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn corrupt_operation_outcomes_file_loads_as_empty() {
+    let dir = scratch_dir("operation-outcomes-corrupt");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("operation-outcomes.json"), b"{not json").unwrap();
+
+    let mut coordinator = OperationCoordinator::load_persistent(&dir);
+    assert!(coordinator.completed_response("req-restart").is_none());
+    assert!(coordinator
+        .try_begin(Some("req-restart"), "task-restart")
+        .is_ok());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

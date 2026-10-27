@@ -422,3 +422,75 @@ fn issue_1179_reconnect_model_mismatch_still_restores_without_context_reset_note
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+fn stored_event_json(dir: &std::path::Path, handle: &str) -> Vec<String> {
+    web_session_store::load::<SessionServerEvent>(dir, handle)
+        .events
+        .iter()
+        .map(|event| serde_json::to_string(event).expect("serialize stored event"))
+        .collect()
+}
+
+#[test]
+fn start_fresh_after_cold_restore_failure_keeps_stored_history_issue_1432() {
+    let dir = scratch_dir("start-fresh-cold-restore-failure");
+    let script = fake_acp_fixture();
+    let handle = "web/start-fresh-cold-restore-failure";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("first acquire");
+        for index in 0..3 {
+            directory.record(
+                handle,
+                SessionServerEvent::Message {
+                    role: "user".to_string(),
+                    text: format!("stored {index}"),
+                    content_blocks: Vec::new(),
+                    item_id: format!("stored-{index}"),
+                    message_id: None,
+                },
+            );
+        }
+        let stored_before = stored_event_json(&dir, handle);
+        assert_eq!(stored_before.len(), 3, "three stored rows seeded");
+        directory.detach_session(handle);
+
+        // A restarted host has a cold actor: the stored transcript was never loaded.
+        let restarted = BlockingSessionDirectory::new(dir.clone());
+        with_test_acp_extra_args(&["--load-fail"], || {
+            restarted
+                .acquire_typed(handle, &dir, "auto", AgentClient::Cursor)
+                .expect_err("cold restore must fail");
+        });
+
+        restarted.start_fresh(handle, &dir).expect("start fresh");
+
+        let stored_after = stored_event_json(&dir, handle);
+        assert!(stored_after.len() > stored_before.len());
+        assert_eq!(
+            stored_after[..stored_before.len()],
+            stored_before[..],
+            "stored rows before the context-cleared note must not be rewritten"
+        );
+
+        let (visible, _) = restarted.read_from(handle, 0);
+        assert_eq!(visible.len(), stored_before.len() + 1 + 1);
+        assert!(matches!(
+            &visible[3],
+            SessionServerEvent::Message { text, .. } if text == CONTEXT_CLEARED_NOTE
+        ));
+        assert_eq!(
+            restarted
+                .eviction_snapshot(handle)
+                .expect("snapshot")
+                .holders,
+            1,
+            "start fresh must hold the session while it is shown"
+        );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
