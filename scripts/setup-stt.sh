@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# Install Moonshine v2 (moonshine-voice) host dependencies and ensure [stt] is
-# configured for both Ajax profiles on this machine:
-#   stable -> ~/.config/ajax/config.toml
-#   dev    -> ~/.ajax-dev/config.toml
-#
-# Shared provider paths live under ~/.ajax-dev so one venv/worker serves both.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,7 +48,6 @@ fi
 
 echo "Installing moonshine-voice (Moonshine v2) into $VENV ..."
 "$PYTHON" -m pip install -q -U pip
-# Remove legacy v1 ONNX package if present from older Ajax STT setups.
 "$PYTHON" -m pip uninstall -q -y useful-moonshine-onnx 2>/dev/null || true
 "$PYTHON" -m pip install -q 'moonshine-voice>=0.1.0' numpy
 

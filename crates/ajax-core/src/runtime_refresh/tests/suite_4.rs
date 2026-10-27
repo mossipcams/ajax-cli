@@ -26,9 +26,6 @@ fn delegated_child_obs() -> StatusObservation {
     }
 }
 
-// #1355: with no primary observation, the projection is WaitingForInput with no
-// selected source timestamp. The `now` fallback used to re-apply the unchanged
-// status on every refresh, stamping a fresh live_status_observed_at each poll.
 #[test]
 fn issue_1355_untimestamped_unchanged_live_status_is_not_reapplied() {
     let mut context = context_with_live_task(LiveStatusKind::WaitingForInput);
@@ -46,7 +43,6 @@ fn issue_1355_untimestamped_unchanged_live_status_is_not_reapplied() {
         .live_status_observed_at
         .expect("the first refresh stamps live_status_observed_at");
 
-    // Ensure the next refresh's `now` is strictly newer than the stamped time.
     std::thread::sleep(Duration::from_millis(2));
 
     let second =
@@ -124,9 +120,6 @@ fn issue_1355_unchanged_kind_without_stored_timestamp_is_stamped() {
     assert!(stamped_at >= before);
 }
 
-// #1355 (second site): the missing-tmux-session branch used to re-apply
-// TmuxMissing and force changed = true on every refresh, re-stamping
-// live_status_observed_at for tasks whose session is gone.
 #[test]
 fn issue_1355_missing_tmux_session_is_not_reapplied_on_second_refresh() {
     let mut context = context_with_task_for_missing_session();
@@ -155,7 +148,6 @@ fn issue_1355_missing_tmux_session_is_not_reapplied_on_second_refresh() {
         "the first refresh applies TmuxMissing"
     );
 
-    // Ensure the next refresh's `now` is strictly newer than the stamped time.
     std::thread::sleep(Duration::from_millis(2));
 
     let second = refresh_runtime_context(&mut context, &mut runner).unwrap();
@@ -209,8 +201,6 @@ fn issue_1355_tmux_missing_applied_on_kind_transition() {
     );
 }
 
-// #1457: Mergeable tasks were never probed, so their agent status observations
-// (e.g. a new turn after CI turned green) were never folded.
 #[test]
 fn issue_1457_idle_mergeable_task_folds_turn_started_observation() {
     let mut context = context_with_active_task();
@@ -249,9 +239,6 @@ fn issue_1457_idle_mergeable_task_folds_turn_started_observation() {
 
 const MERGED_PR_JSON: &str = r#"[{"number":42,"title":"Fix login","url":"https://example.test/pull/42","state":"MERGED","headRefName":"ajax/fix-login","headRefOid":"2222222"}]"#;
 
-// #1456: the CI/PR monitor (the only path that moves a task to Merged when its PR
-// merges) used to run only after the tmux probe, so a failed list-sessions returned
-// early and skipped it.
 struct TmuxSessionsFailRunner {
     prs: String,
 }
@@ -302,8 +289,6 @@ fn issue_1456_full_refresh_monitors_merged_pr_when_tmux_probe_fails() {
     );
 }
 
-// #1456: when no task is probe-eligible the refresh used to return before the CI
-// monitor. Merged/Cleanable tasks are retired by the monitor (CI evidence cleared).
 fn context_with_merged_task_holding_ci_failure() -> CommandContext<InMemoryRegistry> {
     let mut context = context_with_active_task();
     let task = context

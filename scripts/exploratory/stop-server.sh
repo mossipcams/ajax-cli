@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Stop the exploratory ajax-cli web process if still running.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

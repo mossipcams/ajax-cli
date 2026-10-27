@@ -17,8 +17,6 @@ pub fn plan_repair_operation<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
 
-    // Refresh follows renamed branches, so a remaining mismatch is the base
-    // branch or a detached HEAD: nothing repair can safely pick for the operator.
     if task.has_checkout_mismatch() && !task.has_missing_worktree() {
         let mut plan = CommandPlan::new(format!("repair task: {qualified_handle}"));
         plan.blocked_reasons.push(format!(

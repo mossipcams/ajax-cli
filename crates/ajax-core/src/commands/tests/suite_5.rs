@@ -301,8 +301,6 @@ fn failed_git_evidence_refresh_preserves_existing_missing_flags() {
 
 #[test]
 fn refresh_git_substrate_matches_worktree_whose_configured_path_goes_through_symlink() {
-    // git worktree list prints the resolved real path, so a symlinked configured path must
-    // still be recognised as present (#1462).
     let root = std::env::temp_dir().join(format!(
         "ajax-symlink-1462-{}-{}",
         std::process::id(),

@@ -362,7 +362,6 @@ async function getTraining(path: string): Promise<unknown> {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    // Non-JSON bodies (e.g. a proxy's HTML 502 page) are never surfaced as the message.
     payload = undefined;
   }
   if (!response.ok) {
@@ -388,7 +387,6 @@ async function postTraining(path: string, body: unknown): Promise<void> {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    // Non-JSON bodies (e.g. a proxy's HTML 502 page) are never surfaced as the message.
     payload = undefined;
   }
   if (!response.ok) {

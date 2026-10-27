@@ -1,5 +1,3 @@
-// Minimal loopback HTTP helpers for exploratory seeding and preflight.
-
 import { execFileSync } from "node:child_process";
 import { BASE_URL } from "./lib.mjs";
 

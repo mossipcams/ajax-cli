@@ -1,10 +1,3 @@
-//! Ajax-owned records of verified linked worktrees.
-//!
-//! A sandboxed agent can rewrite a worktree's `.git` file and the `gitdir` back-link in its
-//! admin dir, so host-side git must not read repository location from those. The sandbox
-//! records the worktree's verified admin and common dirs here at launch, in a store no sandbox
-//! grant covers, and host-side git is pinned to those paths through the environment.
-
 use std::env;
 use std::fs;
 use std::io;
@@ -12,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Verified repository locations for one linked worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedGit {
     pub git_dir: PathBuf,
@@ -34,10 +26,6 @@ fn record_path(store: &Path, work_tree: &Path) -> PathBuf {
     store.join(format!("{hash:016x}"))
 }
 
-/// Writes the record for `trusted.work_tree` into `store`, replacing any previous record.
-///
-/// Paths are canonicalized first. The record is written to a unique temp file and renamed
-/// into place, so a concurrent lookup never reads a partial record.
 pub fn record(store: &Path, trusted: &TrustedGit) -> io::Result<()> {
     let work_tree = fs::canonicalize(&trusted.work_tree)?;
     let git_dir = fs::canonicalize(&trusted.git_dir)?;
@@ -72,14 +60,6 @@ pub fn record(store: &Path, trusted: &TrustedGit) -> io::Result<()> {
     Ok(())
 }
 
-/// Returns the record of the nearest recorded worktree containing `target`.
-///
-/// A record only counts when its stored work tree equals the matching ancestor exactly, so a
-/// hash collision cannot pin git to another worktree's metadata. Once it matches it is always
-/// returned, even when its admin dir is gone. The agent can delete that admin dir, so falling
-/// back to "no record" would let host git read the agent-controlled `.git` file; pinned git
-/// instead fails closed with "not a git repository". Dropped worktrees are unrecorded by
-/// [`forget`], so a reused path is not pinned to a pruned admin dir.
 pub fn lookup(store: &Path, target: &Path) -> Option<TrustedGit> {
     let target = fs::canonicalize(target).ok()?;
     target.ancestors().find_map(|dir| {
@@ -94,11 +74,6 @@ pub fn lookup(store: &Path, target: &Path) -> Option<TrustedGit> {
     })
 }
 
-/// Removes the record for `work_tree` from `store`. A missing record is not an error.
-///
-/// The record is looked up under the path as given and under its canonical form. Once the
-/// worktree is gone it cannot be canonicalized, so the canonicalized parent joined with the file
-/// name is used instead, which is how [`record`] keyed it while the worktree existed.
 pub fn forget(store: &Path, work_tree: &Path) -> io::Result<()> {
     let mut keys = vec![work_tree.to_path_buf()];
     match fs::canonicalize(work_tree) {
@@ -121,15 +96,10 @@ pub fn forget(store: &Path, work_tree: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Trusted-worktree store, `$HOME/.config/ajax/nono/trusted-worktrees`.
-///
-/// Sits under the Ajax profile dir, which the sandbox profile denies to agents
-/// (`$HOME/.config/ajax/nono`), so the agent cannot rewrite records.
 pub fn default_store() -> Option<PathBuf> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono/trusted-worktrees"))
 }
 
-/// Points `command` at the trusted git dirs, so git ignores the worktree's `.git` file.
 pub fn apply_env(command: &mut Command, trusted: &TrustedGit) {
     command
         .env("GIT_DIR", &trusted.git_dir)
@@ -137,10 +107,6 @@ pub fn apply_env(command: &mut Command, trusted: &TrustedGit) {
         .env("GIT_WORK_TREE", &trusted.work_tree);
 }
 
-/// Disables hooks and fsmonitor at command-line config level (git >= 2.31).
-///
-/// A sandboxed agent can plant `.husky/` hooks or repository config that git would run during
-/// Ajax's own `switch`, `merge`, or `worktree add`, outside the sandbox. Ajax never needs either.
 pub fn disable_hooks(command: &mut Command) {
     command
         .env("GIT_CONFIG_COUNT", "2")
@@ -150,8 +116,6 @@ pub fn disable_hooks(command: &mut Command) {
         .env("GIT_CONFIG_VALUE_1", "false");
 }
 
-/// Applies [`disable_hooks`] unconditionally, then [`apply_env`] when `target` lies in a recorded
-/// worktree.
 pub fn harden(command: &mut Command, target: &Path) {
     disable_hooks(command);
     if let Some(trusted) = default_store().and_then(|store| lookup(&store, target)) {
@@ -195,7 +159,6 @@ mod tests {
         assert!(status.success(), "git {args:?} failed in {}", dir.display());
     }
 
-    /// Creates `root/repo` with one committed file and a linked worktree at `root/wt`.
     fn linked_worktree(root: &Path) -> (PathBuf, TrustedGit) {
         let repo = root.join("repo");
         let worktree = root.join("wt");
@@ -325,8 +288,6 @@ mod tests {
         assert!(!record_path(&store, &trusted.work_tree).exists());
     }
 
-    /// Issue #1387: an agent that deletes its admin dir and rewrites `.git` must not get host git
-    /// to read its planted config. The pinned record fails closed instead.
     #[test]
     fn pinned_env_fails_closed_when_admin_dir_removed_and_git_file_forged() {
         let root = scratch("regression-1387-admin-removed");
@@ -385,7 +346,6 @@ mod tests {
         assert!(record(&root.join("store"), &trusted).is_err());
     }
 
-    /// Issue #1387: an agent that rewrites `.git` must not steer host-side git to its config.
     #[test]
     fn trusted_env_defeats_forged_worktree_link_that_runs_fsmonitor() {
         let root = scratch("regression-1387");
@@ -427,7 +387,6 @@ mod tests {
         );
     }
 
-    /// A planted `core.hooksPath` hook must not run during Ajax's own `git switch`.
     #[test]
     fn disable_hooks_stops_planted_post_checkout_hook() {
         let root = scratch("planted-hook");

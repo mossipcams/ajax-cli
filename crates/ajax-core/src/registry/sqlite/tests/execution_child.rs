@@ -135,7 +135,6 @@ fn runs_with_children_preserves_creation_order() {
 #[test]
 fn earlier_schema_ten_builds_get_missing_agent_runs_columns() {
     let (store, path) = store();
-    // Opens the current schema without writing any run.
     assert!(store
         .latest_run_for_task("registry-task")
         .unwrap()

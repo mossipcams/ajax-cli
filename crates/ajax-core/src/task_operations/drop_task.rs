@@ -79,8 +79,6 @@ pub fn complete_drop_task_operation<R: Registry>(
         .into_iter()
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-    // Issue #1216: a main-checkout drop intentionally preserves the worktree
-    // and branches; do not report those preserved resources as incomplete.
     let mut final_observation = final_observation.clone();
     if context.task_worktree_is_preserved_checkout(final_task) {
         final_observation.worktree = ResourceState::Absent;
@@ -129,10 +127,6 @@ pub fn execute_drop_task_operation<R: Registry>(
         return Err(CommandError::ConfirmationRequired);
     }
 
-    // Issue #1216: a main-checkout drop preserves the checkout and its
-    // branches, but only after proving the task's commits landed on origin's
-    // default branch. Run this before any mutation so a verification failure
-    // halts the drop with nothing removed.
     let preserve_main_checkout = {
         let task_snapshot = context
             .registry
@@ -166,8 +160,6 @@ pub fn execute_drop_task_operation<R: Registry>(
     let drop_ops = planned_drop_ops(context, qualified_handle, &operation.observation)?;
 
     for op in drop_ops {
-        // Issue #1216: a main-checkout drop preserves the checkout and its
-        // branches; emit no removal ops or receipts for them.
         if preserve_main_checkout
             && matches!(
                 op,
@@ -192,10 +184,6 @@ pub fn execute_drop_task_operation<R: Registry>(
                 let already_missing = output.status_code != 0
                     && drop_cleanup_resource_is_already_missing(&command, &output);
                 if output.status_code != 0 && !already_missing {
-                    // When stderr is empty but stdout carries diagnostics (e.g. `git
-                    // branch -D` reports failures on stdout), fall back to stdout so a
-                    // non-zero drop step never persists an uninformative "exited with
-                    // status N:" detail. See issue #1260.
                     let failure_detail =
                         if output.stderr.trim().is_empty() && !output.stdout.trim().is_empty() {
                             format!(
@@ -246,9 +234,6 @@ pub fn execute_drop_task_operation<R: Registry>(
         }
     }
 
-    // Issue #1216: a task-only drop intentionally preserved the main checkout
-    // and its branches. Record that state so completion observation does not
-    // report the preserved resources as failed.
     if preserve_main_checkout {
         let final_task = task(context, qualified_handle)?.clone();
         if let Some(task) = context.registry.get_task_mut(&final_task.id.clone()) {
@@ -284,8 +269,6 @@ pub(super) fn drop_op_execution_decision<R: Registry>(
     })
 }
 
-/// Drops the trusted-git record of a task's removed worktree, so a reused path is not pinned to a
-/// pruned admin dir. Best effort: sandbox launch re-records the path, so errors are ignored.
 fn forget_trusted_worktree<R: Registry>(context: &CommandContext<R>, qualified_handle: &str) {
     let Some(store) = trusted_git::default_store() else {
         return;

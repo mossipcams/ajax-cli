@@ -7,9 +7,6 @@ import { join } from "node:path";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
-// The app entry lives in `app.html` so Vite uses a predictable output name.
-// We rename the built `dist/app.html` to `dist/index.html` so the Rust embed
-// in adapters/assets.rs finds the conventional name.
 function renameAppHtml() {
   return {
     name: "ajax-rename-app-html",
@@ -34,11 +31,6 @@ function renameAppHtml() {
   };
 }
 
-// The Rust asset adapter embeds and fingerprints the built files by exact
-// name, so the build must emit deterministic, non-hashed output:
-//   dist/index.html, dist/app.js, dist/app.css, dist/terminal.js
-// Do not enable content hashing here without updating adapters/assets.rs.
-// terminal.js is the deferred TaskTerminal + @xterm chunk (slice 11).
 export default defineConfig({
   root,
   base: "/",
@@ -51,20 +43,13 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    // No hashing: filenames are part of the Rust embed contract.
     assetsInlineLimit: 0,
     cssCodeSplit: false,
-    // terminal.js must stay lazy (task-route dynamic import). Vite's default
-    // modulepreload would fetch it on every boot and defeat the split.
     modulePreload: false,
     rollupOptions: {
       input: join(root, "app.html"),
       output: {
         entryFileNames: "app.js",
-        // One deferred async chunk from lazy(() => import("./TaskTerminal")).
-        // Do not use manualChunks for TaskTerminal/@xterm: forcing those modules
-        // into a named chunk pulled shared boot modules (api.ts) into terminal.js
-        // and left /api/operations out of app.js.
         chunkFileNames: (chunk) => {
           if (
             chunk.name === "TaskTerminal" ||
@@ -93,7 +78,6 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // Forward API calls to the locally running Rust HTTPS dev server.
       "/api": {
         target: "https://127.0.0.1:8788",
         changeOrigin: true,

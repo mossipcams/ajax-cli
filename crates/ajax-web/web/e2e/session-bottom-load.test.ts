@@ -19,8 +19,6 @@ const transcript = Array.from({ length: TOTAL_TURNS }, (_, turn) => [
 );
 
 async function openSession(page: Page, legacy = false, shortTail = false) {
-  // Install mockFetch and its transcript pass-through in one script: separate
-  // addInitScript calls have no guaranteed execution order.
   const fixturePage = {
     addInitScript: async (script: (routes: Record<string, unknown>) => void, routes: Record<string, unknown>) => {
       await page.addInitScript({ content: `
@@ -47,8 +45,6 @@ async function openSession(page: Page, legacy = false, shortTail = false) {
   const socketUrls: string[] = [];
   const tailTurns = shortTail ? 2 : TAIL_TURNS;
   const tailFrom = shortTail ? (TOTAL_TURNS - tailTurns) * 2 : TAIL_FROM;
-  // A real first-load report uses a few short turns that do not fill the
-  // viewport; drop the padding for that variant.
   const bodyPadding = shortTail ? "" : " Padding to overflow the transcript. ";
   const tailTranscript = Array.from({ length: tailTurns }, (_, turn) => {
     const index = TOTAL_TURNS - tailTurns + turn;
@@ -80,7 +76,6 @@ async function openSession(page: Page, legacy = false, shortTail = false) {
 
   await page.goto("/app.html#/session/web%2Ffix-login");
   if (shortTail) {
-    // A short tail auto-fills immediately, so its count is not stable here.
     await expect(page.getByTestId("session-message-agent").last()).toContainText(`Answer ${TOTAL_TURNS - 1}`);
   } else {
     await expect(page.getByTestId("session-message-agent")).toHaveCount(tailTurns);
@@ -111,8 +106,6 @@ async function routeHistory(page: Page, failFirst = false) {
 }
 
 async function loadEarlier(page: Page) {
-  // Playwright's normal click scrolls the offscreen button into view, moving
-  // the reader's anchor before the application handles the click.
   await page.getByTestId("session-load-earlier").evaluate((button) => {
     (button as HTMLButtonElement).click();
   });
@@ -151,9 +144,6 @@ test("#1301 bottom load: tail snapshot first paint", async ({ page }) => {
   await expect(page.getByTestId("session-message-user").first()).toHaveText("Question 60");
   await expect(page.getByText("Question 0", { exact: true })).toHaveCount(0);
   const geometry = await page.getByTestId("session-thread").evaluate((thread) => {
-    // Measure the last turn wrapper (which includes the MessageTime
-    // footnote rendered after each message), not the agent message element,
-    // as the transcript's actual live bottom.
     const turns = thread.querySelectorAll(".session-turn");
     return {
       scrollTop: thread.scrollTop,
@@ -170,8 +160,6 @@ test("#1304 a short first-load tail auto-fills without interaction", async ({ pa
   const requests = await routeHistory(page);
   await openSession(page, false, true);
 
-  // No scroll and no click: the viewport must fill itself from older server
-  // history while it does not overflow.
   const thread = page.getByTestId("session-thread");
   await expect.poll(() => thread.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
   await expect(page.getByTestId("session-message-user").first()).not.toHaveText("Question 98");
@@ -185,10 +173,6 @@ test("#1304 a short first-load tail auto-fills without interaction", async ({ pa
         - messages.item(messages.length - 1).getBoundingClientRect().bottom,
     };
   });
-  // #1309: on WebKit this auto-fill layout settles at -1px when content
-  // height crosses a subpixel boundary (column-reverse); repeated scrollTop=0
-  // writes settle back there deterministically, so assert the app's own
-  // live-edge pin band instead of an engine-specific exact 0.
   expect(Math.abs(geometry.scrollTop)).toBeLessThanOrEqual(LIVE_EDGE_PIN_BAND_PX);
   expect(geometry.last).toContain(`Answer ${TOTAL_TURNS - 1}`);
   expect(geometry.gap).toBeGreaterThanOrEqual(0);
@@ -220,7 +204,6 @@ test("#1301 bottom load: load earlier pulls older history and keeps the anchor",
   expect(count).toBeGreaterThan(TAIL_TURNS);
   expect(count).toBeLessThanOrEqual(TAIL_TURNS + Math.ceil(HISTORY_REVEAL_BATCH / 2));
   await expect(page.getByTestId("session-load-earlier")).toBeAttached();
-  // The server is exhausted; the remaining clicks reveal locally held batches.
   for (let batch = 0; batch < 3 && await page.getByTestId("session-load-earlier").count(); batch += 1) {
     const previous = await page.getByTestId("session-message-user").count();
     await loadEarlier(page);

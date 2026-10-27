@@ -232,7 +232,6 @@ function ChatSessionScroll({
   view: ReturnType<typeof useChatSession>["view"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  // Only the first load of a handle (loading) changes session identity; ready <-> stale keeps the scroller and loaded history.
   const sessionKey = `${handle}:${detailStatus === "loading"}`;
   const historyWindow = useHistoryWindow(view.conversation, sessionKey, view.serverHistory?.from);
   const earlierHistory = useEarlierHistory({

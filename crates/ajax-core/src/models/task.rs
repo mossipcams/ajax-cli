@@ -191,8 +191,6 @@ impl Task {
         self.has_missing_git_substrate() || self.has_missing_non_branch_substrate()
     }
 
-    /// Missing substrate other than the expected branch: the worktree, tmux,
-    /// and task window (the latter two ignored for chat tasks).
     pub fn has_missing_non_branch_substrate(&self) -> bool {
         let ignores_tmux = self.skip_interactive_agent();
         self.has_missing_worktree()
@@ -206,8 +204,6 @@ impl Task {
             || self.live_reports_unrefuted_missing_substrate(ignores_tmux)
     }
 
-    /// A worktree on another named branch that repair can adopt. Holds even
-    /// when the expected branch is gone, as after a rename.
     pub fn has_adoptable_branch_move(&self) -> bool {
         self.git_status.as_ref().is_some_and(|status| {
             status.worktree_exists
@@ -252,9 +248,6 @@ impl Task {
         })
     }
 
-    /// Branch whose PRs belong to this task: the worktree's observed branch when
-    /// it was switched or renamed away from `branch` (as `gh-pr-create` requires),
-    /// otherwise `branch`.
     pub fn pr_head_branch(&self) -> &str {
         self.git_status
             .as_ref()
@@ -286,12 +279,6 @@ impl Task {
     }
 
     pub fn apply_git_status(&mut self, mut status: GitStatus) {
-        // Agents rename their branch (gh-pr-create requires it), so follow a rename
-        // instead of flagging a mismatch the operator has to adopt by hand. Only a
-        // true rename qualifies: the task branch is gone, and `git branch -m` refuses
-        // existing names, so this never claims a shared or another task's branch
-        // (which Drop would then delete). Base, detached, and plain checkouts of
-        // other branches stay mismatches.
         if let Some(current) = status
             .current_branch
             .as_deref()

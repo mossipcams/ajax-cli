@@ -183,8 +183,6 @@ fn diff_task_plan_blocks_missing_worktree() {
     assert_eq!(plan.blocked_reasons, vec!["task worktree is missing"]);
 }
 
-/// Removes its directory when dropped, so temp repos are cleaned up even when an
-/// assertion fails.
 struct TempRepoRoot(std::path::PathBuf);
 
 impl TempRepoRoot {
@@ -246,9 +244,6 @@ fn run_planned(spec: &CommandSpec) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// #1454: Review and Diff Review must measure the task against origin/<base>.
-/// The local base lags origin when Ajax never fetches it, so diffing against the
-/// local branch counted every upstream commit as the task's own change.
 #[test]
 fn diff_commands_ignore_upstream_commits_missing_from_local_base_1454() {
     let root = TempRepoRoot::new("ajax-1454");
@@ -275,7 +270,6 @@ fn diff_commands_ignore_upstream_commits_missing_from_local_base_1454() {
     git_in(&upstream, &["commit", "-m", "upstream"]);
     git_in(&upstream, &["push", "origin", "main"]);
 
-    // Local main stays at "base" while origin/main moves ahead, as on a stale checkout.
     git_in(&repo, &["fetch", "origin"]);
     git_in(
         &repo,

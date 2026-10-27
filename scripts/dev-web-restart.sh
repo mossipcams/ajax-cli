@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Sync/install ajax-cli and restart web in tmux.
-#
-# Default (no --worktree, Test in Stable): fetch origin/main from the host
-# clone (REPO_ROOT), reset/build only a dedicated detached main worktree
-# (AJAX_STABLE_MAIN_WORKTREE, default ~/.ajax-dev/worktrees/<repo>-main),
-# install into ~/.cargo/bin, then cut over the selected profile. Never resets
-# the Settings-host checkout. pid/logs stay under REPO_ROOT/.ajax-dev-web.
-#
-# --worktree PATH (Test in Dev): build that worktree as-is (including dirty
-# files), install into .ajax-dev-web/bin so stable's cargo bin is untouched,
-# then restart only the selected profile (normally dev / 8788). Never runs
-# git reset/clean/checkout against the task worktree.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -100,7 +88,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Default ports by profile when --port is omitted.
 if [[ -z "$PORT" ]]; then
   case "$PROFILE" in
     stable) PORT="8787" ;;
@@ -108,7 +95,6 @@ if [[ -z "$PORT" ]]; then
   esac
 fi
 
-# Test in Dev must never target stable.
 if [[ -n "$WORKTREE" && "$PROFILE" == "stable" ]]; then
   echo "refusing --worktree deploy for profile=stable" >&2
   exit 2
@@ -142,9 +128,6 @@ sync_main() {
   echo "main tip: $(git -C "$MAIN_WORKTREE" log -1 --oneline)"
 }
 
-# ponytail: git clean removes untracked ajax-model-router script symlinks.
-# Ceiling: local/optional tooling; skip when the router repo is absent.
-# Upgrade: skills call a fixed router path so worktrees need no local links.
 restore_model_router_symlinks() {
   local router="${AJAX_MODEL_ROUTER:-}"
   local candidate installer
@@ -166,16 +149,12 @@ restore_model_router_symlinks() {
   "$installer" --target "$MAIN_WORKTREE" --force
 }
 
-# ponytail: only rewrite ~/.claude|codex|cursor|pi hooks when definitions moved.
-# Ceiling: path-based diff vs prior HEAD / origin/main; misses renames outside
-# agent_hooks.rs. Upgrade: compare `ajax-cli agent-hooks install` dry-run output.
 HOOKS_PATH="crates/ajax-cli/src/agent_hooks.rs"
 HOOKS_CHANGED=0
 
 agent_hooks_differs() {
   local work_tree="$1"
   shift
-  # `git diff --quiet` exits 1 when different; keep set -e safe via `if !`.
   if ! git -C "$work_tree" diff --quiet "$@" -- "$HOOKS_PATH"; then
     return 0
   fi
@@ -211,10 +190,6 @@ mkdir -p "$RUN_DIR"
 BIN_CMD=(ajax-cli)
 USE_SLOT_BIN=0
 
-# ponytail: vite dist must be rebuilt before cargo embed; release-committed dist
-# can lag main. Ceiling: needs local Node/npm (nvm 22 preferred).
-# include_bytes! in assets.rs only re-reads dist when that .rs is rebuilt — touch
-# it after vite so cargo cannot serve a stale embed.
 rebuild_web() {
   local source_root="$1"
   local embed_rs="$source_root/crates/ajax-web/src/adapters/assets.rs"
@@ -224,8 +199,6 @@ rebuild_web() {
     . "$NVM_DIR/nvm.sh"
     nvm use 22 >/dev/null
   fi
-  # Always ci: a present but stale node_modules (lockfile added deps) makes
-  # vite fail mid-build and leaves stable down after Test in Stable exits first.
   echo "Installing npm deps in $source_root (npm ci) ..."
   npm --prefix "$source_root" ci
   echo "Building frontend (web:build) in $source_root ..."
@@ -255,9 +228,6 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
-    # Test in Stable (and any non-worktree restart): always rebuild the web
-    # embed then force-reinstall. Without --force, same-version cargo install
-    # can leave ~/.cargo/bin/ajax-cli on a stale embed after web:build.
     rebuild_web "$SOURCE_ROOT"
     mkdir -p "$CARGO_BIN_DIR"
     if [[ -x "$CARGO_BIN" ]]; then
@@ -287,8 +257,6 @@ fi
 stop_listener() {
   local port="$1"
   local pids
-  # Absolute lsof: agent shells often lack /usr/sbin on PATH, and a missing
-  # lsof makes the post-start probe fail and kill a healthy tmux web session.
   pids="$(/usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
     return 0
@@ -356,8 +324,6 @@ start_web() {
 
   echo "Starting ${cmd_display[*]} (tmux session $TMUX_SESSION) ..."
   : >"$LOG_FILE"
-  # ponytail: tmux keeps the server alive; nohup from agent/CI shells still dies.
-  # Ceiling: requires tmux. Upgrade: launchd plist if we need login-boot without tmux.
   if ! tmux new-session -d -s "$TMUX_SESSION" -c "$REPO_ROOT" \
     "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") $(printf %q "$bin_path") --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"; then
     echo "tmux new-session failed for $TMUX_SESSION" >&2
@@ -415,7 +381,6 @@ if [[ "$USE_SLOT_BIN" -eq 0 ]]; then
   BIN_PATH="$(command -v ajax-cli)"
 fi
 
-# Build finished successfully before we touch the running process.
 if [[ -n "$WORKTREE" ]]; then
   echo "AJAX_DEV_DEPLOY_PHASE=restarting"
 fi
@@ -464,7 +429,6 @@ if [[ -n "$OLD_PID" && -n "$NEW_PID" && "$OLD_PID" == "$NEW_PID" ]]; then
   exit 1
 fi
 
-# Health check against the local listener (not the Cloudflare URL).
 if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "${PROFILE} web started but /api/health failed; see $LOG_FILE" >&2

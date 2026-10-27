@@ -1,53 +1,9 @@
-// Cursor SDK sidecar speaking the same JSONL framing as the Claude Agent SDK
-// sidecar, so the existing Rust `JsonlProcess` can drive this process.
-//
-// Protocol:
-//   stdin:  one JSON command per LF-terminated line: {"id", "type", ...}. Lines
-//           are split on "\n" ONLY (U+2028/U+2029 are NOT separators); one
-//           optional preceding "\r" is stripped. Invalid JSON is answered with
-//           {"type":"response","command":"parse","success":false,"error":...}
-//           and no id.
-//   stdout: (a) responses {"id","type":"response","command","success":true,
-//               "data":{...}} or {...,"success":false,"error":"text"};
-//           (b) events: every run stream message forwarded verbatim as one
-//               JSON line each (their own `type`: status, thinking, assistant,
-//               tool_call, usage, task, system, user, request); and (c)
-//               exactly ONE terminal line per prompt:
-//               {"type":"result","status":"finished"|"error"|"cancelled",
-//                "error":<string, only when present>,
-//                "usage":<object, only when present>}.
-//   stderr: diagnostics only. The SDK logs to console; before the SDK module
-//           is imported, console.log/info/warn/debug are repointed at stderr so
-//           nothing non-JSON can reach stdout. stdout carries protocol lines
-//           only, and this sidecar NEVER reads, logs, prints, or passes an API
-//           key (no `apiKey` option); @cursor/sdk resolves credentials itself.
-//
-// Commands: init {cwd, model:{id,params?}, mode?, resume?, settingSources?} (must be
-// first), prompt {message, images?: [{url}] or [{data,mimeType}] (base64)},
-// abort, set_model {model:{id,params?}}, set_mode {mode:"agent"|"plan"},
-// shutdown (cancels an active run before waiting on the pump); stdin EOF behaves
-// like shutdown (no response). Any command before init other
-// than init is answered success:false. With `resume`, Agent.resume(id, ...)
-// is called with the model ALWAYS passed (a resumed agent has no model); a
-// throwing resume answers success:false and NEVER falls back to Agent.create.
-// Without it, Agent.create({local:{cwd,settingSources},model}) is used;
-// settingSources defaults to ["project","user"]. init data: {sessionId,
-// models (Cursor.models.list(), or [] if it throws/exceeds 15s), commands
-// (scanned .cursor/commands/*.md slash commands)}. prompt is busy while a run
-// is active; slash commands expand Ajax-side (leading "/name" replaced by the
-// scanned file's text read at prompt time, remainder appended after "\n\n",
-// unknown names unchanged, no templating or nesting). send/stream failures
-// yield {"type":"result","status":"error","error":<text>}; abort calls
-// run.cancel() (or cancels as soon as a late send resolves) and the terminal
-// line always comes from the prompt pump.
-
 import { argv, exit, stderr, stdin, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// The SDK logs to console; redirect BEFORE importing it (see header).
 for (const level of ["log", "info", "warn", "debug"]) {
   console[level] = (...args) => stderr.write(args.map(String).join(" ") + "\n");
 }
@@ -55,9 +11,6 @@ for (const level of ["log", "info", "warn", "debug"]) {
 const OPTIONAL_CALL_TIMEOUT_MS = 15_000;
 const SHUTDOWN_PUMP_TIMEOUT_MS = 5_000;
 const DRAIN_FALLBACK_MS = 2_000;
-
-// ---------------------------------------------------------------------------
-// Output plumbing: one JSON object per line, and exit only after draining.
 
 let pendingWrites = 0;
 let wantExit = false;
@@ -86,12 +39,6 @@ function fail(command, id, message) {
   respond(command, id, false, message);
 }
 
-// ---------------------------------------------------------------------------
-// SDK module loading. The sidecar never resolves a module itself: the host
-// resolves @cursor/sdk from a trusted location and passes its absolute path as
-// an explicit `--sdk-module`, exactly like the Claude sidecar: if it cannot
-// load, init fails instead of silently loading anything else.
-
 function flagValue(name) {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] : undefined;
@@ -118,19 +65,16 @@ async function resolveSdk() {
   return { mod: null, error: `no loadable @cursor/sdk module; tried: ${tried.join("; ")}` };
 }
 
-// ---------------------------------------------------------------------------
-// Session state and the per-prompt run pump.
-
 const state = {
   initialized: false,
   agent: null,
   model: null,
   activeRun: false,
   abortRequested: false,
-  mode: undefined, // "agent" | "plan"; omitted from send options when undefined
+  mode: undefined,
   run: null,
   pump: null,
-  commands: {}, // name -> { file, description } from .cursor/commands scanning
+  commands: {},
   shuttingDown: false,
 };
 
@@ -151,18 +95,14 @@ function startPump(run) {
   })();
 }
 
-// ---------------------------------------------------------------------------
-// Slash-command scanning and expansion (Ajax-side, plain text only).
-
 function scanCommands(cwd) {
   const merged = {};
-  // Project commands win over user commands with the same name.
   for (const dir of [join(cwd, ".cursor", "commands"), join(homedir(), ".cursor", "commands")]) {
     let entries;
     try {
       entries = readdirSync(dir);
     } catch {
-      continue; // missing directories are not an error
+      continue;
     }
     for (const entry of entries) {
       if (!entry.endsWith(".md")) continue;
@@ -177,7 +117,6 @@ function scanCommands(cwd) {
           }
         }
       } catch {
-        // unreadable file: keep the entry with an empty description
       }
       if (!Object.prototype.hasOwnProperty.call(merged, name)) merged[name] = { file, description };
     }
@@ -192,7 +131,7 @@ function expandSlash(message) {
   if (!entry) return message;
   let text;
   try {
-    text = readFileSync(entry.file, "utf8").trim(); // read at prompt time
+    text = readFileSync(entry.file, "utf8").trim();
   } catch (error) {
     log(`command file read failed for /${match[1]}: ${error?.message ?? error}`);
     return message;
@@ -200,9 +139,6 @@ function expandSlash(message) {
   const remainder = message.slice(match[0].length).trim();
   return remainder ? `${text}\n\n${remainder}` : text;
 }
-
-// ---------------------------------------------------------------------------
-// Command handlers.
 
 async function handleInit(cmd) {
   if (state.initialized) return fail("init", cmd.id, "already initialized");
@@ -212,7 +148,7 @@ async function handleInit(cmd) {
   if (cmd.mode !== undefined && cmd.mode !== "agent" && cmd.mode !== "plan") {
     return fail("init", cmd.id, 'mode must be "agent" or "plan"');
   }
-  state.mode = cmd.mode; // default stays undefined
+  state.mode = cmd.mode;
   const { mod, error } = await resolveSdk();
   if (!mod) return fail("init", cmd.id, error);
   state.commands = scanCommands(cmd.cwd);
@@ -220,9 +156,7 @@ async function handleInit(cmd) {
   const model = cmd.model;
   let agent;
   if (cmd.resume) {
-    // Fails closed: a throwing resume is reported, never retried as create.
     try {
-      // A resumed agent has no model of its own; the model is ALWAYS passed.
       agent = await mod.Agent.resume(cmd.resume, { local: { cwd: cmd.cwd, settingSources }, model });
     } catch (resumeError) {
       return fail("init", cmd.id, String(resumeError?.message ?? resumeError));
@@ -275,14 +209,11 @@ function handlePrompt(cmd) {
     }
   }
   const options = { model: state.model };
-  if (state.mode !== undefined) options.mode = state.mode; // omitted when undefined
+  if (state.mode !== undefined) options.mode = state.mode;
   const text = expandSlash(cmd.message);
   state.abortRequested = false;
   let run;
   try {
-    // send() does not throw on quota/provider failures; those arrive as
-    // stream status messages and a "error" wait() status. Only transport- or
-    // setup-level failures reach the catch below.
     run = Promise.resolve(images && images.length > 0
       ? state.agent.send({ text, images }, options)
       : state.agent.send(text, options));
@@ -294,9 +225,8 @@ function handlePrompt(cmd) {
   respond("prompt", cmd.id, true, { disposition: "started" });
   run
     .then((r) => {
-      if (!state.activeRun) return; // shut down mid-flight; nothing to pump
+      if (!state.activeRun) return;
       if (state.abortRequested) {
-        // Abort raced ahead of send() resolving; cancel the fresh run now.
         r.cancel().catch((cancelError) => log(`late abort cancel failed: ${cancelError?.message ?? cancelError}`));
       }
       state.run = r;
@@ -316,9 +246,6 @@ function handlePrompt(cmd) {
 async function handleAbort(cmd) {
   if (!state.initialized) return fail("abort", cmd.id, "not initialized");
   if (state.activeRun) {
-    // Cancel as soon as the run exists; a run that resolves late is cancelled
-    // in the send .then() via state.abortRequested. No active run is a no-op
-    // that still succeeds.
     state.abortRequested = true;
     if (state.run) {
       try {
@@ -336,7 +263,7 @@ async function handleSetModel(cmd) {
   if (typeof cmd.model !== "object" || cmd.model === null || typeof cmd.model.id !== "string") {
     return fail("set_model", cmd.id, "set_model requires a model object with an id string");
   }
-  state.model = cmd.model; // used by the next agent.send
+  state.model = cmd.model;
   respond("set_model", cmd.id, true, null);
 }
 
@@ -345,7 +272,7 @@ function handleSetMode(cmd) {
   if (cmd.mode !== "agent" && cmd.mode !== "plan") {
     return fail("set_mode", cmd.id, 'mode must be "agent" or "plan"');
   }
-  state.mode = cmd.mode; // used by the next agent.send
+  state.mode = cmd.mode;
   respond("set_mode", cmd.id, true, null);
 }
 
@@ -359,7 +286,6 @@ async function shutdown() {
   state.shuttingDown = true;
   if (state.run) {
     try {
-      // Cancel the active run so the pump reaches its terminal line fast.
       await state.run.cancel();
     } catch (cancelError) {
       log(`shutdown cancel failed: ${cancelError?.message ?? cancelError}`);
@@ -375,7 +301,6 @@ async function shutdown() {
         }),
       ]);
     } catch {
-      // pump errors are already reported on the wire
     }
   }
   try {
@@ -416,9 +341,6 @@ function dispatch(cmd) {
     fail(type, cmd?.id ?? null, error?.message ?? String(error));
   });
 }
-
-// ---------------------------------------------------------------------------
-// stdin: LF-only line splitting (never U+2028/U+2029).
 
 function handleLine(rawLine) {
   let line = rawLine;

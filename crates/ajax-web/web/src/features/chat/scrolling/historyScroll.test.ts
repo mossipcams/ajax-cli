@@ -22,15 +22,12 @@ describe("historyScroll", () => {
   });
 
   it("restores read position after prepend-style top growth (reversed coords)", () => {
-    // Reversed: live edge is 0, reading 300px away from it.
     const el = thread(-300, 1300, 400);
     restoreScrollAfterTopGrowth(el, -300, 1200);
     expect(el.scrollTop).toBe(-300);
   });
 
   it("keeps pinned non-overflowing windows at the live edge after prepend growth", () => {
-    // Earlier rows grow away from the live edge, so an existing pinned window
-    // remains pinned even when the revealed history starts overflowing.
     const el = thread(0, 500, 400);
     restoreScrollAfterTopGrowth(el, 0, 300);
     expect(el.scrollTop).toBe(0);
@@ -55,7 +52,6 @@ describe("historyScroll", () => {
   });
 
   it("does not auto-load at the live edge until armed", () => {
-    // Reversed coords: scrollTop = 0 is the live edge; it also re-arms.
     const el = thread(0, 1200, 400);
     const result = autoLoadDecision(el, { armed: false, lastLoadAt: 0 }, true, 1000);
     expect(result.shouldLoad).toBe(false);
@@ -63,14 +59,11 @@ describe("historyScroll", () => {
   });
 
   it("auto-loads near the history edge when armed and cooldown elapsed", () => {
-    // Reversed coords (SH=1200, CH=400): live edge = 0, history edge = -800,
-    // preload band is [-800, -600].
     const el = thread(0, 1200, 400);
     const armed = autoLoadDecision(el, { armed: false, lastLoadAt: 0 }, true, 1000);
     expect(armed.shouldLoad).toBe(false);
     expect(armed.nextState.armed).toBe(true);
 
-    // Mid-history is away from the history edge: still armed, no load.
     const scrolled = thread(-400, 1200, 400);
     const afterScroll = autoLoadDecision(scrolled, armed.nextState, true, 1000);
     expect(afterScroll.shouldLoad).toBe(false);
@@ -99,7 +92,6 @@ describe("historyScroll", () => {
     expect(immediate.shouldLoad).toBe(false);
     expect(immediate.nextState.armed).toBe(false);
 
-    // Moving back toward the live edge re-arms for the next pass.
     const scrolled = thread(0, 1200, 400);
     const rearmed = autoLoadDecision(scrolled, immediate.nextState, true, AUTO_LOAD_COOLDOWN_MS + 30);
     expect(rearmed.shouldLoad).toBe(false);

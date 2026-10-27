@@ -241,7 +241,6 @@ describe("Markdown", () => {
     expect(screen.getByText("that").tagName).toBe("EM");
     expect(screen.getByText("bold").tagName).toBe("STRONG");
     expect(screen.getByText("code").tagName).toBe("CODE");
-    // The paragraph's own text keeps "snake_case_name" and "2 * 3 * 4" intact, so neither was split into <em>.
     expect(screen.getByText(/snake_case_name and 2 \* 3 \* 4/)).toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
     render(<Markdown source={"* item one"} />);

@@ -89,6 +89,7 @@ If a change blurs these boundaries, treat it as an architecture change.
   task requires them.
 - Update the owning documentation when behavior, commands, architecture, or
   workflows change.
+- Never leave comments, notes, or todos.
 
 A confirmed Ajax product defect must have an existing or newly opened
 GitHub issue on `mossipcams/ajax-cli` and a focused regression test that would have

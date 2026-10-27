@@ -93,7 +93,6 @@ export function armDropUndo(
   handles: DropUndoHandles,
   executeOperation: ExecuteTaskOperation = postOperation,
 ): void {
-  // Resolved flag and timer are per arm, so a later Drop never cancels an earlier one.
   let resolved = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   if (interactionId) endTapToFeedback(interactionId, "banner");

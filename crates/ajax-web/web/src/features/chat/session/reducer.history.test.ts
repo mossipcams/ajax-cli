@@ -149,7 +149,6 @@ describe("server history bounds and older-page prepend", () => {
     const prior = run([{ type: "message", role: "agent", text: "live note" }]);
     expect(prior.conversation[0].id).toBe("e1");
 
-    // The older page's host note also projects to generated id e1 from an empty state.
     const state = reduceChatSession(asReducer(prior), event({
       type: "prepend",
       events: [{ type: "host_note", text: "older" }],

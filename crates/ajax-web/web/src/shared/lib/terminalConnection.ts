@@ -227,9 +227,6 @@ export function connectTaskTerminal(
             if (!disposed) redialNow(lastDialSeeded);
           },
           () => {
-            // A failed renewal is an unrecoverable session expiry: let the
-            // shared one-shot recovery navigate, then keep reconnecting in case
-            // navigation was suppressed by the guard.
             attemptSessionExpiryNavigation();
             if (!disposed) scheduleReconnect();
           },

@@ -180,7 +180,6 @@ describe("TrainingEvals", () => {
     view.rerender(<TrainingPage onBack={vi.fn()} />);
     expect(fetchEvals).toHaveBeenCalledTimes(1);
     fetchEvals.mockResolvedValue({ evals: [makeEval(99, { group: "finished-eval" })], champion: null });
-    // The count stays the same: identify the completed checkpoint, not just the array length.
     status = { ...status, eval_progress: [another, { ...entry, checkpoint_label: "checkpoint-1200" }] };
     view.rerender(<TrainingPage onBack={vi.fn()} />);
     expect(await screen.findByText("finished-eval")).toBeTruthy();

@@ -1,8 +1,3 @@
-//! Crash-recovery tests for the durable execution store using REAL process
-//! termination: each parent test re-executes the test binary as a child that
-//! performs its scenario's writes and then calls `std::process::abort()`, so
-//! the parent inspects what actually survived on disk.
-
 use super::SqliteRegistryStore;
 use crate::execution::{
     resolve_reconciled, resolve_recovery, ExecutionState as State, InterruptReason, Operation,
@@ -15,7 +10,6 @@ use crate::registry::sqlite::{
 
 const PARENT_TASK: &str = "run-1:prompt:p1";
 
-/// Unique temp database path for one scenario; never touches ~/.ajax.
 fn db_path(scenario: &str) -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     path.push(format!(
@@ -26,7 +20,6 @@ fn db_path(scenario: &str) -> std::path::PathBuf {
     path
 }
 
-/// Re-execute the test binary in child mode for `scenario` against `db`.
 fn run_child(scenario: &str, db: &std::path::Path) -> std::process::ExitStatus {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
@@ -43,7 +36,6 @@ fn run_child(scenario: &str, db: &std::path::Path) -> std::process::ExitStatus {
     command.status().expect("spawn child test process")
 }
 
-/// Shared child setup: the run every scenario builds on.
 fn new_run() -> NewRun {
     NewRun {
         run_id: "run-1".into(),
@@ -54,7 +46,6 @@ fn new_run() -> NewRun {
     }
 }
 
-/// Shared admission commit for the single prompt scenario.
 fn admission() -> ExecutionCommit {
     ExecutionCommit {
         run_id: "run-1".into(),
@@ -73,8 +64,6 @@ fn admission() -> ExecutionCommit {
     }
 }
 
-/// Admit the prompt and move it Pending -> Running with a `PromptDispatch`
-/// checkpoint intent. Returns the intent for scenarios that need to vary it.
 fn dispatch(store: &SqliteRegistryStore, policy: ReplayPolicy, op_id: Option<String>) {
     let intent = CheckpointIntent {
         task_exec_id: PARENT_TASK.into(),
@@ -114,7 +103,7 @@ fn transition_to(store: &SqliteRegistryStore, id: &str, to: State) {
 #[test]
 fn crash_child() {
     let Some(scenario) = std::env::var("AJAX_CRASH_SCENARIO").ok() else {
-        return; // no-op in a normal test run
+        return;
     };
     let db = std::env::temp_dir().join(
         std::env::var("AJAX_CRASH_DB")
@@ -216,7 +205,6 @@ fn crash_child() {
                     })
                     .expect("admission commit");
             }
-            // Only the second run is dispatched.
             store
                 .commit_execution(&ExecutionCommit {
                     run_id: "run-2".into(),
@@ -239,7 +227,6 @@ fn crash_child() {
         other => panic!("unknown crash scenario {other:?}"),
     }
 
-    // A child must never exit normally: this is the simulated crash.
     std::process::abort();
 }
 
@@ -286,7 +273,6 @@ fn admitted_not_dispatched_prompt_survives_once() {
         ("p1".into(), "{\"prompt_text\":\"hi\"}".into())
     );
 
-    // Re-running the SAME admission commit is a no-op: acknowledged, not lost.
     let receipt = store
         .commit_execution(&admission())
         .expect("re-admission commit");
@@ -316,7 +302,6 @@ fn dispatched_uncertain_never_replays() {
     let checkpoint = unfinished[0].checkpoint.expect("checkpoint survives");
     assert!(!checkpoint.has_result);
 
-    // Never Replay: an unsafe ambiguous dispatch is interrupted.
     assert_eq!(
         resolve_recovery(&checkpoint, false),
         RecoveryAction::Interrupt(InterruptReason::UnsafeAmbiguous)
@@ -379,7 +364,6 @@ fn result_committed_before_crash_resumes() {
 
     let checkpoint = unfinished[0].checkpoint.expect("checkpoint survives");
     assert!(checkpoint.has_result);
-    // Completed work is never replayed.
     assert_eq!(
         resolve_recovery(&checkpoint, false),
         RecoveryAction::ResumeFromResult
@@ -413,7 +397,6 @@ fn child_running_blocks_parent_completion() {
         Err(ExecutionCommitError::ChildrenNotTerminal { task_exec_id }) if task_exec_id == "run-1:turn"
     ));
 
-    // Once the child is terminal the parent can finish.
     transition_to(&store, "run-1:sub", State::Failed);
     transition_to(&store, "run-1:turn", State::Completing);
     transition_to(&store, "run-1:turn", State::Completed);
@@ -435,8 +418,6 @@ fn cancel_intent_survives_crash() {
 
     let store = SqliteRegistryStore::new(&db);
 
-    // The child admitted and dispatched but did NOT commit the cancel request.
-    // Commit it now to prove a cancel requested across a crash is honored:
     store
         .commit_execution(&ExecutionCommit {
             run_id: "run-1".into(),

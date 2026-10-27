@@ -439,7 +439,6 @@ fn issue_1069_refresh_preserves_acp_done_after_turn_end() {
     assert_eq!(status.explanation.as_deref(), Some("Response ready"));
 }
 
-// #1199: a configured repository path that is gone made every Cockpit refresh fail.
 #[test]
 fn issue_1199_unobservable_repository_does_not_fail_the_refresh() {
     struct MissingRepoRunner {

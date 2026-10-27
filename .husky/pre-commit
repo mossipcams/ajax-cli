@@ -1,14 +1,3 @@
-# Rebuild the embedded web bundle only when its sources are in this commit.
-# The bundle is compiled into the Rust binary and nothing tests it —
-# Playwright serves the Vite dev server and never reads dist/ — so a stale
-# bundle ships silently (that was #593). Staging it here keeps the rebuild
-# inside the same commit as the source change.
-#
-# `web:build`, never `web:build:check`: the check script strips trailing
-# whitespace that web:build emits and writes the files back, so it would
-# produce spurious dist churn. The committed bundle is raw web:build output.
-#
-# Full nextest/clippy/vitest live in CI. This hook only keeps the commit honest.
 web_sources="$(
   git diff --cached --name-only -- crates/ajax-web/web/ ':!crates/ajax-web/web/dist' || true
 )"

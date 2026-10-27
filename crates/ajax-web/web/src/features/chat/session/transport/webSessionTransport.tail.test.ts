@@ -194,7 +194,6 @@ describe("connectWebSessionTransport tail snapshots", () => {
     );
     expect(sessionStorage.getItem("ajax.web.session.outbox.web%2Ffix-login")).toBeNull();
 
-    // Envelopes at/above the floor are delivered normally.
     socket.emit("message", {
       data: eventJson(105, { type: "message", role: "agent", text: "Live" }),
     } as MessageEvent);
@@ -350,13 +349,9 @@ describe("transcriptFrom validation in parseServerFrame", () => {
   });
 
   it("rejects bad transcriptFrom values", () => {
-    // transcriptFrom without a transcript is rejected.
     expect(parseServerFrame(JSON.stringify({ ...base, transcript: undefined }))).toBeNull();
-    // Above the first included transcript cursor.
     expect(parseServerFrame(JSON.stringify({ ...base, transcriptFrom: 101 }))).toBeNull();
-    // Above the snapshot cursor.
     expect(parseServerFrame(JSON.stringify({ ...base, transcriptFrom: 106 }))).toBeNull();
-    // Negative or non-safe-integer values.
     expect(parseServerFrame(JSON.stringify({ ...base, transcriptFrom: -1 }))).toBeNull();
     expect(parseServerFrame(JSON.stringify({ ...base, transcriptFrom: 2.5 }))).toBeNull();
   });

@@ -1,23 +1,3 @@
-// Fake @cursor/sdk for the cursor_sdk_sidecar tests.
-//
-// Exports `Agent { create, resume }` and `Cursor { models: { list } }`, shaped
-// exactly like the real SDK surface the sidecar codes against:
-//   Agent.create({ local: { cwd, settingSources }, model }) -> Promise<agent>
-//   Agent.resume(agentId, { local, model })  (throws for unknown ids)
-//   agent.agentId / agent.close() / agent.send(text | {text,images},
-//   {model,mode}) -> Promise<run>
-//   run.stream(): AsyncGenerator<message>; run.wait(); run.cancel()
-// Deterministic and network-free. Text scripts:
-//   - contains "FAIL": status RUNNING, then status ERROR "out of usage";
-//     wait() -> { status: "error", error: { message: "out of usage" } };
-//   - contains "SLOW": status RUNNING, then waits (up to 10s) until cancel();
-//     then status CANCELLED; wait() -> { status: "cancelled" };
-//   - contains "LATE": send() resolves only after 100ms (abort-race test);
-//     echo text gains ` images=<n>` / ` mode=<m>` when those are passed.
-//   - otherwise the full happy path with a tool_call whose call_id
-//     deliberately embeds a newline. `send` writes one console.log line so the
-//     tests prove the sidecar keeps stdout free of non-protocol text.
-
 const SLOW_MAX_MS = 10_000;
 
 const MODELS = [
@@ -42,7 +22,6 @@ function makeAgent(agentId) {
       agent.closed = true;
     },
     async send(input, { model, mode } = {}) {
-      // SDK noise on the console: the sidecar must keep this off stdout.
       console.log("sdk noise");
       const text = typeof input === "string" ? input : input.text;
       const images = typeof input === "string" ? [] : (input.images ?? []);
@@ -50,7 +29,6 @@ function makeAgent(agentId) {
       if (images.length > 0) extraEcho += ` images=${images.length}`;
       if (mode !== undefined) extraEcho += ` mode=${mode}`;
       const run = makeRun(agentId, text, model, extraEcho);
-      // "LATE" resolves only after 100ms so an abort can land before state.run.
       if (text.includes("LATE")) await new Promise((resolve) => setTimeout(resolve, 100));
       return run;
     },
@@ -65,7 +43,6 @@ function makeRun(agentId, text, model, extraEcho = "") {
 
   function slowWait() {
     return new Promise((resolve) => {
-      // Poll for cancel(); never sleeps longer than the 10s cap.
       const startedAt = Date.now();
       const timer = setInterval(() => {
         if (cancelled || Date.now() - startedAt >= SLOW_MAX_MS) {

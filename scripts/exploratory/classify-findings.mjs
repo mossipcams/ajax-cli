@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Classify validated findings as novel, known, or regression before filing/memory.
 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -170,8 +170,6 @@ fn run_inherit_stdio(mut process: Command) -> Result<CommandOutput, CommandRunEr
     })
 }
 
-/// The directory a direct `git` invocation operates in: the arg after the first `-C`, resolved
-/// against the command's cwd, else the cwd, else the process cwd.
 fn git_target_dir(command: &CommandSpec) -> PathBuf {
     let base = command
         .cwd

@@ -352,11 +352,6 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
     let branch_seen_in_worktree = path_matched_worktree
         .and_then(|worktree| worktree.branch.as_ref())
         .is_some_and(|branch| branch == &task.branch);
-    // Observation must match what `GitAdapter::delete_branch_substrate` can remove:
-    // it only deletes and prunes the `origin/<branch>` ref for `ajax/` branches.
-    // For any other branch a stale remote-tracking ref (e.g. after its PR merged and
-    // GitHub deleted the remote branch) is not ours to clean up, so counting it would
-    // leave the drop stuck at "branch still present" forever.
     let remote_branch_present =
         task.branch.starts_with("ajax/") && parsed_remote_branches.contains(&task.branch);
     let branch_present =

@@ -1,8 +1,5 @@
 import { useState } from "react";
 
-// The wire carries no per-message time, so the client stamps a message the first
-// time it renders and remembers it per session. Messages that predate this
-// feature show the time they were first loaded, not the time they were sent.
 const ZONE = "America/Chicago";
 const clock = new Intl.DateTimeFormat("en-US", {
   timeZone: ZONE,
@@ -35,7 +32,6 @@ function stamp(handle: string, itemId: string): number {
   try {
     localStorage.setItem(storageKey(handle), JSON.stringify(times));
   } catch {
-    // ponytail: unbounded per-session map; prune if a transcript ever outgrows localStorage
   }
   return times[itemId];
 }

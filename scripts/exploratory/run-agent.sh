@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Launch Cursor Agent for exploratory testing with a hard time budget.
-# Uses exploratory MCP + CLI permission overlays under $HOME/.cursor.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -1,5 +1,3 @@
-//! Durable execution reads, history retention, recovery, and owner leases.
-
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::execution_store::parse_state;
@@ -33,7 +31,6 @@ pub struct UnfinishedExecution {
     pub kind: String,
     pub state: ExecutionState,
     pub cancel_requested: bool,
-    /// `(idempotency_key, content_json)` of the task's first submission.
     pub prompt: Option<(String, String)>,
     pub checkpoint: Option<UnfinishedCheckpoint>,
     pub checkpoint_intent_json: Option<String>,
@@ -53,7 +50,6 @@ pub struct RunPrompt {
     pub state: ExecutionState,
 }
 
-/// Deletes the execution data of one task's runs inside the caller's transaction.
 pub(super) fn delete_runs_for_task_in(
     transaction: &Transaction<'_>,
     task_id: &str,
@@ -101,7 +97,6 @@ fn run_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
     })
 }
 impl SqliteRegistryStore {
-    /// Lists the distinct registry task ids with execution runs, in sorted order.
     pub fn list_run_task_ids(&self) -> Result<Vec<String>, RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -113,7 +108,6 @@ impl SqliteRegistryStore {
             .map_err(database_error)?;
         rows.map(|row| row.map_err(database_error)).collect()
     }
-    /// Returns every prompt of the run (all states) in admission order.
     pub fn prompts_for_run(&self, run_id: &str) -> Result<Vec<RunPrompt>, RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -139,7 +133,6 @@ impl SqliteRegistryStore {
         Ok(prompts)
     }
 
-    /// Returns the last inserted run for a registry task.
     pub fn latest_run_for_task(
         &self,
         task_id: &str,
@@ -159,7 +152,6 @@ impl SqliteRegistryStore {
             .map_err(database_error)
     }
 
-    /// Returns every run that has a recorded child pid, in creation order.
     pub fn runs_with_children(&self) -> Result<Vec<RunRecord>, RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -177,7 +169,6 @@ impl SqliteRegistryStore {
         rows.map(|row| row.map_err(database_error)).collect()
     }
 
-    /// Imports a run and its history atomically, preserving the event sequence.
     pub fn create_run_with_history(
         &self,
         run: &NewRun,
@@ -227,7 +218,6 @@ impl SqliteRegistryStore {
         transaction.commit().map_err(database_error)
     }
 
-    /// Loads nonterminal tasks in run and prompt admission order for recovery.
     pub fn unfinished_executions(&self) -> Result<Vec<UnfinishedExecution>, RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -278,7 +268,6 @@ impl SqliteRegistryStore {
         Ok(tasks)
     }
 
-    /// Keeps the newest events without resetting the run's sequence counter.
     pub fn prune_execution_events(
         &self,
         run_id: &str,
@@ -294,7 +283,6 @@ impl SqliteRegistryStore {
         ).map(|count| count as u64).map_err(database_error)
     }
 
-    /// Deletes only execution data belonging to this registry task, atomically.
     pub fn delete_runs_for_task(&self, task_id: &str) -> Result<u64, RegistrySnapshotError> {
         let mut connection = self.open()?;
         migrations::migrate(&connection)?;
@@ -306,7 +294,6 @@ impl SqliteRegistryStore {
         Ok(deleted)
     }
 
-    /// Claims the single owner lease, refreshing this boot or replacing a stale owner.
     pub fn claim_execution_owner(
         &self,
         boot_id: &str,
@@ -365,7 +352,6 @@ impl SqliteRegistryStore {
         Ok(OwnerClaim::Acquired { previous })
     }
 
-    /// Refreshes the lease only while this boot still owns it.
     pub fn heartbeat_execution_owner(
         &self,
         boot_id: &str,
@@ -382,7 +368,6 @@ impl SqliteRegistryStore {
             .map_err(database_error)
     }
 
-    /// Releases the lease only while this boot still owns it.
     pub fn release_execution_owner(&self, boot_id: &str) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
         migrations::migrate(&connection)?;

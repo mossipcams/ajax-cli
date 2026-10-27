@@ -105,8 +105,6 @@ const TaskRow = memo(function TaskRow({
     onOpenTask?.(card.qualified_handle);
   };
 
-  // Inline actions are real buttons: let their own handlers run and keep the row
-  // body (and Enter/Space aimed at an action) from opening the task.
   const isInlineActionTarget = (event: { target: EventTarget | null }) =>
     event.target instanceof Element && Boolean(event.target.closest(".task-row-actions"));
 
@@ -123,8 +121,6 @@ const TaskRow = memo(function TaskRow({
   const closeRevealOnKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    // SAFETY: Enter/Space keydown carries no trusted target; reuse the click handler's
-    // Element-based closest() check, which never reads mouse-only event fields.
     closeRevealUnlessAction(event as unknown as MouseEvent<HTMLDivElement>);
   };
 

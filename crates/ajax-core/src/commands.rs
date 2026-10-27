@@ -326,9 +326,6 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
     refresh_git_substrate_by_repo(context, runner, None)
 }
 
-/// Like [`refresh_git_substrate_evidence`], but a repository whose Git
-/// observation fails is skipped and named in `unobserved` instead of failing
-/// the refresh for every other repository. Its tasks keep their prior evidence.
 pub fn refresh_observable_git_substrate_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,

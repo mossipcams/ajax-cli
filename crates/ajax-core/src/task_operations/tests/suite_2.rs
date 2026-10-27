@@ -539,9 +539,6 @@ fn drop_force_worktree_teardown_succeeds_with_poisoned_repo_config_and_inherited
 
 #[test]
 fn drop_operation_preserves_main_checkout_and_drops_task_only() {
-    // #1216: dropping a task whose worktree path is the repo's main
-    // checkout must verify the work landed, then remove only registry
-    // state — never trash/remove the checkout or its branches.
     let root = std::env::temp_dir().join(format!(
         "ajax-drop-1216-{}-{}",
         std::process::id(),
@@ -589,8 +586,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
     });
     context.registry.create_task(task).unwrap();
 
-    // One output for the task-only-drop verification, then absent drop
-    // observations for execute and completion.
     let mut outputs = vec![output(0, "", "")];
     outputs.extend(absent_drop_observation_outputs());
     outputs.extend(absent_drop_observation_outputs());
@@ -608,7 +603,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
         .get_task(&TaskId::new("web/fix-login"))
         .is_none());
 
-    // The drop verified the work landed on origin first.
     assert!(
         runner.commands.iter().any(|command| {
             command.program == "sh"
@@ -618,7 +612,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
         runner.commands
     );
 
-    // The checkout and its branches were never touched.
     for command in runner
         .commands
         .iter()

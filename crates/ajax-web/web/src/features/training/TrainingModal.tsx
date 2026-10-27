@@ -17,7 +17,6 @@ interface Props {
 
 const JOB_LABELS = trainingApi.TRAINING_JOB_LABELS;
 
-// Jobs that sit behind the primary Unsloth train action.
 const SECONDARY_JOBS: trainingApi.TrainingJobKind[] = [
   "generate",
   "lfm-eval",
@@ -67,8 +66,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [active, setActive] = useState<PendingAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // Mirrors `open` for event handlers: a POST that rejects after the user
-  // closed the dialog must not surface a stale error banner on next open.
   const openRef = useRef(open);
   const actionInFlightRef = useRef(false);
   useEffect(() => {
@@ -143,8 +140,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
       else if (action.kind === "serve") await trainingApi.serveLlama();
       else await trainingApi.switchTrainingProfile(action.profile);
       setPending(null);
-      // Skip the refetch if the dialog closed while the action completed;
-      // reopening reloads fresh state anyway (same guard as the error path).
       if (openRef.current) void refresh();
     } catch (err) {
       if (openRef.current) {
@@ -242,7 +237,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 onTrain={() => armJob("lfm-train")}
               />
 
-              {/* Finished-but-recent run summary (run object present, not running). */}
               {run && !run.running ? (
                 <div className="training-run" data-testid="training-run-idle">
                   <p className="training-muted">
@@ -251,7 +245,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 </div>
               ) : null}
 
-              {/* Actions: primary train job, secondary jobs grouped. */}
               <section className="training-section" aria-labelledby="training-jobs-heading">
                 <h3 id="training-jobs-heading">Jobs</h3>
 <Button
@@ -292,7 +285,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 onSwitch={armSwitch}
               />
 
-              {/* One consistent confirmation bar for every mutating action. */}
               {pending ? (
                 <div className="training-confirm" data-testid="training-confirm">
                   <p className="training-confirm-text">{confirmDescription(pending)}</p>

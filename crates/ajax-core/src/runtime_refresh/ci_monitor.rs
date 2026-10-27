@@ -203,8 +203,6 @@ fn retire(task: &mut Task) {
     let mut state = load_state(task);
     retire_attempt(task, &mut state);
     state.last_pr_discovery_at = None;
-    // A task with no stored CI state has nothing to retire; writing the default
-    // state here would mark a quiet refresh as changed.
     if state == CiMonitorState::default() && !task.metadata.contains_key(CI_MONITOR_STATE_KEY) {
         return;
     }

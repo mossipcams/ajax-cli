@@ -59,9 +59,6 @@ export function connectWebSessionTransport(
       const consumesInlineTranscript =
         inlineTranscript !== undefined && callbacks.onSnapshot !== undefined;
       if (consumesInlineTranscript) {
-        // Tail snapshots only include the newest events: envelopes matching a
-        // transcript cursor are exact dedupes, and replay below the floor is
-        // stale. Socket-local errors (cursor 0) are exempt from the floor.
         inlineReplayCursors = new Set(inlineTranscript.map(({ cursor }) => cursor));
         inlineTranscriptFloor = frame.snapshot.transcriptFrom;
         callbacks.onCursorAdvance?.(frame.snapshot.cursor);
@@ -71,9 +68,6 @@ export function connectWebSessionTransport(
       }
       callbacks.onSnapshot?.(frame.snapshot);
       if (frame.snapshot.agentPending === true) {
-        // Early snapshot while the harness is still spawning/restoring: keep
-        // inline-transcript bookkeeping, but do not mark ready, emit a
-        // synthetic ready event, or flush queued prompts.
         callbacks.onAgentPending?.();
         return;
       }
@@ -129,7 +123,6 @@ export function connectWebSessionTransport(
       if (inlineReplayCursors.size === 0) inlineReplayCursors = undefined;
       return;
     }
-    // Socket-local errors use cursor 0 but are not part of transcript replay.
     if (parsed.type === "error" && frame.cursor === 0) {
       callbacks.onEvent(parsed);
       return;
@@ -177,8 +170,6 @@ export function connectWebSessionTransport(
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
     if (disposed) return;
-    // Keep unaccepted prompts queued: clearing them here left the stored
-    // outbox holding prompts the next write would silently overwrite.
     callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });
 
@@ -270,7 +261,6 @@ export function connectWebSessionTransport(
       try {
         socket?.close();
       } catch {
-        // A failing close() during disposal is non-fatal; the socket will GC.
       }
       socket = undefined;
     },

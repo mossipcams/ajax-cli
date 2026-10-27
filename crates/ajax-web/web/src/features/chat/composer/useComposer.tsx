@@ -75,7 +75,6 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
-  /** False while host durability blocks new prompts; recovery commands stay available. */
   promptingEnabled: boolean;
   busy: boolean;
   everOpened: boolean;
@@ -230,13 +229,9 @@ export function ComposerProvider({
     [persistDraft],
   );
 
-  // Speech inserts land outside typing; grow the textarea once the inserted
-  // text is in the DOM. Typing keeps its own autoGrow path untouched.
   const [speechGrow, setSpeechGrow] = useState({ generation: 0, shrank: false });
   const setSpeechDraft = useCallback(
     (value: string) => {
-      // Speech inserts may already have advanced draftRef, so the textarea's
-      // DOM value is the prior draft.
       const shrank = value.length < (composerRef.current?.value.length ?? 0);
       setDraftWithPersist(value);
       setSpeechGrow((previous) => ({ generation: previous.generation + 1, shrank }));

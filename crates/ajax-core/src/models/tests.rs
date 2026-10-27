@@ -774,7 +774,6 @@ fn git_refresh_follows_renamed_branch_but_not_base_detached_or_checkout() {
     assert_eq!(task.branch, original);
     assert!(task.has_checkout_mismatch());
 
-    // Task branch still exists: a plain checkout of another branch, not a rename.
     task.apply_git_status(git_status_for_checkout(true, Some("develop")));
     assert_eq!(task.branch, original);
     assert!(task.has_checkout_mismatch());

@@ -362,11 +362,6 @@ export function failedTurnPromptToRestore(
   return { promptText: userPromptText, failureKey: errorNoteId };
 }
 
-/**
- * A failed turn settles the prompt it belongs to, so it stops showing Sending…. Errors carry no
- * clientMessageId, so the failed turn is the last still-pending user prompt; earlier prompts keep
- * their outbox entries and their Sending… state.
- */
 export function clearPendingPrompts(state: ChatSessionReducerState): ChatSessionReducerState {
   const { conversation } = state.view;
   let failedIndex = -1;

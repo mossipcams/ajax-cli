@@ -9,10 +9,6 @@ note: >-
   Shipped in slice 7: <SheetTitle asChild><h2 id="new-task-title"> left the
   new-task dialog with aria-labelledby="radix-_r_1_" resolving to no element,
   so the dialog had no accessible name. Every test, tsc and the build passed.
-# Scoped to *Title/*Description only: those are the components whose generated
-# id is the target of aria-labelledby/aria-describedby. Content-like components
-# have no generated id, so a hand-written id on their child is legitimate — the
-# new-task sheet's own #new-task-sheet is exactly that, and is pinned by e2e.
 rule:
   kind: jsx_element
   all:
