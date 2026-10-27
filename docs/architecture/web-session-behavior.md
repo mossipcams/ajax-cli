@@ -137,8 +137,10 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   fresh session is created behind an existing transcript without that action.
   On a cold actor (its stored transcript not yet loaded), Start fresh loads the
   stored transcript before it writes, so the note is appended after the existing
-  rows, never over them. An in-session `/clear` on a loaded actor does not take
-  an extra holder, so it cannot keep the slot from idle eviction.
+  rows, never over them. Start fresh takes the recovering socket's holder,
+  released when that socket detaches, whether the actor was cold or a warm dead
+  slot; an in-session `/clear` runs under the holder its attach already took
+  and never takes another, so it cannot keep the slot from idle eviction.
 - Live slash commands follow ACP `available_commands_update`: after `session/new`
   and any later replacement, the host stores the complete advertised list and
   exposes it on the snapshot as `availableCommands` (`name`, `description`,
