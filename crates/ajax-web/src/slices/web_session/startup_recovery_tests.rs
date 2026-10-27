@@ -287,3 +287,27 @@ fn queued_scan_reports_incomplete_on_ledger_load_failure_issue_1326() {
 
     cleanup(&dir);
 }
+
+#[test]
+fn running_chat_without_dispatching_prompt_is_recovered_issue_1439() {
+    use ajax_core::models::{LiveObservation, LiveStatusKind};
+    use std::time::SystemTime;
+
+    let (dir, store) = scratch_store("stale-running");
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.live_status = Some(LiveObservation::new(
+        LiveStatusKind::AgentRunning,
+        "Agent working",
+    ));
+    task.live_status_observed_at = Some(SystemTime::now());
+    let handle = task.qualified_handle();
+    let registry = crate::test_support::context_with_tasks(&["web"], vec![task]).registry;
+    store.save(&registry).expect("seed registry");
+
+    let recovered = recover_interrupted_prompts(&store, &dir, "this-boot");
+    assert!(recovered.complete);
+    assert_eq!(recovered.recovered_handles, vec![handle]);
+
+    cleanup(&dir);
+}

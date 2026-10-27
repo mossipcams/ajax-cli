@@ -1,9 +1,10 @@
+use super::session_activity_directory_tests::{record_activities, wait_for_last_activity};
 use super::task_session_outbound::disk_read_from;
 use super::test_support::{
     fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
 };
 use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
-use super::SessionServerEvent;
+use super::{SessionActivity, SessionServerEvent};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
@@ -510,6 +511,55 @@ fn in_session_clear_does_not_leak_a_holder() {
             snapshot.evictable,
             "a released, cleared slot must be evictable"
         );
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1439_actor_with_background_work_survives_idle_cap() {
+    let dir = scratch_dir("issue-1439-background-evict");
+    let handle_a = "web/issue-1439-background-a";
+    let handle_trigger = "web/issue-1439-background-trigger";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_activities(&directory);
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            with_test_acp_extra_args(&["--background-shell"], || {
+                directory
+                    .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire a");
+                directory
+                    .submit_prompt(handle_a, "start background work".to_string())
+                    .expect("prompt");
+            });
+            wait_for_last_activity(&reported, SessionActivity::BackgroundRunning);
+            directory.release(handle_a);
+
+            let child_before = directory.child_id(handle_a).expect("child before");
+            for i in 0..MAX_IDLE_SESSIONS {
+                let handle = format!("web/issue-1439-background-idle-{i}");
+                directory
+                    .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(&handle);
+            }
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            directory.release(handle_trigger);
+
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("re-acquire a");
+            assert_eq!(
+                directory.child_id(handle_a),
+                Some(child_before),
+                "an actor with held background work must not be idle-evicted"
+            );
+        });
     });
 
     let _ = std::fs::remove_dir_all(dir);

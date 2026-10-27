@@ -1,5 +1,6 @@
 use crate::models::{
-    AgentRuntimeStatus, LifecycleStatus, LiveStatusClass, LiveStatusKind, SideFlag, Task,
+    AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusClass, LiveStatusKind,
+    SideFlag, Task,
 };
 use serde::{Deserialize, Serialize};
 
@@ -159,7 +160,7 @@ fn derive_task_status(task: &Task) -> OperatorStatus {
     }
 
     if let Some(live) = task.live_status.as_ref() {
-        if let Some(explanation) = canonical_running_explanation(live.kind) {
+        if let Some(explanation) = live_running_explanation(live) {
             return run(explanation);
         }
     }
@@ -255,6 +256,17 @@ fn live_evidence_is_acknowledged(task: &Task) -> bool {
 fn workflow_boundary_is_acknowledged(task: &Task) -> bool {
     task.attention_acknowledged_at
         .is_some_and(|acknowledged_at| acknowledged_at >= task.last_activity_at)
+}
+
+const SUMMARY_BACKGROUND_WORK_RUNNING: &str = "Background work running";
+
+fn live_running_explanation(live: &LiveObservation) -> Option<&'static str> {
+    if live.kind == LiveStatusKind::AgentRunning
+        && live.summary.trim() == SUMMARY_BACKGROUND_WORK_RUNNING
+    {
+        return Some(SUMMARY_BACKGROUND_WORK_RUNNING);
+    }
+    canonical_running_explanation(live.kind)
 }
 
 fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {

@@ -364,6 +364,20 @@ describe("TaskWorkspace", () => {
       expect(onMutated).toHaveBeenCalledTimes(afterRunning);
     });
 
+    it.each(["waiting", "error"] as const)(
+      "stops the converge refetch once the server status is %s",
+      (status) => {
+        const onMutated = vi.fn();
+        render(chatTree(status, onMutated));
+        emit(false);
+        emit(true);
+        const afterFlip = onMutated.mock.calls.length;
+
+        act(() => vi.advanceTimersByTime(3000));
+        expect(onMutated).toHaveBeenCalledTimes(afterFlip);
+      },
+    );
+
     it("does not interval-refetch when the stream is not busy", () => {
       const onMutated = vi.fn();
       render(chatTree("idle", onMutated));

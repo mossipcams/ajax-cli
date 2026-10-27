@@ -364,6 +364,41 @@ fn active_lifecycle_with_tests_running_live_status_is_running() {
 }
 
 #[test]
+fn background_work_observation_keeps_its_running_explanation() {
+    let mut task = base_task();
+    mark_active(&mut task).unwrap();
+    crate::live::apply_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::AgentRunning, "Background work running"),
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+    );
+
+    let status = derive_operator_status(&task);
+
+    assert_eq!(status.status, TaskStatus::Running);
+    assert_eq!(
+        status.explanation.as_deref(),
+        Some("Background work running")
+    );
+}
+
+#[test]
+fn plain_agent_running_observation_keeps_agent_working_explanation() {
+    let mut task = base_task();
+    mark_active(&mut task).unwrap();
+    crate::live::apply_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working"),
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+    );
+
+    let status = derive_operator_status(&task);
+
+    assert_eq!(status.status, TaskStatus::Running);
+    assert_eq!(status.explanation.as_deref(), Some("Agent working"));
+}
+
+#[test]
 fn active_lifecycle_without_signals_is_unknown() {
     let mut task = base_task();
     mark_active(&mut task).unwrap();

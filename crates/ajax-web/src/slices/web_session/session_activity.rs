@@ -154,6 +154,18 @@ impl SessionActivityReporter {
         self.background
     }
 
+    pub(crate) fn last_reported_running(&self) -> bool {
+        matches!(
+            self.last,
+            Some(
+                SessionActivity::TurnStarted
+                    | SessionActivity::CommandRunning
+                    | SessionActivity::TestsRunning
+                    | SessionActivity::BackgroundRunning
+            )
+        )
+    }
+
     pub(crate) fn set_background(
         &mut self,
         held: bool,
@@ -181,6 +193,11 @@ impl SessionActivityReporter {
         };
         self.state.apply(event, now);
         self.background = held;
+    }
+
+    pub(crate) fn attach_activity(&self, persisted_running: bool) -> Option<SessionActivity> {
+        (persisted_running && !self.turn_running() && !self.background)
+            .then_some(SessionActivity::TurnFailed)
     }
 
     fn reduce_activity(&self, now: SystemTime) -> Option<SessionActivity> {

@@ -5,6 +5,7 @@ use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
 use super::session_evidence::SessionEvidence;
+use super::startup_recovery::persisted_chat_running_for;
 use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
@@ -18,8 +19,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::task_session_exit::{
     self, cancel, is_acp_exit_error, reconcile_unexpected_child_exit,
-    retry_pending_exit_interruption, submit_prompt, try_dispatch_next_if_idle,
-    try_finalize_active_prompt,
+    retry_pending_exit_interruption, settle_running_activity_on_end, submit_prompt,
+    try_dispatch_next_if_idle, try_finalize_active_prompt,
 };
 
 const COMMAND_CAPACITY: usize = 32;
@@ -417,6 +418,15 @@ pub(crate) fn spawn_task_session(
             worktree_path: None,
             ownership,
         };
+        let persisted_running =
+            persisted_chat_running_for(&state.storage.registry_store(), &state.qualified_handle);
+        if let Some(attach) = state
+            .evidence
+            .activity_reporter
+            .attach_activity(persisted_running)
+        {
+            state.evidence.report(&state.qualified_handle, attach);
+        }
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut close_on_exit = false;
@@ -473,6 +483,7 @@ pub(crate) fn spawn_task_session(
             state.prompts.child_exit_reconciled = true;
             state.acp.acp_alive = false;
         }
+        settle_running_activity_on_end(&mut state);
     });
     (tx, join)
 }
@@ -616,6 +627,7 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let _ = reply.send(EvictionSnapshot {
                 evictable: state.is_idle()
                     && !state.busy()
+                    && !state.evidence.activity_reporter.background_held()
                     && state.acp.restore_advertised
                     && persisted_session_id,
                 holders: state.holders.0,
