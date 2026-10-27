@@ -16,7 +16,7 @@ mod tests;
 pub(crate) const DEFAULT_WEB_HOST: &str = "0.0.0.0";
 pub(crate) const DEFAULT_WEB_PORT: &str = "8787";
 
-const FORWARDED_ENV_KEYS: [&str; 10] = [
+const FORWARDED_ENV_KEYS: [&str; 11] = [
     "PATH",
     "LANG",
     "LC_ALL",
@@ -27,6 +27,7 @@ const FORWARDED_ENV_KEYS: [&str; 10] = [
     "AJAX_CONFIG",
     "AJAX_STATE",
     "AJAX_WORKTREE_ROOT",
+    "AJAX_MODEL_ROUTER",
 ];
 const RESTART_SCRIPT_ENV: &str = "AJAX_WEB_RESTART_SCRIPT";
 const RESTART_PROFILE_ENV: &str = "AJAX_WEB_RESTART_PROFILE";

@@ -448,7 +448,7 @@ pub(crate) fn is_task_bootstrap_script(bootstrap: Option<&str>) -> bool {
 }
 
 pub(crate) fn router_symlinks_seed_command(worktree_path: &str) -> CommandSpec {
-    const SCRIPT: &str = r#"router="${AJAX_MODEL_ROUTER:-$HOME/Desktop/Projects/ajax-model-router}"; installer="$router/scripts/install-symlinks"; if [ -x "$installer" ]; then "$installer" --target "$PWD" --force; fi"#;
+    const SCRIPT: &str = r#"router="${AJAX_MODEL_ROUTER:-$HOME/Projects/ajax-model-router}"; installer="$router/scripts/install-symlinks"; if [ -x "$installer" ]; then "$installer" --target "$PWD" --force; fi"#;
     CommandSpec::new("sh", ["-c", SCRIPT]).with_cwd(worktree_path)
 }
 
