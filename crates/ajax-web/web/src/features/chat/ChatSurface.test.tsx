@@ -5,11 +5,17 @@ import * as webSessionTransport from "./session/transport/public";
 import {
   ChatWithSheet,
   chatH,
+  flushRaf,
   mountChat,
   prepareChatSurface,
   send,
   transport,
 } from "./ChatSurface.testHarness";
+import {
+  installTranscriptScrollIntoViewMock,
+  scrollThreadToHistory,
+  stubScrollMetrics,
+} from "./scrolling/transcriptLayout.testHelpers";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -93,6 +99,40 @@ describe("ChatSurface smoke", () => {
 
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Earlier reply");
   });
+
+  it.each([
+    { promptsBlocked: undefined, sendEnabled: true },
+    { promptsBlocked: true, sendEnabled: false },
+  ])(
+    "shows every transcriptError but gates Send only when promptsBlocked is $promptsBlocked",
+    ({ promptsBlocked, sendEnabled }) => {
+      vi.restoreAllMocks();
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, callbacks) => {
+          callbacks.onSnapshot?.({
+            type: "snapshot",
+            protocolVersion: 2,
+            cursor: 0,
+            model: "auto",
+            turnState: "idle",
+            reset: false,
+            transcriptError: "activity report failed",
+            ...(promptsBlocked ? { promptsBlocked: true } : {}),
+          });
+          callbacks.onReady("auto");
+          return transport;
+        },
+      );
+
+      mountChat();
+      fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Ship it" } });
+
+      expect(screen.getByTestId("session-transcript-notice")).toHaveTextContent(
+        "activity report failed",
+      );
+      expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", !sendEnabled);
+    },
+  );
 
   it("opens Diff Review on a left swipe", async () => {
     vi.useFakeTimers();
@@ -195,5 +235,42 @@ describe("ChatSurface smoke", () => {
 
     rerender(<ChatWithSheet pendingConfirmAction="drop" />);
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatSurface detail refetch", () => {
+  let restoreScrollIntoView: (() => void) | undefined;
+
+  beforeEach(() => {
+    prepareChatSurface();
+    restoreScrollIntoView = installTranscriptScrollIntoViewMock();
+  });
+
+  afterEach(() => {
+    restoreScrollIntoView?.();
+  });
+
+  it("keeps the reader's place and loaded history when a failed refetch goes stale and recovers (#1446)", () => {
+    const { rerender } = mountChat({ detailStatus: "ready" });
+    const thread = screen.getByTestId("session-thread") as HTMLDivElement;
+    stubScrollMetrics(thread, 2400, 400, -1920);
+    fireEvent.scroll(thread);
+
+    for (let i = 0; i < 4; i += 1) {
+      send({ type: "message", role: "agent", text: `Earlier ${i}`, itemId: `a${i}` });
+    }
+    scrollThreadToHistory(thread, -1920);
+    fireEvent.scroll(thread);
+    expect(screen.getByTestId("session-jump")).toBeInTheDocument();
+    const visibleBefore = screen.getAllByTestId(/^session-message-/).length;
+
+    rerender(<ChatWithSheet detailStatus="stale" />);
+    rerender(<ChatWithSheet detailStatus="ready" />);
+    flushRaf();
+
+    const recovered = screen.getByTestId("session-thread") as HTMLDivElement;
+    expect(recovered.scrollTop).toBe(-1920);
+    expect(screen.getAllByTestId(/^session-message-/)).toHaveLength(visibleBefore);
+    expect(screen.getByTestId("session-jump")).toBeInTheDocument();
   });
 });

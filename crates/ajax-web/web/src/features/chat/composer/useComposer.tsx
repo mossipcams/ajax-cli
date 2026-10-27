@@ -75,6 +75,8 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
+  /** False while host durability blocks new prompts; recovery commands stay available. */
+  promptingEnabled: boolean;
   busy: boolean;
   everOpened: boolean;
   agentStarting: boolean;
@@ -103,6 +105,7 @@ type ComposerContextValue = {
   editQueued: () => void;
   removeQueued: () => void;
   connected: boolean;
+  promptingEnabled: boolean;
   everOpened: boolean;
   agentStarting: boolean;
   busy: boolean;
@@ -132,6 +135,7 @@ export function useComposerContext(): ComposerContextValue {
 export function ComposerProvider({
   handle,
   connected,
+  promptingEnabled,
   busy,
   everOpened,
   agentStarting,
@@ -226,6 +230,26 @@ export function ComposerProvider({
     [persistDraft],
   );
 
+  // Speech inserts land outside typing; grow the textarea once the inserted
+  // text is in the DOM. Typing keeps its own autoGrow path untouched.
+  const [speechGrow, setSpeechGrow] = useState({ generation: 0, shrank: false });
+  const setSpeechDraft = useCallback(
+    (value: string) => {
+      // Speech inserts may already have advanced draftRef, so the textarea's
+      // DOM value is the prior draft.
+      const shrank = value.length < (composerRef.current?.value.length ?? 0);
+      setDraftWithPersist(value);
+      setSpeechGrow((previous) => ({ generation: previous.generation + 1, shrank }));
+    },
+    [composerRef, setDraftWithPersist],
+  );
+
+  useLayoutEffect(() => {
+    if (speechGrow.generation === 0) return;
+    const node = composerRef.current;
+    if (node) autoGrow(node, speechGrow.shrank);
+  }, [composerRef, speechGrow]);
+
   const {
     speechModel,
     micAriaLabel,
@@ -234,7 +258,7 @@ export function ComposerProvider({
   } = useChatSpeech({
     handle,
     draftRef,
-    setDraft: setDraftWithPersist,
+    setDraft: setSpeechDraft,
   });
 
   const queued = composerQueuedText(composerState);
@@ -293,6 +317,7 @@ export function ComposerProvider({
       scrollToLatest();
       return;
     }
+    if (!promptingEnabled) return;
 
     const result = submitComposerDraft({
       connected,
@@ -406,6 +431,7 @@ export function ComposerProvider({
     connected,
     contentBlocks,
     deliverPrompt,
+    promptingEnabled,
     scrollToLatest,
     sendCancel,
     sendClear,
@@ -592,6 +618,7 @@ export function ComposerProvider({
     editQueued,
     removeQueued,
     connected,
+    promptingEnabled,
     everOpened,
     agentStarting,
     busy,

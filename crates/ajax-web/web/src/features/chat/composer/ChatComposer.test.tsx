@@ -5,7 +5,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import * as autoGrowModule from "@/features/chat/composer/autoGrow";
+import ChatComposer from "@/features/chat/composer/ChatComposer";
+import { ComposerProvider } from "@/features/chat/composer/useComposer";
 import * as useChatSpeechModule from "@/features/chat/composer/speech/useChatSpeech";
+import * as useSpeechInputModule from "@/shared/hooks/useSpeechInput";
+import type { SpeechInputAdapter } from "@/shared/hooks/useSpeechInput";
 import { claimSessionViewportOwnership } from "@/shared/lib/sessionViewport";
 import { initViewport, isKeyboardOpen } from "@/shared/lib/viewport";
 import {
@@ -492,6 +496,25 @@ describe("ChatComposer", () => {
     expect(autoGrowSpy).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement), true);
   });
 
+  it("auto-grows the textarea when speech inserts multiline text", () => {
+    const autoGrowSpy = vi.spyOn(autoGrowModule, "autoGrow");
+    const realUseSpeechInput = useSpeechInputModule.useSpeechInput;
+    let speechAdapter: SpeechInputAdapter | undefined;
+    vi.spyOn(useSpeechInputModule, "useSpeechInput").mockImplementation((handle, adapter) => {
+      speechAdapter = adapter;
+      return realUseSpeechInput(handle, adapter);
+    });
+    mountChat({ handle: "web/fix-login" });
+    autoGrowSpy.mockClear();
+
+    act(() => {
+      speechAdapter?.insertDelta("line one\nline two\nline three");
+    });
+
+    expect(screen.getByLabelText("Message")).toHaveValue("line one\nline two\nline three");
+    expect(autoGrowSpy).toHaveBeenCalledWith(expect.any(HTMLTextAreaElement), false);
+  });
+
   it("isolates composer drafts per task handle", () => {
     let view = mountChat({ handle: "web/task-a" });
     fireEvent.change(screen.getByLabelText("Message"), {
@@ -530,6 +553,23 @@ describe("ChatComposer", () => {
     expect(sessionStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBeNull();
     mountChat({ handle: "web/fix-login" });
     expect(screen.getByLabelText("Message")).toHaveValue("survives tab close");
+  });
+
+  it("withdraws the host row for a follow-up restored after a reload", () => {
+    localStorage.setItem(
+      "ajax.web.session.composer.queue.web%2Ffix-login",
+      JSON.stringify({ text: "Next", clientMessageId: "cmid-restored" }),
+    );
+    mountChat({ handle: "web/fix-login" });
+    act(() => {
+      chatH.emit?.({ type: "ready", model: "auto", busy: true, reset: false });
+    });
+    flushRaf();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-restored");
+    expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
   });
 
   it("restores a queued follow-up after leaving and returning to the task", () => {
@@ -618,5 +658,68 @@ describe("ChatComposer", () => {
     expect(localStorage.getItem("ajax.web.session.composer.draft.web%2Ffix-login")).toBe(
       "survives reload",
     );
+  });
+});
+
+describe("ChatComposer transcript durability gate", () => {
+  it("disables Send and shows a durability notice when transcriptError is set", () => {
+    const noop = vi.fn();
+    render(
+      <ComposerProvider
+        handle="web/fix-login"
+        connected
+        promptingEnabled={false}
+        busy={false}
+        everOpened
+        agentStarting={false}
+        conversation={[]}
+        conversationRevision={0}
+        composerRef={{ current: null }}
+        scrollToLatest={noop}
+        sendPrompt={noop}
+        withdrawQueuedPrompt={noop}
+        sendCancel={noop}
+        sendClear={noop}
+        markStopped={noop}
+      >
+        <ChatComposer transcriptError="forced append failure" />
+      </ComposerProvider>,
+    );
+    expect(screen.getByTestId("session-transcript-notice")).toHaveTextContent(
+      "forced append failure",
+    );
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("keeps /clear sendable while prompting is blocked", () => {
+    const noop = vi.fn();
+    const sendPrompt = vi.fn();
+    const sendClear = vi.fn();
+    render(
+      <ComposerProvider
+        handle="web/fix-login"
+        connected
+        promptingEnabled={false}
+        busy={false}
+        everOpened
+        agentStarting={false}
+        conversation={[]}
+        conversationRevision={0}
+        composerRef={{ current: null }}
+        scrollToLatest={noop}
+        sendPrompt={sendPrompt}
+        withdrawQueuedPrompt={noop}
+        sendCancel={noop}
+        sendClear={sendClear}
+        markStopped={noop}
+      >
+        <ChatComposer transcriptError="forced append failure" />
+      </ComposerProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "/clear" } });
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(sendClear).toHaveBeenCalledOnce();
+    expect(sendPrompt).not.toHaveBeenCalled();
   });
 });

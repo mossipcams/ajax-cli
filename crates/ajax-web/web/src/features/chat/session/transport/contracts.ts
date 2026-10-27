@@ -85,6 +85,10 @@ export interface SessionSnapshot {
   turnState: "idle" | "busy";
   reset: boolean;
   agentPending?: boolean;
+  /** Host transcript fault message; shown for every source. */
+  transcriptError?: string;
+  /** Set only for the durability fault; gates Send, Attach and Mic while true. */
+  promptsBlocked?: boolean;
   pendingPermission?: {
     requestId: string;
     title?: string | null;

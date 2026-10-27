@@ -72,6 +72,23 @@ describe("ConnectionStatus", () => {
     expect(onReload).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts a later Retry click after a failed attempt with the same state", async () => {
+    const onRetry = vi.fn();
+    const { rerender } = render(
+      <ConnectionStatus state="backend unreachable" onRetry={onRetry} />,
+    );
+
+    fireEvent.click(screen.getByText("Retry"));
+    expect(onRetry).toHaveBeenCalledOnce();
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    rerender(<ConnectionStatus state="backend unreachable" onRetry={onRetry} />);
+    fireEvent.click(screen.getByText("Retry"));
+    expect(onRetry).toHaveBeenCalledTimes(2);
+  });
+
   it("latches Retry and Reload under same-turn multi-click", () => {
     const onRetry = vi.fn();
     const onReload = vi.fn();

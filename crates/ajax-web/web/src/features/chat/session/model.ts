@@ -28,6 +28,10 @@ export type ConversationItem =
       text: string;
       contentBlocks?: OutputContentBlock[];
       messageId?: string;
+      /** Browser-assigned id of an optimistic prompt; present only on optimistic prompts. */
+      clientMessageId?: string;
+      /** True until the host accepts the optimistic prompt with its clientMessageId. */
+      pending?: boolean;
     }
   | { kind: "note"; id: string; tone: "info" | "error"; text: string }
   | {
@@ -99,6 +103,10 @@ export interface ChatSessionView {
   elicitation: ChatElicitationState;
   usage: ChatUsageState;
   model: ChatModelState;
+  /** Host-reported transcript fault; present only while set. */
+  transcriptError?: string;
+  /** Present only while the durability fault blocks prompts. */
+  promptsBlocked?: boolean;
   revision: number;
 }
 
@@ -137,14 +145,15 @@ export type ChatSessionEvent =
   | { type: "turn_end"; stopReason?: string }
   | { type: "session_error"; message: string }
   | { type: "session_ready"; busy?: boolean; reset?: boolean }
-  | { type: "prompt_accepted" }
+  | { type: "transcript_snapshot"; transcriptError?: string; promptsBlocked?: boolean }
+  | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "history_bounds"; from: number; floor: number }
   | { type: "prepend"; events: ChatSessionEvent[]; from: number };
 
 export type ChatSessionAction =
   | { type: "event"; event: ChatSessionEvent }
   | { type: "events"; events: ChatSessionEvent[] }
-  | { type: "prompt"; text: string }
+  | { type: "prompt"; text: string; clientMessageId?: string }
   | { type: "decided" }
   | { type: "elicitation_answered" }
   | { type: "reset" };

@@ -508,6 +508,40 @@ const calls = (routeMock as unknown as {
     }
   });
 
+  it("starts a double-clicked job once and re-enables Confirm after it settles", async () => {
+    let resolveStart: () => void = () => undefined;
+    const startTrainingJob = vi.spyOn(trainingApi, "startTrainingJob").mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    try {
+      openModal();
+      // The idle hero mirrors the primary train button; use the jobs-section one.
+      fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
+      const confirm = await screen.findByRole("button", { name: "Confirm" });
+      // Two synchronous clicks before the start promise resolves: only one request may leave.
+      act(() => {
+        confirm.click();
+        confirm.click();
+      });
+      expect(startTrainingJob).toHaveBeenCalledTimes(1);
+      expect(confirm).toBeDisabled();
+
+      await act(async () => resolveStart());
+      await waitFor(() => expect(screen.queryByTestId("training-confirm")).toBeNull());
+
+      // A later, separately confirmed action must still go through.
+      fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
+      const nextConfirm = await screen.findByRole("button", { name: "Confirm" });
+      expect(nextConfirm).toBeEnabled();
+      fireEvent.click(nextConfirm);
+      await waitFor(() => expect(startTrainingJob).toHaveBeenCalledTimes(2));
+    } finally {
+      startTrainingJob.mockRestore();
+    }
+  });
+
   it("shows an action error banner when a confirmed request fails with 409", async () => {
     statusRoute.body = {
       ...idleStatus,

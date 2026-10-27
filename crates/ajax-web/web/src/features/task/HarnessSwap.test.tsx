@@ -39,11 +39,19 @@ describe("HarnessSwap", () => {
 
     fireEvent.click(screen.getByTestId("harness-swap-open"));
     expect(screen.getByRole("radio", { name: "Cursor" })).toBeDisabled();
-    fireEvent.click(screen.getByTestId("harness-swap-apply"));
-
-    expect(await screen.findByTestId("harness-swap-error")).toHaveTextContent(
-      "Same-harness model changes use in-session config chips",
+    expect(screen.getByTestId("harness-swap-apply")).toBeDisabled();
+    expect(screen.getByTestId("harness-swap-harness-only")).toHaveTextContent(
+      "The new harness starts with Auto. Change its model after connecting.",
     );
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("enables Switch once a different harness is selected", () => {
+    render(<HarnessSwap handle="web/fix-login" currentAgent="cursor" />);
+
+    fireEvent.click(screen.getByTestId("harness-swap-open"));
+    expect(screen.getByTestId("harness-swap-apply")).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    expect(screen.getByTestId("harness-swap-apply")).toBeEnabled();
   });
 });

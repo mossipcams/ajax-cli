@@ -98,7 +98,7 @@ export default function HarnessSwap({
         <Button
           type="button"
           variant="default"
-          disabled={disabled || swapMutation.isPending}
+          disabled={disabled || agent === currentAgent || swapMutation.isPending}
           onClick={() => void apply()}
           data-testid="harness-swap-apply"
         >

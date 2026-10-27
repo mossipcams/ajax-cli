@@ -46,7 +46,7 @@ function projectServerEvent(event: WebSessionServerEvent): ChatSessionEvent | nu
       return { type: "system_message", text: event.text };
     }
     case "prompt_accepted":
-      return { type: "prompt_accepted" };
+      return { type: "prompt_accepted", clientMessageId: event.clientMessageId };
     case "tool_call":
       return {
         type: "tool_call",

@@ -13,11 +13,30 @@ import type {
 } from "./model";
 import { initialChatSessionReducerState } from "./model";
 
+function applyTranscriptSnapshot(
+  state: ChatSessionReducerState,
+  event: Extract<ChatSessionEvent, { type: "transcript_snapshot" }>,
+): ChatSessionReducerState {
+  const view = { ...state.view, revision: state.view.revision + 1 };
+  if (event.transcriptError === undefined) {
+    delete view.transcriptError;
+  } else {
+    view.transcriptError = event.transcriptError;
+  }
+  if (event.promptsBlocked === true) {
+    view.promptsBlocked = true;
+  } else {
+    delete view.promptsBlocked;
+  }
+  return { ...state, view };
+}
+
 function applyChatSessionEvent(
   state: ChatSessionReducerState,
   event: ChatSessionEvent,
 ): ChatSessionReducerState {
   if (isErrorOrTurnEndEvent(event)) return applyErrorEvent(state, event);
+  if (event.type === "transcript_snapshot") return applyTranscriptSnapshot(state, event);
   if (isPermissionEvent(event)) return applyPermissionEvent(state, event);
   if (isElicitationEvent(event)) return applyElicitationEvent(state, event);
   if (isActivityEvent(event)) return applyActivityEvent(state, event);
@@ -81,7 +100,7 @@ export function reduceChatSession(
     case "reset":
       return initialChatSessionReducerState;
     case "prompt":
-      return applyOptimisticPrompt(state, action.text);
+      return applyOptimisticPrompt(state, action.text, action.clientMessageId);
     case "decided":
       return applyDecided(state);
     case "elicitation_answered":

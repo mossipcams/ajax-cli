@@ -897,3 +897,84 @@ describe("the permission ask reads as a command, not as markdown", () => {
     expect(marker).toMatchObject({ title: "Run rm -rf target/debug" });
   });
 });
+
+describe("transcript durability projection", () => {
+  it("projects host transcriptError into the view and clears it when a later snapshot omits it", () => {
+    const failed = reduceChatSession(initialChatSessionReducerState, {
+      type: "event",
+      event: { type: "transcript_snapshot", transcriptError: "forced append failure" },
+    });
+    expect(failed.view.transcriptError).toBe("forced append failure");
+    const cleared = reduceChatSession(failed, {
+      type: "event",
+      event: { type: "transcript_snapshot" },
+    });
+    expect(cleared.view.transcriptError).toBeUndefined();
+  });
+});
+
+describe("failed optimistic prompts", () => {
+  const optimistic = () =>
+    reduceChatSession(initialChatSessionReducerState, {
+      type: "prompt",
+      text: "Ship it",
+      clientMessageId: "c1",
+    });
+
+  it("error after an optimistic prompt clears Sending…", () => {
+    const failed = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "session_error", message: "prompt rejected by host" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: false });
+    expect(failed.view.turn.busy).toBe(false);
+  });
+
+  it("turn_end with an error after an optimistic prompt clears Sending…", () => {
+    const failed = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "turn_end", stopReason: "error" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: false });
+  });
+
+  it("an error settles only the prompt of the failed turn, leaving earlier unaccepted prompts pending", () => {
+    const first = reduceChatSession(optimistic(), { type: "prompt", text: "Earlier", clientMessageId: "c0" });
+    const second = reduceChatSession(first, { type: "prompt", text: "Ship it too", clientMessageId: "c2" });
+    const failed = reduceChatSession(second, {
+      type: "event",
+      event: { type: "session_error", message: "prompt rejected by host" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: true });
+    expect(failed.view.conversation[1]).toMatchObject({ text: "Earlier", pending: true });
+    expect(failed.view.conversation[2]).toMatchObject({ text: "Ship it too", pending: false });
+  });
+
+  it("a normal turn_end leaves an unaccepted prompt pending", () => {
+    const ended = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "turn_end", stopReason: "end_turn" },
+    });
+    expect(ended.view.conversation[0]).toMatchObject({ pending: true });
+  });
+});
+
+describe("promptsBlocked projection", () => {
+  it("projects promptsBlocked with the snapshot and clears it when a later snapshot omits it", () => {
+    const blocked = reduceChatSession(initialChatSessionReducerState, {
+      type: "event",
+      event: {
+        type: "transcript_snapshot",
+        transcriptError: "forced append failure",
+        promptsBlocked: true,
+      },
+    });
+    expect(blocked.view.promptsBlocked).toBe(true);
+    const notice = reduceChatSession(blocked, {
+      type: "event",
+      event: { type: "transcript_snapshot", transcriptError: "activity report failed" },
+    });
+    expect(notice.view.transcriptError).toBe("activity report failed");
+    expect(notice.view.promptsBlocked).toBeUndefined();
+  });
+});

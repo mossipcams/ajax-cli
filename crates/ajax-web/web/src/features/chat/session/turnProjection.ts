@@ -267,8 +267,18 @@ export function applyTurnEvent(
       return push(state, { kind: "note", tone: "info", text: event.text });
     case "system_message":
       return push(state, { kind: "note", tone: "info", text: event.text });
-    case "prompt_accepted":
-      return state;
+    case "prompt_accepted": {
+      const index = state.view.conversation.findIndex(
+        (item) =>
+          item.kind === "prose" &&
+          item.pending === true &&
+          item.clientMessageId === event.clientMessageId,
+      );
+      if (index < 0) return state;
+      const item = state.view.conversation[index];
+      if (item.kind !== "prose") return state;
+      return replaceAt(state, index, { ...item, pending: false });
+    }
     default:
       return state;
   }
@@ -277,8 +287,14 @@ export function applyTurnEvent(
 export function applyOptimisticPrompt(
   state: ChatSessionReducerState,
   text: string,
+  clientMessageId?: string,
 ): ChatSessionReducerState {
-  const next = push(state, { kind: "prose", role: "user", text });
+  const next = push(state, {
+    kind: "prose",
+    role: "user",
+    text,
+    ...(clientMessageId ? { clientMessageId, pending: true } : {}),
+  });
   return bumpRevision({
     ...next,
     view: { ...next.view, turn: { ...next.view.turn, busy: true } },
@@ -346,12 +362,40 @@ export function failedTurnPromptToRestore(
   return { promptText: userPromptText, failureKey: errorNoteId };
 }
 
+/**
+ * A failed turn settles the prompt it belongs to, so it stops showing Sending…. Errors carry no
+ * clientMessageId, so the failed turn is the last still-pending user prompt; earlier prompts keep
+ * their outbox entries and their Sending… state.
+ */
+export function clearPendingPrompts(state: ChatSessionReducerState): ChatSessionReducerState {
+  const { conversation } = state.view;
+  let failedIndex = -1;
+  for (let index = conversation.length - 1; index >= 0; index -= 1) {
+    const item = conversation[index];
+    if (item.kind === "prose" && item.role === "user" && item.pending === true) {
+      failedIndex = index;
+      break;
+    }
+  }
+  if (failedIndex === -1) return state;
+  return bumpRevision({
+    ...state,
+    view: {
+      ...state.view,
+      conversation: conversation.map((item, index) =>
+        index === failedIndex && item.kind === "prose" ? { ...item, pending: false } : item,
+      ),
+    },
+  });
+}
+
 export function applyTurnEnd(
   state: ChatSessionReducerState,
   stopReason?: string,
 ): ChatSessionReducerState {
   const failed = stopReason?.toLowerCase() === "error";
-  const settled = settleOpenToolCalls(settleTurn(state), failed ? "failed" : "cancelled");
+  const turnEnded = failed ? clearPendingPrompts(state) : state;
+  const settled = settleOpenToolCalls(settleTurn(turnEnded), failed ? "failed" : "cancelled");
   if (failed && !turnAlreadyReported(settled)) {
     const seq = settled.seq + 1;
     return bumpRevision({

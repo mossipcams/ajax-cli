@@ -1,6 +1,6 @@
 import { explainAcpError } from "./errors";
 import type { ChatSessionEvent, ChatSessionReducerState } from "./model";
-import { applyTurnEnd, settleTurn } from "./turnProjection";
+import { applyTurnEnd, clearPendingPrompts, settleTurn } from "./turnProjection";
 
 function bumpRevision(state: ChatSessionReducerState): ChatSessionReducerState {
   return {
@@ -47,7 +47,11 @@ export function applyErrorEvent(
 ): ChatSessionReducerState {
   switch (event.type) {
     case "session_error":
-      return pushNote(settleTurn(state), "error", explainAcpError(event.message));
+      return pushNote(
+        clearPendingPrompts(settleTurn(state)),
+        "error",
+        explainAcpError(event.message),
+      );
     case "turn_end":
       return applyTurnEnd(state, event.stopReason);
     default:

@@ -73,6 +73,7 @@ import { setupScreenWakeLock } from "@/shared/lib/screenWakeLock";
 const RESUME_DEBOUNCE_MS = 750;
 
 type ResultState = {
+  id: number;
   message: string;
   output?: string | null;
   isError: boolean;
@@ -171,10 +172,10 @@ function AppContent() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [trainingOpen, setTrainingOpen] = useState(false);
   const [result, setResult] = useState<ResultState | null>(null);
+  const resultIdRef = useRef(0);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropResolvedRef = useRef(false);
-  const dropHandles: DropUndoHandles = { dropTimerRef, dropResolvedRef };
+  const dropHandles: DropUndoHandles = { dropTimerRef };
   const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
   const reloadLatchRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);
@@ -200,7 +201,7 @@ function AppContent() {
     const needsYou = cards.filter(
       (card) => card.attention === "needs-you" || card.attention === "review",
     ).length;
-    if (needsYou) parts.push(`${needsYou} need you`);
+    if (needsYou) parts.push(`${needsYou} ${needsYou === 1 ? "needs" : "need"} you`);
     const running = cards.filter((card) => card.status === "running").length;
     if (running) parts.push(`${running} running`);
     if (parts.length > 0) return parts.join(" · ");
@@ -226,7 +227,15 @@ function AppContent() {
       setPendingConfirm(pending);
       return;
     }
-    setResult({ message, output, isError, onUndo: options?.onUndo, onCommit: options?.onCommit });
+    resultIdRef.current += 1;
+    setResult({
+      id: resultIdRef.current,
+      message,
+      output,
+      isError,
+      onUndo: options?.onUndo,
+      onCommit: options?.onCommit,
+    });
   }
 
   function dismissPendingConfirm() {
@@ -918,6 +927,7 @@ function AppContent() {
 
       {result && !pendingConfirm ? (
         <ResultPanel
+          key={result.id}
           message={result.message}
           output={result.output}
           isError={result.isError}

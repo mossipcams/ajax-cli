@@ -5,23 +5,28 @@ type ListItem = { text: string; children: ListItem[] };
 type Block =
   | { kind: "code"; lang: string; text: string }
   | { kind: "heading"; text: string }
-  | { kind: "list"; ordered: boolean; items: ListItem[] }
+  | { kind: "list"; ordered: boolean; start?: number; items: ListItem[] }
   | { kind: "table"; headers: string[]; rows: string[][] }
   | { kind: "quote"; lines: string[] }
   | { kind: "para"; text: string };
 
-const FENCE = /^```(\w*)\s*$/;
+const FENCE = /^\s{0,3}```([^`]*)$/;
+const FENCE_CLOSE = /^\s{0,3}```\s*$/;
 const HEADING = /^#{1,6}\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
-const ORDERED = /^(\s*)\d+[.)]\s+(.*)$/;
+const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BLOCKQUOTE = /^>\s?(.*)$/;
 const TABLE_SEP = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
 
-function parseListItem(line: string): { ordered: boolean; indent: number; text: string } | null {
+function parseListItem(
+  line: string,
+): { ordered: boolean; indent: number; text: string; start: number } | null {
   const bullet = BULLET.exec(line);
-  if (bullet) return { ordered: false, indent: bullet[1].length, text: bullet[2] };
+  if (bullet) return { ordered: false, indent: bullet[1].length, text: bullet[2], start: 1 };
   const ordered = ORDERED.exec(line);
-  if (ordered) return { ordered: true, indent: ordered[1].length, text: ordered[2] };
+  if (ordered) {
+    return { ordered: true, indent: ordered[1].length, text: ordered[3], start: Number(ordered[2]) };
+  }
   return null;
 }
 
@@ -85,11 +90,11 @@ export function parseBlocks(source: string): Block[] {
       flush();
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !FENCE.test(lines[i])) {
+      while (i < lines.length && !FENCE_CLOSE.test(lines[i])) {
         body.push(lines[i]);
         i += 1;
       }
-      blocks.push({ kind: "code", lang: fence[1], text: body.join("\n") });
+      blocks.push({ kind: "code", lang: fence[1].trim().split(/\s+/)[0], text: body.join("\n") });
       continue;
     }
 
@@ -129,7 +134,13 @@ export function parseBlocks(source: string): Block[] {
       flush();
       const tail = blocks[blocks.length - 1];
       if (!(tail?.kind === "list" && tail.ordered === listItem.ordered)) {
-        blocks.push({ kind: "list", ordered: listItem.ordered, items: [] });
+        const list: Extract<Block, { kind: "list" }> = {
+          kind: "list",
+          ordered: listItem.ordered,
+          items: [],
+        };
+        if (listItem.ordered && listItem.start !== 1) list.start = listItem.start;
+        blocks.push(list);
       }
       const listBlock = blocks[blocks.length - 1] as Extract<Block, { kind: "list" }>;
       addListItemToBlock(listBlock, listItem.indent, listItem.text);
@@ -143,8 +154,12 @@ export function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
+// A bare URL may end in a ')' only when a '(' inside the URL closes it, as in Wikipedia titles.
+// A '(' with no ')' before the next '(' or delimiter stays in the URL body.
 const INLINE =
-  /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\((?:https?:\/\/[^)\s]+)\))/g;
+  /(`[^`]+`|\*\*[^*]+\*\*|\*(?![\s*])[^*\n]*?[^\s*]\*|\b_(?!\s)[^_\n]*?[^\s_]_\b|\[[^\]]+\]\((?:https?:\/\/[^)\s]+)\)|https?:\/\/(?:\([^\s<>`()]*\)|\((?![^\s<>`()]*\))|[^\s<>`(])*(?:[^\s<>`.,;:!?()'"\]]|\([^\s<>`()]*\)))/g;
+const EMPHASIS = /^(?:\*(?![\s*])[^*\n]*?[^\s*]\*|_(?!\s)[^_\n]*?[^\s_]_)$/;
+const BARE_URL = /^https?:\/\/(?:\([^\s<>`()]*\)|\((?![^\s<>`()]*\))|[^\s<>`(])*(?:[^\s<>`.,;:!?()'"\]]|\([^\s<>`()]*\))$/;
 
 function safeLink(href: string, label: string, key: string): ReactNode {
   try {
@@ -173,17 +188,24 @@ export function renderInline(text: string, keyPrefix: string): ReactNode[] {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return <strong key={key}>{part.slice(2, -2)}</strong>;
     }
+    if (EMPHASIS.test(part)) return <em key={key}>{renderInline(part.slice(1, -1), key)}</em>;
     const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(part);
     if (link) return safeLink(link[2], link[1], key);
+    if (BARE_URL.test(part)) return safeLink(part, part, key);
     if (part === undefined || part === "") return null;
     return part;
   });
 }
 
-function renderListItems(items: ListItem[], ordered: boolean, keyPrefix: string): ReactNode {
+function renderListItems(
+  items: ListItem[],
+  ordered: boolean,
+  keyPrefix: string,
+  start?: number,
+): ReactNode {
   const Tag = ordered ? "ol" : "ul";
   return (
-    <Tag className="md-list">
+    <Tag className="md-list" start={ordered ? start : undefined}>
       {items.map((item, index) => {
         const key = `${keyPrefix}-${index}`;
         return (
@@ -220,7 +242,7 @@ export default function Markdown({ source }: { source: string }) {
         if (block.kind === "list") {
           return (
             <div key={key} className="md-list-wrap">
-              {renderListItems(block.items, block.ordered, key)}
+              {renderListItems(block.items, block.ordered, key, block.start)}
             </div>
           );
         }

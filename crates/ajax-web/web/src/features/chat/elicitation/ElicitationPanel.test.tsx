@@ -81,6 +81,65 @@ describe("ElicitationPanel", () => {
     expect(onAccept).toHaveBeenCalledWith({ name: "Matt" });
   });
 
+  it("keeps an optional enum's blank option enabled so the choice can be cleared", () => {
+    render(
+      <ElicitationPanel
+        decision={{
+          requestId: "e4",
+          message: "Pick an environment",
+          schema: {
+            type: "object",
+            properties: {
+              env: { type: "string", title: "Environment", enum: ["staging", "prod"] },
+            },
+          },
+          fields: [],
+        }}
+        connected
+        onAccept={vi.fn()}
+        onDecline={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const blank = screen.getByRole("option", { name: "Select…" }) as HTMLOptionElement;
+    expect(blank.disabled).toBe(false);
+    expect(screen.getByLabelText("Environment")).toHaveValue("");
+  });
+
+  it("shows a required single-option enum as unselected until the operator picks it", () => {
+    const onAccept = vi.fn();
+    render(
+      <ElicitationPanel
+        decision={{
+          requestId: "e3",
+          message: "Confirm environment",
+          schema: {
+            type: "object",
+            properties: {
+              env: { type: "string", title: "Environment", enum: ["staging"] },
+            },
+            required: ["env"],
+          },
+          fields: [],
+        }}
+        connected
+        onAccept={onAccept}
+        onDecline={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByLabelText("Environment");
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+
+    fireEvent.change(select, { target: { value: "staging" } });
+    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+    expect(onAccept).toHaveBeenCalledWith({ env: "staging" });
+  });
+
   it("ships elicitation styles through the chat stylesheet graph", () => {
     expect(stylesSource).toContain(".session-elicitation");
   });

@@ -230,3 +230,84 @@ describe("agentPending parsing in parseServerFrame", () => {
     expect(parsed.snapshot.agentPending).toBeUndefined();
   });
 });
+
+describe("#1239 unaccepted prompts stay pending in the outbox", () => {
+  const outboxKey = "ajax.web.session.outbox.web%2Fprompt-ack";
+
+  function storedIds(): string[] {
+    return JSON.parse(sessionStorage.getItem(outboxKey) ?? "[]").map(
+      (prompt: { clientMessageId: string }) => prompt.clientMessageId,
+    );
+  }
+
+  function sentPrompts(socket: ReturnType<typeof fakeSocket>): unknown[] {
+    return socket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "prompt");
+  }
+
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps an unaccepted prompt in the outbox until prompt_accepted arrives", () => {
+    const socket = fakeSocket();
+    const transport = connectWebSessionTransport("web/prompt-ack", callbacks(), platformFor(socket));
+
+    const id = transport.sendPrompt("Pending");
+
+    expect(storedIds()).toEqual([id]);
+    socket.readyState = OPEN_READY_STATE;
+    socket.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
+    expect(sentPrompts(socket)).toHaveLength(1);
+    expect(storedIds()).toEqual([id]);
+
+    socket.emit("message", {
+      data: eventJson(105, { type: "prompt_accepted", clientMessageId: id }),
+    } as MessageEvent);
+    expect(storedIds()).toEqual([]);
+    transport.dispose();
+  });
+
+  it("keeps earlier unaccepted prompts durable when the socket fails to open and a new prompt is sent", async () => {
+    const socket = fakeSocket();
+    const cbs = callbacks();
+    const transport = connectWebSessionTransport("web/prompt-ack", cbs, platformFor(socket));
+    const first = transport.sendPrompt("Unaccepted");
+
+    socket.emit("error");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cbs.onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
+
+    const second = transport.sendPrompt("Second");
+
+    expect(storedIds()).toEqual([first, second]);
+    transport.dispose();
+  });
+
+  it("keeps a prompt unaccepted before the ack queued for retry after reconnect", () => {
+    const first = fakeSocket();
+    const transport = connectWebSessionTransport("web/prompt-ack", callbacks(), platformFor(first));
+    first.readyState = OPEN_READY_STATE;
+    first.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
+    const id = transport.sendPrompt("Retry me");
+    expect(sentPrompts(first)).toHaveLength(1);
+    first.emit("close");
+    transport.dispose();
+
+    const second = fakeSocket();
+    const reconnected = connectWebSessionTransport("web/prompt-ack", callbacks(), platformFor(second));
+    second.readyState = OPEN_READY_STATE;
+    second.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
+
+    expect(sentPrompts(second)).toEqual([
+      { type: "prompt", text: "Retry me", clientMessageId: id },
+    ]);
+    expect(storedIds()).toEqual([id]);
+    reconnected.dispose();
+  });
+});

@@ -277,8 +277,14 @@ prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
 fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
 Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
 bounded without sleeping on the session loop; a failed report is exposed on a
-snapshot as `transcriptError`. Spawn-error dedupe keys on child generation and
-error kind, so reconnect cannot append the same authentication error repeatedly.
+snapshot as `transcriptError`. `transcriptError` is also set for transcript
+corruption (stored rows that could not be read back). Every source is shown to
+the operator, but only the transcript durability fault sets `promptsBlocked`,
+so only that fault blocks Send, Attach, and Mic. The browser keeps Send enabled
+for the built-in `/clear`, which never reaches the prompt path. The snapshot
+republishes when an activity-report fault clears, so the notice goes away.
+Spawn-error dedupe keys on child generation and error kind, so reconnect cannot
+append the same authentication error repeatedly.
 
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order

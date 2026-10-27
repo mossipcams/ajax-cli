@@ -83,6 +83,13 @@ pub struct SessionSnapshot {
         rename = "transcriptError"
     )]
     pub transcript_error: Option<String>,
+    /// Set only while the transcript durability fault blocks prompts; other transcript errors only show.
+    #[serde(
+        default,
+        rename = "promptsBlocked",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub prompts_blocked: bool,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -128,6 +135,7 @@ impl SessionSnapshot {
             pending_permission,
             pending_elicitation,
             transcript_error: None,
+            prompts_blocked: false,
             transcript: None,
             transcript_from: None,
             transcript_floor: None,
@@ -136,6 +144,11 @@ impl SessionSnapshot {
 
     pub fn with_transcript_error(mut self, error: Option<String>) -> Self {
         self.transcript_error = error;
+        self
+    }
+
+    pub fn with_prompts_blocked(mut self, blocked: bool) -> Self {
+        self.prompts_blocked = blocked;
         self
     }
 
