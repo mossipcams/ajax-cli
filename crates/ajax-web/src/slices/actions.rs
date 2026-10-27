@@ -99,7 +99,7 @@ fn web_branch_adoption_for_card<R: Registry>(
     let branch_adoption = plan.branch_adoption?;
     Some(WebAction {
         action: OperatorAction::Repair.as_str().to_string(),
-        label: "Adopt branch".to_string(),
+        label: format!("Adopt {}", branch_adoption.observed_branch),
         destructive: false,
         confirmation_required: true,
         branch_adoption: Some(branch_adoption),
@@ -255,7 +255,7 @@ mod tests {
             .find(|state| state.action == "repair")
             .expect("repair adoption action");
 
-        assert_eq!(repair.label, "Adopt branch");
+        assert_eq!(repair.label, "Adopt fix/web/login");
         assert!(!repair.destructive);
         assert!(repair.confirmation_required);
         assert_eq!(

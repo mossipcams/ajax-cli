@@ -199,7 +199,7 @@ fn browser_cockpit_and_detail_pass_through_checkout_mismatch() {
     assert_eq!(card["status"], "error");
     assert_eq!(card["status_explanation"], EXPLANATION);
     assert_eq!(card["actions"][0]["action"], "repair");
-    assert_eq!(card["actions"][0]["label"], "Adopt branch");
+    assert_eq!(card["actions"][0]["label"], "Adopt fix/pane-stuck");
     assert_eq!(card["actions"][0]["confirmation_required"], true);
     assert_eq!(
         card["actions"][0]["branch_adoption"]["expected_branch"],
