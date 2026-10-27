@@ -19,6 +19,10 @@ pub struct ActionFailure {
 }
 
 pub trait RuntimeBridge<C: CommandRunner> {
+    /// Probes for cockpit state (reload-if-stale, tmux/git/gh) and reports whether
+    /// the probe changed the context. It does not persist: the caller runs it
+    /// outside the control lane and persists under the lane only if the
+    /// probe applied. The caller persists via `persist_registry_snapshot`.
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
