@@ -310,4 +310,26 @@ describe("#1239 unaccepted prompts stay pending in the outbox", () => {
     expect(storedIds()).toEqual([id]);
     reconnected.dispose();
   });
+
+  it("a rejected prompt is not resent on reconnect once withdrawn", () => {
+    const first = fakeSocket();
+    const transport = connectWebSessionTransport("web/prompt-ack", callbacks(), platformFor(first));
+    first.readyState = OPEN_READY_STATE;
+    first.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
+    const id = transport.sendPrompt("Rejected by host");
+    expect(sentPrompts(first)).toHaveLength(1);
+    // The host rejects the prompt without prompt_accepted; the composer withdraws it on restore.
+    transport.withdrawQueuedPrompt(id);
+    first.emit("close");
+    transport.dispose();
+
+    const second = fakeSocket();
+    const reconnected = connectWebSessionTransport("web/prompt-ack", callbacks(), platformFor(second));
+    second.readyState = OPEN_READY_STATE;
+    second.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
+
+    expect(sentPrompts(second)).toEqual([]);
+    expect(storedIds()).toEqual([]);
+    reconnected.dispose();
+  });
 });

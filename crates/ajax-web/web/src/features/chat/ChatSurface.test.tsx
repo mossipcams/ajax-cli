@@ -100,6 +100,40 @@ describe("ChatSurface smoke", () => {
     expect(screen.getByTestId("session-message-agent")).toHaveTextContent("Earlier reply");
   });
 
+  it.each([
+    { promptsBlocked: undefined, sendEnabled: true },
+    { promptsBlocked: true, sendEnabled: false },
+  ])(
+    "shows every transcriptError but gates Send only when promptsBlocked is $promptsBlocked",
+    ({ promptsBlocked, sendEnabled }) => {
+      vi.restoreAllMocks();
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, callbacks) => {
+          callbacks.onSnapshot?.({
+            type: "snapshot",
+            protocolVersion: 2,
+            cursor: 0,
+            model: "auto",
+            turnState: "idle",
+            reset: false,
+            transcriptError: "activity report failed",
+            ...(promptsBlocked ? { promptsBlocked: true } : {}),
+          });
+          callbacks.onReady("auto");
+          return transport;
+        },
+      );
+
+      mountChat();
+      fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Ship it" } });
+
+      expect(screen.getByTestId("session-transcript-notice")).toHaveTextContent(
+        "activity report failed",
+      );
+      expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", !sendEnabled);
+    },
+  );
+
   it("opens Diff Review on a left swipe", async () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();

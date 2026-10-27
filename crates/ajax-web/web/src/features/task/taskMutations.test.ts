@@ -8,7 +8,6 @@ const dropAction = { action: "drop" } as WebAction;
 function freshHandles(): DropUndoHandles {
   return {
     dropTimerRef: { current: null },
-    dropResolvedRef: { current: false },
   };
 }
 

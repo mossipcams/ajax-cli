@@ -23,6 +23,18 @@ describe("failedTurnPromptToRestore", () => {
     });
   });
 
+  it("returns the optimistic prompt's clientMessageId so the outbox entry can be withdrawn", () => {
+    const conversation: ConversationItem[] = [
+      { kind: "prose", id: "u1", role: "user", text: "fix the test", clientMessageId: "c1" },
+      { kind: "note", id: "e2", tone: "error", text: "The agent stopped." },
+    ];
+    expect(failedTurnPromptToRestore(conversation)).toEqual({
+      promptText: "fix the test",
+      failureKey: "e2",
+      clientMessageId: "c1",
+    });
+  });
+
   it("returns null when agent prose arrived before the error", () => {
     const conversation: ConversationItem[] = [
       { kind: "prose", id: "u1", role: "user", text: "go" },

@@ -497,7 +497,9 @@ describe("useSessionConnection", () => {
         });
       const transcriptErrorInView = () =>
         dispatched.reduce(reduceChatSession, initialChatSessionReducerState).view.transcriptError;
-      return { dispatched, snapshot, transcriptErrorInView, unmount };
+      const promptsBlockedInView = () =>
+        dispatched.reduce(reduceChatSession, initialChatSessionReducerState).view.promptsBlocked;
+      return { dispatched, snapshot, transcriptErrorInView, promptsBlockedInView, unmount };
     }
 
     it("applies a snapshot without transcript to the session view", () => {
@@ -537,6 +539,46 @@ describe("useSessionConnection", () => {
       });
 
       expect(transcriptErrorInView()).toBe("forced append failure");
+      unmount();
+    });
+
+    it("projects promptsBlocked only when the snapshot sets it", () => {
+      const { snapshot, transcriptErrorInView, promptsBlockedInView, unmount } =
+        renderSnapshotHarness();
+
+      snapshot({ transcript: undefined, transcriptError: "activity report failed" });
+      expect(transcriptErrorInView()).toBe("activity report failed");
+      expect(promptsBlockedInView()).toBeUndefined();
+
+      snapshot({
+        transcript: undefined,
+        transcriptError: "forced append failure",
+        promptsBlocked: true,
+      });
+      expect(promptsBlockedInView()).toBe(true);
+
+      snapshot({ transcript: undefined });
+      expect(promptsBlockedInView()).toBeUndefined();
+      unmount();
+    });
+
+    it("keeps promptsBlocked after a reset snapshot that replays a transcript", () => {
+      const { snapshot, promptsBlockedInView, unmount } = renderSnapshotHarness();
+
+      snapshot({
+        reset: true,
+        cursor: 3,
+        transcript: [
+          {
+            cursor: 0,
+            event: { type: "message", role: "agent", text: "Answer", itemId: "a1" },
+          },
+        ],
+        transcriptError: "forced append failure",
+        promptsBlocked: true,
+      });
+
+      expect(promptsBlockedInView()).toBe(true);
       unmount();
     });
   });

@@ -198,6 +198,31 @@ describe("Markdown", () => {
     expect(screen.getByRole("list")).not.toHaveAttribute("start");
   });
 
+  it("keeps a balanced closing parenthesis in a bare URL and leaves an unbalanced one outside", () => {
+    render(
+      <Markdown
+        source={"See https://en.wikipedia.org/wiki/Rust_(programming_language) or (https://example.com/a) here"}
+      />,
+    );
+    const rust = "https://en.wikipedia.org/wiki/Rust_(programming_language)";
+    expect(screen.getByRole("link", { name: rust })).toHaveAttribute("href", rust);
+    expect(screen.getByRole("link", { name: "https://example.com/a" })).toHaveAttribute(
+      "href",
+      "https://example.com/a",
+    );
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("keeps links and code inside emphasis", () => {
+    render(<Markdown source={"*see [the docs](https://example.com/docs) and `npm test`*"} />);
+    const emphasis = screen.getByText((_, element) => element?.tagName === "EM");
+    expect(within(emphasis).getByRole("link", { name: "the docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+    expect(within(emphasis).getByText("npm test").tagName).toBe("CODE");
+  });
+
   it("renders *text* and _text_ as emphasis without touching bold, code, snake_case, or bullets", () => {
     render(
       <Markdown

@@ -213,3 +213,29 @@ fn tail_snapshot_flag_requires_exact_key_and_value() {
     // A key that merely contains the name does not opt in.
     assert!(!parse_tail_snapshot_flag(Some("xsnapshotTail=1")));
 }
+
+#[test]
+fn prompts_blocked_is_omitted_unless_the_durability_fault_blocks_prompts() {
+    let base = SessionSnapshot::new(
+        7,
+        "composer-2.5".to_string(),
+        false,
+        true,
+        None,
+        None,
+        SessionChrome::default(),
+    )
+    .with_transcript_error(Some("activity report failed".to_string()));
+    let notice_only = serde_json::to_value(&base).unwrap();
+    assert_eq!(notice_only["transcriptError"], "activity report failed");
+    assert!(notice_only.get("promptsBlocked").is_none());
+
+    let blocked = base.with_prompts_blocked(true);
+    let json = serde_json::to_value(&blocked).unwrap();
+    assert_eq!(json["promptsBlocked"], true);
+
+    let mut value = json;
+    value.as_object_mut().unwrap().remove("promptsBlocked");
+    let parsed: SessionSnapshot = serde_json::from_value(value).unwrap();
+    assert!(!parsed.prompts_blocked);
+}

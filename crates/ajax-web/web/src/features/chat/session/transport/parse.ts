@@ -317,6 +317,7 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
           ...(transcriptError !== undefined ? { transcriptError } : {}),
+          ...(payload.promptsBlocked === true ? { promptsBlocked: true } : {}),
           ...(transcript !== undefined ? { transcript } : {}),
           ...(transcriptFrom !== undefined ? { transcriptFrom } : {}),
           ...(transcriptFloor !== undefined ? { transcriptFloor } : {}),

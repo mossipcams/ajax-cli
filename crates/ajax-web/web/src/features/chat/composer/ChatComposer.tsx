@@ -4,6 +4,7 @@ import {
   preventComposerHotbarFocusSteal,
 } from "./hotbarKeyboard";
 import { autoGrow } from "./autoGrow";
+import { isBuiltInClearCommand } from "./builtInCommands";
 import { useComposerContext } from "./useComposer";
 
 export type ChatComposerProps = {
@@ -51,6 +52,8 @@ export default function ChatComposer({
 
   const hotbarRef = useRef<HTMLDivElement>(null);
   const canPrompt = connected && promptingEnabled;
+  // /clear never reaches the prompt path, so it stays sendable while prompting is blocked.
+  const canSend = connected && (promptingEnabled || isBuiltInClearCommand(draft));
   const transcriptNotice = transcriptError?.trim() || null;
 
   useLayoutEffect(() => {
@@ -193,7 +196,7 @@ export default function ChatComposer({
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!canPrompt || (!draft.trim() && attachments.length === 0 && queued === null)}
+          disabled={!canSend || (!draft.trim() && attachments.length === 0 && queued === null)}
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg

@@ -119,7 +119,7 @@ function ChatSessionBody({
 }) {
   const { surfaceStyle, scrollToLatest } = useChatScroller();
   const { confirmedModel, configOptions, availableCommands, promptCapabilities } = view.model;
-  const promptingEnabled = !view.transcriptError?.trim();
+  const promptingEnabled = !view.promptsBlocked;
 
   return (
     <>

@@ -600,6 +600,19 @@ describe("ChatComposer", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("Please fix the flaky test");
     expect(screen.getByTestId("session-note-error")).toBeInTheDocument();
     expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
+  });
+
+  it("withdraws a restored failed prompt from the outbox even when the draft is not replaced", () => {
+    mountChat();
+    typeComposer("Please fix the flaky test");
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Something newer" } });
+    transport.withdrawQueuedPrompt.mockClear();
+
+    send({ type: "turn_end", stopReason: "error" });
+
+    expect(screen.getByLabelText("Message")).toHaveValue("Something newer");
+    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
   });
 
   it("does not overwrite a non-empty composer draft when a turn fails", () => {
@@ -689,5 +702,37 @@ describe("ChatComposer transcript durability gate", () => {
       "forced append failure",
     );
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("keeps /clear sendable while prompting is blocked", () => {
+    const noop = vi.fn();
+    const sendPrompt = vi.fn();
+    const sendClear = vi.fn();
+    render(
+      <ComposerProvider
+        handle="web/fix-login"
+        connected
+        promptingEnabled={false}
+        busy={false}
+        everOpened
+        agentStarting={false}
+        conversation={[]}
+        conversationRevision={0}
+        composerRef={{ current: null }}
+        scrollToLatest={noop}
+        sendPrompt={sendPrompt}
+        withdrawQueuedPrompt={noop}
+        sendCancel={noop}
+        sendClear={sendClear}
+        markStopped={noop}
+      >
+        <ChatComposer transcriptError="forced append failure" />
+      </ComposerProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "/clear" } });
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    fireEvent.keyDown(screen.getByLabelText("Message"), { key: "Enter", shiftKey: false });
+    expect(sendClear).toHaveBeenCalledOnce();
+    expect(sendPrompt).not.toHaveBeenCalled();
   });
 });

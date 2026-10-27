@@ -25,7 +25,6 @@ export {
 export { useTaskOperationMutation, type ExecuteTaskOperation } from "./useTaskOperationMutation";
 export {
   commitConfirmedAction,
-  clearDropTimer,
   registerDropComposerCleanup,
   type DropUndoHandles,
   type TaskMutationCallbacks,

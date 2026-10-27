@@ -103,8 +103,10 @@ export interface ChatSessionView {
   elicitation: ChatElicitationState;
   usage: ChatUsageState;
   model: ChatModelState;
-  /** Host-reported transcript durability failure; present only while set. */
+  /** Host-reported transcript fault; present only while set. */
   transcriptError?: string;
+  /** Present only while the durability fault blocks prompts. */
+  promptsBlocked?: boolean;
   revision: number;
 }
 
@@ -143,7 +145,7 @@ export type ChatSessionEvent =
   | { type: "turn_end"; stopReason?: string }
   | { type: "session_error"; message: string }
   | { type: "session_ready"; busy?: boolean; reset?: boolean }
-  | { type: "transcript_snapshot"; transcriptError?: string }
+  | { type: "transcript_snapshot"; transcriptError?: string; promptsBlocked?: boolean }
   | { type: "prompt_accepted"; clientMessageId: string }
   | { type: "history_bounds"; from: number; floor: number }
   | { type: "prepend"; events: ChatSessionEvent[]; from: number };

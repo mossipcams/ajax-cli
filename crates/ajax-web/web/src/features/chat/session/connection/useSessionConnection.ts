@@ -24,6 +24,18 @@ import type { ConnectionState } from "./connectionState";
 
 type Dispatch = (action: ChatSessionAction) => void;
 
+type ForwardedTranscriptState = { transcriptError?: string; promptsBlocked: boolean };
+
+function sameTranscriptState(
+  next: ForwardedTranscriptState,
+  forwarded: ForwardedTranscriptState,
+): boolean {
+  return (
+    next.transcriptError === forwarded.transcriptError &&
+    next.promptsBlocked === forwarded.promptsBlocked
+  );
+}
+
 function dispatchWireEvent(dispatch: Dispatch, event: WebSessionServerEvent): void {
   const projected = projectWireEvent(event);
   if (projected) dispatch({ type: "event", event: projected });
@@ -79,7 +91,7 @@ export function useSessionConnection({
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let buffer: MessageBuffer | undefined;
     let nextToReadCursor: number | undefined;
-    let forwardedTranscriptError: string | undefined;
+    let forwardedTranscript: ForwardedTranscriptState = { promptsBlocked: false };
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -127,11 +139,14 @@ export function useSessionConnection({
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
       onSessionAvailableCommands?.(snapshot.availableCommands);
       onSessionPromptCapabilities?.(snapshot.promptCapabilities);
-      const { transcriptError } = snapshot;
+      const transcript: ForwardedTranscriptState = {
+        transcriptError: snapshot.transcriptError,
+        promptsBlocked: snapshot.promptsBlocked === true,
+      };
       if (snapshot.transcript === undefined) {
-        if (transcriptError !== forwardedTranscriptError) {
-          forwardedTranscriptError = transcriptError;
-          dispatch({ type: "event", event: { type: "transcript_snapshot", transcriptError } });
+        if (!sameTranscriptState(transcript, forwardedTranscript)) {
+          forwardedTranscript = transcript;
+          dispatch({ type: "event", event: { type: "transcript_snapshot", ...transcript } });
         }
         return;
       }
@@ -150,10 +165,14 @@ export function useSessionConnection({
         const next = projectWireEvent(normalizeEvent(event));
         return next ? [next] : [];
       });
-      // A replayed transcript can reset the view, so re-send a present error on every replay.
-      if (transcriptError !== undefined || transcriptError !== forwardedTranscriptError) {
-        projected.push({ type: "transcript_snapshot", transcriptError });
-        forwardedTranscriptError = transcriptError;
+      // A replayed transcript can reset the view, so re-send a present fault on every replay.
+      if (
+        transcript.transcriptError !== undefined ||
+        transcript.promptsBlocked ||
+        !sameTranscriptState(transcript, forwardedTranscript)
+      ) {
+        projected.push({ type: "transcript_snapshot", ...transcript });
+        forwardedTranscript = transcript;
       }
       if (
         typeof snapshot.transcriptFrom === "number" &&

@@ -154,10 +154,11 @@ export function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
+// A bare URL may end in a ')' only when a '(' inside the URL closes it, as in Wikipedia titles.
 const INLINE =
-  /(`[^`]+`|\*\*[^*]+\*\*|\*(?![\s*])[^*\n]*?[^\s*]\*|\b_(?!\s)[^_\n]*?[^\s_]_\b|\[[^\]]+\]\((?:https?:\/\/[^)\s]+)\)|https?:\/\/[^\s<>`]*[^\s<>`.,;:!?)'"\]])/g;
+  /(`[^`]+`|\*\*[^*]+\*\*|\*(?![\s*])[^*\n]*?[^\s*]\*|\b_(?!\s)[^_\n]*?[^\s_]_\b|\[[^\]]+\]\((?:https?:\/\/[^)\s]+)\)|https?:\/\/(?:\([^\s<>`()]*\)|[^\s<>`(])*(?:[^\s<>`.,;:!?()'"\]]|\([^\s<>`()]*\)))/g;
 const EMPHASIS = /^(?:\*(?![\s*])[^*\n]*?[^\s*]\*|_(?!\s)[^_\n]*?[^\s_]_)$/;
-const BARE_URL = /^https?:\/\/[^\s<>`]*[^\s<>`.,;:!?)'"\]]$/;
+const BARE_URL = /^https?:\/\/(?:\([^\s<>`()]*\)|[^\s<>`(])*(?:[^\s<>`.,;:!?()'"\]]|\([^\s<>`()]*\))$/;
 
 function safeLink(href: string, label: string, key: string): ReactNode {
   try {
@@ -186,7 +187,7 @@ export function renderInline(text: string, keyPrefix: string): ReactNode[] {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return <strong key={key}>{part.slice(2, -2)}</strong>;
     }
-    if (EMPHASIS.test(part)) return <em key={key}>{part.slice(1, -1)}</em>;
+    if (EMPHASIS.test(part)) return <em key={key}>{renderInline(part.slice(1, -1), key)}</em>;
     const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(part);
     if (link) return safeLink(link[2], link[1], key);
     if (BARE_URL.test(part)) return safeLink(part, part, key);

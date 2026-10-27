@@ -20,7 +20,6 @@ export type TaskMutationCallbacks = {
 
 export type DropUndoHandles = {
   dropTimerRef: { current: ReturnType<typeof setTimeout> | null };
-  dropResolvedRef: { current: boolean };
 };
 
 type DropComposerCleanup = (handle: string) => void;
@@ -33,11 +32,6 @@ export function registerDropComposerCleanup(fn: DropComposerCleanup | null): voi
 
 function runDropComposerCleanup(handle: string): void {
   dropComposerCleanup?.(handle);
-}
-
-export function clearDropTimer(handles: DropUndoHandles) {
-  if (handles.dropTimerRef.current) clearTimeout(handles.dropTimerRef.current);
-  handles.dropTimerRef.current = null;
 }
 
 export async function runTaskAction(

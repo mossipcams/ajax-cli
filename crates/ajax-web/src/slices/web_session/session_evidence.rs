@@ -48,6 +48,18 @@ impl SessionEvidence {
             .or_else(|| self.transcript_corruption.clone())
     }
 
+    /// Only the durability fault blocks prompts; the other transcript errors are shown alone.
+    pub(super) fn prompts_blocked(&self) -> bool {
+        self.transcript_durability_fault.is_some()
+    }
+
+    /// Clearing a fault the browser was shown must republish, or the notice stays stale.
+    fn clear_activity_report_fault(&mut self) {
+        if self.activity_report_fault.take().is_some() {
+            self.pending_transcript_error_snapshot = true;
+        }
+    }
+
     pub(super) fn note_activity_report_failure(&mut self, error: &SessionError) {
         let message = activity_report_transcript_error(error);
         self.activity_report_fault = Some(message);
@@ -62,7 +74,7 @@ impl SessionEvidence {
             Ok(()) => {
                 self.activity_reporter.commit(pending);
                 self.pending_activity_report = None;
-                self.activity_report_fault = None;
+                self.clear_activity_report_fault();
             }
             Err(error) => self.note_activity_report_failure(&error),
         }
@@ -103,7 +115,7 @@ impl SessionEvidence {
             Ok(()) => {
                 self.activity_reporter.commit(activity);
                 self.pending_activity_report = None;
-                self.activity_report_fault = None;
+                self.clear_activity_report_fault();
             }
             Err(error) => {
                 self.note_activity_report_failure(&error);
@@ -220,5 +232,51 @@ mod tests {
             "a turn start that was never delivered must not land after the turn end"
         );
         assert!(evidence.pending_activity_report.is_none());
+    }
+
+    fn idle_evidence() -> SessionEvidence {
+        SessionEvidence {
+            activity_reporter: SessionActivityReporter::default(),
+            pending_activity_report: None,
+            report_activity: Some(std::sync::Arc::new(
+                |_qualified_handle: &str, _activity: SessionActivity| true,
+            )),
+            activity_report_fault: None,
+            pending_activity_report_error_snapshot: false,
+            last_logged_spawn_error_id: None,
+            transcript_durability_fault: None,
+            pending_transcript_error_snapshot: false,
+            transcript_corruption: None,
+        }
+    }
+
+    #[test]
+    fn prompts_blocked_is_set_only_for_the_durability_fault() {
+        let mut evidence = idle_evidence();
+        assert!(!evidence.prompts_blocked());
+
+        evidence.transcript_corruption = Some("stored session is unreadable".to_string());
+        assert!(evidence.transcript_error().is_some());
+        assert!(!evidence.prompts_blocked());
+
+        evidence.activity_report_fault = Some("activity report failed".to_string());
+        assert!(!evidence.prompts_blocked());
+
+        evidence.note_transcript_durability_fault("append failed".to_string());
+        assert!(evidence.prompts_blocked());
+    }
+
+    #[test]
+    fn clearing_the_activity_report_fault_republishes_the_transcript_error_snapshot() {
+        let mut evidence = idle_evidence();
+        evidence.note_activity_report_failure(&SessionError::persist("activity report failed"));
+        evidence.pending_activity_report_error_snapshot = false;
+        evidence.pending_transcript_error_snapshot = false;
+        evidence.pending_activity_report = Some(SessionActivity::TurnEnded);
+
+        evidence.flush_pending_activity_report("web/fix-login");
+
+        assert!(evidence.transcript_error().is_none());
+        assert!(evidence.pending_transcript_error_snapshot);
     }
 }

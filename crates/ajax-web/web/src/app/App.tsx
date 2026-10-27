@@ -175,8 +175,7 @@ function AppContent() {
   const resultIdRef = useRef(0);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmState | null>(null);
   const dropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dropResolvedRef = useRef(false);
-  const dropHandles: DropUndoHandles = { dropTimerRef, dropResolvedRef };
+  const dropHandles: DropUndoHandles = { dropTimerRef };
   const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
   const reloadLatchRef = useRef(false);
   const [pullDistance, setPullDistance] = useState(0);

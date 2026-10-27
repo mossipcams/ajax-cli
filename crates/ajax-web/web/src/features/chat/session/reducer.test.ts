@@ -912,3 +912,57 @@ describe("transcript durability projection", () => {
     expect(cleared.view.transcriptError).toBeUndefined();
   });
 });
+
+describe("failed optimistic prompts", () => {
+  const optimistic = () =>
+    reduceChatSession(initialChatSessionReducerState, {
+      type: "prompt",
+      text: "Ship it",
+      clientMessageId: "c1",
+    });
+
+  it("error after an optimistic prompt clears Sending…", () => {
+    const failed = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "session_error", message: "prompt rejected by host" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: false });
+    expect(failed.view.turn.busy).toBe(false);
+  });
+
+  it("turn_end with an error after an optimistic prompt clears Sending…", () => {
+    const failed = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "turn_end", stopReason: "error" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: false });
+  });
+
+  it("a normal turn_end leaves an unaccepted prompt pending", () => {
+    const ended = reduceChatSession(optimistic(), {
+      type: "event",
+      event: { type: "turn_end", stopReason: "end_turn" },
+    });
+    expect(ended.view.conversation[0]).toMatchObject({ pending: true });
+  });
+});
+
+describe("promptsBlocked projection", () => {
+  it("projects promptsBlocked with the snapshot and clears it when a later snapshot omits it", () => {
+    const blocked = reduceChatSession(initialChatSessionReducerState, {
+      type: "event",
+      event: {
+        type: "transcript_snapshot",
+        transcriptError: "forced append failure",
+        promptsBlocked: true,
+      },
+    });
+    expect(blocked.view.promptsBlocked).toBe(true);
+    const notice = reduceChatSession(blocked, {
+      type: "event",
+      event: { type: "transcript_snapshot", transcriptError: "activity report failed" },
+    });
+    expect(notice.view.transcriptError).toBe("activity report failed");
+    expect(notice.view.promptsBlocked).toBeUndefined();
+  });
+});

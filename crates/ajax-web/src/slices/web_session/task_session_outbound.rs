@@ -22,6 +22,7 @@ pub(super) fn attach_snapshot(
         },
     );
     snapshot.transcript_error = state.evidence.transcript_error();
+    snapshot.prompts_blocked = state.evidence.prompts_blocked();
     AttachSnapshot {
         generation: state.generation,
         snapshot,
@@ -118,6 +119,7 @@ fn snapshot(
         },
     )
     .with_transcript_error(state.evidence.transcript_error())
+    .with_prompts_blocked(state.evidence.prompts_blocked())
 }
 
 #[cfg(test)]

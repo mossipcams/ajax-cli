@@ -85,8 +85,10 @@ export interface SessionSnapshot {
   turnState: "idle" | "busy";
   reset: boolean;
   agentPending?: boolean;
-  /** Host durability failure for the transcript; Send stays gated while set. */
+  /** Host transcript fault message; shown for every source. */
   transcriptError?: string;
+  /** Set only for the durability fault; gates Send, Attach and Mic while true. */
+  promptsBlocked?: boolean;
   pendingPermission?: {
     requestId: string;
     title?: string | null;

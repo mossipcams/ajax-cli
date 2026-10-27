@@ -53,4 +53,20 @@ describe("webSessionFixtures", () => {
     const healthy = parseServerFrame(snapshotJson());
     expect(healthy?.kind === "snapshot" && "transcriptError" in healthy.snapshot).toBe(false);
   });
+
+  it("parses promptsBlocked only when the host sets it true", () => {
+    const base = {
+      type: "snapshot",
+      protocolVersion: SESSION_PROTOCOL_VERSION,
+      cursor: 0,
+      model: "auto",
+      turnState: "idle",
+      reset: false,
+      transcriptError: "forced append failure",
+    };
+    const blocked = parseServerFrame(JSON.stringify({ ...base, promptsBlocked: true }));
+    expect(blocked).toMatchObject({ kind: "snapshot", snapshot: { promptsBlocked: true } });
+    const notice = parseServerFrame(JSON.stringify(base));
+    expect(notice?.kind === "snapshot" && "promptsBlocked" in notice.snapshot).toBe(false);
+  });
 });

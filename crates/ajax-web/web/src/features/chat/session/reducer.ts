@@ -23,6 +23,11 @@ function applyTranscriptSnapshot(
   } else {
     view.transcriptError = event.transcriptError;
   }
+  if (event.promptsBlocked === true) {
+    view.promptsBlocked = true;
+  } else {
+    delete view.promptsBlocked;
+  }
   return { ...state, view };
 }
 
