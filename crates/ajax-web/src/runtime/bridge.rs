@@ -177,7 +177,8 @@ pub(crate) fn operation_error_response(
 
 pub(crate) fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
     let operator_action = OperatorAction::from_label(action)?;
-    if supported_web_action(operator_action) {
+    // Repair reaches operate, which accepts only a confirmed branch adoption.
+    if supported_web_action(operator_action) || operator_action == OperatorAction::Repair {
         return None;
     }
     let message = match operator_action {

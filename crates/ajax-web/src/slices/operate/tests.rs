@@ -4,7 +4,9 @@ use ajax_core::{
     adapters::{CommandOutput, RecordingCommandRunner},
     commands::{CommandContext, CommandError},
     config::{Config, ManagedRepo},
-    models::{GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, TaskId, TmuxStatus},
+    models::{
+        GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, TaskId, TmuxStatus,
+    },
     registry::{InMemoryRegistry, Registry as _},
 };
 
@@ -108,6 +110,30 @@ fn operate_slice_delegates_resume_to_core_operation_without_attach() {
 }
 
 #[test]
+fn operate_slice_ship_with_unpushed_commits_runs_once_confirmed() {
+    let mut task = crate::test_support::fix_login_task();
+    task.lifecycle_status = LifecycleStatus::Reviewable;
+    task.add_side_flag(SideFlag::Unpushed);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut runner = RecordingCommandRunner::default();
+
+    let outcome = operate(
+        &mut context,
+        &mut runner,
+        OperateRequest {
+            task_handle: "web/fix-login".to_string(),
+            action: "ship".to_string(),
+            confirmed: true,
+            branch_adoption: None,
+        },
+    )
+    .unwrap();
+
+    assert!(outcome.state_changed);
+    assert!(!runner.commands().is_empty());
+}
+
+#[test]
 fn operate_slice_rejects_repair_as_unsupported_capability() {
     let mut context = context_with_reviewable_task();
     let mut runner = RecordingCommandRunner::default();
@@ -126,6 +152,37 @@ fn operate_slice_rejects_repair_as_unsupported_capability() {
 
     assert!(matches!(error, OperateError::UnsupportedCapability(_)));
     assert!(runner.commands().is_empty());
+}
+
+#[test]
+fn operate_slice_runs_confirmed_repair_branch_adoption_for_renamed_branch() {
+    let mut context = context_with_renamed_branch();
+    let mut runner = RecordingCommandRunner::default();
+
+    let outcome = operate(
+        &mut context,
+        &mut runner,
+        OperateRequest {
+            task_handle: "web/fix-login".to_string(),
+            action: "repair".to_string(),
+            confirmed: true,
+            branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
+                expected_branch: "ajax/fix-login".to_string(),
+                observed_branch: "fix/web/login".to_string(),
+            }),
+        },
+    )
+    .unwrap();
+
+    assert!(outcome.state_changed);
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .branch,
+        "fix/web/login"
+    );
 }
 
 #[test]
@@ -692,6 +749,29 @@ fn context_with_repo_path(repo_path: &std::path::Path) -> CommandContext<InMemor
         ..Config::default()
     };
     CommandContext::new(config, InMemoryRegistry::default())
+}
+
+fn context_with_renamed_branch() -> CommandContext<InMemoryRegistry> {
+    let mut context = context_with_reviewable_task();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .unwrap();
+    task.lifecycle_status = LifecycleStatus::Active;
+    task.git_status = Some(GitStatus {
+        worktree_exists: true,
+        branch_exists: false,
+        current_branch: Some("fix/web/login".to_string()),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    context
 }
 
 fn context_with_named_checkout_mismatch() -> CommandContext<InMemoryRegistry> {

@@ -110,6 +110,9 @@ fn operate_inner<R: Registry>(
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
         )),
+        OperatorAction::Repair if request.branch_adoption.is_some() => {
+            execute_task_command(context, runner, TaskCommandKind::Repair, &request)
+        }
         OperatorAction::Repair => Err(OperateError::UnsupportedCapability(
             "repair is not supported in Web Cockpit; use Drop or CLI repair",
         )),
@@ -597,7 +600,7 @@ pub fn operate_error_code(error: &OperateError) -> &'static str {
 fn format_command_error(error: &CommandError) -> String {
     match error {
         CommandError::ConfirmationRequired => {
-            "confirmation required — tap again to confirm".to_string()
+            "confirmation required — confirm the action to continue".to_string()
         }
         CommandError::PlanBlocked(reasons) => reasons.join("; "),
         CommandError::TaskNotFound(handle) => format!("task not found: {handle}"),
