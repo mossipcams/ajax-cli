@@ -56,68 +56,6 @@ pub trait Registry {
     fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent>;
     fn record_step_receipt(&mut self, receipt: StepReceipt) -> Result<(), RegistryError>;
     fn step_receipts_for_task(&self, task_id: &TaskId) -> Vec<&StepReceipt>;
-
-    fn adopt_task_branch(
-        &mut self,
-        task_id: &TaskId,
-        expected_branch: &str,
-        observed_branch: &str,
-    ) -> Result<(), RegistryError> {
-        if expected_branch == observed_branch {
-            return Err(RegistryError::InvalidBranchAdoption(
-                "expected and observed branches must differ".to_string(),
-            ));
-        }
-
-        let Some(task) = self.get_task_mut(task_id) else {
-            return Err(RegistryError::TaskNotFound(task_id.clone()));
-        };
-
-        if task.branch != expected_branch {
-            return Err(RegistryError::InvalidBranchAdoption(format!(
-                "task branch intent is {}; expected {expected_branch}",
-                task.branch
-            )));
-        }
-
-        if !task.has_checkout_mismatch() {
-            return Err(RegistryError::InvalidBranchAdoption(
-                "task no longer has a checkout mismatch".to_string(),
-            ));
-        }
-
-        let Some(git_status) = task.git_status.clone() else {
-            return Err(RegistryError::InvalidBranchAdoption(
-                "git evidence is missing".to_string(),
-            ));
-        };
-
-        if !git_status.worktree_exists {
-            return Err(RegistryError::InvalidBranchAdoption(
-                "worktree is not present".to_string(),
-            ));
-        }
-
-        if git_status.current_branch.as_deref() != Some(observed_branch) {
-            return Err(RegistryError::InvalidBranchAdoption(format!(
-                "observed checkout is {}; expected {observed_branch}",
-                git_status.current_branch.as_deref().unwrap_or("detached")
-            )));
-        }
-
-        task.branch = observed_branch.to_string();
-        let mut reconciled = git_status;
-        reconciled.branch_exists = true;
-        reconciled.current_branch = Some(observed_branch.to_string());
-        task.apply_git_status(reconciled);
-        refresh_task_annotations(task);
-
-        self.record_event(
-            task_id.clone(),
-            RegistryEventKind::SubstrateChanged,
-            format!("task branch adopted from {expected_branch} to {observed_branch}"),
-        )
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -348,7 +286,6 @@ pub enum RegistryError {
     DuplicateTask(TaskId),
     TaskNotFound(TaskId),
     InvalidLifecycleTransition(LifecycleTransitionError),
-    InvalidBranchAdoption(String),
 }
 
 impl fmt::Display for RegistryError {
@@ -365,9 +302,6 @@ impl fmt::Display for RegistryError {
                 "invalid lifecycle transition: {:?} -> {:?} ({:?})",
                 error.from, error.to, error.reason
             ),
-            Self::InvalidBranchAdoption(message) => {
-                write!(formatter, "invalid branch adoption: {message}")
-            }
         }
     }
 }

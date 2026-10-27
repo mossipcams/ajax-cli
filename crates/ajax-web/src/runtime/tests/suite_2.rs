@@ -335,34 +335,6 @@ async fn axum_router_reports_shell_version() {
 }
 
 #[tokio::test]
-async fn axum_operation_preserves_branch_adoption_confirmation() {
-    let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-    let (state, cookie, app) = app_with(context, TestBridge::default(), "adoption-confirm");
-
-    let response = post_json(
-            &app,
-            &cookie,
-            "/api/operations",
-            r#"{"task_handle":"web/fix-login","action":"review","confirmed":true,"branch_adoption":{"expected_branch":"ajax/fix-login","observed_branch":"fix/pane-stuck"}}"#,
-        )
-        .await;
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        state.shared().bridge.operate,
-        Some(OperateRequest {
-            task_handle: "web/fix-login".to_string(),
-            action: "review".to_string(),
-            confirmed: true,
-            branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
-                expected_branch: "ajax/fix-login".to_string(),
-                observed_branch: "fix/pane-stuck".to_string(),
-            }),
-        })
-    );
-}
-
-#[tokio::test]
 async fn axum_operations_are_idempotent_by_request_id() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
     let (state, cookie, app) = app_with(context, TestBridge::default(), "axum-idempotency");

@@ -285,7 +285,25 @@ impl Task {
         self.has_missing_worktree() || self.has_missing_branch()
     }
 
-    pub fn apply_git_status(&mut self, status: GitStatus) {
+    pub fn apply_git_status(&mut self, mut status: GitStatus) {
+        // Agents rename their branch (gh-pr-create requires it), so follow a rename
+        // instead of flagging a mismatch the operator has to adopt by hand. Only a
+        // true rename qualifies: the task branch is gone, and `git branch -m` refuses
+        // existing names, so this never claims a shared or another task's branch
+        // (which Drop would then delete). Base, detached, and plain checkouts of
+        // other branches stay mismatches.
+        if let Some(current) = status
+            .current_branch
+            .as_deref()
+            .filter(|current| {
+                status.worktree_exists && !status.branch_exists && !current.is_empty()
+            })
+            .filter(|current| *current != self.branch && *current != self.base_branch)
+        {
+            self.branch = current.to_string();
+            status.branch_exists = true;
+        }
+
         if status.worktree_exists {
             self.remove_side_flag(SideFlag::WorktreeMissing);
             self.clear_live_status_if(LiveStatusKind::WorktreeMissing);

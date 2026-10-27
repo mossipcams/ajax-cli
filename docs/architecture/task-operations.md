@@ -44,16 +44,13 @@ The task operation boundary now owns the main mutable task actions:
   (worktree exists, checkout misaligned), Open/Resume, Check, and Review remain
   available; Review diffs `base...HEAD` at the worktree path (CLI/operate text
   summary). Ship and Clean remain blocked until reconciliation; Drop stays
-  available as an escape hatch. Repair on
-  mismatch offers a zero-command, confirmation-required `BranchAdoptionPlan`
-  carrying the exact expected/observed branch pair; core revalidates that pair
-  at execution, updates only task branch intent, records a substrate-change
-  event, and preserves task identity, path, session, lifecycle, and history.
-  Adoption runs no branch-switch command. Detached checkout cannot be adopted;
-  the operator must switch to a named branch externally and refresh to clear
-  mismatch without changing intent. CLI and Cockpit adapters display the
-  core-provided pair in confirmation prompts, retain it between activations, and
-  resubmit it unchanged; core rejects stale or altered evidence.
+  available as an escape hatch. Applying Git evidence follows a renamed
+  branch: when the worktree is on a named branch other than the task branch and
+  the base branch, `Task::apply_git_status` adopts it as task branch intent with
+  no operator step, preserving task identity, path, session, lifecycle, and
+  history. Only a base-branch or detached checkout remains a mismatch; Repair
+  blocks it with the observed checkout and asks the operator to check out a
+  task branch and refresh.
 - Web Diff Review is a separate read-only projection surface (not a mutable
   task operation). Core observes GitHub PRs associated with a task branch,
   merges live `gh` results with durable `PullRequestRef` metadata on the task

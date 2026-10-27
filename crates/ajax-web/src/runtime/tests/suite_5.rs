@@ -97,7 +97,6 @@ fn logging_operate_unknown_action_includes_action_field() {
             task_handle: "web/fix-login".to_string(),
             action: "not-a-real-action".to_string(),
             confirmed: false,
-            branch_adoption: None,
         },
     )
     .unwrap_err();

@@ -19,7 +19,7 @@ pub(crate) use check::check_task_plan_after_worktree_recreate;
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
-pub use context::{BranchAdoptionPlan, CommandContext, CommandError, CommandPlan, OpenMode};
+pub use context::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};

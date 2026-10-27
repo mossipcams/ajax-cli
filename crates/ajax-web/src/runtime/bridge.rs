@@ -90,8 +90,6 @@ pub(crate) struct MobileActionRequest {
     pub(crate) action: String,
     #[serde(default)]
     pub(crate) confirmed: bool,
-    #[serde(default)]
-    pub(crate) branch_adoption: Option<ajax_core::commands::BranchAdoptionPlan>,
 }
 
 pub(crate) fn handle_action_request<C: CommandRunner>(
@@ -109,7 +107,6 @@ pub(crate) fn handle_action_request<C: CommandRunner>(
             task_handle: request.task_handle,
             action: request.action,
             confirmed: request.confirmed,
-            branch_adoption: request.branch_adoption,
         },
         context,
         runner,
@@ -177,8 +174,7 @@ pub(crate) fn operation_error_response(
 
 pub(crate) fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
     let operator_action = OperatorAction::from_label(action)?;
-    // Repair reaches operate, which accepts only a confirmed branch adoption.
-    if supported_web_action(operator_action) || operator_action == OperatorAction::Repair {
+    if supported_web_action(operator_action) {
         return None;
     }
     let message = match operator_action {

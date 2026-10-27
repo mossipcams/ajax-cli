@@ -49,7 +49,6 @@ export async function runTaskAction(
       action: action.action,
       request_id: requestId(),
       confirmed,
-      ...(action.branch_adoption ? { branch_adoption: action.branch_adoption } : {}),
     });
     if (result.response.cockpit) callbacks.onCockpit?.(result.response.cockpit);
     if (result.ok) {

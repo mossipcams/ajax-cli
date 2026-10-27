@@ -144,13 +144,6 @@ fn render_plan_human(plan: &commands::CommandPlan) -> String {
         lines.push("requires confirmation".to_string());
     }
 
-    if let Some(adoption) = &plan.branch_adoption {
-        lines.push(format!(
-            "adopt branch: {} (expected {})",
-            adoption.observed_branch, adoption.expected_branch
-        ));
-    }
-
     lines.extend(
         plan.blocked_reasons
             .iter()
@@ -221,39 +214,6 @@ mod tests {
         assert_eq!(
             rendered,
             "copy safe\n$ (cd '/tmp/ajax worktrees/feat;rm' && 'my tool' 'hello world' 'semi;colon' 'it'\\''s' '$(danger)')"
-        );
-    }
-
-    #[test]
-    fn render_plan_human_surfaces_typed_branch_adoption() {
-        let mut plan = CommandPlan::new("repair task: web/fix-login");
-        plan.set_branch_adoption("ajax/fix-login", "fix/pane-stuck");
-        plan.requires_confirmation = true;
-
-        let rendered = render_plan_human(&plan);
-
-        assert_eq!(
-            rendered,
-            "repair task: web/fix-login\nrequires confirmation\nadopt branch: fix/pane-stuck (expected ajax/fix-login)"
-        );
-    }
-
-    #[test]
-    fn render_plan_json_preserves_branch_adoption_fields() {
-        let mut plan = CommandPlan::new("repair task: web/fix-login");
-        plan.set_branch_adoption("ajax/fix-login", "fix/pane-stuck");
-        plan.requires_confirmation = true;
-
-        let rendered = render_plan(plan, true).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-
-        assert_eq!(
-            parsed["branch_adoption"]["expected_branch"],
-            "ajax/fix-login"
-        );
-        assert_eq!(
-            parsed["branch_adoption"]["observed_branch"],
-            "fix/pane-stuck"
         );
     }
 
