@@ -14,6 +14,7 @@ pub(crate) mod model_change;
 pub mod native_map;
 mod normalize;
 mod orphan_sweep;
+mod os_process;
 mod output_content;
 mod prepare_session;
 mod process_identity;

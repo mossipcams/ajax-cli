@@ -1,35 +1,20 @@
 //! Process-identity guard for terminating leftover agent processes.
 //!
-//! A recorded "start token" (the `lstart` field from `ps`) pins a pid to the
-//! exact process that was running when it was recorded, so a reused pid can
-//! never be signalled by mistake.
+//! A recorded "start token" (the process start time reported by the OS) pins a
+//! pid to the exact process that was running when it was recorded, so a reused
+//! pid can never be signalled by mistake.
 
+use super::os_process;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Read the start-time token for `pid` via `ps -p <pid> -o lstart=`.
-///
-/// Returns `Some(trimmed stdout)` only when the command ran, exited 0 and the
-/// trimmed output is non-empty; every other outcome is `None`. Pids `<= 0` are
-/// rejected without running anything.
+/// Read the start-time token for `pid`; `None` when the process is gone or
+/// `pid` is not positive. Pids `<= 0` are rejected without probing.
 pub(super) fn start_token(pid: i64) -> Option<String> {
     if pid <= 0 {
         return None;
     }
-    let output = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "lstart="])
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
+    os_process::start_token(pid)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

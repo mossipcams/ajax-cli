@@ -11,7 +11,7 @@
 //!
 //! [`BackgroundLevel`] keeps the evidence timing and is pure: it takes injected
 //! instants and read results. Only [`TaskSessionState::poll_background_jobs`]
-//! runs `ps`, on the blocking pool.
+//! reads the process table, on the blocking pool.
 
 use super::process_tree;
 use super::task_session::TaskSessionState;
@@ -22,11 +22,11 @@ use std::time::{Duration, Instant, SystemTime};
 pub(super) const END_DEBOUNCE: Duration = Duration::from_secs(5);
 
 /// The level stays held this long after the last successful scan. A failing
-/// `ps` therefore cannot hold the status forever.
+/// process-table read therefore cannot hold the status forever.
 pub(super) const SCAN_TTL: Duration = Duration::from_secs(30);
 
-// ponytail: `ps` polling has a ~2 s detection lag and one exec per poll while the
-// level is held. Upgrade path: harness-native background signals, such as the
+// ponytail: process-table polling has a ~2 s detection lag and one table read per
+// poll while the level is held. Upgrade path: harness-native background signals, such as the
 // Claude SDK `background_tasks_changed` message, where a harness exposes them.
 pub(super) const POLL_EVERY: Duration = Duration::from_secs(2);
 
@@ -34,11 +34,11 @@ pub(super) const POLL_EVERY: Duration = Duration::from_secs(2);
 /// ended is seen within this long.
 // ponytail: idle cost ceiling. Every session with a finished turn polls every
 // IDLE_POLL_EVERY, and the table cache is shared by age, so all sessions together
-// cost at most about one `ps` per 5 s host-wide. Upgrade path: harness-native
+// cost at most about one process-table read per 5 s host-wide. Upgrade path: harness-native
 // background signals, which would remove the idle poll entirely.
 pub(super) const IDLE_POLL_EVERY: Duration = Duration::from_secs(5);
 
-/// A turn-end read may reuse a process table this old, so turn ends share one `ps`.
+/// A turn-end read may reuse a process table this old, so turn ends share one read.
 pub(super) const PROBE_MAX_AGE: Duration = Duration::from_millis(250);
 
 /// A held tick read may reuse a process table this old.
@@ -137,7 +137,7 @@ impl BackgroundLevel {
 /// Whether `root`'s shell subtree holds a background shell, from the shared
 /// process table no older than `max_age`. No root (no client, or no child pid)
 /// has no process tree, so the level is clear. `None` means the table is
-/// unavailable (the sandbox denies `ps`): that is no evidence, not a clear level.
+/// unavailable (the kernel read is denied): that is no evidence, not a clear level.
 pub(super) fn probe(root: Option<u32>, max_age: Duration) -> Option<bool> {
     let Some(root) = root else {
         return Some(false);

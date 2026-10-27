@@ -928,18 +928,18 @@ only the chat live head knew a turn was in flight.
   user-prompt turn end reports `Background work running` at once and never `Done`
   first. A `Failed` turn never reads the level and reports `Agent stopped`; an idle,
   never-run or running root never carries it. No process tree (no client, or no
-  child pid) reads as clear. An unavailable `ps` snapshot is no evidence: it never
-  clears a held level and never sets an unheld one. While held, the level is one
+  child pid) reads as clear. An unavailable process-table read is no evidence: it
+  never clears a held level and never sets an unheld one. While held, the level is one
   synthetic completion-holding child run (`background`) and reads as `AgentRunning`
   with summary `Background work running` instead of `Done` or `WaitingForInput`.
   The actor ticks while the turn is finished: every 5 s while not held, so a shell
   started after the turn ended is seen, and every 2 s while held. A held level clears
   after 5 s with no shell seen, after 30 s with no successful scan, at once when the
   client is lost, or when the turn is no longer finished. Every session shares one
-  cached process table (`ps -A -o pid=,ppid=,comm=`): turn-end reads accept a table up
-  to 250 ms old, held ticks up to 1 s, and idle ticks up to 5 s, so a turn end and a
-  tick close together cost one `ps`, and idle polling across all sessions costs about
-  one `ps` per 5 s host-wide.
+  cached process table, read in-process from the kernel (see `os_process.rs`): turn-end
+  reads accept a table up to 250 ms old, held ticks up to 1 s, and idle ticks up to 5 s,
+  so a turn end and a tick close together cost one table read, and idle polling across
+  all sessions costs about one table read per 5 s host-wide.
   A restored session with background shells is not scanned until a turn finishes.
   Known ceiling: a harness that keeps an idle persistent shell reads as background
   work; only Claude sessions have been verified. A harness without lineage events

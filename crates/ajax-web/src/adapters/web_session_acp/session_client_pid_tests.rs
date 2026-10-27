@@ -1,9 +1,8 @@
 //! Tests for [`super::session_client::SessionClient::child_pid`]: one per transport,
 //! each spawned through the existing test seams (fake Pi RPC program, fake Claude
-//! Agent SDK module, fake ACP program) and verified against `ps`.
+//! Agent SDK module, fake ACP program) and verified with a `kill(pid, 0)` probe.
 
 use std::path::Path;
-use std::process::Command;
 
 use ajax_core::models::AgentClient;
 
@@ -12,14 +11,8 @@ use super::session_client::{with_test_pi_program, SessionClient};
 use super::{with_test_acp_extra_args, with_test_acp_program};
 
 fn assert_live_process(pid: u32) {
-    let out = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "pid="])
-        .output()
-        .expect("ps must run");
-    assert!(out.status.success(), "ps -p {pid} must succeed");
-    let listed = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !listed.trim().is_empty(),
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), None).is_ok(),
         "expected a live process for pid {pid}"
     );
 }
