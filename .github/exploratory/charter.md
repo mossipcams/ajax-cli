@@ -45,6 +45,10 @@ browser.
 - `memory.dullActions`: skip or sample lightly; do not repeat low-yield paths.
 - `memory.recommendedFocus` and `confirmedFingerprints`: hints only — follow suspicion.
 
+## Intended behaviour (not defects)
+
+- Phone fullscreen terminal: on a phone viewport, expanding the terminal makes the task header (including Details) inert by design; exit fullscreen to reach Details. Pointer interception on `task-details` while expanded on a phone is expected (#1135, fingerprint `expanded-terminal-blocks-details`). Desktop expanded mode keeps Details reachable; a failure there is still a defect.
+
 ## Defect verification
 
 Never classify an anomaly as confirmed immediately.
