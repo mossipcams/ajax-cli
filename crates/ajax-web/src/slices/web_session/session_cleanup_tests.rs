@@ -155,9 +155,11 @@ fn issue_1436_registry_reload_shuts_down_live_sessions_for_unowned_handles() {
     });
 
     let owned: HashSet<String> = [kept.to_string()].into_iter().collect();
-    directory
-        .runtime_handle()
-        .block_on(directory.inner().cleanup_unowned(&owned));
+    directory.runtime_handle().block_on(
+        directory
+            .inner()
+            .cleanup_unowned(|handle| owned.contains(handle)),
+    );
 
     assert!(
         !directory.inner().has_live_entry(dropped),
@@ -178,6 +180,55 @@ fn issue_1436_registry_reload_shuts_down_live_sessions_for_unowned_handles() {
             .events
             .contains(&note("kept transcript")),
         "owned session transcript must survive reload"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1436_handle_owned_again_before_cleanup_keeps_its_session() {
+    use super::test_support::BlockingSessionDirectory;
+    use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+    use ajax_core::models::AgentClient;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = scratch_dir("reowned");
+    let recreated = "web/recreated";
+    web_session_store::append_events(&dir, recreated, &[note("recreated transcript")]);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = super::test_support::fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(recreated, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire before reload");
+        });
+    });
+
+    // The first check is the candidate scan and reports the handle unowned.
+    // Every later check is the re-check at cleanup time, which reports it
+    // owned again because the task was recreated before cleanup ran.
+    let checks = AtomicUsize::new(0);
+    directory.runtime_handle().block_on(
+        directory
+            .inner()
+            .cleanup_unowned(|_| checks.fetch_add(1, Ordering::SeqCst) > 0),
+    );
+
+    assert!(
+        checks.load(Ordering::SeqCst) > 1,
+        "ownership must be re-checked before the actor is shut down"
+    );
+    assert!(
+        directory.inner().has_live_entry(recreated),
+        "recreated handle must keep its live session"
+    );
+    assert!(
+        web_session_store::load::<serde_json::Value>(&dir, recreated)
+            .events
+            .contains(&note("recreated transcript")),
+        "recreated handle must keep its stored transcript"
     );
 
     let _ = std::fs::remove_dir_all(dir);
@@ -209,9 +260,11 @@ fn issue_1436_registry_reload_keeps_sessions_when_every_handle_is_owned() {
     });
 
     let owned: HashSet<String> = [first, second].into_iter().map(str::to_string).collect();
-    directory
-        .runtime_handle()
-        .block_on(directory.inner().cleanup_unowned(&owned));
+    directory.runtime_handle().block_on(
+        directory
+            .inner()
+            .cleanup_unowned(|handle| owned.contains(handle)),
+    );
 
     for handle in [first, second] {
         assert!(

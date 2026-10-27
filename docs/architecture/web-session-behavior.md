@@ -445,9 +445,12 @@ error kind, so reconnect cannot append the same authentication error repeatedly.
   their persisted stored transcript, and a successful Drop performs the same
   cleanup (live ACP slot plus transcript) before the qualified handle can be
   reused. Ownership is derived from registry task handles only, not browser
-  routes, `localStorage`, or ACP slot state. After a registry reload from disk that changes the task set, the host
-  shuts down live sessions for tasks it no longer owns (for example a task dropped
-  from the CLI), so the dropped task's agent stops.
+  routes, `localStorage`, or ACP slot state. Any registry reload that removes
+  owned task handles (a Cockpit refresh or a reload after a write) shuts down the
+  live sessions for handles the host no longer owns (for example a task dropped
+  from the CLI), so the dropped task's agent stops. Ownership is re-checked at
+  cleanup time, and stored data is deleted only for handles still unowned with no
+  live session, so a task recreated under the same handle keeps its session.
 - Idle LRU eviction sends `Shutdown { close: false }` only to **restore-safe**
   slots: zero subscribers, no in-flight turn, empty host queue, a persisted ACP
   session id, and a harness that advertised `session/resume` or `loadSession` at

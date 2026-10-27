@@ -61,6 +61,7 @@ pub(super) struct TestBridge {
     clear_registry_on_operate: bool,
     persist_result: Result<(), crate::WebError>,
     acknowledge_probe: AcknowledgeProbe,
+    drop_task_on_refresh: Option<String>,
 }
 
 type AcknowledgeProbe = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
@@ -104,6 +105,7 @@ impl Default for TestBridge {
             clear_registry_on_operate: false,
             persist_result: Ok(()),
             acknowledge_probe: Arc::new(Mutex::new(None)),
+            drop_task_on_refresh: None,
         }
     }
 }
@@ -137,7 +139,7 @@ pub(super) fn release_gate(release: &Arc<(Mutex<bool>, Condvar)>) {
 impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
     fn refresh_cockpit(
         &mut self,
-        _context: &mut CommandContext<InMemoryRegistry>,
+        context: &mut CommandContext<InMemoryRegistry>,
         _runner: &mut R,
         tier: RefreshTier,
         deliver_notifications: bool,
@@ -154,7 +156,16 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         self.refresh_tier = Some(tier);
         self.deliver_notifications_flags.push(deliver_notifications);
         self.refresh_count += 1;
-        Ok(false)
+        let Some(handle) = self.drop_task_on_refresh.as_ref() else {
+            return Ok(false);
+        };
+        // Simulates a reload that finds the task dropped from another surface.
+        use ajax_core::registry::Registry as _;
+        context
+            .registry
+            .delete_task(&ajax_core::models::TaskId::new(handle))
+            .expect("drop task on refresh");
+        Ok(true)
     }
 
     fn execute_operate(
@@ -536,3 +547,5 @@ mod suite_3;
 mod suite_4;
 mod suite_5;
 mod suite_6;
+#[cfg(test)]
+mod unowned_cleanup;
