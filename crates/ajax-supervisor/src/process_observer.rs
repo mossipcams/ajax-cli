@@ -159,18 +159,7 @@ async fn supervise_launch<P: ProcessProtocol>(
         protocol.stdout_parser(),
     ));
 
-    let stderr_events = events.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Some(line) = lines.next_line().await? {
-            send_event(
-                &stderr_events,
-                MonitorEvent::Process(ProcessEvent::Stderr { line }),
-            )
-            .await?;
-        }
-        Ok::<(), SupervisorError>(())
-    });
+    let stderr_task = tokio::spawn(read_stderr_lines(stderr, events.clone()));
 
     let status = tokio::select! {
         status = child.wait() => {
@@ -185,13 +174,14 @@ async fn supervise_launch<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
-                    let status = terminate(&mut child).await?;
-                    // Terminal event so consumers do not keep a stale running state after cancel.
+                    // Terminal event before terminating: a child that ignores SIGTERM can outlast the
+                    // consumer's cancel drain. A signal-terminated child has no exit code anyway.
                     let _ = send_event(
                         &events,
-                        MonitorEvent::Process(ProcessEvent::Exited { code: status.code() }),
+                        MonitorEvent::Process(ProcessEvent::Exited { code: None }),
                     )
                     .await;
+                    terminate(&mut child).await?;
                     Err(SupervisorError::Process("process cancelled".to_string()))
                 }
                 Ok(()) => Err(SupervisorError::Process("process cancellation channel changed".to_string())),
@@ -306,6 +296,25 @@ where
             None => MonitorEvent::Process(ProcessEvent::Stdout { line }),
         };
         send_event(&events, event).await?;
+    }
+    Ok(())
+}
+
+/// Stderr never counts as progress, so this reader has no hang detector to reset.
+async fn read_stderr_lines<R>(
+    stderr: R,
+    events: mpsc::Sender<MonitorEvent>,
+) -> Result<(), SupervisorError>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+{
+    let mut lines = BufReader::new(stderr).lines();
+    while let Some(line) = lines.next_line().await? {
+        send_event(
+            &events,
+            MonitorEvent::Process(ProcessEvent::Stderr { line }),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -573,14 +582,17 @@ mod launch_tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::Arc,
+        sync::{atomic::AtomicBool, Arc, Mutex},
         time::{Duration, Instant},
     };
 
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::{mpsc, watch};
 
-    use super::{agent_command, supervise_launch, ProcessProtocol, SandboxInputs, StdoutParser};
+    use super::{
+        agent_command, read_stderr_lines, read_stdout_lines, send_hung_if_quiet, supervise_launch,
+        HangDetector, ProcessProtocol, SandboxInputs, StdoutParser,
+    };
     use crate::{agent::codex::CodexAdapter, SupervisorError};
 
     fn scratch_dir(name: &str) -> PathBuf {
@@ -835,117 +847,89 @@ mod launch_tests {
         );
     }
 
-    /// Runs `/bin/sh -c <script>` as the agent and parses `AGENT <text>` stdout lines into messages.
-    struct MarkerProtocol(String);
-
-    impl ProcessProtocol for MarkerProtocol {
-        fn process_name(&self) -> &str {
-            "shell"
-        }
-
-        fn program(&self) -> &str {
-            "/bin/sh"
-        }
-
-        fn args(&self, _prompt: &str) -> Vec<String> {
-            vec!["-c".to_string(), self.0.clone()]
-        }
-
-        fn stdout_parser(&self) -> StdoutParser {
-            Arc::new(|line: &str| {
-                line.strip_prefix("AGENT ").map(|text| AgentEvent::Message {
-                    text: text.to_string(),
-                })
-            })
-        }
+    /// A detector whose last output was 10 seconds ago, so it is hung unless output resets it.
+    fn stale_hang_detector() -> Arc<Mutex<HangDetector>> {
+        Arc::new(Mutex::new(HangDetector::new(
+            Instant::now() - Duration::from_secs(10),
+            Duration::from_secs(1),
+        )))
     }
 
-    /// Supervises `protocol` with a short hang threshold and returns every event the run emitted.
-    async fn events_with_hang_threshold<P: ProcessProtocol>(
-        protocol: &P,
-        hang_after: Duration,
-    ) -> Vec<MonitorEvent> {
-        let (tx, mut rx) = mpsc::channel(64);
-        let (_cancel_tx, cancel_rx) = watch::channel(false);
-        supervise_launch(
-            protocol,
-            "ignored",
-            tx,
-            Some(hang_after),
-            cancel_rx,
-            None,
-            SandboxInputs {
-                enabled: false,
-                nono: || panic!("nono must not be resolved when the sandbox is off"),
-                profile_dir: None,
-            },
-        )
-        .await
-        .unwrap();
-        let mut events = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            events.push(event);
-        }
-        events
-    }
-
-    fn has_hung(events: &[MonitorEvent]) -> bool {
-        events
-            .iter()
-            .any(|event| matches!(event, MonitorEvent::Process(ProcessEvent::Hung { .. })))
+    /// Runs the same check as the hang task and reports whether it would emit `Hung`.
+    async fn would_report_hung(detector: &Arc<Mutex<HangDetector>>) -> bool {
+        let (tx, _rx) = mpsc::channel(1);
+        send_hung_if_quiet(Some(detector), &tx, &AtomicBool::new(false))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn unparsed_stdout_does_not_reset_hang_detection() {
-        let protocol = ShellProtocol(
-            "i=0; while [ $i -lt 20 ]; do echo heartbeat $i; sleep 0.05; i=$((i+1)); done"
-                .to_string(),
-        );
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
+        let parse_line: StdoutParser = Arc::new(|_line: &str| None::<AgentEvent>);
 
-        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+        read_stdout_lines(
+            &b"heartbeat 0\nheartbeat 1\n"[..],
+            tx,
+            Some(Arc::clone(&detector)),
+            parse_line,
+        )
+        .await
+        .unwrap();
 
-        assert!(
-            events.contains(&MonitorEvent::Process(ProcessEvent::Stdout {
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Stdout {
                 line: "heartbeat 0".to_string()
-            })),
-            "{events:?}"
+            }))
         );
-        assert!(has_hung(&events), "{events:?}");
+        assert!(would_report_hung(&detector).await);
     }
 
     #[tokio::test]
     async fn stderr_does_not_reset_hang_detection() {
-        let protocol = ShellProtocol(
-            "i=0; while [ $i -lt 20 ]; do echo heartbeat $i >&2; sleep 0.05; i=$((i+1)); done"
-                .to_string(),
-        );
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
 
-        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+        read_stderr_lines(&b"heartbeat 0\nheartbeat 1\n"[..], tx)
+            .await
+            .unwrap();
 
-        assert!(
-            events.contains(&MonitorEvent::Process(ProcessEvent::Stderr {
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Stderr {
                 line: "heartbeat 0".to_string()
-            })),
-            "{events:?}"
+            }))
         );
-        assert!(has_hung(&events), "{events:?}");
+        assert!(would_report_hung(&detector).await);
     }
 
     #[tokio::test]
     async fn parsed_agent_events_keep_hang_detection_quiet() {
-        let protocol = MarkerProtocol(
-            "i=0; while [ $i -lt 20 ]; do echo \"AGENT tick $i\"; sleep 0.05; i=$((i+1)); done"
-                .to_string(),
-        );
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
+        let parse_line: StdoutParser = Arc::new(|line: &str| {
+            line.strip_prefix("AGENT ").map(|text| AgentEvent::Message {
+                text: text.to_string(),
+            })
+        });
 
-        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+        read_stdout_lines(
+            &b"AGENT tick 0\n"[..],
+            tx,
+            Some(Arc::clone(&detector)),
+            parse_line,
+        )
+        .await
+        .unwrap();
 
-        assert!(
-            events.contains(&MonitorEvent::Agent(AgentEvent::Message {
-                text: "tick 19".to_string()
-            })),
-            "{events:?}"
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Agent(AgentEvent::Message {
+                text: "tick 0".to_string()
+            }))
         );
-        assert!(!has_hung(&events), "{events:?}");
+        assert!(!would_report_hung(&detector).await);
     }
 }

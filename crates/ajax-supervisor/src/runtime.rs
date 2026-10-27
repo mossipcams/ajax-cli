@@ -219,7 +219,15 @@ async fn forward_monitor_events(
                 eprintln!("ajax supervisor: failed to append event log: {error}");
             }
         }
-        if events.send(event).await.is_err() {
+        // Bound the send too once draining: a full consumer channel must not hang cancellation.
+        let sent = match drain_deadline {
+            Some(deadline) => matches!(
+                tokio::time::timeout_at(deadline, events.send(event)).await,
+                Ok(Ok(()))
+            ),
+            None => events.send(event).await.is_ok(),
+        };
+        if !sent {
             break;
         }
     }
@@ -760,5 +768,109 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
         assert!(saw_blocked);
         let _ = handle.wait().await;
         let _ = fs::remove_file(script);
+    }
+
+    /// Waits until the script writes its pid to `path`. The script writes it only after installing its trap.
+    async fn wait_for_pid_file(path: &std::path::Path) {
+        for _ in 0..400 {
+            if fs::read_to_string(path).is_ok_and(|text| text.trim().parse::<u32>().is_ok()) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("pid never written to {}", path.display());
+    }
+
+    #[tokio::test]
+    async fn runtime_cancel_delivers_exited_when_child_ignores_sigterm() {
+        let script = std::env::temp_dir().join(format!(
+            "ajax-runtime-cancel-sigterm-{}",
+            std::process::id()
+        ));
+        let pid_file = std::env::temp_dir().join(format!(
+            "ajax-runtime-cancel-sigterm-{}.pid",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&pid_file);
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ntrap '' TERM\necho $$ > {}\nsleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::codex_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let started = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("process should start")
+            .expect("monitor should emit process start");
+        assert!(matches!(
+            started,
+            MonitorEvent::Process(ProcessEvent::Started { .. })
+        ));
+        wait_for_pid_file(&pid_file).await;
+        handle.cancel();
+
+        let exited = tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(event) = receiver.recv().await {
+                if matches!(event, MonitorEvent::Process(ProcessEvent::Exited { .. })) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(
+            exited,
+            "SIGTERM-ignoring child delivered no Exited within 2s of cancel"
+        );
+
+        let _ = handle.wait().await;
+        let _ = fs::remove_file(script);
+        let _ = fs::remove_file(pid_file);
+    }
+
+    #[tokio::test]
+    async fn event_forwarder_cancel_bounds_send_to_stalled_consumer() {
+        let (raw_events, raw_receiver) = mpsc::channel(4);
+        // Capacity 1 and never drained: the second forwarded event has nowhere to go.
+        let (events, _stalled_consumer) = mpsc::channel(1);
+        let (cancel, cancel_rx) = watch::channel(false);
+        let forwarder = tokio::spawn(super::forward_monitor_events(
+            raw_receiver,
+            events,
+            None,
+            cancel_rx,
+        ));
+
+        // The forwarder has not run yet (current-thread runtime), so it observes cancel first.
+        raw_events
+            .send(MonitorEvent::Process(ProcessEvent::Started {
+                pid: Some(1),
+            }))
+            .await
+            .expect("raw event receiver should be open");
+        cancel.send(true).expect("cancel receiver should be open");
+        raw_events
+            .send(MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "after cancel".to_string(),
+            }))
+            .await
+            .expect("raw event receiver should be open");
+
+        tokio::time::timeout(Duration::from_secs(3), forwarder)
+            .await
+            .expect("forwarder must finish after cancel even when the consumer is stalled")
+            .expect("forwarder should join")
+            .expect("forwarder should not fail");
     }
 }
