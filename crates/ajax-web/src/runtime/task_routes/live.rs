@@ -380,6 +380,7 @@ where
     }
 
     let response = tokio::task::spawn_blocking(move || {
+        let _flight = state.refresh_flight.blocking_lock();
         let _lane = state.control_lane.blocking_lock();
         state.run_optimistic(
             None,
@@ -508,6 +509,7 @@ where
     let error_request_id = request_id.clone();
     let task_key_for_finish = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
+        let _flight = state.refresh_flight.blocking_lock();
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
             Some(&request_id),
@@ -632,6 +634,7 @@ where
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
+        let _flight = state.refresh_flight.blocking_lock();
         let _lane = state.control_lane.blocking_lock();
         let response = state.run_optimistic(
             request_id.as_deref(),

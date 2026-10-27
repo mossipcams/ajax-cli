@@ -838,4 +838,8 @@ mod cursor_auth_access_tests {
     }
 }
 #[cfg(test)]
+mod activity_report_tests;
+#[cfg(test)]
+mod refresh_lane_tests;
+#[cfg(test)]
 mod tests;

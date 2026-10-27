@@ -246,10 +246,6 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
         let _ = deliver_notifications;
-        if reloaded || state_changed {
-            self.persist_changed_state(context)
-                .map_err(web_error_from_cli)?;
-        }
         Ok(reloaded || state_changed)
     }
 
