@@ -394,6 +394,22 @@ impl TaskSessionDirectory {
         );
     }
 
+    /// Shuts down and cleans up every live session whose handle is not owned.
+    /// The lock is released before awaiting so owned sessions are never blocked.
+    pub async fn cleanup_unowned(&self, owned: &std::collections::HashSet<String>) {
+        let unowned: Vec<String> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .keys()
+                .filter(|handle| !owned.contains(*handle))
+                .cloned()
+                .collect()
+        };
+        for handle in unowned {
+            self.cleanup_session(&handle).await;
+        }
+    }
+
     pub fn prune_stale_persisted(&self, owned: &std::collections::HashSet<String>) {
         super::session_cleanup::prune_stale_persisted_sessions(&self.storage, owned);
     }

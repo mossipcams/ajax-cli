@@ -73,7 +73,7 @@ fn intent(id: &str) -> CheckpointIntent {
     }
 }
 
-fn rows(store: &SqliteRegistryStore, sql: &str) -> Vec<Vec<Value>> {
+pub(super) fn rows(store: &SqliteRegistryStore, sql: &str) -> Vec<Vec<Value>> {
     let connection = store.open().unwrap();
     let mut statement = connection.prepare(sql).unwrap();
     let columns = statement.column_count();

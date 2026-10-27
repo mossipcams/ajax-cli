@@ -128,3 +128,103 @@ fn issue_977_drop_cleanup_isolates_handle_reuse() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn issue_1436_registry_reload_shuts_down_live_sessions_for_unowned_handles() {
+    use super::test_support::BlockingSessionDirectory;
+    use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+    use ajax_core::models::AgentClient;
+    use std::collections::HashSet;
+
+    let dir = scratch_dir("reload-unowned");
+    let kept = "web/kept";
+    let dropped = "web/dropped";
+    web_session_store::append_events(&dir, kept, &[note("kept transcript")]);
+    web_session_store::append_events(&dir, dropped, &[note("dropped transcript")]);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = super::test_support::fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            for handle in [kept, dropped] {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire before reload");
+            }
+        });
+    });
+
+    let owned: HashSet<String> = [kept.to_string()].into_iter().collect();
+    directory
+        .runtime_handle()
+        .block_on(directory.inner().cleanup_unowned(&owned));
+
+    assert!(
+        !directory.inner().has_live_entry(dropped),
+        "unowned session actor must be shut down on reload"
+    );
+    assert!(
+        web_session_store::load::<serde_json::Value>(&dir, dropped)
+            .events
+            .is_empty(),
+        "unowned session transcript must be deleted on reload"
+    );
+    assert!(
+        directory.inner().has_live_entry(kept),
+        "owned session actor must stay live"
+    );
+    assert!(
+        web_session_store::load::<serde_json::Value>(&dir, kept)
+            .events
+            .contains(&note("kept transcript")),
+        "owned session transcript must survive reload"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1436_registry_reload_keeps_sessions_when_every_handle_is_owned() {
+    use super::test_support::BlockingSessionDirectory;
+    use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+    use ajax_core::models::AgentClient;
+    use std::collections::HashSet;
+
+    let dir = scratch_dir("reload-owned");
+    let first = "web/first";
+    let second = "web/second";
+    web_session_store::append_events(&dir, first, &[note("first transcript")]);
+    web_session_store::append_events(&dir, second, &[note("second transcript")]);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = super::test_support::fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            for handle in [first, second] {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire before reload");
+            }
+        });
+    });
+
+    let owned: HashSet<String> = [first, second].into_iter().map(str::to_string).collect();
+    directory
+        .runtime_handle()
+        .block_on(directory.inner().cleanup_unowned(&owned));
+
+    for handle in [first, second] {
+        assert!(
+            directory.inner().has_live_entry(handle),
+            "owned session {handle} must stay live"
+        );
+        assert!(
+            !web_session_store::load::<serde_json::Value>(&dir, handle)
+                .events
+                .is_empty(),
+            "owned transcript {handle} must survive"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -5,16 +5,31 @@ use rusqlite::{params, Transaction};
 use super::super::{InMemoryRegistry, RegistrySnapshotError};
 use crate::ghost_task::is_registry_ghost_task;
 use crate::models::{
-    GitStatus, LiveObservation, RuntimeProjection, StepReceipt, Task, TaskWindowStatus, TmuxStatus,
+    GitStatus, LiveObservation, RuntimeProjection, StepReceipt, Task, TaskId, TaskWindowStatus,
+    TmuxStatus,
 };
 
 use super::enums::*;
+use super::execution_recovery::delete_runs_for_task_in;
 use super::row_codec::*;
+
+fn persisted_task_ids(transaction: &Transaction<'_>) -> Result<Vec<String>, RegistrySnapshotError> {
+    let mut statement = transaction
+        .prepare("SELECT task_id FROM registry_tasks")
+        .map_err(database_error)?;
+    let task_ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    Ok(task_ids)
+}
 
 pub(crate) fn save_registry(
     transaction: &Transaction<'_>,
     registry: &InMemoryRegistry,
 ) -> Result<(), RegistrySnapshotError> {
+    let persisted_task_ids = persisted_task_ids(transaction)?;
     transaction
         .execute("DELETE FROM registry_events", [])
         .map_err(database_error)?;
@@ -58,6 +73,15 @@ pub(crate) fn save_registry(
         .filter(|task| !is_registry_ghost_task(task))
         .map(|task| task.id.clone())
         .collect::<BTreeSet<_>>();
+
+    // A task dropped by this save takes its chat runs with it, so a recreated task
+    // with the same handle starts empty whichever surface performed the drop.
+    for task_id in persisted_task_ids
+        .iter()
+        .filter(|task_id| !live_task_ids.contains(&TaskId::new(task_id.as_str())))
+    {
+        delete_runs_for_task_in(transaction, task_id)?;
+    }
 
     for task in registry
         .tasks

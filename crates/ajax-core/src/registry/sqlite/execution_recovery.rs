@@ -1,6 +1,6 @@
 //! Durable execution reads, history retention, recovery, and owner leases.
 
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::execution_store::parse_state;
 use super::{database_error, migrations, NewRun, SqliteRegistryStore};
@@ -51,6 +51,31 @@ pub struct RunPrompt {
     pub task_exec_id: String,
     pub content_json: String,
     pub state: ExecutionState,
+}
+
+/// Deletes the execution data of one task's runs inside the caller's transaction.
+pub(super) fn delete_runs_for_task_in(
+    transaction: &Transaction<'_>,
+    task_id: &str,
+) -> Result<u64, RegistrySnapshotError> {
+    transaction
+        .execute(
+            "DELETE FROM execution_checkpoints WHERE task_exec_id IN ( \
+             SELECT task_exec_id FROM execution_tasks WHERE run_id IN ( \
+             SELECT run_id FROM agent_runs WHERE task_id = ?1))",
+            [task_id],
+        )
+        .map_err(database_error)?;
+    for table in ["prompt_submissions", "execution_events", "execution_tasks"] {
+        transaction.execute(
+            &format!("DELETE FROM {table} WHERE run_id IN (SELECT run_id FROM agent_runs WHERE task_id = ?1)"),
+            [task_id],
+        ).map_err(database_error)?;
+    }
+    let deleted = transaction
+        .execute("DELETE FROM agent_runs WHERE task_id = ?1", [task_id])
+        .map_err(database_error)?;
+    Ok(deleted as u64)
 }
 
 fn run_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
@@ -276,25 +301,9 @@ impl SqliteRegistryStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;
-        transaction
-            .execute(
-                "DELETE FROM execution_checkpoints WHERE task_exec_id IN ( \
-             SELECT task_exec_id FROM execution_tasks WHERE run_id IN ( \
-             SELECT run_id FROM agent_runs WHERE task_id = ?1))",
-                [task_id],
-            )
-            .map_err(database_error)?;
-        for table in ["prompt_submissions", "execution_events", "execution_tasks"] {
-            transaction.execute(
-                &format!("DELETE FROM {table} WHERE run_id IN (SELECT run_id FROM agent_runs WHERE task_id = ?1)"),
-                [task_id],
-            ).map_err(database_error)?;
-        }
-        let deleted = transaction
-            .execute("DELETE FROM agent_runs WHERE task_id = ?1", [task_id])
-            .map_err(database_error)?;
+        let deleted = delete_runs_for_task_in(&transaction, task_id)?;
         transaction.commit().map_err(database_error)?;
-        Ok(deleted as u64)
+        Ok(deleted)
     }
 
     /// Claims the single owner lease, refreshing this boot or replacing a stale owner.

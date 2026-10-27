@@ -103,6 +103,19 @@ where
     C: Clone + CommandRunner,
     B: Clone + RuntimeBridge<C>,
 {
+    /// After a registry reload from disk changed the task set, shuts down live
+    /// chat sessions for tasks this host no longer owns. Spawned so the shared
+    /// lock is never held across the cleanup; without a runtime there are no
+    /// live actors to clean up.
+    fn cleanup_unowned_sessions(&self, context: &CommandContext<InMemoryRegistry>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let owned = owned_session_handles(context);
+        let directory = Arc::clone(&self.task_session_directory);
+        runtime.spawn(async move { directory.cleanup_unowned(&owned).await });
+    }
+
     pub(crate) fn run_optimistic(
         &self,
         request_id: Option<&str>,
@@ -141,7 +154,7 @@ where
                     guard.runner = runner;
                     guard.bridge = bridge;
                 }
-                Ok(true) => {}
+                Ok(true) => self.cleanup_unowned_sessions(&guard.context),
             }
             guard.revision = guard.revision.saturating_add(1);
             guard.cockpit_cache = None;
@@ -567,6 +580,7 @@ where
             if !matches!(bridge.reload_registry_from_disk(context), Ok(true)) {
                 return;
             }
+            state.cleanup_unowned_sessions(&guard.context);
         }
         guard.revision = guard.revision.saturating_add(1);
         guard.cockpit_cache = None;
