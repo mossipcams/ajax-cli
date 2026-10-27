@@ -1,6 +1,3 @@
-//! Tests for `cursor_sdk_spawn`: launch resolution, the Node floor, fail-closed
-//! restore and operator-pin application against the fake Cursor SDK.
-
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 

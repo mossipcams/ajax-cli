@@ -1,9 +1,3 @@
-//! Tests for [`super::pi_rpc_client`], running the fake Pi RPC fixture as a
-//! directly-executable child (the file has a node shebang) and asserting that
-//! [`PiRpcClient`] turns the JSONL record stream into ACP client events: spawn
-//! and session id, prompt run, abort run, guard errors, rejection, resume id,
-//! shutdown, and request-id sequencing.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -12,15 +6,12 @@ use super::pi_rpc_client::{builtin_command, PiRpcClient};
 
 use serde_json::json;
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn fixture_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_pi_rpc.js")
 }
 
-/// Spawn the fake pi RPC child directly (executable, node shebang), passing
-/// `extra_args` as the fixture switches. Fails loudly when spawn fails.
 fn spawn_client(extra_args: &[&str]) -> PiRpcClient {
     let args: Vec<String> = extra_args.iter().map(|arg| (*arg).to_string()).collect();
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -32,14 +23,10 @@ fn text_blocks() -> String {
     "hello".to_string()
 }
 
-/// True when `event` is a native `AgentText` (the pi message chunk).
 fn is_agent_text(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// Collect events until a native `TurnFinished` for `expected_id` arrives. The
-/// finished turn's result is returned; earlier events are kept. Panics on
-/// any other terminal shape (bounded loop so a hang is a failure, not a stall).
 fn drain_until_finished(client: &PiRpcClient, expected_id: u64) -> (Vec<AgentEvent>, NativeEvent) {
     let mut events = Vec::new();
     for _ in 0..64 {
@@ -60,7 +47,6 @@ fn drain_until_finished(client: &PiRpcClient, expected_id: u64) -> (Vec<AgentEve
     panic!("no TurnFinished for request_id {expected_id} within the bounded drain");
 }
 
-/// The stop-reason string of a successful turn result, if present.
 fn stop_reason(result: &Result<String, String>) -> Option<&str> {
     result.as_ref().ok().map(|s| s.as_str())
 }
@@ -98,8 +84,6 @@ fn abort_flow_finishes_cancelled() {
     let client = spawn_client(&["--hold-run"]);
     let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
 
-    // The fake emits the text delta before holding; the first mappable event
-    // must surface as a native AgentText.
     let first = client.wait_event(TIMEOUT).expect("first prompt event");
     assert!(
         is_agent_text(&first),
@@ -169,7 +153,6 @@ fn rejected_prompt_reports_error_result() {
 
 #[test]
 fn resume_reports_passed_session_id() {
-    // The client injects `--session-id <id>` into the child argv itself.
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
     let client = PiRpcClient::spawn(
         &fixture_path(),
@@ -193,7 +176,6 @@ fn shutdown_returns_session_id_once_then_host_exited() {
     assert_eq!(first, id);
     assert!(client.host_exited());
 
-    // Idempotent: a second call has nothing more to report.
     assert_eq!(client.shutdown(), None);
 }
 
@@ -224,10 +206,6 @@ fn second_prompt_after_finish_gets_request_id_two() {
 
 #[test]
 fn issue_1283_resume_of_a_session_pi_never_persisted_keeps_that_id() {
-    // Real Pi writes no session file until the first message; resuming such a
-    // session must use `--session-id` (which creates it), not `--session`
-    // (the fixture, like real Pi, exits 1 with 'No session found matching
-    // ...' for that flag - issue #1283).
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
     let client = PiRpcClient::spawn(
         &fixture_path(),
@@ -255,7 +233,6 @@ fn spawn_exposes_the_advertised_command_list_once() {
                 description: "Compact the conversation".to_string(),
                 input_hint: None,
             },
-            // The fixture's last entry has no description; it becomes "".
             NativeCommand {
                 name: "extensions".to_string(),
                 description: String::new(),
@@ -321,7 +298,6 @@ fn issue_1360_builtin_command_parsing() {
         builtin_command("  /compact focus on tests "),
         Some(("compact", json!({ "customInstructions": "focus on tests" })))
     );
-    // Trailing whitespace with no instructions means no instructions.
     assert_eq!(builtin_command("/compact   "), Some(("compact", json!({}))));
 
     assert_eq!(
@@ -333,8 +309,6 @@ fn issue_1360_builtin_command_parsing() {
         Some(("set_session_name", json!({ "name": "spaced name" })))
     );
 
-    // A bare `/name`, lookalikes, extension/skill commands, and plain text all
-    // stay on the prompt path.
     let passthrough = [
         "/name",
         "/name   ",
@@ -369,9 +343,6 @@ fn issue_1360_compact_routes_to_the_native_command() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
-    // The fixture's `prompt` arm always emits an "ok" text delta. The only
-    // agent text allowed is the compaction confirmation from the native
-    // compaction_end record, so an "ok" reply would fail this exact match.
     let agent_texts: Vec<&str> = events
         .iter()
         .filter_map(|event| match event {

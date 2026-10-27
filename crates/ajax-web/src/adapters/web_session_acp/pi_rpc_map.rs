@@ -1,26 +1,8 @@
-//! Pure mapping from Pi RPC-mode (`pi --mode rpc`) stdout records to the native
-//! [`AgentEvent`] values consumed by the web session adapter.
-//!
-//! The connection loop that reads the JSONL stream (a later task) calls
-//! [`map_record`] once per parsed record and folds the returned
-//! [`RpcMapping`] values: each emitted event is forwarded to the session in
-//! order, and `finished` / `ended_aborted` track whether the run settled and
-//! whether it ended aborted. Records that carry no adapter meaning
-//! (`response`, the `extension_ui_request` methods other than dialogs and
-//! `notify`, and unknown types) map to an empty result and never panic on missing or malformed fields.
-
 use serde_json::{json, Value};
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
 
-/// Map one parsed Pi RPC stdout record to adapter events and run state.
-///
-/// `session_id` is retained for interface parity with the ACP mappers; native
-/// events carry no session id (the session slice binds them). The mapping is
-/// total: any record — including `extension_ui_request` dialogs, the
-/// fire-and-forget methods, and unknown types — returns an empty result
-/// instead of panicking.
 pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     let finished = match record.get("type").and_then(Value::as_str).unwrap_or("") {
@@ -42,10 +24,6 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
             false
         }
         "compaction_end" => {
-            // A successful `/compact` is otherwise invisible (the assistant
-            // message it interrupts never ends), so confirm it. Failed manual
-            // compactions surface no text here: the compact command's own
-            // failure response already rejects the turn with that error.
             if record.get("reason").and_then(Value::as_str) == Some("manual")
                 && record.get("aborted").and_then(Value::as_bool) != Some(true)
                 && string_field(record, "errorMessage").is_none()
@@ -57,11 +35,6 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
             false
         }
         "agent_settled" => true,
-        // Dialogs (`confirm`, `select`, `input`, `editor`) become elicitation
-        // requests; `notify` is surfaced as agent text (or an error when its
-        // `notifyType` is `"error"`); the other fire-and-forget methods
-        // (`setStatus`, `setWidget`), lifecycle records without adapter
-        // output, and unknown record types produce no events.
         "extension_ui_request" => {
             if let Some(event) = dialog_request(record).or_else(|| notify_event(record)) {
                 events.push(AgentEvent::Native(event));
@@ -80,25 +53,14 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
     }
 }
 
-/// How one Pi record bears on the error state of the current run. The
-/// assistant error memo itself lives in the session (see
-/// `rpc_session::fold_pending_error`); `Failed` and `Notice` are also emitted
-/// as events by [`map_record`].
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PiRunError {
-    /// An assistant message ended with `stopReason: "error"`. Pi may still
-    /// retry it, so it is only surfaced if the run settles without a retry.
     Pending(String),
-    /// A retry started or a later assistant message ended, so any pending
-    /// assistant error was superseded.
     Clear,
-    /// The run itself failed (final retry failure or a failed compaction).
     Failed(String),
-    /// An extension failed; the run's own outcome is unaffected.
     Notice(String),
 }
 
-/// The run-error meaning of one Pi record, if any.
 pub(super) fn run_error(record: &Value) -> Option<PiRunError> {
     match record.get("type").and_then(Value::as_str)? {
         "message_end" => {
@@ -150,11 +112,6 @@ pub(super) fn run_error(record: &Value) -> Option<PiRunError> {
     }
 }
 
-/// Build an elicitation request from one `extension_ui_request` record that
-/// opens a dialog (`confirm`, `select`, `input`, `editor`). The other
-/// fire-and-forget methods (`setStatus`, `setWidget`, and anything else)
-/// return `None` (`notify` is surfaced separately by [`notify_event`]), as do
-/// records without a string `id`.
 fn dialog_request(record: &Value) -> Option<NativeEvent> {
     let request_id = record.get("id")?.as_str()?.to_string();
     match record.get("method")?.as_str()? {
@@ -224,11 +181,6 @@ fn dialog_request(record: &Value) -> Option<NativeEvent> {
     }
 }
 
-/// Surface one fire-and-forget `notify` from an `extension_ui_request`
-/// record (issue #1361): `"error"` notifies become [`NativeEvent::Error`],
-/// everything else becomes agent text with a trailing newline so chat renders
-/// it on its own line. Returns `None` for other methods and for records
-/// without a non-empty string `message`.
 fn notify_event(record: &Value) -> Option<NativeEvent> {
     if record.get("method")?.as_str()? != "notify" {
         return None;
@@ -246,14 +198,10 @@ fn notify_event(record: &Value) -> Option<NativeEvent> {
     )
 }
 
-/// One string field of an `extension_ui_request` record, if present.
 fn string_field(record: &Value, key: &str) -> Option<String> {
     record.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
-/// Map one `message_update` record's `assistantMessageEvent`, if it carries
-/// text. Message starts/ends and streamed tool-call argument deltas carry no
-/// adapter output.
 fn map_message_update(record: &Value, events: &mut Vec<AgentEvent>) -> bool {
     let Some(event) = record.get("assistantMessageEvent") else {
         return false;
@@ -287,7 +235,6 @@ fn tool_call_started(record: &Value) -> Option<NativeEvent> {
     })
 }
 
-/// The native tool kind for one Pi tool name (compared case-insensitively).
 fn tool_kind(tool_name: &str) -> String {
     match tool_name.to_ascii_lowercase().as_str() {
         "read" => "read",
@@ -299,9 +246,6 @@ fn tool_kind(tool_name: &str) -> String {
     .to_string()
 }
 
-/// The first non-empty string among `args.command`, `args.pattern`, and
-/// `args.path`, if any. The search pattern outranks the path so `grep`/`find`
-/// titles show what was searched even when a path is also given.
 fn tool_call_detail(args: &Value) -> Option<String> {
     for key in ["command", "pattern", "path"] {
         if let Some(detail) = args.get(key).and_then(Value::as_str) {
@@ -353,7 +297,6 @@ fn tool_call_finished(record: &Value) -> NativeEvent {
     }
 }
 
-/// `message_end` / `turn_end` record reporting an aborted assistant message.
 fn record_reports_aborted(record: &Value) -> bool {
     matches!(
         record
@@ -364,8 +307,6 @@ fn record_reports_aborted(record: &Value) -> bool {
     )
 }
 
-/// A short confirmation for a successful manual compaction (`/compact`), with
-/// the token counts when the record carries them.
 fn manual_compaction_text(record: &Value) -> String {
     let result = record.get("result");
     let before = result
@@ -382,8 +323,6 @@ fn manual_compaction_text(record: &Value) -> String {
     }
 }
 
-/// The `text` values of Pi content blocks, in order. Blocks without a string
-/// `text` field are skipped so unexpected block shapes never fail the mapping.
 fn pi_text_blocks(blocks: &[Value]) -> Vec<String> {
     blocks
         .iter()

@@ -30,7 +30,6 @@ fn spawn_in(
     CursorSdkClient::spawn(Path::new("node"), &args, cwd, model, resume, TIMEOUT)
 }
 
-/// Drain native events until the client reports no prompt in flight (or TIMEOUT).
 fn drain_turn(client: &CursorSdkClient) -> Vec<NativeEvent> {
     let started = Instant::now();
     let mut events = Vec::new();

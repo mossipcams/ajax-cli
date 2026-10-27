@@ -1,14 +1,8 @@
-//! Tests for the Pi model / thinking-level config options exposed by
-//! [`super::pi_rpc_client::PiRpcClient`], running the fake Pi RPC fixture as a
-//! directly-executable child (the file has a node shebang) and asserting the
-//! options' shape plus the `set_model` / `set_thinking_level` round trips.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::pi_rpc_client::PiRpcClient;
 
-/// Generous per-request bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn fixture_path() -> PathBuf {
@@ -21,8 +15,6 @@ fn spawn_client() -> PiRpcClient {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-/// Owned snapshot of one select option, so callers avoid lifetimes into the
-/// borrowed [`super::NeutralConfigOption`].
 struct SelectView {
     current_value: String,
     values: Vec<String>,
@@ -148,7 +140,6 @@ fn pi_current_model_keeps_provider_when_providers_share_model_ids_1279() {
     )
     .expect("fake pi rpc fixture must spawn (is node installed?)");
 
-    // get_state selects the second provider's copy of `fake-model`.
     assert_eq!(client.applied_model(), "other-provider/fake-model");
 
     let options = client.config_options();

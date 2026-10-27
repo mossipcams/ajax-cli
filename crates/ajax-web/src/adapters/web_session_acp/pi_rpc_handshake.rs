@@ -1,31 +1,3 @@
-//! The Pi RPC handshake: the four state-discovery commands issued to a freshly
-//! spawned [`JsonlProcess`] and their id-correlated responses, typed into
-//! [`RpcHandshake`]. This module is pure transport-plus-parsing on top of the
-//! `jsonl_process` surface (std only, no tokio): it writes all four commands
-//! before waiting for any answer, then drains stdout records until every
-//! expected response has arrived or the deadline passes. It does not wire into
-//! the live session path and does not interpret event semantics beyond
-//! capturing non-response records as pending replay material.
-//!
-//! Correlation rules: each response is a `{"type":"response","id":…}` record
-//! echoing the id [`JsonlProcess::send`] allocated for its command, so the four
-//! replies are matched by id, never by arrival order. Any record that is not
-//! one of those four responses (events such as `extension_ui_request`, other
-//! in-flight responses) is preserved, in arrival order, in
-//! [`RpcHandshake::pending`] for the caller to replay — none are dropped.
-//!
-//! Failure policy: a failing or missing `get_state` (including an absent
-//! `data.sessionId`) fails the whole handshake; failures of the other three
-//! commands degrade to empty lists so a partial discovery state still yields a
-//! usable [`RpcHandshake`]. A timeout, non-JSON stdout line, or child exit
-//! *before* `get_state` completes returns an error that carries the process
-//! stderr tail for diagnostics. A child exit (or closed stdout) *after*
-//! `get_state` but before the other discovery responses also fails: a dead
-//! child cannot answer the rest, so it must not look like a healthy session
-//! (#1276). Only a live child that stays silent past the deadline degrades.
-
-// Not yet reachable from the crate surface: nothing wires this in until the
-// connection-loop task lands, so every public item is dead code for now.
 #![allow(dead_code)]
 
 use std::sync::mpsc;
@@ -36,22 +8,12 @@ use serde_json::{json, Value};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::rpc_handshake::{RpcCommand, RpcHandshake, RpcModel};
 
-/// How long each `try_recv` gap sleeps before re-polling the record channel.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// Issue the four discovery commands and collect their responses.
-///
-/// All four commands are written to stdin (via [`JsonlProcess::send`]) before
-/// any record is read, then records are consumed until all four matching-id
-/// responses have arrived or `timeout` (measured from the first send) elapses.
-/// See the module docs for the correlation and failure policy.
 pub fn handshake(process: &mut JsonlProcess, timeout: Duration) -> Result<RpcHandshake, String> {
     handshake_with_model_provider(process, timeout).map(|(handshake, _)| handshake)
 }
 
-/// [`handshake`], also returning `get_state.data.model.provider` for the
-/// current model. The provider sits beside [`RpcHandshake`] rather than in it
-/// so the shared type keeps its shape for the other session clients (#1279).
 pub fn handshake_with_model_provider(
     process: &mut JsonlProcess,
     timeout: Duration,
@@ -91,9 +53,6 @@ pub fn handshake_with_model_provider(
                         ]
                         .contains(&id.as_str());
 
-                    // Anything that is not one of the four expected responses —
-                    // events, extension_ui_request, other in-flight responses —
-                    // is preserved in arrival order for the caller to replay.
                     if !is_expected_response {
                         pending.push(value);
                         continue;
@@ -103,9 +62,6 @@ pub fn handshake_with_model_provider(
                         s if s == state_id && state.is_none() => state = Some(value),
                         s if s == models_id && models.is_none() => models = Some(value),
                         s if s == levels_id && levels.is_none() => levels = Some(value),
-                        // A second response for an already-seen command cannot
-                        // be one of the four (ids are fresh per process); treat
-                        // any such duplicate as pending replay material.
                         s if s == commands_id && commands.is_none() => commands = Some(value),
                         _ => pending.push(value),
                     }
@@ -118,14 +74,9 @@ pub fn handshake_with_model_provider(
                             process.stderr_tail()
                         ));
                     }
-                    // After get_state the stream is replay material, not fatal;
-                    // preserve the raw line rather than dropping it.
                     pending.push(Value::String(text));
                 }
                 JsonlRecord::Exited => {
-                    // No more records can arrive. Before get_state this is a
-                    // dead child; after it, the missing discovery responses
-                    // would never arrive, so the child is dead either way (#1276).
                     return Err(format!(
                         "pi child exited before the handshake completed (get_state received: {}, stderr tail: {})",
                         state.is_some(),
@@ -141,17 +92,11 @@ pub fn handshake_with_model_provider(
                             process.stderr_tail()
                         ));
                     }
-                    // get_state is already in hand; whatever discovery response
-                    // never arrived degrades to an empty list.
                     break;
                 }
                 std::thread::sleep(POLL_INTERVAL);
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                // The reader thread only disconnects after delivering Exited,
-                // which the arm above has already handled (or exited on). A
-                // closed stream ends the handshake whether or not get_state
-                // has arrived (#1276).
                 return Err(format!(
                     "pi child stdout closed before the handshake completed \
                      (get_state received: {}, stderr tail: {})",
@@ -164,7 +109,6 @@ pub fn handshake_with_model_provider(
 
     let state = state.ok_or("get_state response was not received".to_owned())?;
 
-    // A failing get_state fails the handshake with pi's error text.
     if state.get("success").and_then(Value::as_bool) != Some(true) {
         let detail = state
             .get("error")
@@ -204,16 +148,12 @@ pub fn handshake_with_model_provider(
     Ok((handshake, model_provider))
 }
 
-/// Read a string field from `get_state`'s data object.
 fn string_field(data: Option<&Value>, key: &str) -> Option<String> {
     data.and_then(|d| d.get(key))
         .and_then(Value::as_str)
         .map(str::to_owned)
 }
 
-/// Parse `get_available_models`'s response into typed model entries. A failed,
-/// missing, or malformed response degrades to an empty list; individual
-/// entries lacking the required fields are skipped.
 fn parse_models(response: Option<&Value>) -> Vec<RpcModel> {
     let Some(array) = success_data_list(response, "models") else {
         return Vec::new();
@@ -221,7 +161,6 @@ fn parse_models(response: Option<&Value>) -> Vec<RpcModel> {
     array.iter().filter_map(parse_model).collect()
 }
 
-/// Parse one `data.models` entry.
 fn parse_model(value: &Value) -> Option<RpcModel> {
     let id = value.get("id")?.as_str()?.to_owned();
     Some(RpcModel {
@@ -243,7 +182,6 @@ fn parse_model(value: &Value) -> Option<RpcModel> {
     })
 }
 
-/// Parse `get_available_thinking_levels`'s `data.levels`.
 fn parse_thinking_levels(response: Option<&Value>) -> Vec<String> {
     let Some(array) = success_data_list(response, "levels") else {
         return Vec::new();
@@ -254,7 +192,6 @@ fn parse_thinking_levels(response: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// Parse `get_commands`'s `data.commands`; entries without a name are skipped.
 fn parse_commands(response: Option<&Value>) -> Vec<RpcCommand> {
     let Some(array) = success_data_list(response, "commands") else {
         return Vec::new();
@@ -262,7 +199,6 @@ fn parse_commands(response: Option<&Value>) -> Vec<RpcCommand> {
     array.iter().filter_map(parse_command).collect()
 }
 
-/// Parse one `data.commands` entry.
 fn parse_command(value: &Value) -> Option<RpcCommand> {
     let name = value.get("name")?.as_str()?.to_owned();
     Some(RpcCommand {
@@ -274,9 +210,6 @@ fn parse_command(value: &Value) -> Option<RpcCommand> {
     })
 }
 
-/// The `data.<key>` array of a successful response; `None` when the response
-/// is absent, failed, or malformed. This is what turns a failed optional
-/// discovery command into an empty list instead of an error.
 fn success_data_list<'a>(response: Option<&'a Value>, key: &str) -> Option<&'a Vec<Value>> {
     let response = response?;
     if response.get("success").and_then(Value::as_bool) != Some(true) {

@@ -1,6 +1,4 @@
 #![allow(dead_code)]
-//! Thin client over the Pi RPC building blocks, exposing the prompt/cancel/event/shutdown
-//! shape the web session slice uses from `AcpStdioClient`.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -15,43 +13,27 @@ use super::pi_rpc_map::map_record;
 use super::rpc_client::RpcClientCore;
 use super::rpc_session::RpcSession;
 
-/// Timeout for the `get_session_stats` request sent before a prompt finish.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A thin client wrapping the Pi RPC process + session behind a `Mutex` so that
-/// event and prompt methods can all take `&self`.
 pub struct PiRpcClient {
     core: RpcClientCore,
-    /// Boxed: the client sits inside the SessionClient enum, whose variants must stay size-comparable (clippy::large_enum_variant).
     catalog: Box<Mutex<Catalog>>,
 }
 
-/// Model and thinking-level state snapshotted from the Pi handshake and kept
-/// up to date as selections are applied.
 struct Catalog {
-    /// Model catalog copied out of the handshake before the session consumed it.
     models: Vec<ModelEntry>,
-    /// Thinking levels copied out of the handshake before the session consumed it.
     thinking_levels: Vec<String>,
-    /// Id of the currently selected Pi model (handshake state, then successful `set_model`).
     current_model_id: Option<String>,
-    /// Provider of the currently selected Pi model (handshake state, then `set_model`).
     current_model_provider: Option<String>,
-    /// Currently selected thinking level (handshake state, then `set_thinking_level`).
     current_thinking_level: Option<String>,
 }
 
-/// One model from the Pi handshake catalog, flattened to plain strings so the
-/// handshake record can be dropped after `spawn`.
 struct ModelEntry {
     id: String,
     name: String,
     provider: String,
 }
 
-/// The "provider/id" value of the entry matching `current_model_id` (and
-/// `current_model_provider` when known), falling back to the first entry when
-/// nothing matches.
 fn current_model_value(
     models: &[ModelEntry],
     current_model_id: Option<&str>,
@@ -68,8 +50,6 @@ fn current_model_value(
     format!("{}/{}", current.provider, current.id)
 }
 
-/// The level matching `current_level`, falling back to the first level when
-/// nothing matches.
 fn current_level_value(levels: &[String], current_level: Option<&str>) -> String {
     levels
         .iter()
@@ -92,9 +72,6 @@ fn pi_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
     }))
 }
 
-/// The native Pi command a `/compact` or `/name` chat message routes to, with
-/// its request fields. Everything else (including `/compacted`, `/extensions`,
-/// `/skill:x`, and plain text) is left for the `prompt` path (issue #1360).
 pub(super) fn builtin_command(message: &str) -> Option<(&'static str, Value)> {
     let trimmed = message.trim();
     if trimmed == "/compact" {
@@ -119,13 +96,6 @@ pub(super) fn builtin_command(message: &str) -> Option<(&'static str, Value)> {
 }
 
 impl PiRpcClient {
-    /// Spawn the Pi RPC process, perform the handshake, and wrap it in a session.
-    ///
-    /// Arguments passed to the child are exactly:
-    /// `["--mode", "rpc", "-na"]` then optionally `["--session-id", <id>]`, then `extra_args`.
-    /// (`--session` only matches sessions already on disk; Pi persists a
-    /// session only after its first message, so `--session-id` is required for
-    /// resume; issue #1283.)
     pub fn spawn(
         program: &Path,
         extra_args: &[String],
@@ -147,8 +117,6 @@ impl PiRpcClient {
             handshake_with_model_provider(&mut process, handshake_timeout)
                 .map_err(|e| format!("pi rpc handshake failed: {e}"))?;
 
-        // `RpcSession::new` consumes the handshake record, so copy out the
-        // model / thinking-level state before handing it over.
         let models: Vec<ModelEntry> = hs
             .models
             .iter()
@@ -160,8 +128,6 @@ impl PiRpcClient {
             .collect();
         let thinking_levels = hs.thinking_levels.clone();
         let current_model_id = hs.model_id.clone();
-        // get_state names the provider; the id-only lookup is a fallback for
-        // when it is absent, since several providers may share one model id.
         let current_model_provider = state_model_provider.or_else(|| {
             models
                 .iter()
@@ -170,9 +136,6 @@ impl PiRpcClient {
         });
         let current_thinking_level = hs.thinking_level.clone();
 
-        // The handshake's advertised commands are exposed through
-        // `take_available_commands` once, like an event, rather than queued as
-        // one.
         let commands: Vec<NativeCommand> = hs
             .commands
             .iter()
@@ -196,35 +159,22 @@ impl PiRpcClient {
         })
     }
 
-    /// The shared transport core, used by the session client's two-arm dispatch.
     pub(super) fn core(&self) -> &RpcClientCore {
         &self.core
     }
 
-    /// The Pi session id assigned during handshake. Returns an empty string if the
-    /// session has been shut down.
     pub fn session_id(&self) -> String {
         self.core.session_id()
     }
 
-    /// Slash commands the Pi RPC process advertised at handshake, returned by
-    /// the first call only (one-shot, like an event) so every later drain
-    /// yields an empty list; ACP `AvailableCommandsUpdated` updates replace
-    /// the list within the same drain.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
         self.core.take_available_commands()
     }
 
-    /// OS process id of the live child while a session exists; `None` after shutdown.
     pub fn child_pid(&self) -> Option<u32> {
         self.core.child_pid()
     }
 
-    /// The Pi model and thinking-level options as harness-neutral values.
-    ///
-    /// The model option (id "model") is omitted when no models were reported, and
-    /// the thinking option (id "thought_level") when no levels were reported.
-    /// Both reflect the latest successful `set_model` / `set_thinking_level`.
     pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let c = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         let mut options = Vec::new();
@@ -291,8 +241,6 @@ impl PiRpcClient {
         options
     }
 
-    /// The currently applied Pi model as "provider/id", or an empty string when
-    /// there is no model catalog or no current model.
     pub fn applied_model(&self) -> String {
         let g = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         if g.models.is_empty() {
@@ -304,8 +252,6 @@ impl PiRpcClient {
         }
     }
 
-    /// Apply a model selection of the form "provider/id" through Pi's
-    /// `set_model` command, storing it as the current model on success.
     pub fn set_model(&self, value: &str) -> Result<(), String> {
         let Some((provider, model_id)) = value.split_once('/') else {
             return Err("model must be provider/id".to_string());
@@ -325,8 +271,6 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Apply a thinking-level selection through Pi's `set_thinking_level`
-    /// command, storing it as the current level on success.
     pub fn set_thinking_level(&self, level: &str) -> Result<(), String> {
         self.core.with_session(|s| {
             s.request(
@@ -341,21 +285,15 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Begin a prompt run from a plain-text message.
     pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
         self.core.begin_prompt(message)
     }
 
-    /// Begin a prompt run from a message with attached images. Pi RPC image
-    /// objects carry `"type": "image"` alongside `data` and `mimeType`.
     pub fn begin_prompt_with_images(
         &self,
         message: &str,
         images: &[NativeImage],
     ) -> Result<u64, String> {
-        // Pi RPC `prompt` only runs extension commands, templates and skills:
-        // built-in slash commands like `/compact` would reach the model as
-        // plain text (issue #1360). Route them to their native command instead.
         if images.is_empty() {
             if let Some((command, fields)) = builtin_command(message) {
                 return self.core.begin_command(command, fields);
@@ -364,28 +302,22 @@ impl PiRpcClient {
         self.core.begin_prompt_with_images(message, images)
     }
 
-    /// Abort the active prompt run. Returns `Err` when no run is in flight.
     pub fn cancel(&self) -> Result<(), String> {
         self.core.cancel()
     }
 
-    /// True while a prompt run is active.
     pub fn prompt_in_flight(&self) -> bool {
         self.core.prompt_in_flight()
     }
 
-    /// Non-blocking: returns the next queued event, or `None` if the queue is empty and no
-    /// new step is immediately available. Uses `Duration::ZERO`.
     pub fn poll_event(&self) -> Option<AgentEvent> {
         self.core.poll_event()
     }
 
-    /// Block up to `timeout` for the next event. Returns `None` on timeout with no events.
     pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         self.core.wait_event(timeout)
     }
 
-    /// Answer a Pi extension UI dialog by id (accept or cancel).
     pub fn respond_dialog(
         &self,
         request_id: &str,
@@ -394,13 +326,10 @@ impl PiRpcClient {
         self.core
             .respond("extension_ui_response", request_id, fields)
     }
-    /// Take the session out of its `Option`, dropping it (which closes stdin and reaps the
-    /// child). Returns the session id on first call, `None` thereafter.
     pub fn shutdown(&self) -> Option<String> {
         self.core.shutdown()
     }
 
-    /// True once `Exited` was observed from the event stream or `shutdown` removed the session.
     pub fn host_exited(&self) -> bool {
         self.core.host_exited()
     }

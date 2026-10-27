@@ -1,10 +1,3 @@
-//! Integration tests for the Claude Agent SDK sidecar
-//! (`crates/ajax-web/sidecar/claude_sdk_sidecar.mjs`), running the real `node`
-//! child behind the fake SDK fixture (`crates/ajax-web/tests/fixtures/
-//! fake_claude_sdk.mjs`) through the existing [`JsonlProcess`] JSONL framing:
-//! init/session ids, prompt/abort/tool/model/effort/context flows, guard
-//! errors, U+2028 line framing, and shutdown/exit.
-
 use std::path::Path;
 use std::sync::mpsc::TryRecvError;
 use std::thread::sleep;
@@ -14,12 +7,9 @@ use serde_json::{json, Value};
 
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 
-/// Generous per-step bound: node startup plus one scripted turn.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
-/// Idle poll interval while waiting for records.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Spawn the sidecar under `node`, pointing it at the fake SDK fixture.
 fn spawn_sidecar() -> JsonlProcess {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let args: Vec<String> = vec![
@@ -37,8 +27,6 @@ fn spawn_sidecar() -> JsonlProcess {
         .expect("claude sdk sidecar must spawn (is node installed?)")
 }
 
-/// A spawned sidecar plus every record drained from it so far, so later
-/// assertions can search records that earlier waits already consumed.
 struct Sidecar {
     process: JsonlProcess,
     records: Vec<Value>,
@@ -52,14 +40,12 @@ impl Sidecar {
         }
     }
 
-    /// Send one command and return its id.
     fn command(&mut self, command_type: &str, fields: Value) -> String {
         self.process
             .send(command_type, fields)
             .unwrap_or_else(|error| panic!("send {command_type}: {error}"))
     }
 
-    /// Poll until `predicate` holds over all records drained so far.
     fn wait_until(&mut self, label: &str, predicate: impl Fn(&[Value]) -> bool) {
         let deadline = Instant::now() + STEP_TIMEOUT;
         while !predicate(&self.records) {
@@ -88,7 +74,6 @@ impl Sidecar {
         }
     }
 
-    /// Wait for and return the response carrying `id`.
     fn response(&mut self, id: &str) -> Value {
         self.wait_until(&format!("response {id}"), |records| {
             records.iter().any(|record| is_response_for(record, id))
@@ -100,7 +85,6 @@ impl Sidecar {
             .expect("response collected")
     }
 
-    /// Send `init` with the default cwd and return its response.
     fn init(&mut self) -> Value {
         let id = self.command("init", json!({ "cwd": env!("CARGO_MANIFEST_DIR") }));
         self.response(&id)
@@ -112,7 +96,6 @@ fn is_response_for(record: &Value, id: &str) -> bool {
         && record.get("id").and_then(Value::as_str) == Some(id)
 }
 
-/// Records of the given SDK event `type`, in arrival order.
 fn events<'a>(records: &'a [Value], kind: &'a str) -> impl Iterator<Item = &'a Value> + 'a {
     records
         .iter()
@@ -130,7 +113,6 @@ fn subtype(record: &Value) -> &str {
         .expect("subtype")
 }
 
-/// The `fake_call` record for `method`, panicking when absent.
 fn fake_call<'a>(records: &'a [Value], method: &str) -> &'a Value {
     events(records, "fake_call")
         .find(|record| record.get("method").and_then(Value::as_str) == Some(method))
@@ -207,7 +189,6 @@ fn init_with_resume_preserves_session_id() {
             .and_then(Value::as_str),
         Some("r-1")
     );
-    // The forwarded system/init message carries the resumed session id.
     let prompt_id = sidecar.command("prompt", json!({ "message": "hello" }));
     let prompt_response = sidecar.response(&prompt_id);
     assert_eq!(prompt_response.get("success"), Some(&Value::Bool(true)));
@@ -262,10 +243,6 @@ fn prompt_yields_started_disposition_and_full_turn() {
     assert_eq!(subtype(result), "success");
 }
 
-/// Issue #1274: when the Claude SDK message pump throws, or the query iterator
-/// ends/exhausts while a prompt is in flight, the session must not stay busy
-/// and healthy-looking. The in-flight turn has to finish with an error `result`
-/// that the Rust client can surface; a silent dead sidecar is the defect.
 #[test]
 fn claude_pump_failure_ends_the_turn_and_reports_error_1274() {
     fn assert_lost_turn(sidecar: &mut Sidecar, label: &str, message: &str) {
@@ -275,8 +252,6 @@ fn claude_pump_failure_ends_the_turn_and_reports_error_1274() {
             Some(&Value::Bool(true)),
             "prompt accepted: {label}"
         );
-        // The in-flight turn must finish with an error result; if the pump
-        // silently died the sidecar would stay busy and this times out.
         sidecar.wait_until(label, |records| {
             events(records, "result")
                 .any(|record| record.get("is_error").and_then(Value::as_bool) == Some(true))
@@ -292,14 +267,12 @@ fn claude_pump_failure_ends_the_turn_and_reports_error_1274() {
         assert!(!text.is_empty(), "error result carries a message: {label}");
     }
 
-    // Scenario 1: the SDK query iterator throws mid-turn (pump failure).
     {
         let mut sidecar = Sidecar::spawn();
         sidecar.init();
         assert_lost_turn(&mut sidecar, "pump failure result", "PUMP_FAIL now");
     }
 
-    // Scenario 2: the iterator ends/exhausts mid-turn without a result.
     {
         let mut sidecar = Sidecar::spawn();
         sidecar.init();
@@ -396,7 +369,6 @@ fn abort_interrupts_slow_turn_and_process_stays_usable() {
         Some("aborted_streaming")
     );
     assert_eq!(result.get("is_error"), Some(&Value::Bool(true)));
-    // The same child stays usable: a second plain prompt completes normally.
     let again_id = sidecar.command("prompt", json!({ "message": "again" }));
     let again_response = sidecar.response(&again_id);
     assert_eq!(again_response.get("success"), Some(&Value::Bool(true)));
@@ -507,7 +479,6 @@ fn prompt_containing_u2028_is_one_command() {
             .and_then(Value::as_str),
         Some("started")
     );
-    // The single parsed command runs exactly one turn.
     sidecar.wait_until("turn result", |records| {
         events(records, "result").any(|record| subtype(record) == "success")
     });
@@ -534,7 +505,6 @@ fn shutdown_responds_then_child_exits_once() {
         Some("shutdown")
     );
     assert_eq!(shutdown_response.get("success"), Some(&Value::Bool(true)));
-    // The child exits and Exited arrives exactly once before the stream ends.
     let deadline = Instant::now() + STEP_TIMEOUT;
     let mut exited = 0;
     loop {
@@ -555,7 +525,6 @@ fn shutdown_responds_then_child_exits_once() {
     assert_eq!(exited, 1, "Exited arrives exactly once");
 }
 
-/// The assistant text of the first `assistant` event, panicking when absent.
 fn first_assistant_text(records: &[Value]) -> String {
     let assistant = events(records, "assistant")
         .next()
@@ -579,7 +548,6 @@ fn form_elicitation_is_forwarded_and_answered() {
         sidecar.response(&prompt_id).get("success"),
         Some(&Value::Bool(true))
     );
-    // The form elicitation is forwarded to the host before any turn output.
     sidecar.wait_until("elicitation_request", |records| {
         events(records, "elicitation_request").next().is_some()
     });
@@ -604,7 +572,6 @@ fn form_elicitation_is_forwarded_and_answered() {
         .and_then(Value::as_str)
         .expect("request id")
         .to_owned();
-    // The response command's `id` field is the REQUEST id, not a fresh one.
     sidecar
         .process
         .send_with_id(
@@ -639,7 +606,6 @@ fn abort_cancels_pending_elicitation() {
         sidecar.response(&abort_id).get("success"),
         Some(&Value::Bool(true))
     );
-    // The still-pending elicitation resolves as cancelled, completing the turn.
     sidecar.wait_until("elicit result", |records| {
         events(records, "result").any(|record| subtype(record) == "success")
     });
@@ -716,16 +682,10 @@ fn fake_call_present(records: &[Value], method: &str) -> bool {
         .any(|record| record.get("method").and_then(Value::as_str) == Some(method))
 }
 
-/// Issue #1357 (slice A): with CLAUDE_CODE_ENABLE_TODO_TOOLS=1 the Claude
-/// Agent SDK exposes TaskCreate/TaskUpdate, and task ids only appear in the
-/// TaskCreate tool result. The sidecar must mirror every change of the main-
-/// loop ordered task list as an `ajax_plan` line, emitted AFTER forwarding
-/// the SDK message that caused it.
 #[test]
 fn claude_task_tools_track_plan_as_ajax_plan_1357() {
     let mut sidecar = Sidecar::spawn();
     sidecar.init();
-    // The init query must enable the Claude Agent SDK's todo tools.
     sidecar.wait_until("queryOptions fake_call", |records| {
         fake_call_present(records, "queryOptions")
     });
@@ -789,8 +749,6 @@ fn claude_task_tools_track_plan_as_ajax_plan_1357() {
         "update alpha completed"
     );
 
-    // Each ajax_plan line is emitted AFTER the SDK message that caused it, and
-    // all of them arrive inside the forwarded turn (before its result).
     let plan_positions: Vec<usize> = sidecar
         .records
         .iter()
@@ -826,10 +784,6 @@ fn claude_task_tools_track_plan_as_ajax_plan_1357() {
     );
 }
 
-/// Issue #1358: under permissionMode "bypassPermissions" the SDK never
-/// consults canUseTool, so AskUserQuestion gets auto-answered. A PreToolUse
-/// hook must forward the questions to the operator as an elicitation form and
-/// inject the answers back into the tool input (deny when declined).
 #[test]
 fn ask_user_question_hook_forwards_elicitation_1358() {
     fn run_and_decide(sidecar: &mut Sidecar, action: &str) -> Value {
@@ -839,8 +793,6 @@ fn ask_user_question_hook_forwards_elicitation_1358() {
             Some(&Value::Bool(true)),
             "prompt accepted"
         );
-        // The hook forwards the question as an elicitation form before any
-        // turn output.
         sidecar.wait_until("elicitation_request", |records| {
             events(records, "elicitation_request").next().is_some()
         });
@@ -906,7 +858,6 @@ fn ask_user_question_hook_forwards_elicitation_1358() {
         decision
     }
 
-    // Accept: the hook allows the tool with the answers injected.
     {
         let mut sidecar = Sidecar::spawn();
         sidecar.init();
@@ -927,7 +878,6 @@ fn ask_user_question_hook_forwards_elicitation_1358() {
         );
     }
 
-    // Decline: the hook denies the tool so no auto-answer is invented.
     {
         let mut sidecar = Sidecar::spawn();
         sidecar.init();

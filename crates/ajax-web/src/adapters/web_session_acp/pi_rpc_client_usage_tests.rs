@@ -1,24 +1,15 @@
-//! Tests for the context-usage update [`super::pi_rpc_client`] emits before
-//! each finished prompt: the happy prompt flow reports `UsageUpdate` between
-//! the last message chunk and `RequestFinished`, an aborted run reports it the
-//! same way, and a silent-stats host or a rejected prompt skips it entirely.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::pi_rpc_client::PiRpcClient;
 
-/// Generous per-step bound: node startup plus one scripted record burst, and
-/// the 2s stats timeout must fit inside a single wait when stats are silent.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn fixture_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_pi_rpc.js")
 }
 
-/// Spawn the fake pi RPC child directly (executable, node shebang), passing
-/// `extra_args` as the fixture switches. Fails loudly when spawn fails.
 fn spawn_client(extra_args: &[&str]) -> PiRpcClient {
     let args: Vec<String> = extra_args.iter().map(|arg| (*arg).to_string()).collect();
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -30,9 +21,6 @@ fn text_blocks() -> String {
     "hello".to_string()
 }
 
-/// The `(used, size)` pair when `event` is a native usage event, otherwise
-/// `None`. (The pi client's stats hook emits a native usage event before each
-/// finished prompt; the pi mapper now emits native events.)
 fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     match event {
         AgentEvent::Native(NativeEvent::Usage { used, size }) => Some((*used, *size)),
@@ -40,8 +28,6 @@ fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     }
 }
 
-/// The stop reason when `event` is a successful native turn-finished event,
-/// otherwise `None`.
 fn stop_reason(event: &AgentEvent) -> Option<&str> {
     match event {
         AgentEvent::Native(NativeEvent::TurnFinished {
@@ -51,13 +37,10 @@ fn stop_reason(event: &AgentEvent) -> Option<&str> {
     }
 }
 
-/// True when `event` is a native `AgentText` (the pi message chunk).
 fn is_agent_text(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// Collect events (with generous per-event waits) until a `RequestFinished`
-/// arrives; it is kept as the last element.
 fn collect_until_finished(client: &PiRpcClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
@@ -79,7 +62,6 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
 
     let events = collect_until_finished(&client);
 
-    // Order: message chunk(s), then exactly one Usage, then the finish.
     let finish_index = events
         .iter()
         .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))

@@ -1,6 +1,3 @@
-//! Unit tests for [`super::cursor_sdk_map`], replaying trimmed Cursor SDK
-//! sidecar stream lines.
-
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
@@ -13,8 +10,6 @@ fn map(message: &Value) -> RpcMapping {
     map_cursor_message(message, SESSION_ID)
 }
 
-/// The native event of an event that must be `AgentEvent::Native`, failing on
-/// anything else.
 fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
         AgentEvent::Native(native) => native,

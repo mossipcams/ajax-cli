@@ -1,23 +1,15 @@
-//! Tests for [`super::claude_sdk_client::ClaudeSdkClient`] running the real
-//! `claude_sdk_sidecar.mjs` against the fake Claude Agent SDK fixture: the
-//! handshake/config-option shape, the prompt and abort event flows, model and
-//! effort round trips, shutdown semantics, launch-argument construction, and
-//! the production embedded-script launch path (`node --input-type=module -e`).
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::claude_sdk_client::{sidecar_launch_args, ClaudeSdkClient, EFFORT_LEVELS};
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `(sidecar script, fake sdk module)` paths under the crate.
 fn sidecar_and_fake_sdk() -> (PathBuf, PathBuf) {
     let dir = manifest_dir();
     (
@@ -26,8 +18,6 @@ fn sidecar_and_fake_sdk() -> (PathBuf, PathBuf) {
     )
 }
 
-/// Spawn the real sidecar script (`node <sidecar> --sdk-module <fake>`) wired
-/// to the fake Claude Agent SDK. Fails loudly when spawn fails.
 fn spawn_client(model: Option<&str>, resume: Option<&str>) -> ClaudeSdkClient {
     let (sidecar, fake_sdk) = sidecar_and_fake_sdk();
     let args = vec![
@@ -50,7 +40,6 @@ fn text_blocks(text: &str) -> String {
     text.to_string()
 }
 
-/// The streamed text of a native `AgentText` event, otherwise `None`.
 fn event_text(event: &AgentEvent) -> Option<&str> {
     match event {
         AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text),
@@ -58,8 +47,6 @@ fn event_text(event: &AgentEvent) -> Option<&str> {
     }
 }
 
-/// The `(used, size)` pair when `event` carries a native usage update,
-/// otherwise `None`.
 fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     match event {
         AgentEvent::Native(NativeEvent::Usage { used, size }) => Some((*used, *size)),
@@ -67,7 +54,6 @@ fn usage_update(event: &AgentEvent) -> Option<(u64, u64)> {
     }
 }
 
-/// The stop reason when `event` is a successful native turn-finished event,
 fn stop_reason(event: &AgentEvent) -> Option<&str> {
     match event {
         AgentEvent::Native(NativeEvent::TurnFinished {
@@ -77,8 +63,6 @@ fn stop_reason(event: &AgentEvent) -> Option<&str> {
     }
 }
 
-/// Collect events (with generous per-event waits) until a `RequestFinished`
-/// arrives; it is kept as the last element.
 fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
@@ -93,8 +77,6 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     }
 }
 
-/// The `(request_id, stop reason)` of a successful turn-finished event, used to
-/// assert the identity and terminal shape of one prompt turn.
 fn finished_fields(event: &AgentEvent) -> (u64, Option<&str>) {
     match event {
         AgentEvent::Native(NativeEvent::TurnFinished {
@@ -105,8 +87,6 @@ fn finished_fields(event: &AgentEvent) -> (u64, Option<&str>) {
     }
 }
 
-/// Owned snapshot of one select option, so callers avoid lifetimes into the
-/// borrowed [`super::NeutralConfigOption`].
 struct SelectView {
     current_value: String,
     values: Vec<String>,
@@ -200,11 +180,9 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 
     let events = collect_until_finished(&client);
 
-    // Exactly one message chunk carrying "ok".
     let chunks: Vec<&str> = events.iter().filter_map(event_text).collect();
     assert_eq!(chunks, vec!["ok"], "events: {events:?}");
 
-    // Exactly one UsageUpdate (size 200000, used > 0) before the finish.
     let usage_index = events
         .iter()
         .position(|event| usage_update(event).is_some())
@@ -232,8 +210,6 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
 
 #[test]
 fn finished_turn_emits_context_usage_from_sidecar_1334() {
-    // #1334: the context meter comes from the sidecar's getContextUsage()
-    // snapshot fetched by the run-finished hook, not from the result message.
     let client = spawn_client(None, None);
     client
         .begin_prompt(&text_blocks("hello"))
@@ -241,7 +217,6 @@ fn finished_turn_emits_context_usage_from_sidecar_1334() {
 
     let events = collect_until_finished(&client);
 
-    // The fake SDK fixture reports { totalTokens: 25730, maxTokens: 200000 }.
     let usage_index = events
         .iter()
         .position(|event| usage_update(event).is_some())
@@ -253,7 +228,6 @@ fn finished_turn_emits_context_usage_from_sidecar_1334() {
     let (used, size) = usage_update(&events[usage_index]).unwrap();
     assert_eq!((used, size), (25730, 200000));
 
-    // The Usage event must precede the turn-finished event.
     let finish_index = events
         .iter()
         .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
@@ -269,7 +243,6 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
         .expect("begin_prompt");
     assert_eq!(id, 1);
 
-    // Wait for the first streamed chunk so the prompt is genuinely in flight.
     loop {
         let event = client
             .wait_event(TIMEOUT)
@@ -287,7 +260,6 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
     assert_eq!(finished_id, 1);
     assert_eq!(reason, Some("cancelled"));
 
-    // A second plain prompt on the same client finishes with id 2 (no respawn).
     let second_id = client
         .begin_prompt(&text_blocks("hello"))
         .expect("second begin_prompt");
@@ -381,7 +353,6 @@ fn sidecar_launch_args_embed_the_script_and_pass_the_sdk_module() {
 
 #[test]
 fn production_embedded_script_launch_path_prompts_to_end_turn() {
-    // The production launch shape: `node <embedded script> -- --sdk-module <fake>`.
     let (_, fake_sdk) = sidecar_and_fake_sdk();
     let args = sidecar_launch_args(Some(&fake_sdk.to_string_lossy()));
 
@@ -427,8 +398,6 @@ fn spawn_exposes_the_advertised_command_list_once() {
     );
 }
 
-/// Inline fake sidecar for #1275: acknowledges `init` and `prompt`, then ends
-/// the turn with an API error result (`subtype: success`, `is_error: true`).
 const ERROR_RESULT_SIDECAR: &str = r#"
 const readline = require("node:readline");
 const send = (record) => process.stdout.write(JSON.stringify(record) + "\n");
@@ -449,8 +418,6 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 #[test]
 fn claude_error_result_finishes_prompt_as_failed_1275() {
-    // #1275: a turn ended by an `is_error` result must settle the prompt as a
-    // failure, not as a successful `end_turn`.
     let args = vec!["-e".to_string(), ERROR_RESULT_SIDECAR.to_string()];
     let client = ClaudeSdkClient::spawn(
         Path::new("node"),

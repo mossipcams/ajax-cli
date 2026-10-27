@@ -1,6 +1,3 @@
-//! Unit tests for `agent_event`: variant construction and the `AgentEvent`
-//! wrapper over both ACP and native sources.
-
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::AcpClientEvent;
 

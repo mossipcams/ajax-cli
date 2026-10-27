@@ -1,7 +1,3 @@
-//! Tests for the Pi RPC model-catalog path of [`super::catalog`], running the
-//! fake Pi RPC fixture and asserting that the Pi model catalog comes from the
-//! Pi RPC handshake config options instead of an ACP session/new.
-
 use std::path::{Path, PathBuf};
 
 use super::catalog::read_agent_model_catalog;

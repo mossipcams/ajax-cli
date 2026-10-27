@@ -1,26 +1,10 @@
 #![allow(dead_code)]
-//! Pure mapping from Cursor SDK sidecar stream lines (JSON) to the native
-//! [`AgentEvent`] values consumed by the web session adapter.
-//!
-//! The Cursor client connection loop (a later packet) calls
-//! [`map_cursor_message`] once per parsed line and folds the returned
-//! [`RpcMapping`] values: each emitted event is forwarded to the session in
-//! order, and `finished` / `ended_aborted` track whether the run settled and
-//! whether it ended aborted. Lines that carry no adapter meaning (`usage`,
-//! `status`, `task`, `system`, `user`, `request`, unknown types) map to an
-//! empty result and never panic on missing or malformed fields.
 
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
 
-/// Map one parsed Cursor SDK sidecar line to adapter events and run state.
-///
-/// `session_id` is retained for interface parity with the other mappers;
-/// native events carry no session id (the session slice binds them). The
-/// mapping is total: any line — including non-objects, missing fields, and
-/// unknown types — returns an empty result instead of panicking.
 pub fn map_cursor_message(message: &Value, _session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     let (finished, ended_aborted) = match message.get("type").and_then(Value::as_str).unwrap_or("")
@@ -38,9 +22,6 @@ pub fn map_cursor_message(message: &Value, _session_id: &str) -> RpcMapping {
             (false, false)
         }
         "result" => map_result(message, &mut events),
-        // `usage` (no native turn-usage event yet — add when the shared layer
-        // grows one), `status`, `task`, `system`, `user`, `request`, and unknown
-        // types produce no events.
         _ => (false, false),
     };
     RpcMapping {
@@ -50,9 +31,6 @@ pub fn map_cursor_message(message: &Value, _session_id: &str) -> RpcMapping {
     }
 }
 
-/// Assistant content blocks: one [`NativeEvent::AgentText`] per non-empty text
-/// block, in order. `tool_use` blocks are ignored — tool calls arrive as their
-/// own `tool_call` lines.
 fn map_assistant_text(message: &Value, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
@@ -72,8 +50,6 @@ fn map_assistant_text(message: &Value, events: &mut Vec<AgentEvent>) {
     }
 }
 
-/// Thinking line: non-empty `text` is a thought; an empty `text` closes the
-/// current thought and emits nothing.
 fn map_thinking(message: &Value, events: &mut Vec<AgentEvent>) {
     let text = message.get("text").and_then(Value::as_str).unwrap_or("");
     if !text.is_empty() {
@@ -83,9 +59,6 @@ fn map_thinking(message: &Value, events: &mut Vec<AgentEvent>) {
     }
 }
 
-/// `tool_call` line: a running call opens a tool call (or a plan, for the todo
-/// tracker); a completed/errored one settles it. Lines with a missing or
-/// non-string `call_id` produce nothing.
 fn map_tool_call(message: &Value, events: &mut Vec<AgentEvent>) {
     let Some(id) = message.get("call_id").and_then(Value::as_str) else {
         return;
@@ -123,9 +96,6 @@ fn map_tool_call(message: &Value, events: &mut Vec<AgentEvent>) {
     }
 }
 
-/// The ACP wire string for the tool kind implied by a Cursor SDK tool name.
-/// Names are compared lowercased with underscores removed; unrecognized names
-/// fall back to `"other"`.
 fn tool_kind_for_name(name: &str) -> String {
     let normalized = normalize_tool_name(name);
     let kind = match normalized.as_str() {
@@ -142,9 +112,6 @@ fn normalize_tool_name(name: &str) -> String {
     name.to_ascii_lowercase().replace('_', "")
 }
 
-/// The tool call title: the tool name, then `": "` plus the first non-empty of
-/// `args.path`, `args.command`, `args.pattern`, and `args.globPattern` (string
-/// values only).
 fn tool_title(name: &str, args: Option<&Value>) -> String {
     let Some(args) = args.and_then(Value::as_object) else {
         return name.to_string();
@@ -159,10 +126,6 @@ fn tool_title(name: &str, args: Option<&Value>) -> String {
     name.to_string()
 }
 
-/// The update content of a settled tool call: `result.value.content` when it is
-/// a string; else `result.value.stdout` and `result.value.diffString` when they
-/// are non-empty strings (the edit result's unified diff); else
-/// `result.error.message` when it is a string; else nothing.
 fn tool_update_content(result: Option<&Value>) -> Option<String> {
     let result = result?;
     if let Some(content) = result.pointer("/value/content").and_then(Value::as_str) {
@@ -188,9 +151,6 @@ fn is_todo_tracker(name: &str) -> bool {
     normalize_tool_name(name) == "updatetodos"
 }
 
-/// `updateTodos` args: one [`NativeEvent::Plan`] entry per todo, in order. The
-/// pair is `(content, status)`; `inProgress` maps to `"in_progress"`,
-/// `cancelled` to `"completed"`, and other statuses pass through unchanged.
 fn map_todos_plan(args: &Value, events: &mut Vec<AgentEvent>) {
     let Some(todos) = args.get("todos").and_then(Value::as_array) else {
         return;
@@ -214,10 +174,6 @@ fn map_todos_plan(args: &Value, events: &mut Vec<AgentEvent>) {
     events.push(AgentEvent::Native(NativeEvent::Plan(entries)));
 }
 
-/// `result` line: the sidecar's single terminal line per prompt. Always settles
-/// the run. A missing or non-string status is an error; `cancelled` aborts
-/// silently; any other non-`finished` status emits an error event with the
-/// error text, or a fallback message when absent.
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     let status = message.get("status").and_then(Value::as_str);
     let ended_aborted = status == Some("cancelled");
