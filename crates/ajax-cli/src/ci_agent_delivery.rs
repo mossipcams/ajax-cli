@@ -39,7 +39,7 @@ pub(crate) fn deliver(
             process.trim()
         ));
     }
-    let target = format!("{}:{}", task.tmux_session, task.task_window);
+    let target = format!("={}:{}", task.tmux_session, task.task_window);
     let foreground = run_stdout(
         runner,
         &CommandSpec::new(
@@ -116,5 +116,90 @@ fn run_stdout(runner: &mut impl CommandRunner, command: &CommandSpec) -> Result<
             command.program,
             output.stderr.trim()
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ajax_core::{
+        adapters::{CommandOutput, CommandRunError},
+        models::{AgentClient, TaskId},
+    };
+
+    #[derive(Default)]
+    struct ProbeRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for ProbeRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: "claude\n".to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn foreground_probe_targets_the_exact_task_window() {
+        let cache_dir =
+            std::env::temp_dir().join(format!("ajax-ci-delivery-1450-{}", std::process::id()));
+        let runtime_dir = cache_dir.join("agent-runtime");
+        fs::create_dir_all(&runtime_dir).unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let snapshot = AgentRuntimeSnapshot {
+            task_id: "web/fix-login".to_string(),
+            state: AgentRuntimeState::Running,
+            observed_at_unix_millis: now,
+            pid: Some(4242),
+            exit_code: None,
+            message: None,
+        };
+        fs::write(
+            runtime_dir.join(format!("{}.json", task_file_stem("web/fix-login"))),
+            serde_json::to_string(&snapshot).unwrap(),
+        )
+        .unwrap();
+        let task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "web/fix-login",
+            "fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "task",
+            AgentClient::Claude,
+        );
+        let notification = AgentNotification::CiFailed {
+            episode_id: "episode-1".to_string(),
+            task_id: TaskId::new("web/fix-login"),
+            pr_number: 7,
+            head_sha: "abc123".to_string(),
+            failed_checks: Vec::new(),
+        };
+        let mut runner = ProbeRunner::default();
+
+        let status = deliver(&cache_dir, &mut runner, &task, &notification);
+        fs::remove_dir_all(&cache_dir).unwrap();
+
+        assert_eq!(status, Ok(AgentNotificationDeliveryStatus::Accepted));
+        assert!(runner.commands.contains(&CommandSpec::new(
+            "tmux",
+            [
+                "display-message",
+                "-p",
+                "-t",
+                "=ajax-web-fix-login:task",
+                "#{pane_current_command}",
+            ],
+        )));
     }
 }

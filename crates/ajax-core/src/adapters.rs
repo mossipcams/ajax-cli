@@ -52,12 +52,12 @@ mod tests {
 
         assert_eq!(
             adapter.attach_session("ajax-web-fix-login"),
-            CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
             adapter.switch_client("ajax-web-fix-login"),
-            CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
@@ -83,7 +83,7 @@ mod tests {
                 [
                     "new-window",
                     "-t",
-                    "ajax-web-fix-login",
+                    "=ajax-web-fix-login:",
                     "-n",
                     "task",
                     "-c",
@@ -93,15 +93,15 @@ mod tests {
         );
         assert_eq!(
             adapter.kill_window("ajax-web-fix-login", "task"),
-            CommandSpec::new("tmux", ["kill-window", "-t", "ajax-web-fix-login:task"])
+            CommandSpec::new("tmux", ["kill-window", "-t", "=ajax-web-fix-login:task"])
         );
         assert_eq!(
             adapter.select_window("ajax-web-fix-login", "task"),
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"])
         );
         assert_eq!(
             adapter.switch_client_to_window("ajax-web-fix-login", "task"),
-            CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
@@ -111,7 +111,7 @@ mod tests {
                 [
                     "send-keys",
                     "-t",
-                    "ajax-web-fix-login:task",
+                    "=ajax-web-fix-login:task",
                     "codex --cd /tmp/worktree",
                     "Enter"
                 ]
@@ -119,7 +119,7 @@ mod tests {
         );
         assert_eq!(
             adapter.kill_session("ajax-web-fix-login"),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"])
         );
         assert_eq!(
             adapter.list_sessions(),
@@ -133,7 +133,7 @@ mod tests {
                 [
                     "list-windows",
                     "-t",
-                    "ajax-web-fix-login",
+                    "=ajax-web-fix-login",
                     "-F",
                     "#{window_name}\t#{pane_current_path}"
                 ]
@@ -156,7 +156,7 @@ mod tests {
             adapter.capture_pane("ajax-web-fix-login", "task"),
             CommandSpec::new(
                 "tmux",
-                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"]
+                ["capture-pane", "-p", "-t", "=ajax-web-fix-login:task"]
             )
             .with_timeout(std::time::Duration::from_secs(8))
         );
@@ -171,7 +171,8 @@ mod tests {
             command in "[^\\x00]{0,80}"
         ) {
             let adapter = TmuxAdapter::new("tmux");
-            let target = format!("{session}:{window}");
+            let target = format!("={session}:{window}");
+            let session_target = format!("={session}:");
 
             prop_assert_eq!(
                 adapter.new_detached_task_session(&session, &window, &path),
@@ -196,7 +197,7 @@ mod tests {
                     [
                         "new-window",
                         "-t",
-                        session.as_str(),
+                        session_target.as_str(),
                         "-n",
                         window.as_str(),
                         "-c",

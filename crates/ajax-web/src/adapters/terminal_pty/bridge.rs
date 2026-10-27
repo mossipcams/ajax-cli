@@ -223,6 +223,27 @@ pub(crate) async fn send_error_and_close(socket: &mut WebSocket, error: String) 
     let _ = socket.send(Message::Close(None)).await;
 }
 
+pub(crate) fn base_session_probe_command(session: &str) -> TmuxCommand {
+    let target = tmux_session_target(session);
+    TmuxCommand::new(["has-session", "-t", &target])
+}
+
+pub(crate) fn probe_failure_detail(succeeded: bool, stdout: &str, stderr: &str) -> Option<String> {
+    if succeeded {
+        return if stdout.trim().is_empty() {
+            Some("window probe found no window".to_string())
+        } else {
+            None
+        };
+    }
+    let detail = stderr.trim();
+    Some(if detail.is_empty() {
+        "window probe failed".to_string()
+    } else {
+        detail.to_string()
+    })
+}
+
 pub(crate) async fn run_tmux_command(
     command: &TmuxCommand,
 ) -> std::io::Result<std::process::Output> {
@@ -248,7 +269,7 @@ pub async fn bridge_task_terminal_socket(
     .await;
 
     if !plan.worktree_path.as_os_str().is_empty() && plan.worktree_path.exists() {
-        let has_base = TmuxCommand::new(["has-session", "-t", &plan.tmux_session]);
+        let has_base = base_session_probe_command(&plan.tmux_session);
         let base_exists =
             matches!(run_tmux_command(&has_base).await, Ok(out) if out.status.success());
         if !base_exists {
@@ -288,16 +309,11 @@ pub async fn bridge_task_terminal_socket(
 
     let probe = task_window_probe_command(&isolated.ephemeral_session, &plan.task_window);
     let probe_failure = match run_tmux_command(&probe).await {
-        Ok(output) if output.status.success() => None,
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let detail = stderr.trim();
-            Some(if detail.is_empty() {
-                "window probe failed".to_string()
-            } else {
-                detail.to_string()
-            })
-        }
+        Ok(output) => probe_failure_detail(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+        ),
         Err(error) => Some(error.to_string()),
     };
     if let Some(failure) = probe_failure {

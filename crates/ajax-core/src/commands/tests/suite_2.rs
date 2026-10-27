@@ -321,7 +321,7 @@ fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
     );
     assert_eq!(plan.commands[3].program, "tmux");
     assert_eq!(plan.commands[3].args[0], "send-keys");
-    assert_eq!(plan.commands[3].args[2], "ajax-web-fix-logout:task");
+    assert_eq!(plan.commands[3].args[2], "=ajax-web-fix-logout:task");
     assert_eq!(
         plan.commands[3].args[3],
         "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
@@ -429,7 +429,7 @@ fn new_task_plan_slugifies_title_into_branch_session_and_handle() {
         "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
     );
     assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
-    assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:task");
+    assert_eq!(send_keys.args[2], "=ajax-api-ship-oauth-v2:task");
     let launch_words = shell_words(&send_keys.args[3]);
     assert_eq!(
         &launch_words[launch_words.len() - 3..],
@@ -673,16 +673,16 @@ fn open_task_plan_targets_task_directly() {
     assert_eq!(
         outside_tmux.commands,
         vec![
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
-            CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
     );
     assert_eq!(
         inside_tmux.commands,
         vec![
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
-            CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
     );

@@ -185,7 +185,7 @@ fn clean_plan_uses_policy_and_native_cleanup() {
                 "ajax/fix-login",
                 false,
             ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]),
         ]
     );
 }
@@ -287,7 +287,7 @@ fn remove_task_plan_force_removes_active_task_resources() {
                 "ajax/fix-login",
                 true,
             ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]),
         ]
     );
 }
@@ -594,7 +594,7 @@ fn cleanup_and_remove_plans_are_distinct() {
 #[test]
 fn teardown_step_result_ignores_unrelated_resource_commands() {
     let unrelated_commands = [
-        CommandSpec::new("tmux", ["kill-session", "-t", "other-session"]),
+        CommandSpec::new("tmux", ["kill-session", "-t", "=other-session"]),
         CommandSpec::new(
             "git",
             [
@@ -685,7 +685,7 @@ fn teardown_step_result_records_matching_tmux_cleanup() {
         .unwrap();
     task.add_side_flag(SideFlag::TmuxMissing);
     task.add_side_flag(SideFlag::TaskWindowMissing);
-    let command = CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]);
+    let command = CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]);
 
     let changed =
         mark_task_cleanup_step_completed(&mut context, "web/fix-login", &command).unwrap();

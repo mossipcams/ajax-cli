@@ -17,12 +17,14 @@ impl TmuxAdapter {
     }
 
     pub fn attach_session(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["attach-session", "-t", session])
+        let target = tmux_session_target(session);
+        CommandSpec::new(&self.program, ["attach-session", "-t", &target])
             .with_mode(CommandMode::InheritStdio)
     }
 
     pub fn switch_client(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["switch-client", "-t", session])
+        let target = tmux_session_target(session);
+        CommandSpec::new(&self.program, ["switch-client", "-t", &target])
             .with_mode(CommandMode::InheritStdio)
     }
 
@@ -39,9 +41,10 @@ impl TmuxAdapter {
     }
 
     pub fn ensure_task_window(&self, session: &str, window: &str, path: &str) -> CommandSpec {
+        let target = format!("{}:", tmux_session_target(session));
         CommandSpec::new(
             &self.program,
-            ["new-window", "-t", session, "-n", window, "-c", path],
+            ["new-window", "-t", &target, "-n", window, "-c", path],
         )
     }
 
@@ -72,7 +75,8 @@ impl TmuxAdapter {
     }
 
     pub fn kill_session(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["kill-session", "-t", session])
+        let target = tmux_session_target(session);
+        CommandSpec::new(&self.program, ["kill-session", "-t", &target])
     }
 
     pub fn list_sessions(&self) -> CommandSpec {
@@ -81,12 +85,13 @@ impl TmuxAdapter {
     }
 
     pub fn list_windows(&self, session: &str) -> CommandSpec {
+        let target = tmux_session_target(session);
         CommandSpec::new(
             &self.program,
             [
                 "list-windows",
                 "-t",
-                session,
+                &target,
                 "-F",
                 "#{window_name}\t#{pane_current_path}",
             ],
@@ -120,7 +125,7 @@ impl TmuxAdapter {
     }
 
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
-        let target = format!("{session}:{window}");
+        let target = tmux_window_target(session, window);
         CommandSpec::new(&self.program, ["capture-pane", "-p", "-t", &target])
             .with_timeout(TMUX_PROBE_TIMEOUT)
     }
@@ -194,13 +199,81 @@ impl TmuxAdapter {
     }
 }
 
+pub(crate) fn tmux_session_target(session: &str) -> String {
+    format!("={session}")
+}
+
 fn tmux_window_target(session: &str, window: &str) -> String {
-    format!("{session}:{window}")
+    format!("{}:{window}", tmux_session_target(session))
 }
 
 #[cfg(test)]
 mod tests {
     use super::TmuxAdapter;
+
+    #[test]
+    fn session_and_window_commands_use_exact_match_targets() {
+        let adapter = TmuxAdapter::new("tmux");
+
+        assert_eq!(
+            adapter.attach_session("ajax-web-fix").args,
+            ["attach-session", "-t", "=ajax-web-fix"]
+        );
+        assert_eq!(
+            adapter.switch_client("ajax-web-fix").args,
+            ["switch-client", "-t", "=ajax-web-fix"]
+        );
+        assert_eq!(
+            adapter.switch_client_to_window("ajax-web-fix", "task").args,
+            ["switch-client", "-t", "=ajax-web-fix"]
+        );
+        assert_eq!(
+            adapter
+                .ensure_task_window("ajax-web-fix", "task", "/tmp/wt")
+                .args,
+            [
+                "new-window",
+                "-t",
+                "=ajax-web-fix:",
+                "-n",
+                "task",
+                "-c",
+                "/tmp/wt"
+            ]
+        );
+        assert_eq!(
+            adapter.kill_window("ajax-web-fix", "task").args,
+            ["kill-window", "-t", "=ajax-web-fix:task"]
+        );
+        assert_eq!(
+            adapter.select_window("ajax-web-fix", "task").args,
+            ["select-window", "-t", "=ajax-web-fix:task"]
+        );
+        assert_eq!(
+            adapter
+                .send_agent_command("ajax-web-fix", "task", "codex")
+                .args,
+            ["send-keys", "-t", "=ajax-web-fix:task", "codex", "Enter"]
+        );
+        assert_eq!(
+            adapter.capture_pane("ajax-web-fix", "task").args,
+            ["capture-pane", "-p", "-t", "=ajax-web-fix:task"]
+        );
+        assert_eq!(
+            adapter.kill_session("ajax-web-fix").args,
+            ["kill-session", "-t", "=ajax-web-fix"]
+        );
+        assert_eq!(
+            adapter.list_windows("ajax-web-fix").args,
+            [
+                "list-windows",
+                "-t",
+                "=ajax-web-fix",
+                "-F",
+                "#{window_name}\t#{pane_current_path}"
+            ]
+        );
+    }
 
     #[test]
     fn session_status_matches_trimmed_session_name_exactly() {

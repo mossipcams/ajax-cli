@@ -51,7 +51,7 @@ fn remove_execute_force_removes_task_resources() {
     );
     assert_eq!(
         runner.commands[6],
-        CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+        CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"])
     );
     assert!(runner.commands.iter().any(|command| {
         command.program == "sh" && command.args.get(2) == Some(&"ajax-delete-branch".to_string())
@@ -248,7 +248,7 @@ fn drop_execute_kills_live_tmux_when_registry_cache_says_absent() {
                 ]
             ),
             git_list_remote_branches_command(),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]),
             CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
                 .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(

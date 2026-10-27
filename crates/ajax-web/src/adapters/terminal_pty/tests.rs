@@ -67,7 +67,7 @@ fn adapter_contract_tmux_attach_uses_registered_session_and_task_window() {
         vec![
             "attach-session".to_string(),
             "-t".to_string(),
-            "ajax-web-fix-login:task".to_string(),
+            "=ajax-web-fix-login:task".to_string(),
         ]
     );
     assert!(!command_plan
@@ -82,7 +82,7 @@ fn tmux_attach_target_never_uses_browser_handle() {
 
     let command_plan = build_tmux_attach_command_plan(&plan);
 
-    assert_eq!(command_plan.args[2], "ajax-web-fix-login:task");
+    assert_eq!(command_plan.args[2], "=ajax-web-fix-login:task");
     assert!(!command_plan
         .args
         .iter()
@@ -100,9 +100,38 @@ fn adapter_contract_task_window_probe_targets_ephemeral_session() {
             "display-message".to_string(),
             "-p".to_string(),
             "-t".to_string(),
-            "ajax-web-fix-login-m1a2b3c:task".to_string(),
+            "=ajax-web-fix-login-m1a2b3c:task".to_string(),
             "#{window_id}".to_string(),
         ]
+    );
+}
+
+#[test]
+fn task_window_probe_with_empty_stdout_is_a_failure() {
+    assert_eq!(
+        super::bridge::probe_failure_detail(true, "", ""),
+        Some("window probe found no window".to_string())
+    );
+    assert_eq!(
+        super::bridge::probe_failure_detail(true, " \n", ""),
+        Some("window probe found no window".to_string())
+    );
+}
+
+#[test]
+fn task_window_probe_with_window_id_is_a_success() {
+    assert_eq!(super::bridge::probe_failure_detail(true, "@3\n", ""), None);
+}
+
+#[test]
+fn task_window_probe_nonzero_exit_keeps_stderr_as_detail() {
+    assert_eq!(
+        super::bridge::probe_failure_detail(false, "", "can't find window: task\n"),
+        Some("can't find window: task".to_string())
+    );
+    assert_eq!(
+        super::bridge::probe_failure_detail(false, "", ""),
+        Some("window probe failed".to_string())
     );
 }
 
@@ -138,7 +167,7 @@ fn browser_attach_preserves_shared_task_session_size() {
                     "-s".to_string(),
                     ephemeral.to_string(),
                     "-t".to_string(),
-                    "ajax-web-fix-login".to_string(),
+                    "=ajax-web-fix-login".to_string(),
                 ],
             },
             TmuxCommand {
@@ -146,7 +175,7 @@ fn browser_attach_preserves_shared_task_session_size() {
                 args: vec![
                     "set-option".to_string(),
                     "-t".to_string(),
-                    ephemeral.to_string(),
+                    format!("={ephemeral}:"),
                     "status-interval".to_string(),
                     "5".to_string(),
                 ],
@@ -156,7 +185,7 @@ fn browser_attach_preserves_shared_task_session_size() {
                 args: vec![
                     "set-option".to_string(),
                     "-t".to_string(),
-                    ephemeral.to_string(),
+                    format!("={ephemeral}:"),
                     "visual-activity".to_string(),
                     "off".to_string(),
                 ],
@@ -166,7 +195,7 @@ fn browser_attach_preserves_shared_task_session_size() {
                 args: vec![
                     "set-option".to_string(),
                     "-t".to_string(),
-                    ephemeral.to_string(),
+                    format!("={ephemeral}:"),
                     "visual-bell".to_string(),
                     "off".to_string(),
                 ],
@@ -184,14 +213,22 @@ fn browser_attach_preserves_shared_task_session_size() {
                 .map(|pair| pair[1].as_str())
         })
         .collect();
-    assert_eq!(set_option_targets, vec![ephemeral, ephemeral, ephemeral]);
+    let ephemeral_options = format!("={ephemeral}:");
+    assert_eq!(
+        set_option_targets,
+        vec![
+            ephemeral_options.as_str(),
+            ephemeral_options.as_str(),
+            ephemeral_options.as_str(),
+        ]
+    );
     assert!(!set_option_targets.contains(&"ajax-web-fix-login"));
     assert_eq!(
         isolated.attach.args,
         vec![
             "attach-session".to_string(),
             "-t".to_string(),
-            format!("{ephemeral}:task"),
+            format!("={ephemeral}:task"),
         ]
     );
     assert!(!isolated
@@ -335,7 +372,7 @@ fn isolated_attach_plan_seeds_browser_scrollback_from_task_window() {
             "-p",
             "-e",
             "-t",
-            "ajax-web-fix-login-m1a2b3c:task",
+            "=ajax-web-fix-login-m1a2b3c:task",
             "-S",
             "-10000",
             "-E",
@@ -390,9 +427,20 @@ fn disconnect_destroys_one_off_viewports_but_preserves_reconnectable_sessions() 
             args: vec![
                 "kill-session".to_string(),
                 "-t".to_string(),
-                "ajax-web-fix-login-m1a2b3c".to_string(),
+                "=ajax-web-fix-login-m1a2b3c".to_string(),
             ],
         }]
+    );
+}
+
+#[test]
+fn bridge_base_session_probe_targets_exact_session() {
+    let command = super::bridge::base_session_probe_command("ajax-web-fix-login");
+
+    assert_eq!(command.program, "tmux");
+    assert_eq!(
+        command.args,
+        vec!["has-session", "-t", "=ajax-web-fix-login"]
     );
 }
 

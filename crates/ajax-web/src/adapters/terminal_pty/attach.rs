@@ -92,8 +92,16 @@ pub struct TmuxAttachCommandPlan {
     pub args: Vec<String>,
 }
 
+pub(crate) fn tmux_session_target(session: &str) -> String {
+    format!("={session}")
+}
+
+pub(crate) fn tmux_session_options_target(session: &str) -> String {
+    format!("={session}:")
+}
+
 pub fn tmux_attach_target(session: &str, task_window: &str) -> String {
-    format!("{session}:{task_window}")
+    format!("{}:{task_window}", tmux_session_target(session))
 }
 
 pub(crate) fn task_window_probe_command(ephemeral_session: &str, task_window: &str) -> TmuxCommand {
@@ -171,8 +179,13 @@ pub fn ephemeral_client_token(client_id: &str) -> String {
     full[..12].to_string()
 }
 
+pub(crate) fn kill_session_command(session: &str) -> TmuxCommand {
+    let target = tmux_session_target(session);
+    TmuxCommand::new(["kill-session", "-t", &target])
+}
+
 pub fn destroy_ephemeral_session_commands(ephemeral_session: &str) -> Vec<TmuxCommand> {
-    vec![TmuxCommand::new(["kill-session", "-t", ephemeral_session])]
+    vec![kill_session_command(ephemeral_session)]
 }
 
 pub(crate) fn should_ignore_setup_failure(command: &TmuxCommand, stderr: &str) -> bool {
@@ -186,6 +199,8 @@ pub(crate) fn build_isolated_attach_plan_with_token(
 ) -> IsolatedAttachPlan {
     let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
     let history_target = tmux_attach_target(&ephemeral, &plan.task_window);
+    let base_target = tmux_session_target(&plan.tmux_session);
+    let ephemeral_options = tmux_session_options_target(&ephemeral);
     let ephemeral_plan = TerminalAttachPlan {
         qualified_handle: plan.qualified_handle.clone(),
         tmux_session: ephemeral.clone(),
@@ -194,17 +209,22 @@ pub(crate) fn build_isolated_attach_plan_with_token(
     };
     IsolatedAttachPlan {
         setup: vec![
+            TmuxCommand::new(["new-session", "-d", "-s", &ephemeral, "-t", &base_target]),
             TmuxCommand::new([
-                "new-session",
-                "-d",
-                "-s",
-                &ephemeral,
+                "set-option",
                 "-t",
-                &plan.tmux_session,
+                &ephemeral_options,
+                "status-interval",
+                "5",
             ]),
-            TmuxCommand::new(["set-option", "-t", &ephemeral, "status-interval", "5"]),
-            TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-activity", "off"]),
-            TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-bell", "off"]),
+            TmuxCommand::new([
+                "set-option",
+                "-t",
+                &ephemeral_options,
+                "visual-activity",
+                "off",
+            ]),
+            TmuxCommand::new(["set-option", "-t", &ephemeral_options, "visual-bell", "off"]),
         ],
         history: TmuxCommand::new([
             "capture-pane",
@@ -291,7 +311,7 @@ pub fn reap_orphan_terminal_sessions() {
         .filter(|line| !line.is_empty())
         .collect();
     for session in ephemeral_sessions_to_reap(&names) {
-        let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
+        let _ = run_tmux_command_blocking(&kill_session_command(&session));
     }
 }
 
@@ -318,6 +338,6 @@ pub fn reap_detached_ephemeral_terminal_sessions_except(keep: Option<&str>) {
         })
         .collect();
     for session in ephemeral_sessions_to_reap_detached(&rows, keep) {
-        let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
+        let _ = run_tmux_command_blocking(&kill_session_command(&session));
     }
 }

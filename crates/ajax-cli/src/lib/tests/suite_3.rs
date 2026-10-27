@@ -582,7 +582,7 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
-                ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
+                ["capture-pane", "-p", "-t", "=ajax-web-fix-login:task"],
             )
             .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(

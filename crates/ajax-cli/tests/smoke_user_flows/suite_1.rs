@@ -134,7 +134,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            "tmux send-keys -t =ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
             sandbox.root.join("cache/agent-runtime").display(),
             worktree.display(),
         )),
@@ -169,20 +169,20 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
 
     let log = sandbox.command_log();
     assert!(
-        log.matches("tmux select-window -t ajax-web-fix-login:task")
+        log.matches("tmux select-window -t =ajax-web-fix-login:task")
             .count()
             >= 3,
         "open should select the task window each time:\n{log}"
     );
     assert!(
-        log.matches("tmux select-window -t ajax-web-fix-login:task")
+        log.matches("tmux select-window -t =ajax-web-fix-login:task")
             .count()
             >= 5,
         "open and trunk should idempotently target the task window:\n{log}"
     );
     assert!(
-        log.contains("tmux attach-session -t ajax-web-fix-login")
-            || log.contains("tmux switch-client -t ajax-web-fix-login"),
+        log.contains("tmux attach-session -t =ajax-web-fix-login")
+            || log.contains("tmux switch-client -t =ajax-web-fix-login"),
         "open should attach or switch to the expected session:\n{log}"
     );
 }
@@ -214,7 +214,7 @@ fn smoke_cockpit_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
 
     let command_log = sandbox.command_log();
     assert!(
-        !command_log.contains("tmux kill-session -t ajax-web-fix-login"),
+        !command_log.contains("tmux kill-session -t =ajax-web-fix-login"),
         "Ctrl-Q detach should not tear down the durable tmux session:\n{command_log}"
     );
 
@@ -267,7 +267,7 @@ fn smoke_cockpit_reattaches_after_interrupted_attach_client() {
     let command_log = sandbox.command_log();
     assert!(
         command_log
-            .matches("tmux attach-session -t ajax-web-fix-login")
+            .matches("tmux attach-session -t =ajax-web-fix-login")
             .count()
             >= 2,
         "interrupted attach should be followed by a second attach:\n{command_log}"
@@ -403,7 +403,7 @@ fn smoke_merge_and_clean_completed_task() {
         "confirmed clean should run external cleanup commands"
     );
     assert!(
-        log_after_clean.contains("tmux kill-session -t ajax-web-fix-login"),
+        log_after_clean.contains("tmux kill-session -t =ajax-web-fix-login"),
         "clean should kill the task session:\n{log_after_clean}"
     );
     assert!(
@@ -527,7 +527,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
         worktree.display()
     )));
     assert!(
-        !log.contains("tmux send-keys -t ajax-web-fix-login:task"),
+        !log.contains("tmux send-keys -t =ajax-web-fix-login:task"),
         "agent launch should not run after tmux session creation fails:\n{log}"
     );
 }
