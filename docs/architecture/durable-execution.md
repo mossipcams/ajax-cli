@@ -52,6 +52,10 @@ Key invariants:
   by `prune_execution_events`, which deletes old rows in place and never reuses
   a sequence number, so existing cursors remain valid after pruning.
 - **Superseded streamed versions are rewritten in place as markers.** When a commit appends a streamed `message` event whose non-empty `itemId` already has an earlier real version in the retained transcript, that earlier row's payload is rewritten to an empty marker (a `message` with the same role and `itemId`, no text/content blocks) inside the same transaction. Rows are never deleted or renumbered for this: sequence numbers stay dense and monotonic, cursors stay valid, reads skip markers, and markers count toward the 2000-event retention.
+- **Dropping a task deletes its chat runs on every surface.** Saving a registry
+  that no longer contains a task deletes that task's chat runs (agent runs,
+  execution tasks, checkpoints, prompts and events) in the same save
+  transaction, so a recreated task with the same handle starts empty.
 
 The transcript is the event stream itself: there is no separate prose-only
 copy that can drift from what was executed.

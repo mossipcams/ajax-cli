@@ -394,6 +394,42 @@ impl TaskSessionDirectory {
         );
     }
 
+    /// Shuts down every live session whose handle `is_owned` rejects, then
+    /// deletes its stored data. `is_owned` is evaluated at cleanup time, so a
+    /// handle recreated since the registry changed is never touched. Storage is
+    /// deleted only after the actor is down, and only under the sessions lock
+    /// while the handle is still unowned with no live entry, so a concurrent
+    /// acquire cannot interleave. The sessions lock is never held across an await
+    /// or while `is_owned` runs, since `is_owned` locks the host's shared state.
+    pub async fn cleanup_unowned(&self, is_owned: impl Fn(&str) -> bool + Send) {
+        let live: Vec<String> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.keys().cloned().collect()
+        };
+        let unowned: Vec<String> = live
+            .into_iter()
+            .filter(|handle| !is_owned(handle))
+            .collect();
+        for handle in unowned {
+            if is_owned(&handle) {
+                continue;
+            }
+            self.drop_session(&handle).await;
+            if is_owned(&handle) {
+                continue;
+            }
+            let sessions = self.sessions.lock().unwrap();
+            if sessions.contains_key(&handle) {
+                continue;
+            }
+            web_session_store::delete_session(
+                &self.storage.registry_store(),
+                &self.storage.state_dir,
+                &handle,
+            );
+        }
+    }
+
     pub fn prune_stale_persisted(&self, owned: &std::collections::HashSet<String>) {
         super::session_cleanup::prune_stale_persisted_sessions(&self.storage, owned);
     }

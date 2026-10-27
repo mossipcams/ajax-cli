@@ -4,7 +4,7 @@ use crate::{
     adapters::http::{
         json_response, json_value_response, response_from_web_error, web_error_response,
     },
-    slices::cockpit,
+    slices::{cockpit, web_session::owned_session_handles},
     WebError,
 };
 use ajax_core::{
@@ -140,8 +140,16 @@ where
     {
         let mut guard = state.shared();
         if guard.revision == base_revision {
+            let previously_owned = owned_session_handles(&guard.context);
+            let still_owned = owned_session_handles(&context);
+            let owned_task_removed = previously_owned
+                .iter()
+                .any(|handle| !still_owned.contains(handle));
             guard.context = context;
             guard.bridge = bridge;
+            if owned_task_removed {
+                state.cleanup_unowned_sessions();
+            }
             if let Some(response) = cached_response {
                 guard.cockpit_cache = Some(CockpitCacheEntry {
                     response,

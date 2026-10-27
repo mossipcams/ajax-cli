@@ -103,12 +103,43 @@ where
     C: Clone + CommandRunner,
     B: Clone + RuntimeBridge<C>,
 {
+    /// After a registry reload removed owned tasks, shuts down live chat
+    /// sessions for handles this host no longer owns. Ownership is re-read from
+    /// the current shared context when cleanup runs, so a task recreated under
+    /// the same handle keeps its session. Spawned so the shared lock is never
+    /// held across the cleanup; without a runtime there are no live actors.
+    pub(crate) fn cleanup_unowned_sessions(&self)
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let shared = Arc::clone(&self.shared);
+        let directory = Arc::clone(&self.task_session_directory);
+        runtime.spawn(async move {
+            directory
+                .cleanup_unowned(|handle| {
+                    let guard = shared
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    owned_session_handles(&guard.context).contains(handle)
+                })
+                .await
+        });
+    }
+
     pub(crate) fn run_optimistic(
         &self,
         request_id: Option<&str>,
         conflict_message: &str,
         operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> (Response, bool),
-    ) -> Response {
+    ) -> Response
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
         let (mut context, mut runner, mut bridge, base_revision) = {
             let guard = self.shared();
             (
@@ -141,7 +172,7 @@ where
                     guard.runner = runner;
                     guard.bridge = bridge;
                 }
-                Ok(true) => {}
+                Ok(true) => self.cleanup_unowned_sessions(),
             }
             guard.revision = guard.revision.saturating_add(1);
             guard.cockpit_cache = None;
@@ -567,6 +598,7 @@ where
             if !matches!(bridge.reload_registry_from_disk(context), Ok(true)) {
                 return;
             }
+            state.cleanup_unowned_sessions();
         }
         guard.revision = guard.revision.saturating_add(1);
         guard.cockpit_cache = None;
