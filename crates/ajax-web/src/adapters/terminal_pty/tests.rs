@@ -235,7 +235,7 @@ fn browser_attach_preserves_shared_task_session_size() {
         .attach
         .args
         .iter()
-        .any(|arg| arg == "ajax-web-fix-login:task"));
+        .any(|arg| arg == "=ajax-web-fix-login:=task"));
     assert!(!isolated
         .attach
         .args
