@@ -1528,8 +1528,18 @@ outside the shared-state lock.
 
 Runtime coordination contract (implemented):
 
-- One `tokio::sync::Mutex<()>` process-local async control lane serializes
-  refresh, notify, action, and start context replacement.
+- One `tokio::sync::Mutex<()>` process-local async control lane (`control_lane`)
+  serializes in-process state replacement and persistence: refresh apply,
+  notify delivery, actions, task start, harness swap, and session writes.
+- A separate `tokio::sync::Mutex<()>` `refresh_flight` is the cockpit refresh
+  single-flight. Refresh probes (reload-if-stale, tmux/git/gh) run under
+  `refresh_flight` without `control_lane`; the probe result is then applied
+  under `control_lane`.
+- Lock order is `refresh_flight` then `control_lane`, everywhere. Actions, task
+  start, and harness swap take `refresh_flight` before the lane, so they still
+  wait for an in-flight refresh (#555 action contract: the refresh result is
+  committed, not discarded). Session-path writers (activity reports, session
+  model persist, attach) take only the lane and never wait on refresh probes.
 - Shared `std::sync::Mutex` guards are held only to clone or replace
   in-memory state, never across commands, persistence, probes, or `.await`.
 - The CLI bridge and SQLite optimistic revision/merge remain the cross-process
@@ -1540,10 +1550,14 @@ Runtime coordination contract (implemented):
   measurement justifies it.
 - Lightweight health/static/detail reads and PTY work remain outside the
   control lane after short snapshot reads.
-- Cockpit reads may serve the current server-owned projection from shared
-  state when refresh, notify, action, or start work already holds the control
-  lane; they do not cache that fallback response. Later polls use the normal
-  refresh path when the lane is available or the cache TTL expires.
+- Cockpit reads serve the current server-owned projection from shared state
+  while a refresh is in flight (`refresh_flight` is held); they do not cache that
+  fallback response. Later polls use the normal refresh path when the flight is
+  free or the cache TTL expires.
+- The apply step holds `control_lane` briefly with a blocking lock. A refresh
+  whose base revision moved before apply (a brief session write) is discarded
+  and redone by the next poll. Its probe result is never persisted, delivered,
+  or swapped in.
 - Session activity reports from chat session actors try the control lane
   without waiting. When the lane is busy the report is deferred to a FIFO
   queue that a dedicated thread applies under the lane once it frees; later
@@ -1552,9 +1566,11 @@ Runtime coordination contract (implemented):
   (missing task, unsaved registry) still fail the report so the chat
   surfaces them.
 
-The control lane (`control_lane`) is acquired by the cockpit refresh path and,
-after operation admission, by the action and task-start handlers, pinned by two
-runtime concurrency tests.
+The control lane (`control_lane`) is acquired by the cockpit refresh apply step
+(blocking) and, after `refresh_flight` and operation admission, by the action,
+task-start, and harness-swap handlers, pinned by runtime concurrency tests. The
+refresh probe holds only `refresh_flight`; the browser GET takes `refresh_flight`
+with `try_lock` and the push tick with `blocking_lock`.
 
 ### Post-startup runtime refresh
 

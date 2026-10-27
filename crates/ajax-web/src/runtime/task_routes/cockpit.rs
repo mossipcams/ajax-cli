@@ -52,15 +52,9 @@ where
         return response.into_axum_response();
     }
 
-    tokio::task::spawn_blocking(move || match state.control_lane.try_lock() {
-        Ok(_lane) => refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false),
-        Err(_) => {
-            let guard = state.shared();
-            match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
-                Ok(value) => json_value_response(200, value),
-                Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
-            }
-        }
+    tokio::task::spawn_blocking(move || match state.refresh_flight.try_lock() {
+        Ok(_flight) => refresh_cockpit_and_cache_locked(&state, RefreshTier::Live, false),
+        Err(_) => current_projection_response(&state),
     })
     .await
     .unwrap_or_else(|error| {
@@ -68,6 +62,15 @@ where
             "cockpit refresh worker failed: {error}"
         )))
     })
+}
+
+/// The current shared projection, served without running or applying a refresh.
+fn current_projection_response<C, B>(state: &WebAppState<C, B>) -> AxumResponse {
+    let guard = state.shared();
+    match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
+        Ok(value) => json_value_response(200, value),
+        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
+    }
 }
 
 pub(crate) async fn refresh_cockpit_and_cache<C, B>(
@@ -81,7 +84,7 @@ where
 {
     let state = state.clone();
     tokio::task::spawn_blocking(move || {
-        let _lane = state.control_lane.blocking_lock();
+        let _flight = state.refresh_flight.blocking_lock();
         refresh_cockpit_and_cache_locked(&state, tier, deliver_notifications)
     })
     .await
@@ -92,6 +95,13 @@ where
     })
 }
 
+/// Runs one refresh. The caller holds `refresh_flight`. The probe runs on a
+/// clone without `control_lane`; the apply (revision check, persist,
+/// deliveries, swap, cache fill) takes `control_lane` with a blocking lock.
+/// Operations hold `refresh_flight` before the lane, so no operation can hold
+/// the lane while this refresh is in flight; only brief session writes can, and
+/// a probe whose base revision moved because of one is discarded and redone by
+/// the next poll.
 pub(crate) fn refresh_cockpit_and_cache_locked<C, B>(
     state: &WebAppState<C, B>,
     tier: RefreshTier,
@@ -114,9 +124,18 @@ where
             guard.revision,
         )
     };
-    let mut result = bridge
-        .refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications)
-        .map(|_| ());
+    let probe = bridge.refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications);
+
+    let _lane = state.control_lane.blocking_lock();
+    if state.shared().revision != base_revision {
+        return current_projection_response(state);
+    }
+
+    let mut result = match probe {
+        Ok(true) => bridge.persist_registry_snapshot(&mut context),
+        Ok(false) => Ok(()),
+        Err(error) => Err(error),
+    };
     if result.is_ok() && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
     {
         if let Err(error) = bridge.persist_registry_snapshot(&mut context) {

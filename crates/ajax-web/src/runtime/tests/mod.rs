@@ -136,6 +136,19 @@ pub(super) fn release_gate(release: &Arc<(Mutex<bool>, Condvar)>) {
     cvar.notify_all();
 }
 
+/// A bridge whose first cockpit refresh probe signals `entered` and then blocks
+/// until `release` is opened.
+pub(super) fn blocking_refresh_bridge(
+    entered: Arc<Notify>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+) -> TestBridge {
+    TestBridge {
+        refresh_entered: Some(entered),
+        refresh_release: Some(release),
+        ..TestBridge::default()
+    }
+}
+
 impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
     fn refresh_cockpit(
         &mut self,
