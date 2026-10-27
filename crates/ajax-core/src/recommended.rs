@@ -5,6 +5,7 @@ use crate::{
     },
     operation::{task_operation_eligibility, TaskOperation},
     policy::merge_safety,
+    runtime_refresh::ci_monitor::{self, CiAttemptStatus},
     ui_state::derive_operator_status,
 };
 
@@ -183,10 +184,21 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
-    if is_adoptable_branch_move(task)
-        || (!task.has_missing_substrate()
-            && (task.has_checkout_mismatch()
-                || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch))
+    if is_adoptable_branch_move(task) {
+        // Resume rejects a task whose expected branch is gone; adopt it first.
+        return if task.has_missing_branch() {
+            vec![OperatorAction::Repair, OperatorAction::Drop]
+        } else {
+            vec![
+                OperatorAction::Repair,
+                OperatorAction::Resume,
+                OperatorAction::Drop,
+            ]
+        };
+    }
+    if !task.has_missing_substrate()
+        && (task.has_checkout_mismatch()
+            || task.runtime_projection.health == RuntimeHealth::CheckoutMismatch)
     {
         return vec![
             OperatorAction::Repair,
@@ -211,10 +223,13 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         } else {
             Vec::new()
         };
+    // A live status such as WaitingForApproval can mask CiFailed, so the stored
+    // attempt is consulted as well.
     let ci_failed = task
         .live_status
         .as_ref()
-        .is_some_and(|status| status.kind == LiveStatusKind::CiFailed);
+        .is_some_and(|status| status.kind == LiveStatusKind::CiFailed)
+        || ci_monitor::load_state(task).status == CiAttemptStatus::Failed;
     actions.extend(
         [
             (TaskOperation::Open, OperatorAction::Resume),
@@ -378,6 +393,7 @@ mod tests {
             AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth,
             RuntimeObservationSource, SideFlag, Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
+        operation::{task_operation_eligibility, TaskOperation},
     };
 
     fn task(handle: &str) -> Task {
@@ -547,13 +563,22 @@ mod tests {
 
         assert_eq!(
             plan.available_actions,
-            vec![
-                OperatorAction::Repair,
-                OperatorAction::Resume,
-                OperatorAction::Drop,
-            ]
+            vec![OperatorAction::Repair, OperatorAction::Drop]
         );
-        assert_ne!(plan.action, OperatorAction::Drop);
+        assert_eq!(plan.action, OperatorAction::Repair);
+        for action in &plan.available_actions {
+            match action {
+                OperatorAction::Resume => assert!(
+                    task_operation_eligibility(&t, TaskOperation::Open).is_allowed(),
+                    "advertised Resume must be accepted by the open planner"
+                ),
+                OperatorAction::Repair => assert!(
+                    t.has_checkout_mismatch() && !t.has_missing_worktree(),
+                    "advertised Repair must plan a branch adoption"
+                ),
+                _ => {}
+            }
+        }
     }
 
     #[test]

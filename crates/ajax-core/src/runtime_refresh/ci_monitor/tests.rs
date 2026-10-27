@@ -401,6 +401,62 @@ fn red_ci_demotes_mergeable_task_so_ship_is_not_offered() {
     );
 }
 
+#[test]
+fn red_ci_under_approval_gate_still_withholds_ship() {
+    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
+    let success =
+        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+    let failure =
+        r#"[{"name":"CI","state":"FAILURE","link":"https://github.test/actions/runs/1"}]"#;
+    let mut changed = false;
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    ctx.registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap()
+        .lifecycle_status = crate::models::LifecycleStatus::Reviewable;
+    let mut runner = MonitorRunner {
+        prs: open.into(),
+        checks: success.into(),
+        commands: vec![],
+    };
+    tick(&mut ctx, &mut runner, 1000, &mut changed);
+    assert_eq!(
+        task0(&ctx.registry).lifecycle_status,
+        crate::models::LifecycleStatus::Mergeable
+    );
+
+    let task = ctx
+        .registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap();
+    crate::live::apply_observation(
+        task,
+        crate::live::LiveObservation::new(
+            crate::live::LiveStatusKind::WaitingForApproval,
+            "approval needed",
+        ),
+    );
+
+    runner.checks = failure.into();
+    tick(&mut ctx, &mut runner, 1300, &mut changed);
+    let task = task0(&ctx.registry);
+    assert_eq!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(crate::live::LiveStatusKind::WaitingForApproval),
+        "the approval gate keeps the live status while CI is red"
+    );
+    assert_eq!(
+        task.lifecycle_status,
+        crate::models::LifecycleStatus::Reviewable
+    );
+    assert!(
+        !crate::recommended::available_operator_actions(&task)
+            .contains(&crate::models::OperatorAction::Ship),
+        "stored red CI must withhold Ship even when another live status masks CiFailed"
+    );
+}
+
 fn pr_list_head(runner: &MonitorRunner) -> Option<String> {
     runner
         .commands
