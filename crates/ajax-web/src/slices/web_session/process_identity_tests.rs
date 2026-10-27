@@ -3,10 +3,6 @@ use std::time::Duration;
 
 use super::process_identity::{judge, start_token, terminate_if_same, Termination, Verdict};
 
-/// Spawn a real `sleep 60` and move the `Child` into a background thread that
-/// reaps it via `child.wait()`, returning its ExitStatus through the handle.
-/// Reaping matters: an unreaped killed child lingers as a zombie that `ps`
-/// still lists, which would break the "gone" assertions below.
 fn spawn_sleep_child() -> (i64, std::thread::JoinHandle<std::process::ExitStatus>) {
     let mut child = Command::new("sleep")
         .arg("60")
@@ -18,8 +14,6 @@ fn spawn_sleep_child() -> (i64, std::thread::JoinHandle<std::process::ExitStatus
     (pid, handle)
 }
 
-/// Kill a pid via the shell so we do not need the `Child`, then join the
-/// reaper thread so nothing lingers.
 fn kill_and_reap(pid: i64, handle: std::thread::JoinHandle<std::process::ExitStatus>) {
     Command::new("kill")
         .args(["-KILL", &pid.to_string()])
@@ -48,8 +42,6 @@ fn start_token_of_a_live_child_is_stable_and_gone_after_exit() {
         "the token must be stable while the process lives"
     );
 
-    // Kill it (we no longer own the Child), then reaping by the background
-    // thread makes ps stop listing it.
     Command::new("kill")
         .args(["-KILL", &pid.to_string()])
         .stdout(Stdio::null())

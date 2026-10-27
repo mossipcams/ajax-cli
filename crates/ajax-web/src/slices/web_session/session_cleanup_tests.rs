@@ -206,9 +206,6 @@ fn issue_1436_handle_owned_again_before_cleanup_keeps_its_session() {
         });
     });
 
-    // The first check is the candidate scan and reports the handle unowned.
-    // Every later check is the re-check at cleanup time, which reports it
-    // owned again because the task was recreated before cleanup ran.
     let checks = AtomicUsize::new(0);
     directory.runtime_handle().block_on(
         directory
@@ -303,8 +300,6 @@ fn issue_1436_ownership_check_runs_without_the_sessions_lock() {
         });
     });
 
-    // The ownership check locks the sessions directory itself. It only returns
-    // if cleanup does not hold the sessions lock while calling it.
     let inner = Arc::clone(directory.inner());
     let probe = Arc::clone(&inner);
     let runtime = directory.runtime_handle();

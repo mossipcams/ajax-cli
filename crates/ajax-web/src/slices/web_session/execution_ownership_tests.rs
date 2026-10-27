@@ -32,7 +32,6 @@ fn second_directory_in_same_process_takes_over_lease() {
     let second = ExecutionOwnership::new(SessionStorage::under(dir));
     assert!(second.ensure_owner().is_ok());
 
-    // The first boot id no longer owns the lease, so its heartbeat fails.
     let store = first_storage.registry_store();
     assert!(!store
         .heartbeat_execution_owner(first.boot_id(), now_ms())
@@ -89,8 +88,6 @@ fn takeover_fences_directory_and_recovery_writes_issue_1327() {
         .expect("first owner commits before takeover");
     }
 
-    // Make the first lease stale so the second directory takes the existing
-    // stale-owner claim path without waiting for the timeout.
     assert!(SessionStorage::under(dir.clone())
         .registry_store()
         .heartbeat_execution_owner(&first.ownership_boot_id(), 0)
@@ -222,7 +219,6 @@ fn dropping_ownership_releases_the_lease() {
 #[test]
 fn unreadable_store_reports_stored_session_unreadable() {
     let dir = test_support::scratch_dir("exec-ownership-unreadable");
-    // Make the registry database path a directory so it cannot be opened.
     std::fs::create_dir_all(dir.join("ajax.db")).expect("create bogus db dir");
 
     let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
@@ -249,7 +245,6 @@ fn lost_lease_is_detected_by_heartbeat_and_blocks_ensure_owner() {
     let second = ExecutionOwnership::new(SessionStorage::under(dir));
     assert!(second.ensure_owner().is_ok());
 
-    // The first boot no longer owns the lease; its heartbeat marks it lost.
     first.heartbeat();
 
     let err = first
@@ -276,7 +271,6 @@ fn lost_to_a_live_foreign_host_stays_lost_and_is_refused() {
     let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
     ownership.mark_lost_for_test();
 
-    // A live foreign holder keeps the refusal in place.
     ownership.heartbeat();
     assert!(ownership.check().is_err());
 
@@ -313,7 +307,6 @@ fn lost_lease_recovers_when_the_foreign_host_dies() {
     child.kill().expect("kill sleep helper");
     child.wait().expect("wait on sleep helper");
 
-    // The next heartbeat tick re-claims the dead host's lease.
     ownership.heartbeat();
     assert!(ownership.check().is_ok());
     assert!(ownership.ensure_owner().is_ok());
@@ -322,7 +315,6 @@ fn lost_lease_recovers_when_the_foreign_host_dies() {
 #[test]
 fn lost_after_heartbeat_errors_recovers_when_the_database_is_healthy_again() {
     let dir = test_support::scratch_dir("exec-ownership-lost-db-recovery");
-    // Make the registry database path a directory so it cannot be opened.
     std::fs::create_dir_all(dir.join("ajax.db")).expect("create bogus db dir");
 
     let ownership = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
@@ -334,7 +326,6 @@ fn lost_after_heartbeat_errors_recovers_when_the_database_is_healthy_again() {
 
     std::fs::remove_dir_all(dir.join("ajax.db")).expect("remove bogus db dir");
 
-    // The next heartbeat tick finds a healthy database and recovers.
     ownership.heartbeat();
     assert!(ownership.check().is_ok());
 }
@@ -352,7 +343,6 @@ fn acquire_retry_recovers_a_lost_lease() {
 #[test]
 fn repeated_heartbeat_errors_mark_the_lease_lost() {
     let dir = test_support::scratch_dir("exec-ownership-heartbeat-errors");
-    // Make the registry database path a directory so it cannot be opened.
     std::fs::create_dir_all(dir.join("ajax.db")).expect("create bogus db dir");
 
     let ownership = ExecutionOwnership::new(SessionStorage::under(dir));
@@ -362,7 +352,6 @@ fn repeated_heartbeat_errors_mark_the_lease_lost() {
     ownership.heartbeat();
     assert!(ownership.check().is_ok());
 
-    // The third consecutive failure is positive enough evidence.
     ownership.heartbeat();
     let err = ownership
         .check()
@@ -400,7 +389,6 @@ fn lost_ownership_refuses_prompts_and_leaves_the_transcript_unchanged() {
             .expect("acquire");
         let (before, cursor) = directory.read_from(handle, 0);
 
-        // A second boot in the same process takes over the lease.
         let foreign = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
         assert!(foreign.ensure_owner().is_ok());
 
@@ -436,7 +424,6 @@ fn recovered_turns_that_fail_to_report_are_retried_on_the_next_heartbeat() {
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
     directory.set_report_session_activity(Arc::new(move |_: &str, _: SessionActivity| {
-        // The first report fails; later reports succeed.
         count.fetch_add(1, Ordering::SeqCst) > 0
     }));
 
@@ -477,9 +464,6 @@ fn healthy_heartbeat_retries_an_incomplete_startup_sweep_issue_1326() {
 
     let dir = test_support::scratch_dir("exec-ownership-sweep-retry");
 
-    // Seed an orphan run row and a Dispatching prompt, exactly as a dead host
-    // would leave them, reusing the setup of
-    // `sweep_once_retries_listing_failure_issue_1326`.
     let store = SqliteRegistryStore::new(dir.join("ajax.db"));
     let mut child = std::process::Command::new("sleep")
         .arg("60")
@@ -504,8 +488,6 @@ fn healthy_heartbeat_retries_an_incomplete_startup_sweep_issue_1326() {
     assert!(ledger.mark_dispatching("p1"));
     prompt_ledger::try_persist(&store, &dir, "handle", &ledger).expect("persist ledger");
 
-    // Make the startup sweep's recovery persist fail, so the first sweep is
-    // INCOMPLETE and recovers nothing.
     let guard = prompt_ledger::ForcePersistFailGuard::enable();
 
     let ownership = ExecutionOwnership::new(SessionStorage::under(dir.clone()));
@@ -518,8 +500,6 @@ fn healthy_heartbeat_retries_an_incomplete_startup_sweep_issue_1326() {
         "an incomplete startup sweep must not report recovered turns"
     );
 
-    // Fix the failure: clear the injection, then one healthy heartbeat tick
-    // must retry the sweep and complete it.
     drop(guard);
     ownership.heartbeat();
 
@@ -529,14 +509,12 @@ fn healthy_heartbeat_retries_an_incomplete_startup_sweep_issue_1326() {
         "the heartbeat must signal the orphan and recover the turn exactly once"
     );
 
-    // The Dispatching prompt must be interrupted on disk.
     let recovered = prompt_ledger::try_load(&store, &dir, "handle").expect("load ledger");
     assert_eq!(
         recovered.entry("p1").expect("p1 must exist").phase,
         PromptPhase::Interrupted
     );
 
-    // A second healthy heartbeat is a no-op: the sweep already completed.
     ownership.heartbeat();
     assert!(
         ownership.take_recovered_handles().is_empty(),

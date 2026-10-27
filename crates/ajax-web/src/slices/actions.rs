@@ -73,8 +73,6 @@ fn web_action_for_card<R: Registry>(
 ) -> Option<WebAction> {
     let mut state = web_action(action)?;
     if action == OperatorAction::Ship {
-        // Core decides whether merging needs confirmation (e.g. unpushed commits);
-        // the browser must send confirmed:true when it does.
         state.confirmation_required = merge_task_plan(context, &card.qualified_handle)
             .is_ok_and(|plan| plan.requires_confirmation);
     }

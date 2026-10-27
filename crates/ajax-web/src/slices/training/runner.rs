@@ -46,7 +46,6 @@ impl TrainingCommandRunner for SshTrainingRunner {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child = command.spawn().map_err(|_| TrainingRunError::Failed)?;
-        // Drain both pipes while waiting so a large stdout cannot block the child.
         let stdout_reader = drain(child.stdout.take());
         let stderr_reader = drain(child.stderr.take());
         let deadline = Instant::now() + SSH_TIMEOUT;

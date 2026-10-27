@@ -1,9 +1,3 @@
-//! Integration tests for [`RpcSession::request`], running the real `node`
-//! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
-//! and asserting that a one-shot request correlates its response by id, keeps
-//! every unrelated record queued for the next [`RpcStep`] call, and surfaces
-//! failures (rejected model, silent command, child exit).
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -15,17 +9,11 @@ use super::pi_rpc_handshake::handshake;
 use super::pi_rpc_map::map_record;
 use super::rpc_session::{RpcSession, RpcStep};
 
-/// Generous bound: node startup plus one scripted record burst.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-/// Bound for "this must not hang" negative tests.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Per-step bound after a request has queued records.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
-/// Short bound that must elapse with no response on the wire (timeout checks).
 const SILENT_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
-/// fixture script. Fails loudly (panics) when `node` is missing.
 fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
@@ -37,7 +25,6 @@ fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-/// Spawn the fake, run the real four-command handshake, and build a session.
 fn handshaken_session(extra_flags: &[&str]) -> RpcSession {
     let mut process = spawn_fake_pi(extra_flags);
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
@@ -119,8 +106,6 @@ fn request_preserves_interleaved_events_for_next_step() {
         .expect("stats request must succeed");
     assert_eq!(data.get("totalMessages").and_then(|v| v.as_u64()), Some(3));
 
-    // The prompt's agent_start + text_delta arrived while the request waited;
-    // nothing may be dropped, and they surface in order.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
         matches!(step, RpcStep::Events(_)),
@@ -138,8 +123,6 @@ fn request_preserves_interleaved_events_for_next_step() {
         }
     }
 
-    // The held run still needs an abort to settle: request queued nothing of
-    // its own, and the next step is idle.
     session.abort().expect("abort");
 }
 
@@ -162,15 +145,12 @@ fn request_after_child_exit_errors_and_next_step_exits_once() {
     let mut process = spawn_fake_pi(&[]);
     let handshake_result = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
 
-    // Closing stdin is pi's documented orderly shutdown.
     process.close_stdin();
     let mut session = RpcSession::new(process, handshake_result, map_record);
 
     let err = session
         .request("get_session_stats", json!({}), REQUEST_TIMEOUT)
         .expect_err("a dead child must not answer");
-    // A closed stdin can no longer be written to, so the request fails at
-    // send; the child's exit must still surface exactly once via `next_step`.
     assert!(
         err.to_lowercase().contains("closed"),
         "a closed child cannot be sent to: {err}"

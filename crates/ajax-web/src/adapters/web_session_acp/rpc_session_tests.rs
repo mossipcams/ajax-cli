@@ -1,9 +1,3 @@
-//! Integration tests for [`super::rpc_session`], running the real `node`
-//! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
-//! and asserting that a [`RpcSession`] on top of the real handshake turns the
-//! record stream into [`RpcStep`]s: prompt and abort runs, guard errors, prompt
-//! rejection, handshake pending records first, and child exit.
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
@@ -17,15 +11,10 @@ use serde_json::{json, Value};
 
 use super::rpc_session::{carry_tool_inputs, fold_pending_error, RpcSession, RpcStep};
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
-/// Bound for "this must not hang" negative tests.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Short bound that must elapse with no records on the wire (Idle checks).
 const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
-/// fixture script. Fails loudly (panics) when `node` is missing.
 fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
@@ -37,7 +26,6 @@ fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-/// Spawn the fake and run the real four-command handshake.
 fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     let mut process = spawn_fake_pi(extra_flags);
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
@@ -50,7 +38,6 @@ fn contains_agent_text(events: &[AgentEvent]) -> bool {
         .any(|event| matches!(event, AgentEvent::Native(NativeEvent::AgentText(_))))
 }
 
-/// The text of the first native `AgentText` in `events`, if one is present.
 fn agent_text(events: &[AgentEvent]) -> Option<&str> {
     events.iter().find_map(|event| match event {
         AgentEvent::Native(NativeEvent::AgentText(text)) => Some(text.as_str()),
@@ -73,8 +60,6 @@ fn prompt_flow_surfaces_events_then_finishes() {
         "run is active right after begin_prompt"
     );
 
-    // The prompt response (`disposition: "started"`), `agent_start`, and the
-    // first `message_update` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
         matches!(&step, RpcStep::Events(events) if contains_agent_text(events)),
@@ -109,8 +94,6 @@ fn abort_flow_finishes_with_aborted() {
         .abort()
         .expect("abort of the active run must be sent");
 
-    // The abort response (not the prompt's id), the aborted `message_end`, and
-    // `agent_settled` all resolve within one call.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
         matches!(step, RpcStep::RunFinished { aborted: true }),
@@ -148,7 +131,6 @@ fn issue_1272_low_level_abort_remains_strict_while_idle() {
         error.to_lowercase().contains("active"),
         "error must say there is no active run: {error}"
     );
-    // SessionClient adapts idle cancellation; the transport still requires a run.
     assert!(!session.run_active());
     session.begin_prompt("hello fake pi").expect("begin prompt");
     session.abort().expect("active abort must still succeed");
@@ -172,8 +154,6 @@ fn rejected_prompt_surfaces_pi_error_text() {
     );
 }
 
-// The fake fixture ignores unknown commands, so the command's response is
-// fed straight to `prompt_response_step` with the id the session tracked.
 #[test]
 fn issue_1360_command_run_success_response_finishes_the_run() {
     let (process, handshake) = handshaken(&[]);
@@ -263,15 +243,12 @@ fn handshake_pending_records_are_processed_first() {
     let (process, handshake) = handshaken(&["--interleave-text"]);
     let mut session = RpcSession::new(process, handshake, map_record);
 
-    // No command has been sent: the only record that can arrive is the pending
-    // `message_update` captured during the handshake.
     let step = session.next_step(STEP_TIMEOUT);
     assert!(
         matches!(&step, RpcStep::Events(events) if agent_text(events) == Some("pending-text")),
         "pending text record must come out first: {step:?}"
     );
 
-    // The queue is drained; nothing else is on the wire.
     let step = session.next_step(IDLE_TIMEOUT);
     assert!(
         matches!(step, RpcStep::Idle),
@@ -283,7 +260,6 @@ fn handshake_pending_records_are_processed_first() {
 fn closed_child_surfaces_exited() {
     let (mut process, handshake) = handshaken(&[]);
 
-    // Closing stdin is pi's documented orderly shutdown.
     process.close_stdin();
     let mut session = RpcSession::new(process, handshake, map_record);
 
@@ -295,7 +271,6 @@ fn closed_child_surfaces_exited() {
     assert!(!session.run_active());
 }
 
-/// Build a `ToolCall` event with the given id and optional raw input.
 fn tool_call(id: &str, raw_input: Option<Value>) -> AgentEvent {
     AgentEvent::Native(NativeEvent::ToolCall {
         id: id.to_owned(),
@@ -306,7 +281,6 @@ fn tool_call(id: &str, raw_input: Option<Value>) -> AgentEvent {
     })
 }
 
-/// Build a `ToolCallUpdate` event with the given id, status, and optional raw input.
 fn tool_update(id: &str, status: &str, raw_input: Option<Value>) -> AgentEvent {
     AgentEvent::Native(NativeEvent::ToolCallUpdate {
         id: id.to_owned(),
@@ -316,7 +290,6 @@ fn tool_update(id: &str, status: &str, raw_input: Option<Value>) -> AgentEvent {
     })
 }
 
-/// Extract `raw_input` from a `ToolCallUpdate`, panicking on any other shape.
 fn update_raw_input(event: &AgentEvent) -> Option<Value> {
     match event {
         AgentEvent::Native(NativeEvent::ToolCallUpdate { raw_input, .. }) => raw_input.clone(),
@@ -337,7 +310,6 @@ fn carry_tool_inputs_attaches_call_input_to_later_updates() {
     carry_tool_inputs(&mut memo, &mut events);
 
     assert_eq!(update_raw_input(&events[1]), Some(input.clone()));
-    // A terminal update consumes the memo entry.
     assert_eq!(update_raw_input(&events[2]), Some(input));
     assert!(memo.is_empty());
 }
@@ -354,7 +326,6 @@ fn carry_tool_inputs_drops_entry_after_terminal_update() {
 
     carry_tool_inputs(&mut memo, &mut events);
 
-    // The second update arrives after the entry was removed: no input leaks.
     assert_eq!(update_raw_input(&events[2]), None);
     assert!(memo.is_empty());
 }
@@ -372,7 +343,6 @@ fn carry_tool_inputs_update_with_own_input_is_kept_and_refreshes_memo() {
 
     carry_tool_inputs(&mut memo, &mut events);
 
-    // The update's own input is untouched and the later update gets it.
     assert_eq!(update_raw_input(&events[1]), Some(second.clone()));
     assert_eq!(update_raw_input(&events[2]), Some(second));
 }
@@ -382,10 +352,8 @@ fn carry_tool_inputs_ignores_non_object_inputs_and_foreign_ids() {
     let mut memo = HashMap::new();
     let object_input = json!({ "path": "src/a.rs" });
     let mut events = vec![
-        // Non-object inputs are never remembered.
         tool_call("c1", Some(json!(42))),
         tool_update("c1", "completed", None),
-        // Unrelated ids do not leak inputs across calls.
         tool_call("c2", Some(object_input.clone())),
         tool_update("c9", "completed", None),
     ];
@@ -394,13 +362,10 @@ fn carry_tool_inputs_ignores_non_object_inputs_and_foreign_ids() {
 
     assert_eq!(update_raw_input(&events[1]), None);
     assert_eq!(update_raw_input(&events[3]), None);
-    // c2's entry is still pending: no terminal update arrived for it.
     assert_eq!(memo.len(), 1);
     assert_eq!(memo.get("c2"), Some(&object_input));
 }
 
-/// Fold a whole Pi record sequence through the mapper and the pending-error
-/// memo, returning every event in the order a session would surface them.
 fn fold_pi_records(records: &[Value]) -> Vec<AgentEvent> {
     let mut pending = None;
     let mut surfaced = Vec::new();
@@ -444,7 +409,6 @@ fn unretried_assistant_error_flushes_once_before_settle_1335() {
     ]);
 
     assert_eq!(error_texts(&events), vec!["401 invalid api key"]);
-    // The flushed error is the last event of the run, ahead of the finish.
     assert!(matches!(
         events.last(),
         Some(AgentEvent::Native(NativeEvent::Error(_)))

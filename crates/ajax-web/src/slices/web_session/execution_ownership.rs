@@ -3,7 +3,6 @@ use ajax_core::registry::OwnerClaim;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Only one Ajax web host process may run chat agents against a given registry.
 pub(crate) struct ExecutionOwnership {
     storage: SessionStorage,
     boot_id: String,
@@ -12,15 +11,12 @@ pub(crate) struct ExecutionOwnership {
     recovered_handles: std::sync::Mutex<Vec<String>>,
 }
 
-/// How often the runtime task renews the execution owner lease.
 pub(crate) const HEARTBEAT_EVERY: Duration = Duration::from_secs(10);
-/// A lease older than this is treated as abandoned.
 const STALE_AFTER_MS: i64 = 30_000;
 
 impl ExecutionOwnership {
     pub(crate) fn new(mut storage: SessionStorage) -> Self {
         let boot_id = random_boot_id();
-        // Each host arms its own shared fence only after a successful claim.
         storage.owner_fence = Default::default();
         Self {
             storage,
@@ -39,13 +35,10 @@ impl ExecutionOwnership {
         &self.storage
     }
 
-    /// Takes the handles whose turns startup recovery interrupted, for activity reporting.
     pub(crate) fn take_recovered_handles(&self) -> Vec<String> {
         std::mem::take(&mut *self.recovered_handles.lock().unwrap())
     }
 
-    /// Puts recovered handles back for the next activity-reporting pass, so a
-    /// turn whose report failed is retried on the next heartbeat.
     pub(crate) fn requeue_recovered_handles(&self, handles: Vec<String>) {
         self.recovered_handles.lock().unwrap().extend(handles);
     }
@@ -55,23 +48,10 @@ impl ExecutionOwnership {
         self.lost.store(true, Ordering::SeqCst);
     }
 
-    /// Claims the single chat-agent owner lease for this registry database.
-    /// Fails only when a live foreign process already holds it. A lost
-    /// ownership is not permanent: every acquire attempts recovery, and the
-    /// heartbeat does the same each tick (see `heartbeat`).
     pub(crate) fn ensure_owner(&self) -> Result<(), String> {
         self.try_claim()
     }
 
-    /// Attempts to claim (or re-claim) the execution owner lease for this
-    /// registry. Fails only when a live foreign process holds it. The first
-    /// successful claim in this process also runs the orphan sweep until complete
-    /// (`orphan_sweep::sweep_once`), terminating harness children left behind
-    /// by previous hosts, and then the startup recovery that interrupts prompts
-    /// left `Dispatching` by dead hosts. On success
-    /// clears `lost` and resets the heartbeat failure counter, so a host that
-    /// lost its lease recovers as soon as the lease is free, stale, or held by
-    /// a process that is gone.
     fn try_claim(&self) -> Result<(), String> {
         let store = self.storage.registry_store();
         let pid = std::process::id() as i64;
@@ -95,9 +75,6 @@ impl ExecutionOwnership {
                 boot_id: _,
                 pid: holder,
             }) if holder == pid || !process_alive(holder) => {
-                // Our own previous directory in this process, or an owner that is no
-                // longer alive: re-claim with stale_after_ms = -1 so the staleness
-                // check always passes and the takeover does not wait STALE_AFTER_MS.
                 match store.claim_execution_owner(&self.boot_id, pid, now_unix_ms(), -1) {
                     Ok(OwnerClaim::Acquired { .. }) => {
                         let _ = self.storage.owner_fence.set(self.boot_id.clone());
@@ -126,7 +103,6 @@ impl ExecutionOwnership {
         }
     }
 
-    /// Refuses agent start when this host has lost the execution owner lease.
     pub(crate) fn check(&self) -> Result<(), String> {
         if self.lost.load(Ordering::SeqCst) {
             Err("execution ownership lost; reconnect to retry, or restart this host".to_string())
@@ -134,13 +110,6 @@ impl ExecutionOwnership {
             Ok(())
         }
     }
-    /// Renews the lease. A healthy heartbeat also retries the orphan sweep in
-    /// case the startup sweep was incomplete; completed sweeps are no-ops.
-    ///
-    /// If ownership was already lost, each tick attempts a re-claim instead of
-    /// doing nothing: recovery happens here (or on the next acquire) as soon as
-    /// the lease is free, stale, or held by a process that is gone; while a
-    /// live foreign host holds it, `lost` stays set.
     pub(crate) fn heartbeat(&self) {
         if self.lost.load(Ordering::SeqCst) {
             match self.try_claim() {
@@ -159,9 +128,6 @@ impl ExecutionOwnership {
             Ok(true) => {
                 self.consecutive_heartbeat_failures
                     .store(0, Ordering::SeqCst);
-                // A sweep that failed at startup (or during an earlier
-                // re-claim) is retried here; once complete in this process
-                // this is a cheap no-op.
                 self.recovered_handles.lock().unwrap().extend(
                     super::orphan_sweep::sweep_once(
                         &self.storage.registry_store(),
@@ -172,7 +138,6 @@ impl ExecutionOwnership {
                 );
             }
             Ok(false) => {
-                // Another boot owns the lease now.
                 self.lost.store(true, Ordering::SeqCst);
                 tracing::error!(target: "ajax_web", "chat execution ownership lost to another host");
             }
@@ -215,7 +180,6 @@ fn unavailable(error: impl std::fmt::Display) -> String {
     format!("stored session is unreadable: agent execution ownership unavailable: {error}")
 }
 
-/// 16 random bytes as hex; falls back to a pid/nanos stamp if entropy fails.
 fn random_boot_id() -> String {
     let mut bytes = [0u8; 16];
     match getrandom::fill(&mut bytes) {
@@ -224,9 +188,6 @@ fn random_boot_id() -> String {
     }
 }
 
-/// Whether a lease holder is still running. Existence only, so a zombie holder
-/// counts as alive; without positive evidence of death the holder is kept,
-/// since taking over a live owner is the worse failure.
 fn process_alive(pid: i64) -> bool {
     #[cfg(unix)]
     {

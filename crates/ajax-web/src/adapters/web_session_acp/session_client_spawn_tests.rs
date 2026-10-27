@@ -1,9 +1,3 @@
-//! Tests for the Pi RPC spawn path of [`super::session_client`], running the
-//! fake Pi RPC fixture as a directly-executable child (node shebang) through
-//! [`SessionClient::spawn_with_operator_pin`] and asserting: the spawn report
-//! shape, session resume, fail-closed restore when Pi starts the wrong
-//! session, and the test-only Pi gating.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

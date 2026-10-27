@@ -458,7 +458,6 @@ fn cross_harness_cold_acquire_does_not_resume_a_foreign_session_id() {
     let same_dir = scratch_dir("cross-harness-resume-same");
     let same_handle = "web/cross-harness-resume-same";
 
-    // A Claude run must not resume under Codex; a Codex run may resume.
     let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
     crate::adapters::web_session_store::try_save_meta(
         &store,
@@ -482,7 +481,6 @@ fn cross_harness_cold_acquire_does_not_resume_a_foreign_session_id() {
             "a claude session id must never be resumed under codex"
         );
 
-        // Seed a real fixture session so a same-harness cold acquire can resume it.
         let initial_directory = BlockingSessionDirectory::new(same_dir.clone());
         initial_directory
             .acquire(same_handle, &same_dir, "auto", AgentClient::Codex)
@@ -514,7 +512,6 @@ fn assert_failed_context_reset_preserves_live_queue(operation: &str) {
             directory
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire old harness");
-            // An untracked active prompt isolates queue-discard persistence from terminal persistence.
             directory
                 .submit_prompt_with_id(handle, String::new(), "hold".into())
                 .expect("active prompt");
@@ -611,7 +608,6 @@ fn issue_1324_warm_acquire_converges_to_registry_agent() {
     let store = SqliteRegistryStore::new(dir.join("ajax.db"));
     store.save(&context.registry).expect("save original agent");
     let directory = BlockingSessionDirectory::new(dir.clone());
-    // Distinct fresh IDs let this test detect an accidental resume across clients.
     let script = dir.join("unique-session.js");
     let source = std::fs::read_to_string(fake_acp_fixture()).expect("fixture");
     let session_id = "const sessionId = 'fake-sess-1';";
@@ -687,7 +683,6 @@ fn issue_1324_idle_switch_discards_queued_prompts() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     assert!(!directory.inner().has_live_entry(handle));
 
-    // No live session: seed the SQLite ledger with queued prompts directly.
     let store = SqliteRegistryStore::new(dir.join("ajax.db"));
     let mut ledger = prompt_ledger::try_load(&store, &dir, handle).expect("load empty ledger");
     ledger.upsert_queued(

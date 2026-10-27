@@ -3,11 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Write through a temp file and rename, so a crash mid-write leaves the
-/// previous file intact instead of a truncated one. The file holds the VAPID
-/// private key or subscription keys, so the temp file is always a new
-/// owner-only file: a leftover or planted one at that path is removed, never
-/// reused, and `create_new` refuses to write through a symlink.
 pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let mut tmp = path.as_os_str().to_owned();

@@ -1,9 +1,3 @@
-//! Pi RPC extension UI dialog regression test: a `confirm` dialog emitted as
-//! an `extension_ui_request` must reach the browser as an elicitation request,
-//! and answering it must let the waiting turn finish. Expected to fail while
-//! the host ignores `extension_ui_request` events (the fixture then never
-//! settles, so no ElicitationRequest is ever recorded).
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -31,9 +25,6 @@ fn pi_confirm_dialog_reaches_the_browser_and_answer_finishes_the_turn() {
         dir.submit_prompt_with_id(HANDLE, "p1".into(), "go".into())
             .expect("submit p1");
 
-        // (1) The confirm dialog must surface to the browser as an
-        // elicitation request. Fails today: the host ignores
-        // extension_ui_request, so no ElicitationRequest is recorded.
         let request_id = std::cell::RefCell::new(None);
         test_support::pump_until(&dir, HANDLE, Duration::from_secs(5), |events| {
             if request_id.borrow().is_none() {
@@ -48,7 +39,6 @@ fn pi_confirm_dialog_reaches_the_browser_and_answer_finishes_the_turn() {
         });
         let request_id = request_id.into_inner().expect("elicitation request id");
 
-        // (2) Answering the dialog must finish the waiting turn.
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(dir.inner().answer_elicitation(
             HANDLE,

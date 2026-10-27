@@ -501,7 +501,6 @@ fn in_session_clear_does_not_leak_a_holder() {
             .runtime_handle()
             .block_on(directory.inner().clear_context(handle, &dir))
             .expect("in-session clear");
-        // The attach's holder is the only one: a warm /clear must not add a holder.
         assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 1);
 
         directory.release(handle);

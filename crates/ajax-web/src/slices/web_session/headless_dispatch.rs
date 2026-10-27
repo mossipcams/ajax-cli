@@ -1,7 +1,3 @@
-//! Headless dispatch of a chat's queued prompts with no browser attached: the
-//! companion acquires each stored session (resuming its native session and
-//! failing closed), waits until every prompt is done, then releases it.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,7 +6,6 @@ use ajax_core::models::AgentClient;
 
 use super::TaskSessionDirectory;
 
-/// One chat whose queued prompts should run with no browser attached.
 pub(crate) struct HeadlessTarget {
     pub handle: String,
     pub worktree_path: PathBuf,
@@ -18,10 +13,6 @@ pub(crate) struct HeadlessTarget {
     pub agent: AgentClient,
 }
 
-/// Dispatches one chat's queued prompts with no browser attached: acquires the
-/// session (resuming the stored native session and failing closed), waits until
-/// its prompts are done, then releases it. Returns `Err(reason)` when the
-/// session cannot be acquired (the prompts stay queued) or the deadline passes.
 pub(crate) async fn run_queued_prompts(
     directory: &Arc<TaskSessionDirectory>,
     target: &HeadlessTarget,
@@ -69,9 +60,6 @@ pub(crate) async fn run_queued_prompts(
     outcome
 }
 
-/// Dispatches `targets` strictly one at a time in the given order (concurrency 1),
-/// so one chat's failure never blocks or interleaves with another. Logs each
-/// failure and returns the per-handle results in input order.
 pub(crate) async fn run_all(
     directory: &Arc<TaskSessionDirectory>,
     targets: Vec<HeadlessTarget>,

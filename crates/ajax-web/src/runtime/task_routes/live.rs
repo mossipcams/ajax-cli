@@ -390,7 +390,6 @@ where
                     crate::slices::operate::swap_task_agent(context, &handle, &request.agent, None);
                 match result {
                     Ok(outcome) => {
-                        // An unsaved swap must not reset the live session (#1226).
                         if let Err(error) = bridge.persist_registry_snapshot(context) {
                             *context = before_swap;
                             return (response_from_web_error(error, None), false);

@@ -159,7 +159,6 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         let Some(handle) = self.drop_task_on_refresh.as_ref() else {
             return Ok(false);
         };
-        // Simulates a reload that finds the task dropped from another surface.
         use ajax_core::registry::Registry as _;
         context
             .registry

@@ -306,11 +306,6 @@ fn transcript_origin_allowed(headers: &HeaderMap) -> bool {
     origin_authority(origin).is_some_and(|authority| authority.eq_ignore_ascii_case(host))
 }
 
-/// GET /api/tasks/<handle>/session/transcript — one page of older retained
-/// transcript events for the browser's "Load earlier" walk. Same-origin
-/// browser fetches send no Origin header and are allowed; a present Origin must
-/// match Host. Task-handle validation runs before reading storage; read-only,
-/// never touches a live session actor.
 pub(crate) async fn axum_task_session_transcript<C, B>(
     State(state): State<WebAppState<C, B>>,
     handle: String,

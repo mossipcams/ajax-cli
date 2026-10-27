@@ -83,7 +83,6 @@ pub struct SessionSnapshot {
         rename = "transcriptError"
     )]
     pub transcript_error: Option<String>,
-    /// Set only while the transcript durability fault blocks prompts; other transcript errors only show.
     #[serde(
         default,
         rename = "promptsBlocked",
@@ -204,13 +203,6 @@ pub fn parse_client_cursor(query: Option<&str>) -> Option<usize> {
     })
 }
 
-/// Parse the `snapshotTail` opt-in flag from a WebSocket attach query string.
-///
-/// Clients that send `snapshotTail=1` consume the inline tail transcript and
-/// need no per-event compatibility frames, so the server skips envelope
-/// replay for them. Returns true only when the query contains a pair whose key
-/// is exactly `snapshotTail` and value is exactly `1`; any other value,
-/// missing key, empty value, or absent query yields false.
 pub fn parse_tail_snapshot_flag(query: Option<&str>) -> bool {
     query.is_some_and(|query| {
         query

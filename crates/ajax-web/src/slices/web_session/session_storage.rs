@@ -2,7 +2,6 @@ use ajax_core::registry::SqliteRegistryStore;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-/// Storage locations shared by every Chat session in a companion.
 #[derive(Clone)]
 pub struct SessionStorage {
     pub state_dir: PathBuf,
@@ -19,7 +18,6 @@ impl SessionStorage {
         }
     }
 
-    /// Construct a store without opening the database.
     pub fn registry_store(&self) -> SqliteRegistryStore {
         let store = SqliteRegistryStore::new(&self.registry_db);
         match self.owner_fence.get() {

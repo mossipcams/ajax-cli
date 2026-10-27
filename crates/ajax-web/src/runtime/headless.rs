@@ -1,7 +1,3 @@
-//! Startup dispatch of queued prompts left by a previous host without any browser
-//! attached: after the execution lease is claimed, resumable chats are dispatched
-//! strictly one at a time.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,10 +12,9 @@ use crate::slices::web_session::{
     run_headless_dispatch, HeadlessTarget, TaskSessionDirectory, HEARTBEAT_EVERY,
 };
 
-const CLAIM_RETRIES: usize = 6; // a live foreign host may still hold the lease right after a restart
+const CLAIM_RETRIES: usize = 6;
 const MAX_WAIT_PER_CHAT: Duration = Duration::from_secs(30 * 60);
 
-/// Pure: the chats among `handles` that can be resumed headlessly, in `handles` order.
 pub(crate) fn targets_for(
     context: &CommandContext<InMemoryRegistry>,
     handles: &[String],
@@ -55,9 +50,6 @@ where
     let directory = Arc::clone(&state.task_session_directory);
     let shared = Arc::clone(&state.shared);
     tokio::spawn(async move {
-        // Claim the startup dispatch list; a live foreign host may still hold
-        // the lease right after a restart, and an incomplete scan is rescanned
-        // until it completes (bounded by CLAIM_RETRIES).
         let Some(handles) = claim_startup_handles(&directory, HEARTBEAT_EVERY).await else {
             return;
         };
@@ -65,8 +57,6 @@ where
             return;
         }
 
-        // Build targets inside a short std-mutex scope; the guard must not live
-        // across an await.
         let targets = {
             let guard = shared.lock().expect("web shared state lock poisoned");
             targets_for(&guard.context, &handles)
@@ -83,7 +73,6 @@ where
     });
 }
 
-/// Claims the startup dispatch list. A live foreign host may still hold the lease right after a restart (an Err), and an incomplete scan is rescanned until it completes: each rescan filters out handles handed out earlier, so appended handles never repeat. Returns `None` when the claim keeps failing for CLAIM_RETRIES attempts; `pause` bounds the sleep between attempts so tests can run in milliseconds.
 async fn claim_startup_handles(
     directory: &TaskSessionDirectory,
     pause: Duration,
@@ -117,7 +106,6 @@ async fn claim_startup_handles(
             return Some(handles);
         }
         if attempt == CLAIM_RETRIES {
-            // ponytail (cap = CLAIM_RETRIES): a persistent scan error or an incomplete scan falls through to the warn above after CLAIM_RETRIES attempts; a later heartbeat does not rescan.
             tracing::warn!(
                 target: "ajax_web",
                 attempts = attempt,
@@ -177,7 +165,6 @@ mod tests {
 
     #[test]
     fn targets_for_skips_non_acp_task() {
-        // Rebuild with a non-ACP-capable agent (AgentClient::Other).
         let mut task = ajax_core::models::Task::new(
             ajax_core::models::TaskId::new("web/other-agent"),
             "web",
@@ -199,7 +186,6 @@ mod tests {
 
     #[test]
     fn targets_for_skips_interactive_task() {
-        // A task that is not flagged skip_interactive_agent is not resumable.
         let task = crate::test_support::fix_login_task();
         let handle = task.qualified_handle();
         let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
@@ -221,16 +207,12 @@ mod tests {
         assert_eq!(targets[1].handle, a_handle);
     }
 
-    /// On-disk path of a chat's legacy prompt-ledger sidecar:
-    /// `<state>/web-session/<handle with % and / percent-encoded>.prompt-ledger.json`.
     fn ledger_file(dir: &std::path::Path, handle: &str) -> std::path::PathBuf {
         let encoded = handle.replace('%', "%25").replace('/', "%2F");
         dir.join("web-session")
             .join(format!("{encoded}.prompt-ledger.json"))
     }
 
-    /// Writes the legacy prompt-ledger sidecar for a chat with one `Queued`
-    /// entry, in the on-disk shape the store imports on first load.
     fn write_queued_sidecar(dir: &std::path::Path, handle: &str) {
         let file = ledger_file(dir, handle);
         std::fs::create_dir_all(file.parent().unwrap()).expect("create session dir");
@@ -251,8 +233,6 @@ mod tests {
         .expect("write ledger sidecar");
     }
 
-    /// Seeds a foreign-owned run (`foreign-boot` owner) with one `Queued`
-    /// prompt, exactly as the startup scan expects to find.
     fn seed_foreign_queued(dir: &std::path::Path, handle: &str) {
         use ajax_core::registry::{ExecutionCommit, NewRun, RunUpdate, SqliteRegistryStore};
 
@@ -287,9 +267,6 @@ mod tests {
         seed_foreign_queued(&dir, "web/a");
         seed_foreign_queued(&dir, "web/b");
 
-        // A malformed legacy sidecar makes web/b's ledger unreadable so the
-        // first scan cannot read it; a background task restores a valid one once
-        // the loop rescans.
         let broken = ledger_file(&dir, "web/b");
         std::fs::write(&broken, "malformed ledger").expect("corrupt ledger");
 
@@ -308,8 +285,6 @@ mod tests {
             .await
             .expect("lease claimed");
 
-        // The first (incomplete) scan hands out web/a; the rescan appends web/b
-        // without re-handing-out web/a, so each handle appears exactly once.
         assert_eq!(handles, vec!["web/a".to_owned(), "web/b".to_owned()]);
         assert!(
             directory.headless_scan_complete(),
@@ -323,8 +298,6 @@ mod tests {
         seed_foreign_queued(&dir, "web/a");
         seed_foreign_queued(&dir, "web/b");
 
-        // web/b's ledger stays unreadable for the whole loop, so the scan never
-        // completes and the retry cap must bound the attempts.
         let broken = ledger_file(&dir, "web/b");
         std::fs::write(&broken, "malformed ledger").expect("corrupt ledger");
 
@@ -343,8 +316,6 @@ mod tests {
     #[tokio::test]
     async fn a_failing_startup_claim_is_retried_until_the_lease_frees_up() {
         let dir = crate::slices::web_session::test_support::scratch_dir("headless-claim-retry");
-        // A live foreign host claims the execution lease, so the first claim
-        // attempt fails; it dies shortly before the loop retries.
         let child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
@@ -368,8 +339,6 @@ mod tests {
             }
         });
 
-        // The first attempt hits the live foreign lease (Err); after the owner
-        // dies, a later retry must replace it and claim instead of giving up.
         let handles = claim_startup_handles(&directory, Duration::from_millis(50))
             .await
             .expect("the retried claim must succeed once the foreign host dies");

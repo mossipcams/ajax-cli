@@ -1,7 +1,3 @@
-//! Pure mapping between the Ajax Chat prompt ledger and the durable execution
-//! kernel. No I/O, no database calls: these functions translate ledger state
-//! into a single [`ExecutionCommit`] and back.
-
 use ajax_core::execution::{ExecutionState, Operation, ReplayPolicy};
 use ajax_core::registry::{
     CheckpointIntent, CheckpointResult, ExecutionCommit, NewExecutionTask, NewPrompt,
@@ -14,8 +10,7 @@ fn task_exec_id(run_id: &str, key: &str) -> String {
     format!("{run_id}:prompt:{key}")
 }
 
-/// Serialize a ledger entry into the kernel `content_json` envelope.
-#[allow(dead_code)] // Nothing calls this yet; wiring lands in packet 4b-A2.
+#[allow(dead_code)]
 pub(super) fn entry_content_json(entry: &PromptLedgerEntry) -> String {
     serde_json::json!({
         "transcript_text": entry.transcript_text,
@@ -51,8 +46,6 @@ fn content_fields(content_json: &str) -> (String, String, Vec<serde_json::Value>
     }
 }
 
-/// Rebuild a ledger from the stored prompts, preserving order. Failed and
-/// Cancelled prompts are omitted; Completed entries have their text cleared.
 pub(super) fn ledger_from_prompts(prompts: &[RunPrompt]) -> PromptLedger {
     let mut entries = Vec::with_capacity(prompts.len());
     for prompt in prompts {
@@ -75,7 +68,6 @@ pub(super) fn ledger_from_prompts(prompts: &[RunPrompt]) -> PromptLedger {
             }
             ExecutionState::Interrupted => PromptPhase::Interrupted,
             ExecutionState::Completed => PromptPhase::Completed,
-            // Failed and Cancelled are skipped above.
             _ => unreachable!("failed/cancelled prompts are omitted"),
         };
         entries.push(PromptLedgerEntry {
@@ -98,9 +90,6 @@ fn target_state(phase: PromptPhase) -> ExecutionState {
     }
 }
 
-/// Ordered intermediate states (inclusive of the target) that move `from` to
-/// `to`, or an error pair for unsupported changes. An empty path means the
-/// state is already correct.
 fn transition_path(
     from: ExecutionState,
     to: ExecutionState,
@@ -124,8 +113,6 @@ fn transition_path(
     Ok(steps)
 }
 
-/// Compute the single kernel commit that makes the stored prompts match the
-/// desired ledger. Returns `Ok(None)` when nothing would change.
 pub(super) fn plan_commit(
     run_id: &str,
     current: &[RunPrompt],
@@ -144,9 +131,6 @@ pub(super) fn plan_commit(
                     parent_id: None,
                     kind: "prompt".into(),
                 });
-                // A brand-new prompt admitted directly as Completed never needs its
-                // text: store the empty envelope instead of clearing a row that does
-                // not exist yet.
                 commit.prompts.push(NewPrompt {
                     idempotency_key: key.to_string(),
                     task_exec_id: exec_id.clone(),
@@ -168,7 +152,6 @@ pub(super) fn plan_commit(
             }
         }
 
-        // New prompts start in Pending.
         let start = current
             .iter()
             .find(|prompt| prompt.idempotency_key == key)
@@ -226,11 +209,6 @@ pub(super) fn plan_commit(
         }
     }
 
-    // One rule decides content clears: exactly one clear per prompt whose
-    // state after this commit is terminal (Completed, Failed or Cancelled)
-    // and which still holds real content. A key in `desired` ends in its
-    // target state; a key absent from `desired` is cancelled here, or was
-    // already terminal. Brand-new prompts have no row yet and never clear.
     let mut to_clear: Vec<&str> = desired
         .entries
         .iter()

@@ -493,7 +493,6 @@ fn start_fresh_after_cold_restore_failure_keeps_stored_history_issue_1432() {
         assert_eq!(stored_before.len(), 3, "three stored rows seeded");
         directory.detach_session(handle);
 
-        // A restarted host has a cold actor: the stored transcript was never loaded.
         let restarted = BlockingSessionDirectory::new(dir.clone());
         with_test_acp_extra_args(&["--load-fail"], || {
             restarted

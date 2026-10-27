@@ -1,9 +1,3 @@
-//! End-to-end proof that a Claude `Write` tool call reaches the wire with its
-//! diff block and keeps it after the later result update: the transcript is
-//! merged per call id the way the browser projection does (the last non-empty
-//! `content` wins), and the settled content must contain both the diff and the
-//! tool result text.
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -34,7 +28,6 @@ fn claude_write_tool_call_keeps_its_diff_after_the_result_update() {
             dir.submit_prompt_with_id(HANDLE, "p1".into(), "TOOL go".to_string())
                 .expect("submit p1");
 
-            // Wait until the Write call settles as completed in the transcript.
             test_support::pump_until(&dir, HANDLE, Duration::from_secs(20), |events| {
                 events.iter().any(|event| {
                     matches!(event, SessionServerEvent::ToolCall { status, .. } if status == "completed")
@@ -43,8 +36,6 @@ fn claude_write_tool_call_keeps_its_diff_after_the_result_update() {
 
             let (transcript, _cursor) = dir.read_from(HANDLE, 0);
 
-            // Merge per call id the way the browser projection does: the last
-            // non-empty `content` wins.
             let mut merged: std::collections::BTreeMap<String, Vec<ToolContent>> =
                 std::collections::BTreeMap::new();
             for event in &transcript {

@@ -252,7 +252,6 @@ async fn session_transcript_unknown_task_is_404() {
 
 #[tokio::test]
 async fn session_transcript_walk_back_with_from_reaches_floor() {
-    // Cursors 0..=4 with a user message at 0, 2, and 4.
     let events = vec![
         message("user", "one"),
         message("assistant", "two"),
@@ -274,7 +273,6 @@ async fn session_transcript_walk_back_with_from_reaches_floor() {
     assert_eq!(first["floor"], 0);
     let from = first["from"].as_u64().expect("from");
 
-    // Walking back with the page's own `from` must make progress to the floor.
     let second = json_of(
         transcript_get(
             &app,
@@ -290,7 +288,6 @@ async fn session_transcript_walk_back_with_from_reaches_floor() {
         "walk should stop at the floor"
     );
 
-    // Re-issuing the stopped walk makes no further progress (no infinite loop).
     let third = json_of(
         transcript_get(
             &app,

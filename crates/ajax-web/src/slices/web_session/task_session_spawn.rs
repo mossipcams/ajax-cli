@@ -66,7 +66,6 @@ pub(super) async fn acquire(
     }
 
     state.acp.model = model.to_string();
-    // Unreadable metadata must fail the attach, not start a fresh ACP context.
     let stored: StoredSession<SessionServerEvent> = web_session_store::try_load(
         &state.storage.registry_store(),
         &state.storage.state_dir,
@@ -109,9 +108,6 @@ pub(super) async fn acquire(
     }
 }
 
-/// Adopts the stored transcript, normalizer seed and prompt ledger into a cold
-/// actor. Acquire and Start fresh both go through here so neither appends to a
-/// log that has not loaded the rows it would otherwise overwrite (#1432).
 fn adopt_stored_session(
     state: &mut TaskSessionState,
     events: Vec<SessionServerEvent>,
@@ -125,7 +121,6 @@ fn adopt_stored_session(
             Ok(())
         }
         Err(error) => {
-            // Stay cold so the next attempt loads the stored transcript again.
             state.log = super::transcript::TranscriptLog::default();
             state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&[]);
             Err(error)
@@ -133,8 +128,6 @@ fn adopt_stored_session(
     }
 }
 
-/// Start fresh on a cold actor: its first acquire failed before the stored
-/// transcript loaded, so load it before anything is written to the log.
 fn load_cold_session(state: &mut TaskSessionState, agent: AgentClient) -> Result<(), SessionError> {
     let stored = web_session_store::try_load::<SessionServerEvent>(
         &state.storage.registry_store(),
@@ -280,7 +273,6 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, SessionError> {
-    // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
     state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
@@ -347,13 +339,9 @@ pub(super) async fn clear_session_context(
 ) -> Result<u64, SessionError> {
     let model = state.acp.model.clone();
     let agent = state.agent;
-    // Only the caller knows whether it still needs a holder: restore-recovery
-    // Start fresh attaches afterwards, while an in-session /clear already runs
-    // under the holder its attach took, and a second one would never be released.
     if !state.stored_loaded {
         load_cold_session(state, agent)?;
     }
-    // Operator reset: retry transcript writes instead of staying blocked.
     state.evidence.transcript_durability_fault = None;
     state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
@@ -419,8 +407,6 @@ fn release_live_client(
     close_session: bool,
     reason: &'static str,
 ) -> Result<(), SessionError> {
-    // This is the only place the host sends ACP `session/cancel` on its own.
-    // Name the caller when it cuts a running turn short (#1189).
     if state.prompts.active_prompt.is_some() {
         tracing::warn!(
             handle = %state.qualified_handle,

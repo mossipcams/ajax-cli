@@ -1,7 +1,3 @@
-//! Tests for [`super::session_client::SessionClient::child_pid`]: one per transport,
-//! each spawned through the existing test seams (fake Pi RPC program, fake Claude
-//! Agent SDK module, fake ACP program) and verified with a `kill(pid, 0)` probe.
-
 use std::path::Path;
 
 use ajax_core::models::AgentClient;

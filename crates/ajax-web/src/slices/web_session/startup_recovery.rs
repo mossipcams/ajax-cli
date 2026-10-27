@@ -1,17 +1,3 @@
-//! Startup-time recovery for chat prompts cut off by a host restart.
-//!
-//! A prompt that reached the `Dispatching` phase when its owning host died is
-//! gone: the agent child process no longer exists and nothing will retry the
-//! turn. This module applies the same rule as
-//! `task_session_exit::recover_prompt_ledger` (which runs per session at
-//! attach time) to *every* chat run in the registry: mark those prompts
-//! `Interrupted`, append one transcript note per prompt, and leave `Queued`
-//! prompts untouched for the next acquire. It never spawns an agent; it only
-//! rewrites durable state. Like the orphan sweep, it never fails startup: every
-//! error is logged with `tracing::warn` and the scan continues. Runs whose
-//! `owner_boot_id` equals this host's boot id are live here and are never
-//! touched.
-
 use std::path::Path;
 
 use ajax_core::registry::SqliteRegistryStore;
@@ -24,17 +10,12 @@ pub(crate) struct RecoveryResult {
     pub(crate) complete: bool,
 }
 
-/// The transcript note appended when a prompt in flight is cut off by a host restart.
 pub(super) fn interrupted_by_restart_event(prompt_id: &str) -> SessionServerEvent {
     SessionServerEvent::Error {
         message: format!("Prompt {prompt_id} was interrupted by host restart and was not retried."),
     }
 }
 
-/// Events appended for a prompt cut off by a host restart: the `PromptAccepted`
-/// a normal accept sends, so the browser outbox drops the prompt instead of
-/// resending it on every reconnect (#1434), then the transcript note. Each
-/// prompt is interrupted once, so each gets exactly one acknowledgement.
 pub(super) fn interrupted_by_restart_events(prompt_id: &str) -> Vec<SessionServerEvent> {
     vec![
         SessionServerEvent::PromptAccepted {
@@ -44,16 +25,6 @@ pub(super) fn interrupted_by_restart_events(prompt_id: &str) -> Vec<SessionServe
     ]
 }
 
-/// For every run whose `owner_boot_id` differs from `current_boot_id`: load the
-/// prompt ledger, apply [`crate::adapters::web_session_store::prompt_ledger::PromptLedger::recover_after_restart`],
-/// and when any prompt was `Dispatching`, persist the interrupted ledger together
-/// with one note event per prompt in one transaction. Returns the handles
-/// (task ids) of every run where at least one prompt was interrupted and
-/// persisted successfully, in scan order, each handle once. Runs owned by this
-/// host are never
-/// touched; `Queued` prompts are left as they are for the next acquire. Every
-/// error is logged and the scan continues, so this function never panics and
-/// never fails startup. Any listing, load, or persist error makes `complete` false.
 pub(crate) fn recover_interrupted_prompts(
     store: &SqliteRegistryStore,
     state_dir: &Path,
@@ -73,7 +44,6 @@ pub(crate) fn recover_interrupted_prompts(
     };
     for handle in handles {
         match store.latest_run_for_task(&handle) {
-            // Live in this host: leave it alone.
             Ok(Some(run)) if run.owner_boot_id.as_deref() == Some(current_boot_id) => continue,
             Ok(_) => {}
             Err(error) => {
@@ -127,13 +97,6 @@ pub(crate) fn recover_interrupted_prompts(
     result
 }
 
-/// The outcome of the startup dispatch scan: every run whose latest run row
-/// is not owned by `current_boot_id` (the same skip rule as
-/// [`recover_interrupted_prompts`]) and whose prompt ledger still has at least
-/// one `Queued` prompt. Handles are returned sorted for determinism. Every
-/// load error is logged with `tracing::warn` and the scan continues, so this
-/// function never panics; any listing, run-row, or ledger-load error makes
-/// `complete` false while the handles found so far are still returned.
 pub(crate) struct QueuedScan {
     pub(crate) handles: Vec<String>,
     pub(crate) complete: bool,
@@ -158,7 +121,6 @@ pub(crate) fn queued_prompt_handles(
     };
     for handle in handles {
         match store.latest_run_for_task(&handle) {
-            // Live in this host: leave it to its live session.
             Ok(Some(run)) if run.owner_boot_id.as_deref() == Some(current_boot_id) => continue,
             Ok(_) => {}
             Err(error) => {

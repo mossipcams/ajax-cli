@@ -629,7 +629,6 @@ mod tests {
         let path = dir.join(SUBSCRIPTIONS_FILE);
         fs::write(&path, "not json").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        // A temp path planted as a symlink must be replaced, not written through.
         let outside = dir.join("outside");
         fs::write(&outside, "untouched").unwrap();
         std::os::unix::fs::symlink(&outside, dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp")))
@@ -654,7 +653,6 @@ mod tests {
         let path = dir.join(SUBSCRIPTIONS_FILE);
         let saved = fs::read_to_string(&path).unwrap();
 
-        // A directory at the temp path makes the next write fail before rename.
         fs::create_dir_all(dir.join(format!("{SUBSCRIPTIONS_FILE}.tmp"))).unwrap();
         hub.apply_unsubscribe(&UnsubscribeRequest {
             endpoint: None,

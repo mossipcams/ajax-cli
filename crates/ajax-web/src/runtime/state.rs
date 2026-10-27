@@ -106,11 +106,6 @@ where
     C: Clone + CommandRunner,
     B: Clone + RuntimeBridge<C>,
 {
-    /// After a registry reload removed owned tasks, shuts down live chat
-    /// sessions for handles this host no longer owns. Ownership is re-read from
-    /// the current shared context when cleanup runs, so a task recreated under
-    /// the same handle keeps its session. Spawned so the shared lock is never
-    /// held across the cleanup; without a runtime there are no live actors.
     pub(crate) fn cleanup_unowned_sessions(&self)
     where
         C: Send + 'static,
@@ -363,7 +358,6 @@ where
         if guard.revision != base_revision {
             return Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat);
         }
-        // A promotion that is not on disk would revert on restart (#1225).
         if promoted
             && bridge
                 .clone()
@@ -380,8 +374,6 @@ where
         Ok(plan)
     }
 
-    /// Commit a control-lane mutation only once its registry snapshot is on
-    /// disk, so success means durable and shared state never runs ahead of it.
     fn commit_durable(
         &self,
         mut context: CommandContext<InMemoryRegistry>,
@@ -420,8 +412,6 @@ impl<C, B> WebAppState<C, B> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Records a finished operation's outcome, then writes it with the
-    /// operations lock already released so disk I/O never blocks other requests.
     pub(crate) fn finish_operation(
         &self,
         request_id: Option<&str>,
@@ -631,9 +621,7 @@ pub(crate) struct OperationCoordinator {
     pub(crate) in_flight_requests: BTreeSet<String>,
     pub(crate) in_flight_tasks: BTreeSet<String>,
     pub(crate) store_path: Option<PathBuf>,
-    /// Sequence number of the newest outcome snapshot captured for persistence.
     pub(crate) write_seq: u64,
-    /// Sequence number of the newest snapshot written; held only for the write.
     pub(crate) persisted_seq: Arc<Mutex<u64>>,
 }
 
@@ -643,8 +631,6 @@ pub(crate) enum GateRejection {
 }
 
 impl OperationCoordinator {
-    /// An outcome older than the replay window is treated as absent, in memory
-    /// as well as on disk, so a long-lived host cannot replay it indefinitely.
     pub(crate) fn completed_response(&self, request_id: &str) -> Option<Response> {
         let completed_at = *self.completed_at.get(request_id)?;
         if now_unix_secs().saturating_sub(completed_at) > MAX_OUTCOME_AGE_SECS {
@@ -684,8 +670,6 @@ impl OperationCoordinator {
         Ok(())
     }
 
-    /// Releases the in-flight markers and records the outcome. The returned
-    /// write must be persisted by the caller after the operations lock is dropped.
     pub(crate) fn finish(
         &mut self,
         request_id: Option<&str>,

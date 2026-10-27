@@ -1,5 +1,3 @@
-//! Translate web session events into neutral ACP execution facts.
-
 use ajax_core::acp_execution_state::{
     AcpExecutionEvent, ProviderState, ToolCallFields, ToolKind, ToolStatus,
 };

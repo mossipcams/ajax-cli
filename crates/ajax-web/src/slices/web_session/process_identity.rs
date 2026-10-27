@@ -1,15 +1,7 @@
-//! Process-identity guard for terminating leftover agent processes.
-//!
-//! A recorded "start token" (the process start time reported by the OS) pins a
-//! pid to the exact process that was running when it was recorded, so a reused
-//! pid can never be signalled by mistake.
-
 use super::os_process;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Read the start-time token for `pid`; `None` when the process is gone or
-/// `pid` is not positive. Pids `<= 0` are rejected without probing.
 pub(super) fn start_token(pid: i64) -> Option<String> {
     if pid <= 0 {
         return None;
@@ -20,16 +12,11 @@ pub(super) fn start_token(pid: i64) -> Option<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(super) enum Verdict {
-    /// No process is running for the recorded identity.
     Gone,
-    /// A process with the same pid has a *different* start time.
     Reused,
-    /// The live start token matches the recorded one exactly.
     Same,
 }
 
-/// Compare a recorded start token against the live one. Pure function of its
-/// inputs; no process inspection happens here.
 #[allow(dead_code)]
 pub(super) fn judge(recorded: &str, live: Option<&str>) -> Verdict {
     match live {
@@ -39,8 +26,6 @@ pub(super) fn judge(recorded: &str, live: Option<&str>) -> Verdict {
     }
 }
 
-/// Returns the pid of a foreign host's child that is still the same live process
-/// recorded on the run row, or `None` when acquire must not be blocked.
 pub(super) fn foreign_live_child(
     child: Option<(i64, i64)>,
     child_started: Option<&str>,
@@ -63,15 +48,10 @@ pub(super) fn foreign_live_child(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub(super) enum Termination {
-    /// The matching process was signalled and is gone.
     Terminated,
-    /// No process with the recorded identity exists any more.
     AlreadyGone,
-    /// A same-pid process with a different start time; never signalled.
     NotSameProcess,
-    /// `pid` is too privileged (<= 1) or is our own pid; never signalled.
     Refused,
-    /// Signalling itself failed.
     Failed,
 }
 
@@ -87,8 +67,6 @@ fn send_signal(pid: i64, signal: &str) -> bool {
     }
 }
 
-/// Poll until `start_token(pid)` no longer equals the recorded token (i.e. the
-/// process is gone or has been replaced), for up to `budget`.
 fn wait_no_longer_same(pid: i64, recorded_token: &str, budget: Duration) -> bool {
     let deadline = Instant::now() + budget;
     loop {
@@ -102,10 +80,6 @@ fn wait_no_longer_same(pid: i64, recorded_token: &str, budget: Duration) -> bool
     }
 }
 
-/// Terminate `pid` ONLY if it is provably the same process that was recorded:
-/// same pid AND same start time. Sends SIGTERM, then escalates to SIGKILL if
-/// the process is still the same one after 2 s. Never signals a reused pid,
-/// pid <= 1, or our own pid.
 #[allow(dead_code)]
 pub(super) fn terminate_if_same(pid: i64, recorded_token: &str) -> Termination {
     if pid <= 1 || pid == std::process::id() as i64 {
@@ -117,7 +91,6 @@ pub(super) fn terminate_if_same(pid: i64, recorded_token: &str) -> Termination {
         Verdict::Same => {}
     }
 
-    // ponytail: shells out to ps/kill; a token re-check just before each signal narrows but cannot close the pid-reuse race
     if !send_signal(pid, "-TERM") {
         return Termination::Failed;
     }
@@ -125,7 +98,6 @@ pub(super) fn terminate_if_same(pid: i64, recorded_token: &str) -> Termination {
         return Termination::Terminated;
     }
 
-    // Still the same process after 2 s: re-check the token before escalating.
     match judge(recorded_token, start_token(pid).as_deref()) {
         Verdict::Same => {}
         _ => return Termination::Terminated,

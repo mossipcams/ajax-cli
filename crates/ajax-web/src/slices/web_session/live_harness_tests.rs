@@ -1,25 +1,3 @@
-//! Opt-in parity test against the real installed harnesses.
-//!
-//! Under `cfg(test)`, `SessionClient::spawn_with_operator_pin` selects a native
-//! transport (Claude SDK, Cursor SDK, Pi RPC) only while that transport's
-//! fixture override is installed (see `transport_for`). Every other test
-//! therefore runs the native harnesses against fakes, which is how a parity
-//! audit once passed while real Claude, Pi and Cursor features were broken.
-//! This test installs overrides that point at the real installed modules, then
-//! checks the session contract structurally. It never asserts exact model
-//! wording.
-//!
-//! Real turns take 5-60s each and spend real model quota, so the test is
-//! `#[ignore]`d. Run it per harness:
-//!
-//! `AJAX_LIVE_HARNESS=claude cargo test -p ajax-web --lib live_harness_parity -- --ignored --nocapture`
-//!
-//! `AJAX_LIVE_HARNESS` is a comma list of `claude`, `pi`, `cursor`, `codex`
-//! (default `claude,pi,codex`). Overrides point at the global npm packages
-//! (`@anthropic-ai/claude-agent-sdk`, `@cursor/sdk`) and the `pi` on PATH.
-//! Codex runs over ACP unchanged. A harness that cannot spawn (missing CLI,
-//! expired Cursor login) fails with the spawn error; it is never skipped.
-
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -108,7 +86,6 @@ fn npm_package(relative: &str) -> PathBuf {
     path
 }
 
-/// Installs the real-module override for `harness` around `run`.
 fn with_real_harness<R>(harness: Harness, run: impl FnOnce() -> R) -> R {
     match harness {
         Harness::Claude => {
@@ -125,7 +102,6 @@ fn with_real_harness<R>(harness: Harness, run: impl FnOnce() -> R) -> R {
     }
 }
 
-/// Everything one prompt produced: loose events plus its terminal(s).
 struct Turn {
     events: Vec<SessionServerEvent>,
     terminals: Vec<PromptTerminal>,
@@ -166,8 +142,6 @@ impl Turn {
     }
 }
 
-/// Sends one prompt, optionally cancels it after `cancel_after`, and drains
-/// until its single terminal arrives or `budget` runs out.
 fn run_turn(
     label: &str,
     client: &mut SessionClient,
@@ -224,8 +198,6 @@ fn flush_chunk(open: &mut Option<MessageChunk>) {
     }
 }
 
-/// Prints one line per non-message event and one merged line per run of
-/// message chunks sharing a role and messageId.
 fn print_transcript(turn: &Turn) {
     let mut open: Option<MessageChunk> = None;
     for event in turn.all_events() {
@@ -274,7 +246,6 @@ fn check_harness(harness: Harness) {
         .expect("run git init");
     assert!(git.success(), "{label}: git init failed");
 
-    // (1) Spawn: a live session with a non-empty identity.
     let (mut client, report) = SessionClient::spawn_with_operator_pin(agent, &dir, "default", None)
         .unwrap_or_else(|err| panic!("{label}: spawn failed: {err}"));
     assert!(
@@ -283,7 +254,6 @@ fn check_harness(harness: Harness) {
     );
     let mut deduper = UsageDeduper::default();
 
-    // (2) A tool-using turn ends in one Success terminal with a tool call.
     let tools = run_turn(label, &mut client, &mut deduper, TOOL_PROMPT, None);
     assert_success(label, &tools);
     assert!(
@@ -291,7 +261,6 @@ fn check_harness(harness: Harness) {
         "{label}: tool turn must emit a tool_call event"
     );
 
-    // Claude-only: the todo/plan panel and slash-command output.
     if matches!(harness, Harness::Claude) {
         let plan = run_turn(
             label,
@@ -313,7 +282,6 @@ fn check_harness(harness: Harness) {
         );
     }
 
-    // (3) A long turn cancelled mid-flight, then a short turn still succeeds.
     let cancelled = run_turn(
         label,
         &mut client,
@@ -338,7 +306,6 @@ fn check_harness(harness: Harness) {
     );
     assert_success(label, &after_cancel);
 
-    // (4) Every non-model select option switches to another choice without error.
     for option in report.config_options.unwrap_or_default() {
         if matches!(option.category, Some(NeutralConfigCategory::Model)) {
             continue;
@@ -368,7 +335,6 @@ fn check_harness(harness: Harness) {
         );
     }
 
-    // (5) Shutdown, then resume the same session id and run a turn.
     let session_id = client.session_id().to_string();
     client.shutdown();
     let (mut resumed, _) =
