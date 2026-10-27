@@ -67,7 +67,7 @@ fn adapter_contract_tmux_attach_uses_registered_session_and_task_window() {
         vec![
             "attach-session".to_string(),
             "-t".to_string(),
-            "=ajax-web-fix-login:task".to_string(),
+            "=ajax-web-fix-login:=task".to_string(),
         ]
     );
     assert!(!command_plan
@@ -82,7 +82,7 @@ fn tmux_attach_target_never_uses_browser_handle() {
 
     let command_plan = build_tmux_attach_command_plan(&plan);
 
-    assert_eq!(command_plan.args[2], "=ajax-web-fix-login:task");
+    assert_eq!(command_plan.args[2], "=ajax-web-fix-login:=task");
     assert!(!command_plan
         .args
         .iter()
@@ -100,7 +100,7 @@ fn adapter_contract_task_window_probe_targets_ephemeral_session() {
             "display-message".to_string(),
             "-p".to_string(),
             "-t".to_string(),
-            "=ajax-web-fix-login-m1a2b3c:task".to_string(),
+            "=ajax-web-fix-login-m1a2b3c:=task".to_string(),
             "#{window_id}".to_string(),
         ]
     );
@@ -228,7 +228,7 @@ fn browser_attach_preserves_shared_task_session_size() {
         vec![
             "attach-session".to_string(),
             "-t".to_string(),
-            format!("={ephemeral}:task"),
+            format!("={ephemeral}:=task"),
         ]
     );
     assert!(!isolated
@@ -372,7 +372,7 @@ fn isolated_attach_plan_seeds_browser_scrollback_from_task_window() {
             "-p",
             "-e",
             "-t",
-            "=ajax-web-fix-login-m1a2b3c:task",
+            "=ajax-web-fix-login-m1a2b3c:=task",
             "-S",
             "-10000",
             "-E",

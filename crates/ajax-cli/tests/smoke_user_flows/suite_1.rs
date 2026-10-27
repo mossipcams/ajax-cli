@@ -134,7 +134,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t =ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            "tmux send-keys -t =ajax-web-fix-login:=task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
             sandbox.root.join("cache/agent-runtime").display(),
             worktree.display(),
         )),
@@ -169,13 +169,13 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
 
     let log = sandbox.command_log();
     assert!(
-        log.matches("tmux select-window -t =ajax-web-fix-login:task")
+        log.matches("tmux select-window -t =ajax-web-fix-login:=task")
             .count()
             >= 3,
         "open should select the task window each time:\n{log}"
     );
     assert!(
-        log.matches("tmux select-window -t =ajax-web-fix-login:task")
+        log.matches("tmux select-window -t =ajax-web-fix-login:=task")
             .count()
             >= 5,
         "open and trunk should idempotently target the task window:\n{log}"
@@ -527,7 +527,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
         worktree.display()
     )));
     assert!(
-        !log.contains("tmux send-keys -t =ajax-web-fix-login:task"),
+        !log.contains("tmux send-keys -t =ajax-web-fix-login:=task"),
         "agent launch should not run after tmux session creation fails:\n{log}"
     );
 }

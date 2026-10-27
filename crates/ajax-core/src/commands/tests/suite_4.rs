@@ -711,3 +711,19 @@ fn teardown_step_result_records_matching_tmux_cleanup() {
         "missing-substrate flags stay until drop completes so retries stay visible"
     );
 }
+
+#[test]
+fn teardown_step_result_ignores_bare_tmux_session_kill() {
+    let mut context = context_with_cleanable_task();
+    let command = CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]);
+
+    let changed =
+        mark_task_cleanup_step_completed(&mut context, "web/fix-login", &command).unwrap();
+
+    assert!(!changed);
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert!(task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists));
+}

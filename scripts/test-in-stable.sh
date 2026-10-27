@@ -26,7 +26,7 @@ if [[ ! -x "$RESTART" ]]; then
   echo "missing restart script: $RESTART" >&2
   exit 1
 fi
-if tmux has-session -t "$SESSION" 2>/dev/null; then
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
   echo "a Test in Stable run is already in progress (tmux session $SESSION)" >&2
   exit 1
 fi

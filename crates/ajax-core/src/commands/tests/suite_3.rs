@@ -11,7 +11,7 @@ fn open_use_case_module_targets_task_directly() {
     assert_eq!(
         plan.commands,
         vec![
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -529,7 +529,7 @@ fn open_task_plan_allows_old_healthy_complete_runtime_projection() {
     assert_eq!(
         plan.commands,
         vec![
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -574,7 +574,7 @@ fn open_task_plan_allows_stale_runtime_when_live_status_requests_resume() {
     assert_eq!(
         plan.commands,
         vec![
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]

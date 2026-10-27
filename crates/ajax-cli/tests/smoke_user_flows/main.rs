@@ -587,8 +587,6 @@ printf 'tmux %s\n' "$*" >> "$AJAX_SMOKE_COMMAND_LOG"
 sessions="$AJAX_SMOKE_SUBSTRATE_DIR/sessions"
 mkdir -p "$sessions"
 
-# Real tmux exact-match targets: `=<session>`, `=<session>:<window>`, and
-# `=<session>:` (new-window). Strip them down to the bare session name.
 exact_session() {
   local target="${1#=}"
   target="${target%:}"

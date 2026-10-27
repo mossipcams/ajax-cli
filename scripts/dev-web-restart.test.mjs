@@ -103,7 +103,8 @@ test("stop_tmux_session is a legacy cleanup that tolerates a missing tmux", () =
     script,
     /stop_tmux_session\(\) \{\n  if ! command -v tmux >\/dev\/null 2>&1; then\n    return 0\n  fi/,
   );
-  assert.match(script, /tmux has-session -t "\$TMUX_SESSION"/);
+  assert.match(script, /tmux has-session -t "=\$TMUX_SESSION"/);
+  assert.match(script, /tmux kill-session -t "=\$TMUX_SESSION"/);
 });
 
 test("background install runs from REPO_ROOT so the job WorkingDirectory is the repo", () => {

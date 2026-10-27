@@ -1,6 +1,6 @@
 use super::process_tree::is_shell;
 use ajax_core::{
-    adapters::{acp_launch_for_agent, CommandRunner, CommandSpec},
+    adapters::{acp_launch_for_agent, tmux_window_target, CommandRunner, CommandSpec},
     models::{AgentClient, Task},
 };
 use std::path::Path;
@@ -36,7 +36,7 @@ fn tmux_pane_current_command(
     session: &str,
     window: &str,
 ) -> Result<String, ()> {
-    let target = format!("={session}:{window}");
+    let target = tmux_window_target(session, window);
     let output = runner
         .run(&CommandSpec::new(
             "tmux",
@@ -142,7 +142,7 @@ mod tests {
                 "display-message".to_string(),
                 "-p".to_string(),
                 "-t".to_string(),
-                format!("={}:{}", task.tmux_session, task.task_window),
+                format!("={}:={}", task.tmux_session, task.task_window),
                 "#{pane_current_command}".to_string(),
             ]
         );

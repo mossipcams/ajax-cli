@@ -29,7 +29,7 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
         && command
             .args
             .iter()
-            .any(|arg| arg == &task.tmux_session || arg == &tmux_session_target(&task.tmux_session))
+            .any(|arg| arg == &tmux_session_target(&task.tmux_session))
     {
         context
             .registry

@@ -6,6 +6,7 @@ pub struct TerminalAttachPlan {
     pub worktree_path: std::path::PathBuf,
 }
 
+use ajax_core::adapters::{tmux_session_slot_target, tmux_session_target, tmux_window_target};
 use portable_pty::{Child, CommandBuilder};
 use std::time::Duration;
 
@@ -92,25 +93,13 @@ pub struct TmuxAttachCommandPlan {
     pub args: Vec<String>,
 }
 
-pub(crate) fn tmux_session_target(session: &str) -> String {
-    format!("={session}")
-}
-
-pub(crate) fn tmux_session_options_target(session: &str) -> String {
-    format!("={session}:")
-}
-
-pub fn tmux_attach_target(session: &str, task_window: &str) -> String {
-    format!("{}:{task_window}", tmux_session_target(session))
-}
-
 pub(crate) fn task_window_probe_command(ephemeral_session: &str, task_window: &str) -> TmuxCommand {
-    let target = tmux_attach_target(ephemeral_session, task_window);
+    let target = tmux_window_target(ephemeral_session, task_window);
     TmuxCommand::new(["display-message", "-p", "-t", &target, "#{window_id}"])
 }
 
 pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCommandPlan {
-    let target = tmux_attach_target(&plan.tmux_session, &plan.task_window);
+    let target = tmux_window_target(&plan.tmux_session, &plan.task_window);
     TmuxAttachCommandPlan {
         program: "tmux".to_string(),
         args: vec!["attach-session".to_string(), "-t".to_string(), target],
@@ -198,9 +187,9 @@ pub(crate) fn build_isolated_attach_plan_with_token(
     token: &str,
 ) -> IsolatedAttachPlan {
     let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
-    let history_target = tmux_attach_target(&ephemeral, &plan.task_window);
+    let history_target = tmux_window_target(&ephemeral, &plan.task_window);
     let base_target = tmux_session_target(&plan.tmux_session);
-    let ephemeral_options = tmux_session_options_target(&ephemeral);
+    let ephemeral_options = tmux_session_slot_target(&ephemeral);
     let ephemeral_plan = TerminalAttachPlan {
         qualified_handle: plan.qualified_handle.clone(),
         tmux_session: ephemeral.clone(),

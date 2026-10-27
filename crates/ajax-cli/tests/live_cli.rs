@@ -619,7 +619,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         worktree = worktree.display()
     )));
     assert!(lifecycle_log.contains(&format!(
-        "args=send-keys -t =ajax-web-fix-login:task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
+        "args=send-keys -t =ajax-web-fix-login:=task if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi; ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
         state_root = home.root.join(".cache/ajax/agent-runtime").display(),
         worktree = worktree.display()
     )));
@@ -627,7 +627,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         !lifecycle_log.contains("'Fix Login!'"),
         "ajax start should not send the task title as the initial agent prompt:\n{lifecycle_log}"
     );
-    assert!(lifecycle_log.contains("args=select-window -t =ajax-web-fix-login:task"));
+    assert!(lifecycle_log.contains("args=select-window -t =ajax-web-fix-login:=task"));
     assert!(
         lifecycle_log.contains("args=attach-session -t =ajax-web-fix-login")
             || lifecycle_log.contains("args=switch-client -t =ajax-web-fix-login")

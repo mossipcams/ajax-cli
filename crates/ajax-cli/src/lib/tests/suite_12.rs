@@ -139,7 +139,7 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
         runner.commands(),
         &[CommandSpec::new(
             "tmux",
-            ["select-window", "-t", "=ajax-web-fix-login:task"]
+            ["select-window", "-t", "=ajax-web-fix-login:=task"]
         )]
     );
     assert_eq!(
@@ -237,7 +237,7 @@ fn pending_cockpit_resume_task_session_failure_stays_in_cockpit_without_lifecycl
         runner.commands(),
         &[CommandSpec::new(
             "tmux",
-            ["select-window", "-t", "=ajax-web-fix-login:task"]
+            ["select-window", "-t", "=ajax-web-fix-login:=task"]
         )]
     );
     assert_eq!(
@@ -357,7 +357,7 @@ fn pending_cockpit_repair_runs_task_window_plan() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -413,7 +413,7 @@ fn pending_cockpit_open_alias_actions_run_open_plan_without_lifecycle_change() {
     assert_eq!(
         runner.commands(),
         &[
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ],

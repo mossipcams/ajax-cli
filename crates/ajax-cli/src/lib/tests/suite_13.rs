@@ -139,7 +139,7 @@ fn pending_cockpit_open_action_runs_task_without_lifecycle_change() {
     assert_eq!(
         runner.commands(),
         &[
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -175,7 +175,7 @@ fn pending_cockpit_open_action_switches_client_when_inside_tmux() {
     assert_eq!(
         runner.commands(),
         &[
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]

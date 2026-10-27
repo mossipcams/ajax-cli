@@ -59,7 +59,7 @@ fn task_window_repair_plan_recreates_missing_worktree_when_branch_exists() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -166,7 +166,7 @@ fn task_window_repair_plan_recreates_missing_tmux_session_with_task() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -213,7 +213,7 @@ fn task_window_repair_plan_repairs_task_when_tmux_session_exists() {
     assert_eq!(
         plan.commands,
         vec![
-            CommandSpec::new("tmux", ["kill-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["kill-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new(
                 "tmux",
                 [
@@ -226,7 +226,7 @@ fn task_window_repair_plan_repairs_task_when_tmux_session_exists() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
@@ -268,7 +268,7 @@ fn task_window_repair_plan_creates_missing_task_when_tmux_session_exists() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
             CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]

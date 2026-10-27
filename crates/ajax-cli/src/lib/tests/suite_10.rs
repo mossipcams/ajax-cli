@@ -419,7 +419,7 @@ fn pending_new_task_action_runs_after_title_is_collected() {
             "/Users/matt/projects/api__worktrees/ajax-fix-login",
             None,
         ),
-        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-api-fix-login:task"]),
+        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-api-fix-login:=task"]),
         expected_new_task_open_command("ajax-api-fix-login"),
     ]);
     assert_eq!(runner.commands(), expected_commands.as_slice());

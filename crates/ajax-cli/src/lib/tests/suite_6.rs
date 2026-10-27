@@ -117,7 +117,7 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             None,
         ),
-        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
     assert_eq!(runner.commands(), expected_commands.as_slice());
@@ -202,7 +202,7 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             Some("npm ci"),
         ),
-        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
     assert_eq!(runner.commands(), expected_commands.as_slice());
@@ -485,7 +485,7 @@ fn new_execute_allows_reusing_removed_task_handle() {
             "/Users/matt/projects/web__worktrees/ajax-fix-login",
             None,
         ),
-        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"]),
+        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
         expected_new_task_open_command("ajax-web-fix-login"),
     ]);
     assert_eq!(runner.commands(), expected_commands.as_slice());

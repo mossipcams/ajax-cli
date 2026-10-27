@@ -460,7 +460,7 @@ proptest! {
             &[
                 CommandSpec::new(
                     "tmux",
-                    ["select-window", "-t", "=ajax-web-fix-login:task"]
+                    ["select-window", "-t", "=ajax-web-fix-login:=task"]
                 ),
                 CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -510,7 +510,7 @@ proptest! {
                 &[
                     CommandSpec::new(
                         "tmux",
-                        ["kill-window", "-t", "=ajax-web-fix-login:task"]
+                        ["kill-window", "-t", "=ajax-web-fix-login:=task"]
                     ),
                     CommandSpec::new(
                         "tmux",

@@ -125,7 +125,7 @@ fn adapter_contract_start_dispatch_executes_core_command_plan() {
             "/Users/matt/projects/web__worktrees/ajax-fix-logout",
             None,
         ),
-        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-logout:task"]),
+        CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-logout:=task"]),
         expected_new_task_open_command("ajax-web-fix-logout"),
     ]);
     assert_eq!(runner.commands(), expected_commands.as_slice());

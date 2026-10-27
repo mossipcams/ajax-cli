@@ -24,7 +24,7 @@ pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
 pub use git::GitAdapter;
 pub use github::{CiChecksObservation, CiChecksReport, CiChecksState, GithubChecksAdapter};
 pub use process::{clear_ambient_git_env, ProcessCommandRunner, AMBIENT_GIT_ENV_VARS};
-pub use tmux::TmuxAdapter;
+pub use tmux::{tmux_session_slot_target, tmux_session_target, tmux_window_target, TmuxAdapter};
 
 #[cfg(test)]
 mod tests {
@@ -93,11 +93,11 @@ mod tests {
         );
         assert_eq!(
             adapter.kill_window("ajax-web-fix-login", "task"),
-            CommandSpec::new("tmux", ["kill-window", "-t", "=ajax-web-fix-login:task"])
+            CommandSpec::new("tmux", ["kill-window", "-t", "=ajax-web-fix-login:=task"])
         );
         assert_eq!(
             adapter.select_window("ajax-web-fix-login", "task"),
-            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:task"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"])
         );
         assert_eq!(
             adapter.switch_client_to_window("ajax-web-fix-login", "task"),
@@ -111,7 +111,7 @@ mod tests {
                 [
                     "send-keys",
                     "-t",
-                    "=ajax-web-fix-login:task",
+                    "=ajax-web-fix-login:=task",
                     "codex --cd /tmp/worktree",
                     "Enter"
                 ]
@@ -156,7 +156,7 @@ mod tests {
             adapter.capture_pane("ajax-web-fix-login", "task"),
             CommandSpec::new(
                 "tmux",
-                ["capture-pane", "-p", "-t", "=ajax-web-fix-login:task"]
+                ["capture-pane", "-p", "-t", "=ajax-web-fix-login:=task"]
             )
             .with_timeout(std::time::Duration::from_secs(8))
         );
@@ -171,7 +171,7 @@ mod tests {
             command in "[^\\x00]{0,80}"
         ) {
             let adapter = TmuxAdapter::new("tmux");
-            let target = format!("={session}:{window}");
+            let target = format!("={session}:={window}");
             let session_target = format!("={session}:");
 
             prop_assert_eq!(

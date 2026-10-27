@@ -1,6 +1,6 @@
 use crate::agent_runtime::{task_file_stem, AgentRuntimeSnapshot, AgentRuntimeState};
 use ajax_core::{
-    adapters::{CommandRunner, CommandSpec, TmuxAdapter},
+    adapters::{tmux_window_target, CommandRunner, CommandSpec, TmuxAdapter},
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
     models::{AgentClient, Task},
 };
@@ -39,7 +39,7 @@ pub(crate) fn deliver(
             process.trim()
         ));
     }
-    let target = format!("={}:{}", task.tmux_session, task.task_window);
+    let target = tmux_window_target(&task.tmux_session, &task.task_window);
     let foreground = run_stdout(
         runner,
         &CommandSpec::new(
@@ -197,7 +197,7 @@ mod tests {
                 "display-message",
                 "-p",
                 "-t",
-                "=ajax-web-fix-login:task",
+                "=ajax-web-fix-login:=task",
                 "#{pane_current_command}",
             ],
         )));
