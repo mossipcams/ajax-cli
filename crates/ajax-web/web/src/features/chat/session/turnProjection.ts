@@ -267,8 +267,18 @@ export function applyTurnEvent(
       return push(state, { kind: "note", tone: "info", text: event.text });
     case "system_message":
       return push(state, { kind: "note", tone: "info", text: event.text });
-    case "prompt_accepted":
-      return state;
+    case "prompt_accepted": {
+      const index = state.view.conversation.findIndex(
+        (item) =>
+          item.kind === "prose" &&
+          item.pending === true &&
+          item.clientMessageId === event.clientMessageId,
+      );
+      if (index < 0) return state;
+      const item = state.view.conversation[index];
+      if (item.kind !== "prose") return state;
+      return replaceAt(state, index, { ...item, pending: false });
+    }
     default:
       return state;
   }
@@ -277,8 +287,14 @@ export function applyTurnEvent(
 export function applyOptimisticPrompt(
   state: ChatSessionReducerState,
   text: string,
+  clientMessageId?: string,
 ): ChatSessionReducerState {
-  const next = push(state, { kind: "prose", role: "user", text });
+  const next = push(state, {
+    kind: "prose",
+    role: "user",
+    text,
+    ...(clientMessageId ? { clientMessageId, pending: true } : {}),
+  });
   return bumpRevision({
     ...next,
     view: { ...next.view, turn: { ...next.view.turn, busy: true } },

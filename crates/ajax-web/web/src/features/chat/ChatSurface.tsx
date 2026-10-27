@@ -119,6 +119,7 @@ function ChatSessionBody({
 }) {
   const { surfaceStyle, scrollToLatest } = useChatScroller();
   const { confirmedModel, configOptions, availableCommands, promptCapabilities } = view.model;
+  const promptingEnabled = !view.transcriptError?.trim();
 
   return (
     <>
@@ -169,6 +170,7 @@ function ChatSessionBody({
         <ComposerProvider
           handle={handle}
           connected={connected}
+          promptingEnabled={promptingEnabled}
           busy={view.turn.busy}
           everOpened={everOpened}
           agentStarting={agentStarting}
@@ -203,7 +205,11 @@ function ChatSessionBody({
             setModelSheetOpen={setModelSheetOpen}
             onApply={applyConfigOption}
             renderComposer={({ notice: noticeSlot, modelControl }) => (
-              <ChatComposer notice={noticeSlot} modelControl={modelControl} />
+              <ChatComposer
+                notice={noticeSlot}
+                modelControl={modelControl}
+                transcriptError={view.transcriptError}
+              />
             )}
           />
         </ComposerProvider>
@@ -226,7 +232,9 @@ function ChatSessionScroll({
   view: ReturnType<typeof useChatSession>["view"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const historyWindow = useHistoryWindow(view.conversation, `${handle}:${detailStatus}`, view.serverHistory?.from);
+  // Only the first load of a handle (loading) changes session identity; ready <-> stale keeps the scroller and loaded history.
+  const sessionKey = `${handle}:${detailStatus === "loading"}`;
+  const historyWindow = useHistoryWindow(view.conversation, sessionKey, view.serverHistory?.from);
   const earlierHistory = useEarlierHistory({
     handle,
     serverHistory: view.serverHistory,
@@ -238,7 +246,7 @@ function ChatSessionScroll({
   return (
     <ChatScroller
       revision={view.revision}
-      sessionKey={`${handle}:${detailStatus}`}
+      sessionKey={sessionKey}
       composerRef={composerRef}
       activityCount={toolCount(view.conversation)}
       historyScroll={{

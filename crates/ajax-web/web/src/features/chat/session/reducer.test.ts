@@ -897,3 +897,18 @@ describe("the permission ask reads as a command, not as markdown", () => {
     expect(marker).toMatchObject({ title: "Run rm -rf target/debug" });
   });
 });
+
+describe("transcript durability projection", () => {
+  it("projects host transcriptError into the view and clears it when a later snapshot omits it", () => {
+    const failed = reduceChatSession(initialChatSessionReducerState, {
+      type: "event",
+      event: { type: "transcript_snapshot", transcriptError: "forced append failure" },
+    });
+    expect(failed.view.transcriptError).toBe("forced append failure");
+    const cleared = reduceChatSession(failed, {
+      type: "event",
+      event: { type: "transcript_snapshot" },
+    });
+    expect(cleared.view.transcriptError).toBeUndefined();
+  });
+});

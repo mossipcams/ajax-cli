@@ -85,6 +85,8 @@ export interface SessionSnapshot {
   turnState: "idle" | "busy";
   reset: boolean;
   agentPending?: boolean;
+  /** Host durability failure for the transcript; Send stays gated while set. */
+  transcriptError?: string;
   pendingPermission?: {
     requestId: string;
     title?: string | null;

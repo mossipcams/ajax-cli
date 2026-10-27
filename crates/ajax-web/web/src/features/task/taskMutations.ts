@@ -100,18 +100,23 @@ export function armDropUndo(
   handles: DropUndoHandles,
   executeOperation: ExecuteTaskOperation = postOperation,
 ): void {
-  handles.dropResolvedRef.current = false;
+  // Resolved flag and timer are per arm, so a later Drop never cancels an earlier one.
+  let resolved = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   if (interactionId) endTapToFeedback(interactionId, "banner");
+  const settle = () => {
+    resolved = true;
+    if (timer) clearTimeout(timer);
+    if (handles.dropTimerRef.current === timer) handles.dropTimerRef.current = null;
+  };
   const commit = () => {
-    if (handles.dropResolvedRef.current) return;
-    handles.dropResolvedRef.current = true;
-    clearDropTimer(handles);
+    if (resolved) return;
+    settle();
     void runTaskAction(action, handle, true, interactionId, callbacks, executeOperation);
   };
   const undo = () => {
-    if (handles.dropResolvedRef.current) return;
-    handles.dropResolvedRef.current = true;
-    clearDropTimer(handles);
+    if (resolved) return;
+    settle();
     if (interactionId) {
       endTapToOperationComplete(interactionId, {
         ok: false,
@@ -120,7 +125,8 @@ export function armDropUndo(
       });
     }
   };
-  handles.dropTimerRef.current = setTimeout(commit, DROP_UNDO_MS);
+  timer = setTimeout(commit, DROP_UNDO_MS);
+  handles.dropTimerRef.current = timer;
   callbacks.onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });
 }
 

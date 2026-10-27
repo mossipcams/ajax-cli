@@ -155,7 +155,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
       if (!id) return "";
       if (!view.turn.busy) {
         markActivity();
-        dispatch({ type: "prompt", text: trimmed });
+        dispatch({ type: "prompt", text: trimmed, clientMessageId: id });
       }
       return id;
     },

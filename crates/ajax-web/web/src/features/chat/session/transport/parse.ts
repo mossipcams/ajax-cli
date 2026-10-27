@@ -17,6 +17,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
 }
 
+function parseTranscriptError(value: unknown): string | undefined | null {
+  if (value === undefined || value === null) return undefined;
+  return typeof value === "string" ? value : null;
+}
+
 function parsePayload(payload: Record<string, unknown>): WebSessionServerEvent | null {
   if (typeof payload.type !== "string") return null;
   switch (payload.type) {
@@ -261,6 +266,8 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
       const sessionConfigOptions = parseLiveConfigOptions(payload.sessionConfigOptions);
       const availableCommands = parseLiveAvailableCommands(payload.availableCommands);
       const promptCapabilities = parseLivePromptCapabilities(payload.promptCapabilities);
+      const transcriptError = parseTranscriptError(payload.transcriptError);
+      if (transcriptError === null) return null;
       const transcript = parseSnapshotTranscript(payload, payload.cursor);
       if (transcript === null || (transcript !== undefined && !payload.reset)) return null;
       let transcriptFrom: number | undefined;
@@ -309,6 +316,7 @@ export function parseServerFrame(raw: string): ParsedServerFrame | null {
           ...(promptCapabilities !== undefined ? { promptCapabilities } : {}),
           ...(pending ? { pendingPermission: pending } : {}),
           ...(pendingElicitation ? { pendingElicitation } : {}),
+          ...(transcriptError !== undefined ? { transcriptError } : {}),
           ...(transcript !== undefined ? { transcript } : {}),
           ...(transcriptFrom !== undefined ? { transcriptFrom } : {}),
           ...(transcriptFloor !== undefined ? { transcriptFloor } : {}),

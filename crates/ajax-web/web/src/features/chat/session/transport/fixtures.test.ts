@@ -33,4 +33,24 @@ describe("webSessionFixtures", () => {
     });
     expect(FIXTURE_SNAPSHOT.busy.pendingPermission?.requestId).toBe("p1");
   });
+
+  it("parses the optional transcriptError from host snapshots", () => {
+    const failed = parseServerFrame(
+      JSON.stringify({
+        type: "snapshot",
+        protocolVersion: SESSION_PROTOCOL_VERSION,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        transcriptError: "forced append failure",
+      }),
+    );
+    expect(failed).toMatchObject({
+      kind: "snapshot",
+      snapshot: { transcriptError: "forced append failure" },
+    });
+    const healthy = parseServerFrame(snapshotJson());
+    expect(healthy?.kind === "snapshot" && "transcriptError" in healthy.snapshot).toBe(false);
+  });
 });

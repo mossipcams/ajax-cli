@@ -79,6 +79,7 @@ export function useSessionConnection({
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let buffer: MessageBuffer | undefined;
     let nextToReadCursor: number | undefined;
+    let forwardedTranscriptError: string | undefined;
     everOpenedRef.current = false;
     setEverOpened(false);
 
@@ -126,7 +127,14 @@ export function useSessionConnection({
       onSessionConfigOptions?.(snapshot.sessionConfigOptions);
       onSessionAvailableCommands?.(snapshot.availableCommands);
       onSessionPromptCapabilities?.(snapshot.promptCapabilities);
-      if (snapshot.transcript === undefined) return;
+      const { transcriptError } = snapshot;
+      if (snapshot.transcript === undefined) {
+        if (transcriptError !== forwardedTranscriptError) {
+          forwardedTranscriptError = transcriptError;
+          dispatch({ type: "event", event: { type: "transcript_snapshot", transcriptError } });
+        }
+        return;
+      }
 
       const ready: WebSessionServerEvent = {
         type: "ready",
@@ -142,6 +150,11 @@ export function useSessionConnection({
         const next = projectWireEvent(normalizeEvent(event));
         return next ? [next] : [];
       });
+      // A replayed transcript can reset the view, so re-send a present error on every replay.
+      if (transcriptError !== undefined || transcriptError !== forwardedTranscriptError) {
+        projected.push({ type: "transcript_snapshot", transcriptError });
+        forwardedTranscriptError = transcriptError;
+      }
       if (
         typeof snapshot.transcriptFrom === "number" &&
         typeof snapshot.transcriptFloor === "number"

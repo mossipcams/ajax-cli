@@ -9,9 +9,14 @@ import { useComposerContext } from "./useComposer";
 export type ChatComposerProps = {
   notice?: ReactNode;
   modelControl?: ReactNode;
+  transcriptError?: string;
 };
 
-export default function ChatComposer({ notice = null, modelControl = null }: ChatComposerProps) {
+export default function ChatComposer({
+  notice = null,
+  modelControl = null,
+  transcriptError,
+}: ChatComposerProps) {
   const {
     draft,
     composerRef,
@@ -25,6 +30,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
     onComposerKeyDown,
     submitComposer,
     connected,
+    promptingEnabled,
     everOpened,
     agentStarting,
     busy,
@@ -44,6 +50,8 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
   } = useComposerContext();
 
   const hotbarRef = useRef<HTMLDivElement>(null);
+  const canPrompt = connected && promptingEnabled;
+  const transcriptNotice = transcriptError?.trim() || null;
 
   useLayoutEffect(() => {
     if (draftRestoreGeneration === 0) return;
@@ -66,6 +74,15 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
       onSubmit={submitComposer}
     >
       {notice}
+      {transcriptNotice ? (
+        <div
+          className="session-config-notice"
+          data-testid="session-transcript-notice"
+          role="alert"
+        >
+          <p>{transcriptNotice}</p>
+        </div>
+      ) : null}
       {attachmentError ? (
         <p className="session-composer-attachment-error" role="alert">
           {attachmentError}
@@ -137,7 +154,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           type="button"
           className="session-composer-button session-composer-attach"
           aria-label="Attach"
-          disabled={!connected || !canAttach}
+          disabled={!canPrompt || !canAttach}
           hidden={!canAttach}
           onMouseDown={preventComposerHotbarFocusSteal}
           onClick={() => attachInputRef.current?.click()}
@@ -163,7 +180,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           aria-label={micArmed ? "Stop voice input" : micAriaLabel}
           title={micArmed ? "Stop voice input" : micAriaLabel}
           disabled={
-            !connected ||
+            !canPrompt ||
             speechModel.state === "connecting" ||
             speechModel.state === "finalizing"
           }
@@ -176,7 +193,7 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
           type="submit"
           className="session-composer-button session-composer-send"
           aria-label={submitLabel}
-          disabled={!connected || (!draft.trim() && attachments.length === 0 && queued === null)}
+          disabled={!canPrompt || (!draft.trim() && attachments.length === 0 && queued === null)}
           onMouseDown={preventComposerHotbarFocusSteal}
         >
           <svg
@@ -207,11 +224,13 @@ export default function ChatComposer({ notice = null, modelControl = null }: Cha
               : everOpened
                 ? "Reconnecting…"
                 : "Starting…"
-            : queued !== null
-              ? "Enter stops this turn and sends…"
-              : busy
-                ? "Queues after this turn…"
-                : "Message…"
+            : !promptingEnabled
+              ? "Transcript unavailable…"
+              : queued !== null
+                ? "Enter stops this turn and sends…"
+                : busy
+                  ? "Queues after this turn…"
+                  : "Message…"
         }
         aria-label="Message"
         ref={composerRef}

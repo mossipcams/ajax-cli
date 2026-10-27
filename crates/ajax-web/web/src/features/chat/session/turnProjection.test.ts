@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { failedTurnPromptToRestore } from "./turnProjection";
-import type { ConversationItem } from "./model";
+import {
+  applyOptimisticPrompt,
+  applyTurnEvent,
+  failedTurnPromptToRestore,
+} from "./turnProjection";
+import { initialChatSessionReducerState, type ConversationItem } from "./model";
 
 describe("failedTurnPromptToRestore", () => {
   it("returns the user prompt when the tail is an error note with no agent answer", () => {
@@ -33,5 +37,44 @@ describe("failedTurnPromptToRestore", () => {
       { kind: "note", id: "n1", tone: "info", text: "Stopped" },
     ];
     expect(failedTurnPromptToRestore(conversation)).toBeNull();
+  });
+});
+
+describe("optimistic prompt acknowledgement", () => {
+  it("renders an optimistic prompt as pending until its prompt_accepted arrives", () => {
+    const optimistic = applyOptimisticPrompt(initialChatSessionReducerState, "Ship it", "c1");
+    const [prompt] = optimistic.view.conversation;
+    expect(prompt).toMatchObject({
+      kind: "prose",
+      role: "user",
+      text: "Ship it",
+      clientMessageId: "c1",
+      pending: true,
+    });
+
+    const accepted = applyTurnEvent(optimistic, {
+      type: "prompt_accepted",
+      clientMessageId: "c1",
+    });
+    expect(accepted.view.conversation[0]).toMatchObject({ text: "Ship it" });
+    expect(accepted.view.conversation[0]).not.toHaveProperty("pending", true);
+  });
+
+  it("keeps a prompt pending when prompt_accepted names another id", () => {
+    const optimistic = applyOptimisticPrompt(initialChatSessionReducerState, "Ship it", "c1");
+    const next = applyTurnEvent(optimistic, {
+      type: "prompt_accepted",
+      clientMessageId: "other",
+    });
+    expect(next.view.conversation[0]).toMatchObject({ pending: true, clientMessageId: "c1" });
+  });
+
+  it("never marks a transcript-restored prompt as pending", () => {
+    const restored = applyTurnEvent(initialChatSessionReducerState, {
+      type: "user_message",
+      text: "From the transcript",
+      itemId: "t1",
+    });
+    expect(restored.view.conversation[0]).not.toHaveProperty("pending");
   });
 });

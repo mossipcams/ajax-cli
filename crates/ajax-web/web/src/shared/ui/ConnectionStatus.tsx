@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { ConnectionState } from "@/shared/lib/types";
 
 interface Props {
@@ -22,10 +22,6 @@ export default function ConnectionStatus({
   const retryLatchRef = useRef(false);
   const reloadLatchRef = useRef(false);
 
-  useEffect(() => {
-    retryLatchRef.current = false;
-  }, [state]);
-
   return (
     <div className="connection-status" data-testid="connection-status" data-state={state}>
       <span className="connection-label">{label}</span>
@@ -37,6 +33,9 @@ export default function ConnectionStatus({
             if (retryLatchRef.current) return;
             retryLatchRef.current = true;
             onRetry?.();
+            queueMicrotask(() => {
+              retryLatchRef.current = false;
+            });
           }}
         >
           Retry

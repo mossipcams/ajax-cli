@@ -55,6 +55,29 @@ describe("TaskDetailsSheet chat entry", () => {
     expect(onOpenTerminal).toHaveBeenCalledOnce();
   });
 
+  it("closes the sheet before opening the diff from chat mode", () => {
+    const calls: string[] = [];
+    const onOpenChange = vi.fn(() => calls.push("close"));
+    const onOpenDiff = vi.fn(() => calls.push("diff"));
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+        onOpenTerminal={vi.fn()}
+        onOpenDiff={onOpenDiff}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show diff" }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onOpenDiff).toHaveBeenCalledOnce();
+    expect(calls).toEqual(["close", "diff"]);
+  });
+
   it("leads the sheet with task identity in chat mode", () => {
     render(
       <TaskDetailsSheet

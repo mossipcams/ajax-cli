@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import TaskMetaDetails, { humanizeTaskAnnotation } from "./TaskMetaDetails";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
@@ -11,6 +11,7 @@ const stylesSource = readOrderedStylesSource(
 );
 
 const fetchDevDeploy = vi.fn();
+const copyText = vi.fn();
 
 vi.mock("@/shared/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/shared/lib/api")>();
@@ -20,8 +21,17 @@ vi.mock("@/shared/lib/api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/shared/lib/clipboard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/shared/lib/clipboard")>();
+  return {
+    ...actual,
+    copyText: (...args: unknown[]) => copyText(...args),
+  };
+});
+
 beforeEach(() => {
   fetchDevDeploy.mockReset();
+  copyText.mockReset();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -52,6 +62,21 @@ function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
 }
 
 describe("TaskMetaDetails", () => {
+  it("reports copy success and failure for copyable fields", async () => {
+    copyText.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const onResult = vi.fn();
+    render(<TaskMetaDetails detail={detail()} embedded onResult={onResult} />);
+
+    const copyButtons = screen.getAllByRole("button", { name: "Copy" });
+    fireEvent.click(copyButtons[0]);
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith("Copied branch", null, false));
+
+    fireEvent.click(copyButtons[1]);
+    await waitFor(() => expect(onResult).toHaveBeenLastCalledWith("Copy failed", null, true));
+    expect(copyText).toHaveBeenNthCalledWith(1, "ajax/fix-login");
+    expect(copyText).toHaveBeenNthCalledWith(2, "/repo/web__worktrees/ajax-fix-login");
+  });
+
   it("renders created and last-activity relative times in task details", () => {
     const now = Math.floor(Date.now() / 1000);
     render(

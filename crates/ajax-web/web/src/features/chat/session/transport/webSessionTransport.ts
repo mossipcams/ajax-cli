@@ -177,7 +177,8 @@ export function connectWebSessionTransport(
   socket.addEventListener("close", closeListener);
   void waitForSocketOpen(socket).catch(() => {
     if (disposed) return;
-    pendingPrompts.length = 0;
+    // Keep unaccepted prompts queued: clearing them here left the stored
+    // outbox holding prompts the next write would silently overwrite.
     callbacks.onEvent({ type: "error", message: OPEN_FAILURE });
   });
 

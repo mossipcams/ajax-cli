@@ -11,6 +11,7 @@ function queueKey(handle: string): string {
 
 type StoredComposerQueue = {
   text: string;
+  clientMessageId?: string;
 };
 
 export function readComposerDraft(handle: string): string {
@@ -41,9 +42,14 @@ export function readComposerQueue(handle: string): ComposerState {
     const parsed = JSON.parse(raw) as StoredComposerQueue;
     const text = typeof parsed.text === "string" ? parsed.text : "";
     if (!text.trim()) return { status: "idle" };
+    const clientMessageId =
+      typeof parsed.clientMessageId === "string" && parsed.clientMessageId
+        ? parsed.clientMessageId
+        : undefined;
     return {
       status: "queued",
       text,
+      ...(clientMessageId ? { clientMessageId } : {}),
     };
   } catch {
     return { status: "idle" };
@@ -67,7 +73,10 @@ export function writeComposerQueue(handle: string, state: ComposerState): void {
       localStorage.removeItem(queueKey(handle));
       return;
     }
-    const payload: StoredComposerQueue = { text: state.text };
+    const payload: StoredComposerQueue = {
+      text: state.text,
+      ...(state.clientMessageId ? { clientMessageId: state.clientMessageId } : {}),
+    };
     localStorage.setItem(queueKey(handle), JSON.stringify(payload));
   } catch {
   }

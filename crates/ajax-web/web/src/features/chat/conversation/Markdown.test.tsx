@@ -66,6 +66,47 @@ describe("parseBlocks", () => {
       { kind: "para", text: "Run `cargo test    --all` for all tests." },
     ]);
   });
+
+  it("recognises fences indented up to three spaces, closing them the same way", () => {
+    expect(parseBlocks("Try:\n   ```js\nlet x = 1;\n   ```\nafter")).toEqual([
+      { kind: "para", text: "Try:" },
+      { kind: "code", lang: "js", text: "let x = 1;" },
+      { kind: "para", text: "after" },
+    ]);
+  });
+
+  it("accepts any info string on a fence opener, not just word characters", () => {
+    expect(parseBlocks("```c++\nint x;\n```")).toEqual([
+      { kind: "code", lang: "c++", text: "int x;" },
+    ]);
+  });
+
+  it("does not open a fence on an inline ``` span, so following lines stay prose", () => {
+    expect(parseBlocks("```inline``` then text\nmore lines\n\nafter")).toEqual([
+      { kind: "para", text: "```inline``` then text more lines" },
+      { kind: "para", text: "after" },
+    ]);
+  });
+
+  it("takes the first word of a fence info string as the language", () => {
+    expect(parseBlocks("```js title=x\nlet x = 1;\n```")).toEqual([
+      { kind: "code", lang: "js", text: "let x = 1;" },
+    ]);
+  });
+
+  it("keeps the first number of an ordered list so it can render with start", () => {
+    expect(parseBlocks("3. third\n4. fourth")).toEqual([
+      {
+        kind: "list",
+        ordered: true,
+        start: 3,
+        items: [
+          { text: "third", children: [] },
+          { text: "fourth", children: [] },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("Markdown", () => {
@@ -132,6 +173,53 @@ describe("Markdown", () => {
     render(<Markdown source={"First line of prose\nsecond line of prose"} />);
     expect(screen.getByText("First line of prose second line of prose")).toBeInTheDocument();
     expect(screen.getAllByRole("paragraph")).toHaveLength(1);
+  });
+
+  it("links bare http(s) URLs but leaves trailing punctuation outside the link", () => {
+    render(
+      <Markdown
+        source={"Docs at https://example.com/docs. Also (https://example.org/a), then http://example.net,"}
+      />,
+    );
+    const docs = screen.getByRole("link", { name: "https://example.com/docs" });
+    expect(docs).toHaveAttribute("href", "https://example.com/docs");
+    const org = screen.getByRole("link", { name: "https://example.org/a" });
+    expect(org).toHaveAttribute("href", "https://example.org/a");
+    const net = screen.getByRole("link", { name: "http://example.net" });
+    expect(net).toHaveAttribute("href", "http://example.net");
+    expect(screen.getAllByRole("link")).toHaveLength(3);
+  });
+
+  it("starts ordered lists at their first number and omits start for 1", () => {
+    const { unmount } = render(<Markdown source={"3. third\n4. fourth"} />);
+    expect(screen.getByRole("list")).toHaveAttribute("start", "3");
+    unmount();
+    render(<Markdown source={"1. first\n2. second"} />);
+    expect(screen.getByRole("list")).not.toHaveAttribute("start");
+  });
+
+  it("renders *text* and _text_ as emphasis without touching bold, code, snake_case, or bullets", () => {
+    render(
+      <Markdown
+        source={"*this* and _that_, plus **bold**, `code`, snake_case_name and 2 * 3 * 4"}
+      />,
+    );
+    expect(screen.getByText("this").tagName).toBe("EM");
+    expect(screen.getByText("that").tagName).toBe("EM");
+    expect(screen.getByText("bold").tagName).toBe("STRONG");
+    expect(screen.getByText("code").tagName).toBe("CODE");
+    // The paragraph's own text keeps "snake_case_name" and "2 * 3 * 4" intact, so neither was split into <em>.
+    expect(screen.getByText(/snake_case_name and 2 \* 3 \* 4/)).toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    render(<Markdown source={"* item one"} />);
+    expect(screen.getByRole("list")).toHaveTextContent("item one");
+  });
+
+  it("keeps bare javascript: URLs and raw HTML as inert text", () => {
+    render(<Markdown source={"Run javascript:alert(1) or <img src=x onerror=alert(1)>"} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText(/javascript:alert\(1\) or <img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
   });
 });
 

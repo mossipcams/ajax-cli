@@ -122,7 +122,14 @@ export default function TaskDetailsSheet({
                     Ajax terminal
                   </Button>
                   {onOpenDiff ? (
-                    <Button type="button" variant="secondary" onClick={onOpenDiff}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        close();
+                        onOpenDiff();
+                      }}
+                    >
                       Show diff
                     </Button>
                   ) : null}

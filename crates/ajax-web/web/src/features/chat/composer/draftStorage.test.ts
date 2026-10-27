@@ -56,6 +56,30 @@ describe("draftStorage", () => {
     });
   });
 
+  it("round-trips the queued follow-up's clientMessageId", () => {
+    writeComposerQueue("web/fix-login", {
+      status: "queued",
+      text: "follow up after turn",
+      clientMessageId: "cmid-7",
+    });
+    expect(readComposerQueue("web/fix-login")).toEqual({
+      status: "queued",
+      text: "follow up after turn",
+      clientMessageId: "cmid-7",
+    });
+  });
+
+  it("reads an older stored queue without a clientMessageId", () => {
+    localStorage.setItem(
+      "ajax.web.session.composer.queue.web%2Ffix-login",
+      JSON.stringify({ text: "older draft" }),
+    );
+    expect(readComposerQueue("web/fix-login")).toEqual({
+      status: "queued",
+      text: "older draft",
+    });
+  });
+
   it("restores stopping as queued text only", () => {
     writeComposerQueue("web/fix-login", {
       status: "stopping",

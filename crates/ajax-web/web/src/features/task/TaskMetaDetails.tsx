@@ -118,13 +118,26 @@ export function humanizeTaskAnnotation(note: string): string | null {
   return `${kindLabel} · ${evLabel}`;
 }
 
-function MetaCopyCell({ value }: { value: string }) {
+function MetaCopyCell({
+  label,
+  value,
+  onResult,
+}: {
+  label: string;
+  value: string;
+  onResult?: Props["onResult"];
+}) {
+  async function copy() {
+    const copied = await copyText(value);
+    onResult?.(copied ? `Copied ${label}` : "Copy failed", null, !copied);
+  }
+
   return (
     <dd className="meta-copy-cell">
       <span className="meta-copy-value" title={value}>
         {value}
       </span>
-      <button type="button" className="meta-copy" onClick={() => copyText(value)}>
+      <button type="button" className="meta-copy" onClick={() => void copy()}>
         Copy
       </button>
     </dd>
@@ -156,13 +169,13 @@ export default function TaskMetaDetails({
         {hideBranch ? null : (
           <>
             <dt>Branch</dt>
-            <MetaCopyCell value={detail.branch} />
+            <MetaCopyCell label="branch" value={detail.branch} onResult={onResult} />
           </>
         )}
         <dt>Base</dt>
         <dd>{detail.base_branch}</dd>
         <dt>Worktree</dt>
-        <MetaCopyCell value={detail.worktree_path} />
+        <MetaCopyCell label="worktree" value={detail.worktree_path} onResult={onResult} />
         {detail.git?.unpushed_commits ? (
           <>
             <dt>Unpushed</dt>

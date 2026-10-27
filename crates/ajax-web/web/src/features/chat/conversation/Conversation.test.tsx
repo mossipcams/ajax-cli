@@ -246,6 +246,22 @@ describe("Conversation — activity disclosure live gating", () => {
   });
 });
 
+describe("Conversation — pending prompts", () => {
+  it("shows a Sending label on a pending user turn but not on a delivered one", () => {
+    const items: ConversationItem[] = [
+      { ...userProse("u1", "Ship it"), clientMessageId: "c1", pending: true },
+      userProse("u2", "Already delivered"),
+    ];
+    render(<Conversation items={items} busy={true} />);
+
+    const turns = screen.getAllByTestId("session-message-user");
+    expect(turns[0]).toHaveAttribute("data-pending", "true");
+    expect(within(turns[0]).getByText("Sending…")).toBeInTheDocument();
+    expect(turns[1]).not.toHaveAttribute("data-pending");
+    expect(within(turns[1]).queryByText("Sending…")).not.toBeInTheDocument();
+  });
+});
+
 describe("Conversation — what stays in the conversation", () => {
   it("keeps an unanswered permission ask in the column, without the buttons", () => {
     const items: ConversationItem[] = [

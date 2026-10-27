@@ -458,4 +458,86 @@ describe("useSessionConnection", () => {
     ]);
     unmount();
   });
+
+  describe("snapshot transcriptError", () => {
+    function renderSnapshotHarness() {
+      const dispatched: ChatSessionAction[] = [];
+      const transport: webSessionTransport.WebSessionTransport = {
+        sendPrompt: vi.fn(() => "prompt-1"),
+        sendCancel: vi.fn(),
+        setModel: vi.fn(),
+        setConfigOption: vi.fn(),
+        respondPermission: vi.fn(),
+        dispose: vi.fn(),
+      };
+      const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, nextCallbacks) => {
+          callbacks.push(nextCallbacks);
+          return transport;
+        },
+      );
+      const { unmount } = renderHook(() =>
+        useSessionConnection({
+          ...hookOptions(),
+          dispatch: (action) => dispatched.push(action),
+        }),
+      );
+      const snapshot = (overrides: Partial<webSessionTransport.SessionSnapshot>) =>
+        act(() => {
+          callbacks[0]?.onSnapshot?.({
+            type: "snapshot",
+            protocolVersion: 2,
+            cursor: 0,
+            model: "auto",
+            turnState: "idle",
+            reset: false,
+            ...overrides,
+          });
+        });
+      const transcriptErrorInView = () =>
+        dispatched.reduce(reduceChatSession, initialChatSessionReducerState).view.transcriptError;
+      return { dispatched, snapshot, transcriptErrorInView, unmount };
+    }
+
+    it("applies a snapshot without transcript to the session view", () => {
+      const { snapshot, transcriptErrorInView, unmount } = renderSnapshotHarness();
+
+      snapshot({ transcript: undefined, transcriptError: "forced append failure" });
+
+      expect(transcriptErrorInView()).toBe("forced append failure");
+      unmount();
+    });
+
+    it("clears the session view transcriptError on a later snapshot without one", () => {
+      const { snapshot, transcriptErrorInView, unmount } = renderSnapshotHarness();
+
+      snapshot({ transcript: undefined, transcriptError: "forced append failure" });
+      expect(transcriptErrorInView()).toBe("forced append failure");
+
+      snapshot({ transcript: undefined });
+
+      expect(transcriptErrorInView()).toBeUndefined();
+      unmount();
+    });
+
+    it("keeps transcriptError after a reset snapshot that replays a transcript", () => {
+      const { snapshot, transcriptErrorInView, unmount } = renderSnapshotHarness();
+
+      snapshot({
+        reset: true,
+        cursor: 3,
+        transcript: [
+          {
+            cursor: 0,
+            event: { type: "message", role: "agent", text: "Answer", itemId: "a1" },
+          },
+        ],
+        transcriptError: "forced append failure",
+      });
+
+      expect(transcriptErrorInView()).toBe("forced append failure");
+      unmount();
+    });
+  });
 });

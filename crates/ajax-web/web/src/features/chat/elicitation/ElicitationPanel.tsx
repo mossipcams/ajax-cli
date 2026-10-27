@@ -64,6 +64,11 @@ function FieldInput({
           onChange={(event) => onChange(event.target.value)}
         >
           {!field.required ? <option value="">Select…</option> : null}
+          {field.required && field.defaultValue === undefined ? (
+            <option value="" disabled>
+              Select…
+            </option>
+          ) : null}
           {field.enumOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.title}
