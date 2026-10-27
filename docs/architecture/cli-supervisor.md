@@ -13,7 +13,8 @@ Composition shell and supervised agent execution.
 - `agent/cursor.rs` owns Cursor CLI command construction and stream-json parsing.
 - `repo_observer.rs` owns repository file-change observation and Git snapshots.
 - `process_observer.rs` owns child process output, exit status, and hang
-  detection.
+  detection. Hang detection counts only parsed agent events as progress; raw
+  stdout and stderr lines are forwarded but do not reset the hang timer.
 - `event_log.rs` owns optional append-only JSONL event persistence.
 - `status.rs` reduces monitor events into observed live status.
 

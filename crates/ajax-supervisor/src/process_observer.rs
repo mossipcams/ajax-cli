@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    process::ExitStatus,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -158,12 +159,10 @@ async fn supervise_launch<P: ProcessProtocol>(
         protocol.stdout_parser(),
     ));
 
-    let stderr_hang_detector = hang_detector.clone();
     let stderr_events = events.clone();
     let stderr_task = tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Some(line) = lines.next_line().await? {
-            observe_output(stderr_hang_detector.as_ref());
             send_event(
                 &stderr_events,
                 MonitorEvent::Process(ProcessEvent::Stderr { line }),
@@ -186,7 +185,13 @@ async fn supervise_launch<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
-                    terminate(&mut child).await?;
+                    let status = terminate(&mut child).await?;
+                    // Terminal event so consumers do not keep a stale running state after cancel.
+                    let _ = send_event(
+                        &events,
+                        MonitorEvent::Process(ProcessEvent::Exited { code: status.code() }),
+                    )
+                    .await;
                     Err(SupervisorError::Process("process cancelled".to_string()))
                 }
                 Ok(()) => Err(SupervisorError::Process("process cancellation channel changed".to_string())),
@@ -262,7 +267,7 @@ fn agent_command(
 
 /// Stops the direct child the way a terminal Ctrl-C would: SIGTERM first, so a wrapper such as
 /// `nono` can forward it to the agent, then SIGKILL if it has not exited within 2 seconds.
-async fn terminate(child: &mut Child) -> Result<(), SupervisorError> {
+async fn terminate(child: &mut Child) -> Result<ExitStatus, SupervisorError> {
     if let Some(pid) = child.id() {
         // ponytail: shells out to kill(1) like ajax-web's process_group does; use nix::sys::signal::kill(Pid, SIGTERM) if nix becomes a dependency.
         let _ = std::process::Command::new("kill")
@@ -271,17 +276,14 @@ async fn terminate(child: &mut Child) -> Result<(), SupervisorError> {
             .stderr(std::process::Stdio::null())
             .status();
     }
-    if tokio::time::timeout(Duration::from_secs(2), child.wait())
-        .await
-        .is_ok()
-    {
-        return Ok(());
+    if let Ok(Ok(status)) = tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
+        return Ok(status);
     }
     child.start_kill()?;
-    tokio::time::timeout(Duration::from_secs(2), child.wait())
+    let status = tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await
         .map_err(|_| SupervisorError::Process("cancelled process did not exit".to_string()))??;
-    Ok(())
+    Ok(status)
 }
 
 async fn read_stdout_lines<R>(
@@ -295,10 +297,14 @@ where
 {
     let mut lines = BufReader::new(stdout).lines();
     while let Some(line) = lines.next_line().await? {
-        observe_output(hang_detector.as_ref());
-        let event = parse_line(&line)
-            .map(MonitorEvent::Agent)
-            .unwrap_or_else(|| MonitorEvent::Process(ProcessEvent::Stdout { line }));
+        // Only parsed agent events count as progress; raw stdout is forwarded without resetting the hang timer.
+        let event = match parse_line(&line) {
+            Some(event) => {
+                observe_output(hang_detector.as_ref());
+                MonitorEvent::Agent(event)
+            }
+            None => MonitorEvent::Process(ProcessEvent::Stdout { line }),
+        };
         send_event(&events, event).await?;
     }
     Ok(())
@@ -571,7 +577,7 @@ mod launch_tests {
         time::{Duration, Instant},
     };
 
-    use ajax_core::events::AgentEvent;
+    use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::{mpsc, watch};
 
     use super::{agent_command, supervise_launch, ProcessProtocol, SandboxInputs, StdoutParser};
@@ -776,5 +782,170 @@ mod launch_tests {
             !process_alive(grandchild),
             "grandchild {grandchild} survived cancel"
         );
+    }
+
+    #[tokio::test]
+    async fn issue_1237_cancel_ends_event_stream_with_terminal_event() {
+        let dir = scratch_dir("issue-1237-cancel-terminal");
+        let pid_file = dir.join("agent.pid");
+        let protocol = ShellProtocol(format!("echo $$ > {}; sleep 30", pid_file.display()));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let canceller = tokio::spawn(async move {
+            read_pid(&pid_file).await;
+            cancel_tx.send(true).unwrap();
+        });
+
+        let error = supervise_launch(
+            &protocol,
+            "ignored",
+            tx,
+            None,
+            cancel_rx,
+            None,
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        canceller.await.unwrap();
+
+        let mut events = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = rx.recv().await {
+                events.push(event);
+            }
+        })
+        .await
+        .expect("event stream should close after cancellation");
+
+        assert!(
+            matches!(&error, SupervisorError::Process(message) if message == "process cancelled"),
+            "{error}"
+        );
+        assert!(
+            matches!(
+                events.last(),
+                Some(MonitorEvent::Process(ProcessEvent::Exited { .. }))
+            ),
+            "cancelled run ended its event stream without a terminal lifecycle event; events: {events:?}"
+        );
+    }
+
+    /// Runs `/bin/sh -c <script>` as the agent and parses `AGENT <text>` stdout lines into messages.
+    struct MarkerProtocol(String);
+
+    impl ProcessProtocol for MarkerProtocol {
+        fn process_name(&self) -> &str {
+            "shell"
+        }
+
+        fn program(&self) -> &str {
+            "/bin/sh"
+        }
+
+        fn args(&self, _prompt: &str) -> Vec<String> {
+            vec!["-c".to_string(), self.0.clone()]
+        }
+
+        fn stdout_parser(&self) -> StdoutParser {
+            Arc::new(|line: &str| {
+                line.strip_prefix("AGENT ").map(|text| AgentEvent::Message {
+                    text: text.to_string(),
+                })
+            })
+        }
+    }
+
+    /// Supervises `protocol` with a short hang threshold and returns every event the run emitted.
+    async fn events_with_hang_threshold<P: ProcessProtocol>(
+        protocol: &P,
+        hang_after: Duration,
+    ) -> Vec<MonitorEvent> {
+        let (tx, mut rx) = mpsc::channel(64);
+        let (_cancel_tx, cancel_rx) = watch::channel(false);
+        supervise_launch(
+            protocol,
+            "ignored",
+            tx,
+            Some(hang_after),
+            cancel_rx,
+            None,
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
+        )
+        .await
+        .unwrap();
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    fn has_hung(events: &[MonitorEvent]) -> bool {
+        events
+            .iter()
+            .any(|event| matches!(event, MonitorEvent::Process(ProcessEvent::Hung { .. })))
+    }
+
+    #[tokio::test]
+    async fn unparsed_stdout_does_not_reset_hang_detection() {
+        let protocol = ShellProtocol(
+            "i=0; while [ $i -lt 20 ]; do echo heartbeat $i; sleep 0.05; i=$((i+1)); done"
+                .to_string(),
+        );
+
+        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+
+        assert!(
+            events.contains(&MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "heartbeat 0".to_string()
+            })),
+            "{events:?}"
+        );
+        assert!(has_hung(&events), "{events:?}");
+    }
+
+    #[tokio::test]
+    async fn stderr_does_not_reset_hang_detection() {
+        let protocol = ShellProtocol(
+            "i=0; while [ $i -lt 20 ]; do echo heartbeat $i >&2; sleep 0.05; i=$((i+1)); done"
+                .to_string(),
+        );
+
+        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+
+        assert!(
+            events.contains(&MonitorEvent::Process(ProcessEvent::Stderr {
+                line: "heartbeat 0".to_string()
+            })),
+            "{events:?}"
+        );
+        assert!(has_hung(&events), "{events:?}");
+    }
+
+    #[tokio::test]
+    async fn parsed_agent_events_keep_hang_detection_quiet() {
+        let protocol = MarkerProtocol(
+            "i=0; while [ $i -lt 20 ]; do echo \"AGENT tick $i\"; sleep 0.05; i=$((i+1)); done"
+                .to_string(),
+        );
+
+        let events = events_with_hang_threshold(&protocol, Duration::from_millis(200)).await;
+
+        assert!(
+            events.contains(&MonitorEvent::Agent(AgentEvent::Message {
+                text: "tick 19".to_string()
+            })),
+            "{events:?}"
+        );
+        assert!(!has_hung(&events), "{events:?}");
     }
 }
