@@ -281,3 +281,55 @@ fn issue_1436_registry_reload_keeps_sessions_when_every_handle_is_owned() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn issue_1436_ownership_check_runs_without_the_sessions_lock() {
+    use super::test_support::BlockingSessionDirectory;
+    use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+    use ajax_core::models::AgentClient;
+    use std::{sync::mpsc, sync::Arc, time::Duration};
+
+    let dir = scratch_dir("lock-order");
+    let handle = "web/lock-order";
+    web_session_store::append_events(&dir, handle, &[note("unowned transcript")]);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = super::test_support::fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire before reload");
+        });
+    });
+
+    // The ownership check locks the sessions directory itself. It only returns
+    // if cleanup does not hold the sessions lock while calling it.
+    let inner = Arc::clone(directory.inner());
+    let probe = Arc::clone(&inner);
+    let runtime = directory.runtime_handle();
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || {
+        runtime.block_on(inner.cleanup_unowned(move |candidate| {
+            probe.has_live_entry(candidate);
+            false
+        }));
+        let _ = done.send(());
+    });
+    finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("cleanup must not call is_owned while holding the sessions lock");
+
+    assert!(
+        !directory.inner().has_live_entry(handle),
+        "unowned session actor must be shut down"
+    );
+    assert!(
+        web_session_store::load::<serde_json::Value>(&dir, handle)
+            .events
+            .is_empty(),
+        "unowned session transcript must be deleted"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
