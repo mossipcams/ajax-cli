@@ -64,7 +64,6 @@ impl TaskSessionDirectory {
         *self.report_activity.lock().unwrap() = Some(report);
     }
 
-    /// Claims the execution lease (running the one-time orphan sweep and startup recovery) and returns, once per process, the handles whose queued prompts should be dispatched without a browser attached. An incomplete scan leaves the directory rescannable: previously handed-out handles are filtered out of every later result, and after a complete scan every later call returns an empty list. Fails like `ensure_owner` when a live foreign host holds the lease.
     pub(crate) fn startup_dispatch_handles(&self) -> Result<Vec<String>, String> {
         self.ownership.ensure_owner()?;
         self.report_recovered_turns();
@@ -92,15 +91,10 @@ impl TaskSessionDirectory {
         Ok(fresh)
     }
 
-    /// True once a complete startup dispatch scan has run; the headless runtime checks this to stop rescan attempts.
     pub(crate) fn headless_scan_complete(&self) -> bool {
         self.headless_scanned
             .load(std::sync::atomic::Ordering::SeqCst)
     }
-    /// Counts the chat's prompts that are not yet done (ledger entries in the
-    /// Queued or Dispatching phase). A ledger load error reports 1 so a headless
-    /// runner keeps waiting until its deadline instead of releasing a session it
-    /// cannot verify.
     pub(crate) fn unfinished_prompt_count(&self, handle: &str) -> usize {
         match crate::adapters::web_session_store::prompt_ledger::try_load(
             &self.storage.registry_store(),
@@ -118,13 +112,11 @@ impl TaskSessionDirectory {
         }
     }
 
-    /// Renews the chat execution owner lease; called from the runtime heartbeat task.
     pub(crate) fn heartbeat_execution_ownership(&self) {
         self.ownership.heartbeat();
         self.report_recovered_turns();
     }
 
-    /// Test accessor for the owning host's boot id.
     #[cfg(test)]
     pub(crate) fn ownership_boot_id(&self) -> String {
         self.ownership.boot_id().to_owned()
@@ -135,14 +127,11 @@ impl TaskSessionDirectory {
         [&self.storage, self.ownership.storage()]
     }
 
-    /// Test seed: put recovered handles back so heartbeat reporting can be exercised.
     #[cfg(test)]
     pub(crate) fn requeue_recovered_handles_for_test(&self, handles: Vec<String>) {
         self.ownership.requeue_recovered_handles(handles);
     }
 
-    /// Report the turns that startup recovery interrupted as failed, so a restart never leaves a task on "Agent working" (#1176).
-    /// A handle whose report returns false is requeued and retried on the next heartbeat.
     fn report_recovered_turns(&self) {
         let Some(report) = self.report_activity_for_spawn() else {
             return;
@@ -394,13 +383,6 @@ impl TaskSessionDirectory {
         );
     }
 
-    /// Shuts down every live session whose handle `is_owned` rejects, then
-    /// deletes its stored data. `is_owned` is evaluated at cleanup time, so a
-    /// handle recreated since the registry changed is never touched. Storage is
-    /// deleted only after the actor is down, and only under the sessions lock
-    /// while the handle is still unowned with no live entry, so a concurrent
-    /// acquire cannot interleave. The sessions lock is never held across an await
-    /// or while `is_owned` runs, since `is_owned` locks the host's shared state.
     pub async fn cleanup_unowned(&self, is_owned: impl Fn(&str) -> bool + Send) {
         let live: Vec<String> = {
             let sessions = self.sessions.lock().unwrap();
@@ -540,13 +522,11 @@ impl TaskSessionDirectory {
         }
     }
 
-    /// In-session /clear: the attached socket already holds the slot.
     pub async fn clear_context(&self, handle: &str, worktree_path: &Path) -> Result<u64, String> {
         self.clear_context_with_holder(handle, worktree_path, false)
             .await
     }
 
-    /// Restore-recovery Start fresh: the caller attaches afterwards and releases on exit.
     pub async fn start_fresh(&self, handle: &str, worktree_path: &Path) -> Result<(), String> {
         self.clear_context_with_holder(handle, worktree_path, true)
             .await
@@ -595,10 +575,6 @@ impl TaskSessionDirectory {
         self.detached_attach_snapshot(handle, fallback_model, client_cursor)
     }
 
-    /// Storage-only attach snapshot. Reads the retained transcript without
-    /// sending any command to a live session actor (which may be blocked in
-    /// the middle of a restore), so it is safe to call while `acquire_typed`
-    /// is still in flight.
     pub fn detached_attach_snapshot(
         &self,
         handle: &str,
@@ -650,10 +626,6 @@ impl TaskSessionDirectory {
         }
     }
 
-    /// One page of older retained transcript events for a handle, read the
-    /// same way the detached attach fallback loads history (load_detached +
-    /// `TranscriptLog::from_events`), then sliced by the pure `replay::read_before`
-    /// walker. Read-only: never spawns or touches a live session actor.
     pub(crate) fn retained_transcript_page(
         &self,
         handle: &str,
@@ -662,8 +634,6 @@ impl TaskSessionDirectory {
     ) -> super::replay::TranscriptPage {
         let (stored, _) = load_detached(&self.storage, handle);
         let log = super::transcript::TranscriptLog::from_events(stored.events, stored.dropped);
-        // A missing `before` walks from the newest retained event; a missing
-        // `limit` uses the same tail bound as attach snapshots.
         let before = before.unwrap_or(usize::MAX);
         let limit = limit.unwrap_or(super::replay::TAIL_EVENT_LIMIT);
         super::replay::read_before(&log, before, limit)
@@ -853,9 +823,6 @@ fn clear_stored_session_id(storage: &SessionStorage, handle: &str) -> Result<(),
     .map_err(|error| format!("stored session id could not be cleared: {error}"))
 }
 
-/// Discard the chat's SQLite-queued prompts on an idle harness switch (#1324),
-/// so headless startup dispatch never runs them under the new harness. Fails
-/// closed: a ledger load or persist error is returned to the caller.
 fn discard_queued_prompts(storage: &SessionStorage, handle: &str) -> Result<(), String> {
     let mut ledger = web_session_store::prompt_ledger::try_load(
         &storage.registry_store(),
@@ -873,8 +840,6 @@ fn discard_queued_prompts(storage: &SessionStorage, handle: &str) -> Result<(), 
     .map_err(|error| format!("queued prompts could not be discarded: {error}"))
 }
 
-/// Stored transcript for a handle with no live slot, plus what to tell the
-/// operator when it could not be read back whole.
 fn load_detached(
     storage: &SessionStorage,
     handle: &str,

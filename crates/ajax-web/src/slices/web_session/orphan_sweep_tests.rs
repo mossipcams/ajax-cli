@@ -1,6 +1,3 @@
-//! Tests for the one-time orphan sweep. Each nextest case runs in its own
-//! process, so pid-scoped scratch directories cannot collide between tests.
-
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -9,8 +6,6 @@ use super::orphan_sweep::sweep;
 use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
 use ajax_core::registry::{RunRecord, SqliteRegistryStore};
 
-/// Spawn a real `sleep 60`; the reaper thread keeps it collectable so a killed
-/// child leaves no zombie that `ps` would still list.
 fn spawn_sleep_child() -> (i64, std::thread::JoinHandle<std::process::ExitStatus>) {
     let child = Command::new("sleep")
         .arg("60")
@@ -25,7 +20,6 @@ fn reap(mut child: Child) -> std::process::ExitStatus {
     child.wait().expect("wait on sleep helper")
 }
 
-/// Kill a pid we no longer own the `Child` for, then join the reaper.
 fn kill_and_reap(pid: i64, handle: std::thread::JoinHandle<std::process::ExitStatus>) {
     Command::new("kill")
         .args(["-KILL", &pid.to_string()])
@@ -36,7 +30,6 @@ fn kill_and_reap(pid: i64, handle: std::thread::JoinHandle<std::process::ExitSta
     handle.join().expect("join sleep reaper");
 }
 
-/// A scratch state dir plus a fresh registry store inside it.
 fn scratch_store(label: &str) -> (PathBuf, SqliteRegistryStore) {
     let dir =
         std::env::temp_dir().join(format!("ajax-orphan-sweep-{}-{label}", std::process::id()));
@@ -45,7 +38,6 @@ fn scratch_store(label: &str) -> (PathBuf, SqliteRegistryStore) {
     (dir, store)
 }
 
-/// Record a run row exactly as `TaskSessionState::record_child_identity` does.
 fn record_row(
     store: &SqliteRegistryStore,
     state_dir: &Path,
@@ -81,7 +73,6 @@ fn term_ignoring_child_is_killed_before_identity_is_cleared_issue_1327() {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::time::Instant;
 
-    // Keep failure paths (including the red run) from leaving a child behind.
     struct ChildGuard {
         pid: i64,
         reaper: Option<std::thread::JoinHandle<std::process::ExitStatus>>,
@@ -101,7 +92,6 @@ fn term_ignoring_child_is_killed_before_identity_is_cleared_issue_1327() {
 
     let (dir, store) = scratch_store("term-ignoring-1327");
     let ready = dir.join("ready");
-    // Use shell builtins so the fixture has no grandchildren to orphan.
     let child = Command::new("sh")
         .args([
             "-c",
@@ -313,7 +303,6 @@ fn same_boot_id_is_never_touched() {
 #[test]
 fn dead_pid_clears_row_without_signalling() {
     let (dir, store) = scratch_store("dead");
-    // Spawn and reap a short-lived process so we have a known-dead pid.
     let mut child = Command::new("true")
         .stdin(Stdio::null())
         .spawn()
@@ -362,7 +351,6 @@ fn matching_token_terminates_the_whole_process_group_issue_1298() {
     let pid = child.id() as i64;
     let reaper = std::thread::spawn(move || reap(child));
 
-    // Wait for the backgrounded grandchild's pid to be recorded.
     let mut grandchild: Option<i64> = None;
     for _ in 0..20 {
         if let Ok(contents) = std::fs::read_to_string(&pidfile) {
@@ -383,7 +371,6 @@ fn matching_token_terminates_the_whole_process_group_issue_1298() {
     let handled = result.handled;
     assert_eq!(handled, 1, "the matching orphan must be handled");
 
-    // The grandchild shares the child's process group and must die too (issue #1298).
     let pid_alive = |p: i64| {
         Command::new("kill")
             .args(["-0", &p.to_string()])
@@ -418,7 +405,6 @@ fn matching_token_terminates_the_whole_process_group_issue_1298() {
     cleanup(&dir);
 }
 
-/// The run id for a handle, as `record_child_identity` derives it.
 fn row_id_for(store: &SqliteRegistryStore, handle: &str) -> String {
     store
         .latest_run_for_task(handle)
@@ -510,7 +496,6 @@ fn sweep_once_retries_listing_failure_issue_1326() {
         PromptPhase::Interrupted
     );
 
-    // A new foreign row after completion must not be scanned or recovered.
     record_row(
         &store,
         &dir,

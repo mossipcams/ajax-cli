@@ -1,13 +1,8 @@
-//! Records the live agent child's identity on the run row when a new client is installed.
-
 use super::task_session::{agent_client_name, TaskSessionState};
 use super::SessionError;
 use crate::adapters::web_session_store;
 
 impl TaskSessionState {
-    /// Write this host's boot id and the live child's pid plus start-time token
-    /// to the run row so a later host can find orphans. A live child whose
-    /// identity cannot be recorded must fail the attach.
     pub(super) fn record_child_identity(&self) -> Result<(), SessionError> {
         let child = match self
             .acp

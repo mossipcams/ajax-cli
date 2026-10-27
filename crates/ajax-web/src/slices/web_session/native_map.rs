@@ -1,18 +1,9 @@
-//! Pure mapping from the native adapter event vocabulary ([`NativeEvent`] in
-//! `adapters::web_session_acp::agent_event`) to [`SessionServerEvent`]. Every
-//! variant produces exactly what `acp_map` produces for the equivalent ACP
-//! session update, so wire output stays identical once the Claude SDK / Pi RPC
-//! adapters stop translating through ACP.
-
 use crate::adapters::web_session_acp::NativeEvent;
 
 use super::acp_map::{derive_tool_locations, message_event, target_from_raw_input};
 use super::{PlanEntry, SessionServerEvent, ToolContent};
 use serde_json::{Map, Value};
 
-/// Map one native event to the [`SessionServerEvent`] values `acp_map` would
-/// produce for the equivalent ACP session update. Empty chunks and zero-sized
-/// usage produce no events, matching `acp_map`.
 pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
     match event {
         NativeEvent::AgentText(text) => native_message("agent", text),
@@ -67,25 +58,16 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             message: message.clone(),
             schema: schema.clone(),
         }],
-        // Lifecycle events are handled by the drain loop, because they need
-        // request and host state.
         NativeEvent::TurnFinished { .. } | NativeEvent::Error(_) | NativeEvent::Exited => {
             Vec::new()
         }
     }
 }
 
-/// The [`SessionServerEvent::Message`] an ACP text/thought chunk update maps to
-/// (`acp_map`'s `typed_message_event` without content blocks or a message id).
-/// Empty chunks produce no event.
 fn native_message(role: &str, text: &str) -> Vec<SessionServerEvent> {
     message_event(role, text.to_string(), Vec::new(), None)
 }
 
-/// The [`SessionServerEvent::ToolCall`] for one tool-call-shaped native event,
-/// mirroring `acp_map`'s `typed_tool_call_update_event`: titles and kinds fall
-/// back to the empty string, locations come from `raw_input`, content is
-/// pre-mapped.
 fn native_tool_event(
     call_id: &str,
     title: &str,
@@ -111,8 +93,6 @@ fn native_tool_event(
     }
 }
 
-/// A native tool-call text payload as [`ToolContent`]: empty/whitespace-only
-/// text produces no blocks, mirroring `acp_map`'s whitespace filtering.
 fn native_tool_content(content: &Option<String>) -> Vec<ToolContent> {
     content
         .as_deref()
@@ -124,11 +104,6 @@ fn native_tool_content(content: &Option<String>) -> Vec<ToolContent> {
         .collect()
 }
 
-/// [`ToolContent::Diff`] blocks derived from a native edit/write tool's raw
-/// input, like ACP harnesses send. Single edits (Claude `Edit`, Pi `edit`) and
-/// multi-edits (`edits` arrays) produce one diff per new text; write inputs
-/// (`content` with no old/new keys) produce a diff without an old text. Any
-/// other shape produces nothing, and odd shapes never panic.
 fn edit_diffs(raw_input: Option<&Value>) -> Vec<ToolContent> {
     const NEW_KEYS: [&str; 4] = ["new_string", "newText", "new_text", "newString"];
     const OLD_KEYS: [&str; 4] = ["old_string", "oldText", "old_text", "oldString"];
@@ -169,13 +144,10 @@ fn edit_diffs(raw_input: Option<&Value>) -> Vec<ToolContent> {
     diffs
 }
 
-/// The first string value among `keys` in a JSON object, if any.
 fn first_string<'a>(input: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| input.get(*key).and_then(Value::as_str))
 }
-/// `(content, status)` pairs as [`PlanEntry`] values with `acp_map`'s empty-
-/// entry filtering and content trimming.
 fn native_plan_entries(entries: &[(String, String)]) -> Vec<PlanEntry> {
     entries
         .iter()

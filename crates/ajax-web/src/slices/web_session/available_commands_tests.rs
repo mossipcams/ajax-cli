@@ -249,7 +249,6 @@ fn harness_swap_does_not_keep_the_previous_harness_commands() {
                 "expected the first harness to advertise web/help commands"
             );
 
-            // Swap the harness while the replacement advertises no slash commands.
             with_test_acp_extra_args(&[], || {
                 let _ = rt.block_on(directory.inner().reset_harness_context(
                     handle,

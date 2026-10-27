@@ -946,8 +946,6 @@ fn detached_attach_snapshot_serves_stored_transcript_while_restore_pending_issue
         );
         seed.kill_host_for_test(handle);
 
-        // `--resume` advertises resume; both delays stay under the 500 ms test
-        // restore budget.
         let args = ["--resume", "--resume-delay=250", "--load-delay=250"];
         with_test_acp_extra_args(&args, || {
             let directory = BlockingSessionDirectory::new(dir.clone());
@@ -980,7 +978,6 @@ fn detached_attach_snapshot_serves_stored_transcript_while_restore_pending_issue
                 .block_on(restore)
                 .expect("restore task")
                 .expect("delayed restore must succeed");
-            // One acquire holds one slot; release drops the count back to zero.
             assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 1);
             directory.release(handle);
             assert_eq!(directory.eviction_snapshot(handle).unwrap().holders, 0);

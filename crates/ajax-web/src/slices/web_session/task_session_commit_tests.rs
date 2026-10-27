@@ -1,5 +1,3 @@
-//! Prompt admission must be atomic: a ledger commit and its transcript events land together.
-
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::with_test_acp_program;
@@ -56,7 +54,6 @@ fn admitted_prompt_and_user_bubble_survive_a_restart() {
         drop(directory);
     });
 
-    // Restart: same directory, no live slot.
     let reloaded = BlockingSessionDirectory::new(dir.clone());
     with_test_acp_program(&script, || {
         let ledger = crate::adapters::web_session_store::prompt_ledger::load(&dir, handle)

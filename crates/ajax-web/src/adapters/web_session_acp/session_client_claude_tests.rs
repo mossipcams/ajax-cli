@@ -1,8 +1,3 @@
-//! Tests for the `SessionClient::Claude` variant of [`super::session_client::SessionClient`]:
-//! the Claude Agent SDK transport reachable through the unified enum, driven by
-//! the fake Claude Agent SDK fixture so every assertion goes through the enum's
-//! own match arms.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -16,19 +11,16 @@ use super::client::{AcpSpawnError, RestoreFailure};
 use super::session_client::SessionClient;
 use super::SessionConfigValue;
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The fake Claude Agent SDK fixture path under the crate.
 fn fake_sdk() -> PathBuf {
     manifest_dir().join("tests/fixtures/fake_claude_sdk.mjs")
 }
 
-/// Run `f` with the fake SDK module override installed.
 fn with_fake<R>(f: impl FnOnce() -> R) -> R {
     with_test_claude_sdk_module(&fake_sdk(), f)
 }
@@ -37,7 +29,6 @@ fn text_blocks(text: &str) -> Vec<ContentBlock> {
     vec![ContentBlock::Text(TextContent::new(text))]
 }
 
-/// Spawn the Claude transport through the enum and return the variant's state.
 fn spawn_claude_variant() -> (SessionClient, super::SessionSpawnReport) {
     SessionClient::spawn_with_operator_pin(AgentClient::Claude, manifest_dir(), "default", None)
         .expect("fake claude sdk spawn must succeed")
@@ -114,7 +105,6 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
             .begin_prompt(&text_blocks("please SLOW down"))
             .expect("begin_prompt");
 
-        // Wait for the first streamed chunk so the prompt is genuinely in flight.
         loop {
             let event = client
                 .wait_event(TIMEOUT)
@@ -128,7 +118,6 @@ fn issue_1272_claude_active_and_idle_cancel_through_the_enum() {
         assert!(outcome.permissions.is_empty());
         assert!(outcome.elicitations.is_empty());
 
-        // Drain until the run ends with stopReason cancelled.
         loop {
             let event = client.wait_event(TIMEOUT).expect("event after cancel");
             if let AgentEvent::Native(NativeEvent::TurnFinished {
@@ -181,7 +170,6 @@ fn request_responses_are_rejected_in_claude_mode() {
             .unwrap_err();
         assert_eq!(err, "unsupported elicitation action");
 
-        // Claude answers elicitations now (W3f); the sidecar ignores unknown ids.
         client
             .respond_elicitation("r-1", "decline", None)
             .expect("a decline is forwarded to the sidecar");
@@ -199,7 +187,6 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         assert!(outcome.error.is_none(), "error: {:?}", outcome.error);
         assert_eq!(outcome.applied_model, "haiku");
 
-        // Effort option updates through apply_config_option.
         let effort = SessionConfigValue::Select("low".to_string());
         let outcome = client
             .apply_config_option("effort", effort)
@@ -218,7 +205,6 @@ fn model_pin_and_config_options_flow_through_the_enum() {
         };
         assert_eq!(current_value.as_str(), "low");
 
-        // An unknown model id surfaces as an outcome error, not a hard failure.
         let bad_model = SessionConfigValue::Select("not-a-model".to_string());
         let outcome = client
             .apply_config_option("model", bad_model)
@@ -232,7 +218,6 @@ fn model_pin_and_config_options_flow_through_the_enum() {
             outcome.error
         );
 
-        // An unsupported option id is likewise an outcome error.
         let nope = SessionConfigValue::Select("x".to_string());
         let outcome = client
             .apply_config_option("nope", nope)
@@ -290,8 +275,6 @@ fn issue_1273_claude_shutdown_and_detach_return_no_error() {
 #[test]
 fn other_agents_do_not_take_the_claude_path() {
     with_fake(|| {
-        // With the module override installed, only AgentClient::Claude routes to
-        // the SDK spawn; the others keep their existing dispatch.
         assert!(
             super::session_client::transport_for(AgentClient::Cursor)
                 != HarnessTransport::ClaudeSdk

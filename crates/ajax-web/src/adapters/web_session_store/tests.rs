@@ -75,7 +75,6 @@ fn torn_final_line_is_skipped_on_import() {
     let handle = "web/fix-login";
     let path = session_path(&dir, handle);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // Legacy JSONL import source: one good event row plus a torn final line.
     std::fs::write(
         &path,
         format!(
@@ -150,7 +149,6 @@ fn append_past_the_event_cap_retains_exactly_max_log_events() {
 fn handle_with_slash_encodes_to_single_filename() {
     let dir = scratch_dir("encode");
     let handle = "web/fix/login";
-    // Legacy JSONL import source written directly so the filename check holds.
     let path = session_path(&dir, handle);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
@@ -219,7 +217,6 @@ fn issue_1228_unreadable_file_is_an_error_not_an_empty_session() {
     let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
     assert!(try_load::<serde_json::Value>(&store, &dir, handle, "unknown").is_ok());
 
-    // A directory at the transcript path opens but cannot be read.
     let path = session_path(&dir, handle);
     std::fs::create_dir_all(&path).unwrap();
     assert!(try_load::<serde_json::Value>(&store, &dir, handle, "unknown").is_err());
@@ -348,7 +345,6 @@ fn delete_session_removes_numbered_migration_leftovers() {
 #[test]
 fn delete_session_still_removes_files_when_the_database_delete_fails() {
     let dir = scratch_dir("delete-db-fail");
-    // A directory where the registry lives makes the database unusable.
     std::fs::create_dir_all(dir.join("ajax.db")).unwrap();
     let path = session_path(&dir, "web/a");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -405,7 +401,6 @@ fn record_child_identity_round_trips_and_clears() {
     );
     assert_eq!(run.owner_boot_id, Some("boot-a".to_string()));
 
-    // A respawn with no live child clears the identity but keeps the owner.
     record_child_identity(&store, &dir, handle, "unknown", None, "boot-a").unwrap();
 
     let run = store.latest_run_for_task(handle).unwrap().unwrap();
@@ -483,7 +478,6 @@ fn append_rewrites_preserve_cursors_before_and_after_pruning() {
             vec![padding as u64 + 1, padding as u64 + 2]
         );
 
-        // Rewrites without appended events must also reach the transaction.
         try_append_events_with_rewrites(
             &store,
             &dir,

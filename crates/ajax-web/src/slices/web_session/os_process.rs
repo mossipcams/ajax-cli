@@ -1,18 +1,7 @@
-//! In-process process probes, read from the kernel without spawning `ps`.
-//!
-//! `ps` is setuid, so the nono sandbox refuses to exec it; reading the start
-//! time and state directly keeps the identity guard and the orphan sweep
-//! working inside the sandbox.
-
-/// The BSD info record for `pid`, or `None` when the kernel returns no full
-/// record (exited, zombie, or denied).
 #[cfg(target_os = "macos")]
 fn bsd_info(pid: i32) -> Option<nix::libc::proc_bsdinfo> {
-    // SAFETY: proc_bsdinfo is plain C data, so all-zero bytes are a valid value.
     let mut info: nix::libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<nix::libc::proc_bsdinfo>() as nix::libc::c_int;
-    // SAFETY: `info` is a live, writable proc_bsdinfo and `size` is exactly its
-    // byte length, so the kernel writes at most `size` bytes into it.
     let written = unsafe {
         nix::libc::proc_pidinfo(
             pid,
@@ -25,8 +14,6 @@ fn bsd_info(pid: i32) -> Option<nix::libc::proc_bsdinfo> {
     (written == size).then_some(info)
 }
 
-/// Start-time token for `pid`, or `None` when `pid` is not positive, no such
-/// process exists, or the platform has no probe.
 #[cfg(target_os = "macos")]
 pub(super) fn start_token(pid: i64) -> Option<String> {
     let pid = i32::try_from(pid).ok().filter(|pid| *pid > 0)?;
@@ -37,17 +24,12 @@ pub(super) fn start_token(pid: i64) -> Option<String> {
     ))
 }
 
-/// Number of pids the kernel reports, from a size-zero `proc_listallpids` call.
 #[cfg(target_os = "macos")]
 fn pid_count() -> Option<usize> {
-    // SAFETY: a null buffer with size 0 is the documented way to ask for the
-    // count only; the kernel writes nothing.
     let count = unsafe { nix::libc::proc_listallpids(std::ptr::null_mut(), 0) };
     usize::try_from(count).ok().filter(|count| *count > 0)
 }
 
-/// Every pid the kernel lists, sized from a count call with headroom. A buffer
-/// that fills is retried once with a larger one; a second full buffer gives up.
 #[cfg(target_os = "macos")]
 fn list_pids() -> Option<Vec<i32>> {
     const HEADROOM: usize = 64;
@@ -55,11 +37,7 @@ fn list_pids() -> Option<Vec<i32>> {
     for _ in 0..2 {
         let mut pids = vec![0i32; capacity];
         let bytes = nix::libc::c_int::try_from(capacity * std::mem::size_of::<i32>()).ok()?;
-        // SAFETY: `pids` is a live Vec of `capacity` i32s and `bytes` is exactly
-        // its byte length, so the kernel writes at most `bytes` bytes into it.
         let listed = unsafe { nix::libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
-        // libproc reports a failed listing as 0, not -1, and a real table is never
-        // empty (launchd and this process are always present), so 0 or less is failure.
         let listed = usize::try_from(listed).ok().filter(|listed| *listed > 0)?;
         if listed < capacity {
             pids.truncate(listed);
@@ -70,9 +48,6 @@ fn list_pids() -> Option<Vec<i32>> {
     None
 }
 
-/// The process table: (pid, ppid, comm) for every process whose BSD info the
-/// kernel returns. Zombies and exited or denied processes are skipped, and
-/// `None` means the pid list itself could not be read.
 #[cfg(target_os = "macos")]
 pub(super) fn table() -> Option<Vec<(u32, u32, String)>> {
     let rows = list_pids()?
@@ -95,15 +70,9 @@ pub(super) fn table() -> Option<Vec<(u32, u32, String)>> {
     Some(rows)
 }
 
-/// Byte offset of `p_stat` in the kernel's `kinfo_proc` (sys/sysctl.h). The
-/// embedded `extern_proc` comes first: 16 bytes of union, `p_vmspace`,
-/// `p_sigacts`, `p_flag`, then `p_stat`.
 #[cfg(target_os = "macos")]
 const P_STAT_OFFSET: usize = 36;
 
-/// Whether `pid` is an exited process still waiting to be reaped. `proc_pidinfo`
-/// returns no record for a zombie, so this reads the kernel process table
-/// through `sysctl(KERN_PROC_PID)`, the same source `ps` reports `Z` from.
 #[cfg(target_os = "macos")]
 pub(super) fn is_zombie(pid: i64) -> bool {
     let Some(pid) = i32::try_from(pid).ok().filter(|pid| *pid > 0) else {
@@ -115,13 +84,8 @@ pub(super) fn is_zombie(pid: i64) -> bool {
         nix::libc::KERN_PROC_PID,
         pid,
     ];
-    // kinfo_proc is well under this size; a larger buffer lets the kernel report
-    // how many bytes it actually wrote through `len`.
     let mut buf = [0u8; 1024];
     let mut len = buf.len();
-    // SAFETY: `mib` names four ints, and `buf`/`len` describe a live writable
-    // buffer of `len` bytes. No new value is set (null `newp`), so nothing is written
-    // through the kernel's input side.
     let rc = unsafe {
         nix::libc::sysctl(
             mib.as_mut_ptr(),
@@ -132,13 +96,9 @@ pub(super) fn is_zombie(pid: i64) -> bool {
             0,
         )
     };
-    // A missing process yields success with no bytes written.
     rc == 0 && len > P_STAT_OFFSET && u32::from(buf[P_STAT_OFFSET]) == nix::libc::SZOMB
 }
 
-/// The text of `/proc/<pid>/stat` after the parenthesised comm field. comm
-/// may contain spaces or ')', so fields are counted from after the last ')';
-/// the first of them is the state.
 #[cfg(target_os = "linux")]
 fn proc_stat_after_comm(pid: i64) -> Option<String> {
     if pid <= 0 {
@@ -149,10 +109,6 @@ fn proc_stat_after_comm(pid: i64) -> Option<String> {
     Some(after_comm.to_string())
 }
 
-/// Start-time token for `pid`: `{boot_id}:{starttime}`. `starttime` is field 22
-/// of `/proc/<pid>/stat`, counted in clock ticks since boot, so the boot id is
-/// what keeps a token from a previous boot from matching a reused pid. An
-/// unreadable boot id yields `None`, so an unverifiable process is never signalled.
 #[cfg(target_os = "linux")]
 pub(super) fn start_token(pid: i64) -> Option<String> {
     let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
@@ -161,21 +117,16 @@ pub(super) fn start_token(pid: i64) -> Option<String> {
         return None;
     }
     let after_comm = proc_stat_after_comm(pid)?;
-    // Field 3 (state) is the first field after comm, which makes starttime
-    // (field 22) index 19.
     let starttime = after_comm.split_whitespace().nth(19)?;
     Some(format!("{boot_id}:{starttime}"))
 }
 
-/// Whether `pid` is an exited process still waiting to be reaped (state `Z`).
 #[cfg(target_os = "linux")]
 pub(super) fn is_zombie(pid: i64) -> bool {
     proc_stat_after_comm(pid)
         .is_some_and(|after_comm| after_comm.split_whitespace().next() == Some("Z"))
 }
 
-/// The (pid, ppid, comm) row for one `/proc/<pid>/stat`, or `None` when the entry
-/// vanished or is unreadable. comm sits between the first '(' and the last ')'.
 #[cfg(target_os = "linux")]
 fn linux_row(pid: u32) -> Option<(u32, u32, String)> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -191,8 +142,6 @@ fn linux_row(pid: u32) -> Option<(u32, u32, String)> {
     Some((pid, ppid, comm))
 }
 
-/// The process table read from `/proc`, one row per numeric entry that can be
-/// read. `None` means `/proc` itself could not be listed.
 #[cfg(target_os = "linux")]
 pub(super) fn table() -> Option<Vec<(u32, u32, String)>> {
     let entries = std::fs::read_dir("/proc").ok()?;
@@ -210,27 +159,21 @@ pub(super) fn table() -> Option<Vec<(u32, u32, String)>> {
     Some(rows)
 }
 
-/// Start-time probing is not implemented on this platform.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn start_token(_pid: i64) -> Option<String> {
     None
 }
 
-/// Zombie probing is not implemented on this platform, so nothing reads as one.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn is_zombie(_pid: i64) -> bool {
     false
 }
 
-/// Process-table probing is not implemented on this platform.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn table() -> Option<Vec<(u32, u32, String)>> {
     None
 }
 
-/// Whether a process with this pid exists. A zombie exists here: `kill(pid, 0)`
-/// succeeds for an exited but unreaped process. Only ESRCH is positive evidence
-/// of death; EPERM and any other error keep the process counted as existing.
 #[cfg(unix)]
 pub(super) fn exists(pid: i64) -> bool {
     let Some(pid) = i32::try_from(pid).ok().filter(|pid| *pid > 0) else {
@@ -243,7 +186,6 @@ pub(super) fn exists(pid: i64) -> bool {
     }
 }
 
-/// Existence probing is not implemented on this platform, so nothing reads as dead.
 #[cfg(not(unix))]
 pub(super) fn exists(_pid: i64) -> bool {
     true

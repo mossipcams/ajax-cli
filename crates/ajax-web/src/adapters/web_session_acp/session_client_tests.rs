@@ -1,6 +1,3 @@
-//! Tests for [`super::session_client::SessionClient`] using the Pi RPC variant
-//! backed by the `fake_pi_rpc.js` fixture.
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -41,7 +38,6 @@ fn is_agent_message_chunk(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::AgentText(_)))
 }
 
-/// True when `event` is a native usage event.
 fn is_usage_update(event: &AgentEvent) -> bool {
     matches!(event, AgentEvent::Native(NativeEvent::Usage { .. }))
 }
@@ -110,7 +106,6 @@ fn pi_variant_cancel_active_run_yields_empty_outcome_and_cancelled_stop() {
     assert!(outcome.permissions.is_empty());
     assert!(outcome.elicitations.is_empty());
 
-    // The fake may emit a chunk before the run finishes; drain until RequestFinished.
     let finished = loop {
         match session.wait_event(WAIT) {
             None => panic!("run should finish after cancel"),
@@ -168,7 +163,6 @@ fn pi_variant_rejects_request_and_elicitation_responses() {
         .expect_err("respond_client_request should be unsupported");
     assert_eq!(err, "Pi RPC mode has no permission or elicitation requests");
 
-    // The Pi arm answers extension dialogs (issue #1306).
     let err = session
         .respond_elicitation("elicit-1", "accept", None)
         .expect_err("accept without an answer should be rejected");

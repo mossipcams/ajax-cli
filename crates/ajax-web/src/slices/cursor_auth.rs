@@ -1,14 +1,8 @@
-//! HTTP handlers for the Cursor SDK sign-in flow. The browser only ever
-//! receives phases and status payloads (login URL, email, expiry) — never key
-//! material.
-
 use crate::adapters::web_session_acp::CursorLogin;
 use axum::{http::StatusCode, response::IntoResponse, Json};
 
 const WORKER_FAILED: &str = "cursor login worker failed";
 
-/// `GET /api/cursor/auth`: current credential state. 200 with the status on
-/// success; 502 when the credential check reports an error.
 pub async fn axum_cursor_auth_status() -> axum::response::Response {
     match tokio::task::spawn_blocking(|| CursorLogin::global().status()).await {
         Ok(Ok(status)) => Json(status).into_response(),
@@ -25,12 +19,10 @@ pub async fn axum_cursor_auth_status() -> axum::response::Response {
     }
 }
 
-/// `GET /api/cursor/auth/login`: current login phase.
 pub async fn axum_cursor_login_phase() -> axum::response::Response {
     cursor_login_phase_response().await
 }
 
-/// `POST /api/cursor/auth/login`: start a sign-in flow (returns the phase).
 pub async fn axum_cursor_login_start() -> axum::response::Response {
     match tokio::task::spawn_blocking(|| CursorLogin::global().start()).await {
         Ok(phase) => Json(phase).into_response(),
@@ -42,7 +34,6 @@ pub async fn axum_cursor_login_start() -> axum::response::Response {
     }
 }
 
-/// `POST /api/cursor/auth/login/cancel`: cancel the running sign-in flow.
 pub async fn axum_cursor_login_cancel() -> axum::response::Response {
     match tokio::task::spawn_blocking(|| CursorLogin::global().cancel()).await {
         Ok(phase) => Json(phase).into_response(),

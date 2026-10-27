@@ -13,7 +13,6 @@ pub(super) struct SessionEvidence {
     pub last_logged_spawn_error_id: Option<String>,
     pub transcript_durability_fault: Option<String>,
     pub pending_transcript_error_snapshot: bool,
-    /// Stored rows that could not be read back; shown, but does not block prompts.
     pub transcript_corruption: Option<String>,
 }
 
@@ -48,12 +47,10 @@ impl SessionEvidence {
             .or_else(|| self.transcript_corruption.clone())
     }
 
-    /// Only the durability fault blocks prompts; the other transcript errors are shown alone.
     pub(super) fn prompts_blocked(&self) -> bool {
         self.transcript_durability_fault.is_some()
     }
 
-    /// Clearing a fault the browser was shown must republish, or the notice stays stale.
     fn clear_activity_report_fault(&mut self) {
         if self.activity_report_fault.take().is_some() {
             self.pending_transcript_error_snapshot = true;
@@ -93,7 +90,6 @@ impl SessionEvidence {
         self.report_activity_for_event_with_probe(qualified_handle, event, &mut || Some(false));
     }
 
-    /// `probe` reads the background level when the event finishes a running turn.
     pub(super) fn report_activity_for_event_with_probe(
         &mut self,
         qualified_handle: &str,
@@ -109,7 +105,6 @@ impl SessionEvidence {
         self.report(qualified_handle, activity);
     }
 
-    /// Deliver one activity and commit it; on failure keep it pending for retry.
     pub(super) fn report(&mut self, qualified_handle: &str, activity: SessionActivity) {
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {

@@ -36,9 +36,6 @@ pub(crate) fn now_unix_secs() -> u64 {
 }
 
 impl OperationCoordinator {
-    /// Loads completed request_id outcomes persisted under `state_dir`. A
-    /// missing file starts empty; an unreadable or corrupt one is reported
-    /// once and also starts empty, so startup never fails on it.
     pub(crate) fn load_persistent(state_dir: &Path) -> Self {
         let path = state_dir.join(OUTCOMES_FILE);
         let mut coordinator = Self {
@@ -84,10 +81,6 @@ impl OperationCoordinator {
         coordinator
     }
 
-    /// Captures every completed outcome as the bytes to write to the state
-    /// file, tagged with a sequence number so a stale snapshot is never written
-    /// over a newer one. The caller persists them after releasing the
-    /// operations lock.
     pub(crate) fn pending_write(&mut self) -> Option<PendingOutcomeWrite> {
         let path = self.store_path.clone()?;
         let entries = self
@@ -122,7 +115,6 @@ impl OperationCoordinator {
     }
 }
 
-/// Outcome bytes captured under the operations lock, written once it is released.
 pub(crate) struct PendingOutcomeWrite {
     path: PathBuf,
     bytes: Vec<u8>,
@@ -131,9 +123,6 @@ pub(crate) struct PendingOutcomeWrite {
 }
 
 impl PendingOutcomeWrite {
-    /// Writes under the persisted-sequence lock, so writers never share the
-    /// `<file>.tmp` path and a snapshot older than the last one persisted is
-    /// skipped. A failed write is reported and leaves the in-memory outcomes in place.
     pub(crate) fn persist(self) {
         let mut persisted = self
             .persisted_seq

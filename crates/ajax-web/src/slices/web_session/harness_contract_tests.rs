@@ -1,11 +1,3 @@
-//! Table-driven execution-contract tests for the four harness transports:
-//! ACP, Pi RPC, Claude SDK, and Cursor SDK sessions must each follow the
-//! same core
-//! session execution contract that the web session slice sees through
-//! [`super::acp_drain::drain_acp_events`]: spawn with identity, prompt to a
-//! single successful terminal, idle-cancel purity (issue 1272), and clean
-//! shutdown/detach (issue 1273).
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -21,10 +13,8 @@ use super::acp_drain::{drain_acp_events, PromptTerminalOutcome};
 use super::acp_usage::UsageDeduper;
 use super::{test_support, SessionServerEvent};
 
-/// Installs a harness's fixture override, then runs the shared contract body.
 type ContractInstaller = Box<dyn FnOnce(&dyn Fn())>;
 
-/// One transport under test; `install` runs the shared contract body for it.
 struct ContractRow {
     name: &'static str,
     agent: AgentClient,
@@ -100,7 +90,6 @@ fn drain_until_terminal(
 
 fn run_contract(name: &str, agent: AgentClient) {
     let work_dir = test_support::scratch_dir(&format!("harness-contract-{name}"));
-    // (1) Spawn: the contract requires a live session identity.
     let (mut client, _report) =
         match SessionClient::spawn_with_operator_pin(agent, &work_dir, "default", None) {
             Ok(pair) => pair,
@@ -116,8 +105,6 @@ fn run_contract(name: &str, agent: AgentClient) {
         "{name}: child_pid must report the live host process"
     );
 
-    // (2) Prompt: exactly one successful terminal and at least one agent
-    // message, then no prompt left in flight.
     let request_id = match client.begin_prompt(&[ContentBlock::Text(TextContent::new("hello"))]) {
         Ok(id) => id,
         Err(err) => panic!("{name}: begin_prompt must succeed: {err}"),
@@ -154,7 +141,6 @@ fn run_contract(name: &str, agent: AgentClient) {
         "{name}: prompt_in_flight must be false after the terminal"
     );
 
-    // (3) Idle cancel: no prompt in flight, so nothing to surface (issue 1272).
     let cancel = match client.cancel() {
         Ok(outcome) => outcome,
         Err(err) => panic!("{name}: idle cancel must succeed: {err}"),
@@ -164,7 +150,6 @@ fn run_contract(name: &str, agent: AgentClient) {
         "{name}: idle cancel must report no pending permissions or elicitations (issue 1272)"
     );
 
-    // (4) Shutdown/detach: both report no remaining work (issue 1273).
     assert!(
         client.shutdown().is_none(),
         "{name}: shutdown must return None with nothing left to surface"

@@ -1,4 +1,3 @@
-//! Read-only legacy JSONL importer. Sources are retained after migration.
 use super::{session_path, StoredSession};
 use serde::{de::DeserializeOwned, Deserialize};
 use std::{
@@ -22,8 +21,6 @@ struct DiskEventLine<T> {
     event: T,
 }
 
-/// Read the stored session. A missing file is an empty session; a file that
-/// exists but cannot be read is an error, never an empty session.
 pub(super) fn read<T: DeserializeOwned>(
     state_dir: &Path,
     handle: &str,
@@ -37,13 +34,11 @@ pub(super) fn read<T: DeserializeOwned>(
     };
     let mut lines = Vec::new();
     for line in BufReader::new(file).split(b'\n') {
-        // A row that is not UTF-8 is a corrupt row, not an unreadable file.
         let line = String::from_utf8_lossy(&line?).into_owned();
         if !line.trim().is_empty() {
             lines.push(line);
         }
     }
-    // An unparsable final row is a write cut short by a crash, not corruption.
     let parse_end = match lines.last() {
         Some(last) if matches!(parse_line::<T>(last), ParsedLine::Corrupt) => lines.len() - 1,
         _ => lines.len(),
@@ -70,9 +65,7 @@ pub(super) fn read<T: DeserializeOwned>(
 enum ParsedLine<T> {
     Meta(DiskMeta),
     Event(T),
-    /// Not a readable row: the stored history lost something here.
     Corrupt,
-    /// A well-formed row of a kind this build does not know.
     Skip,
 }
 

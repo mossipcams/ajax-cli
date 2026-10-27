@@ -11,7 +11,6 @@ use ajax_core::{
 use std::time::SystemTime;
 
 const ROOT_RUN_ID: &str = "acp-session";
-/// The one synthetic completion-holding child that carries the background level.
 const BACKGROUND_RUN_ID: &str = "background";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionActivity {
@@ -107,7 +106,6 @@ pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
 #[derive(Debug, Default)]
 pub(crate) struct SessionActivityReporter {
     state: ajax_core::acp_execution_state::AcpExecutionState,
-    /// Whether the background child is applied to `state`.
     background: bool,
     last: Option<SessionActivity>,
 }
@@ -121,9 +119,6 @@ impl SessionActivityReporter {
         self.activity_for_event_with_probe(event, &mut || Some(false))
     }
 
-    /// Apply one root event. Every turn end reads the background level before the
-    /// activity is reduced, whether or not a turn start was observed. A failed
-    /// turn is not finished, so it never reads the level.
     pub(crate) fn activity_for_event_with_probe(
         &mut self,
         event: &super::SessionServerEvent,
@@ -133,12 +128,10 @@ impl SessionActivityReporter {
         let now = SystemTime::now();
         self.state
             .apply(acp_execution_map::execution_event(event, in_flight), now);
-        // A running root turn never carries the background level.
         if self.turn_running() {
             self.set_background_child(false, now);
         }
         if matches!(event, super::SessionServerEvent::TurnEnd { .. }) && self.turn_finished() {
-            // An unavailable read (None) is no evidence, so it never clears the level.
             if let Some(held) = probe() {
                 self.set_background_child(held, now);
             }
@@ -150,7 +143,6 @@ impl SessionActivityReporter {
         self.state.turn() == RootTurnState::Running
     }
 
-    /// True when the root turn has settled or been cancelled. Failed is not finished here.
     pub(crate) fn turn_finished(&self) -> bool {
         matches!(
             self.state.turn(),
@@ -162,8 +154,6 @@ impl SessionActivityReporter {
         self.background
     }
 
-    /// Hold or release the background level, then reduce. The level exists only
-    /// after a finished turn, so `held` is ignored otherwise.
     pub(crate) fn set_background(
         &mut self,
         held: bool,
@@ -210,8 +200,6 @@ impl SessionActivityReporter {
             ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated
         );
         let activity = match (held, self.state.turn()) {
-            // Checked before the kind: a held root reads as WaitingForInput, which must not show as the operator's turn.
-            // A failed root is never masked as background work.
             (true, RootTurnState::Failed) => SessionActivity::TurnFailed,
             (true, RootTurnState::Settled | RootTurnState::Cancelled) => {
                 SessionActivity::BackgroundRunning

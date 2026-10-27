@@ -165,8 +165,6 @@ where
         spawn_push_tick(&state);
         spawn_push_tick(&state);
 
-        // Keep the chat execution owner lease alive so a restarted host cannot take
-        // over while this one still runs agents. Cloned before `state` moves into axum_app.
         let directory = Arc::clone(&state.task_session_directory);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
@@ -177,8 +175,6 @@ where
             }
         });
 
-        // Dispatch queued prompts left by a previous host without any browser
-        // attached, one chat at a time. Cloned before `state` moves into axum_app.
         headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)

@@ -410,9 +410,6 @@ fn transcript_append_failure_backlog_recovers_in_order() {
     let dir = scratch_dir("append-backlog-retry");
     let handle = "web/append-backlog-retry";
     let script = fake_acp_fixture();
-    // Chmod target: the state directory. The store re-chmods the db file itself
-    // back to writable on every open, so only locking the directory reliably
-    // blocks journal-file creation.
 
     with_test_acp_program(&script, || {
         with_test_acp_extra_args(&["--hold-prompt"], || {
@@ -424,8 +421,6 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 .submit_prompt_with_id(handle, "active-1".into(), "first".into())
                 .expect("active");
 
-            // Fail transcript persistence once: a read-only database rejects the
-            // append; restoring write access lets the next commit succeed.
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
                 .expect("chmod state dir read-only");
             directory.record(
@@ -459,14 +454,10 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 "failed appends must not reach the log: {events:?}"
             );
 
-            // While the backlog is unpersisted, terminating the prompt must not
-            // mark the turn completed.
             directory
                 .cancel(handle, true)
                 .expect("cancel accepted for retry");
             thread::sleep(Duration::from_millis(200));
-            // The read-only directory may also block reads (None); what must
-            // never be observed is a completed turn without the persisted events.
             assert_ne!(
                 ledger_phase(&dir, handle, "active-1"),
                 Some(PromptPhase::Completed),
@@ -702,7 +693,6 @@ fn assert_activity_waits_for_transcript_commit(recover_with_terminal: bool) {
                 Some(PromptPhase::Completed)
             );
 
-            // Further pumps must not replay activity from the recovered backlog.
             directory.read_from(handle, 0);
             let reports = reports.lock().unwrap();
             let waiting: Vec<_> = reports
@@ -718,7 +708,6 @@ fn assert_activity_waits_for_transcript_commit(recover_with_terminal: bool) {
                 waiting[0].1.contains(&permission),
                 "activity must follow durable events"
             );
-            // The retained persistence error keeps its existing failed-turn status.
             let terminal_activity = if recover_with_terminal {
                 SessionActivity::TurnFailed
             } else {
@@ -764,7 +753,6 @@ fn acquire_blocks_while_foreign_live_child_is_recorded_issue_1327() {
     let dir = scratch_dir("foreign-child-acquire-block");
     let handle = "web/foreign-child-acquire-block";
     let store = SessionStorage::under(dir.clone()).registry_store();
-    // Startup sweep already ran; record a foreign child as if it appeared after boot.
     super::orphan_sweep::sweep_once(&store, &dir, "test-host");
     let (pid, mut sleep_child) = spawn_sleep_child();
     let token = process_identity::start_token(pid).expect("live child token");

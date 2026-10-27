@@ -11,9 +11,6 @@ use std::{
 use tokio::time::sleep;
 
 const EVENT_POLL_MS: u64 = 50;
-/// Before blocking on a (possibly slow) harness restore, give `snapshotTail`
-/// clients an early storage-only snapshot so the browser is not blank while
-/// the session actor is still acquiring.
 const EARLY_SNAPSHOT_AFTER: Duration = Duration::from_millis(150);
 pub(crate) const MAX_SESSION_FRAME_BYTES: usize = super::prompt_content::MAX_PROMPT_FRAME_BYTES;
 pub(crate) const SESSION_PING_INTERVAL: Duration = Duration::from_secs(20);
@@ -26,10 +23,6 @@ async fn release_slot(directory: &Arc<TaskSessionDirectory>, handle: &str) {
     directory.release(handle).await;
 }
 
-/// Cursor the live attach resumes from after an early storage-only snapshot.
-/// Only an inline transcript means the browser consumed history up to
-/// `early.cursor`; a non-reset early snapshot replays nothing, so the client's
-/// own cursor must stay put or the events in between would never be sent.
 pub(crate) fn resume_cursor_after_early(
     early: &SessionSnapshot,
     client_cursor: Option<usize>,
@@ -41,19 +34,12 @@ pub(crate) fn resume_cursor_after_early(
     }
 }
 
-/// A reset attach inlines the newest transcript into its snapshot. When the
-/// client opts in with `snapshotTail=1`, skip re-sending that same retained
-/// history as per-event envelopes. Resumable reconnects (no inline
-/// transcript) and legacy clients keep the full replay.
 pub(crate) fn should_skip_replayed_envelopes(
     tail_snapshot: bool,
     snapshot: &SessionSnapshot,
 ) -> bool {
     tail_snapshot && snapshot.transcript.is_some()
 }
-/// Decide which frames a batch yields for one client. A reset snapshot with
-/// an inline transcript (and a `snapshotTail=1` client) already carries the
-/// same history, so re-sent envelopes are dropped; everything else flows.
 pub(crate) fn outbound_frames(
     batch_snapshot: Option<SessionSnapshot>,
     batch_events: Vec<SessionEventEnvelope>,
@@ -75,14 +61,8 @@ pub(crate) async fn bridge_task_session_socket(
 ) {
     let handle = plan.qualified_handle.clone();
     let model = plan.model.clone();
-    // Race the (potentially minutes-long) harness restore against a short
-    // timer so tail clients see a storage-only snapshot immediately. Legacy
-    // clients keep the old behavior: just await the acquire.
     let mut early_cursor: Option<usize> = None;
     let acquire_result: Result<(), SessionError> = {
-        // One acquire future for the whole race: dropping it on the timer arm
-        // would leave the Acquire command already queued in the actor while a
-        // second Acquire is sent, double-counting the holder.
         let acquire = directory.acquire_typed(&handle, &plan.worktree_path, &model, plan.agent);
         tokio::pin!(acquire);
         if tail_snapshot {
@@ -93,8 +73,6 @@ pub(crate) async fn bridge_task_session_socket(
                         directory.detached_attach_snapshot(&handle, model.clone(), client_cursor);
                     early_cursor = resume_cursor_after_early(&early.snapshot, client_cursor);
                     if !send_snapshot(&mut socket, &early.snapshot.with_agent_pending(true)).await {
-                        // The acquire is still in flight and may have succeeded:
-                        // wait for it so the holder taken by it is released.
                         if acquire.await.is_ok() {
                             release_slot(&directory, &handle).await;
                         }

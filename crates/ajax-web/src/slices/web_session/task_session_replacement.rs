@@ -55,7 +55,6 @@ pub(super) fn finalize_client_metadata(
     model: &str,
     bump_generation: bool,
 ) -> Result<(), SessionError> {
-    // The session is only resumable once its id is on disk.
     web_session_store::try_save_meta(
         &state.storage.registry_store(),
         &state.storage.state_dir,

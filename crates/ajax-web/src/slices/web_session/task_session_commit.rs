@@ -2,7 +2,6 @@ use super::task_session::TaskSessionState;
 use super::{SessionError, SessionServerEvent};
 
 impl TaskSessionState {
-    /// Commits a prompt-ledger change and transcript events in one transaction; memory is updated only after the commit succeeds.
     pub(super) fn commit_ledger_with_events(
         &mut self,
         update: impl FnOnce(&mut crate::adapters::web_session_store::prompt_ledger::PromptLedger),
@@ -11,7 +10,6 @@ impl TaskSessionState {
         let mut next = self.prompts.prompt_ledger.clone();
         update(&mut next);
 
-        // Retried events have already been filtered; keep them ahead of this commit's events.
         let mut filtered = self.unpersisted.clone();
         filtered.extend(self.filter_events_for_log(events));
 

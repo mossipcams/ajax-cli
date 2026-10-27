@@ -38,7 +38,6 @@ fn cockpit_refresh_that_drops_a_task_shuts_down_its_live_session() {
 
     rt.block_on(refresh_cockpit_and_cache(&state, RefreshTier::Live, false));
 
-    // Cleanup is spawned onto the runtime, so wait for the actor to shut down.
     rt.block_on(async {
         for _ in 0..200 {
             if !directory.has_live_entry(handle) {

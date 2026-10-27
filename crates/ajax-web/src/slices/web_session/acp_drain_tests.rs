@@ -548,8 +548,6 @@ fn native_error_matches_acp_error() {
 
 #[test]
 fn claude_error_result_shows_one_error_and_failed_terminal_1275() {
-    // The error text is folded into the failed TurnFinished (#1275), so the drain
-    // must show it once and settle the prompt as Failed, not as a success.
     let outcome = drain_one(AgentEvent::Native(NativeEvent::TurnFinished {
         request_id: 7,
         result: Err("Claude run failed: API Error: overloaded".to_string()),
@@ -614,8 +612,6 @@ fn native_exit_reports_agent_process_exited_1336() {
     );
 }
 
-/// A source whose handshake advertised one slash command, yielded on the
-/// first drain only, with no further events unless queued.
 struct HandshakeCommandSource {
     events: RefCell<VecDeque<AgentEvent>>,
     commands_taken: Cell<bool>,

@@ -157,7 +157,6 @@ fn interrupted_to_queued() {
         .expect("commit");
     assert_eq!(commit.transitions.len(), 1);
     assert_eq!(commit.transitions[0].to, ExecutionState::Pending);
-    // Content changed and target is Pending: content update.
     assert_eq!(commit.prompt_content_updates.len(), 1);
     assert_eq!(commit.prompt_content_updates[0].idempotency_key, "m1");
 }
@@ -369,7 +368,6 @@ fn ledger_from_prompts_round_trip() {
     assert_eq!(completed.prompt_text, "");
     assert!(completed.content_blocks.is_empty());
 
-    // Malformed content falls back to empty text fields.
     let malformed = prompt("m7", ExecutionState::Pending, Some("not json"));
     let ledger = ledger_from_prompts(&[malformed]);
     assert_eq!(ledger.entries[0].transcript_text, "");
@@ -417,14 +415,12 @@ fn mixed_current_with_empty_desired_clears_every_leftover_row_once() {
     let commit = plan_commit("run-1", &current, &ledger(Vec::new()))
         .unwrap()
         .expect("commit");
-    // Only the Pending row transitions; the two terminal rows just clear.
     assert_eq!(commit.transitions.len(), 1);
     assert_eq!(commit.transitions[0].task_exec_id, "run-1:prompt:m1");
     assert_eq!(commit.transitions[0].to, ExecutionState::Cancelled);
     let mut clears = commit.prompt_content_clears.clone();
     clears.sort();
     assert_eq!(clears, vec!["m1", "m2", "m3"]);
-    // No duplicate clears.
     let mut deduped = clears.clone();
     deduped.dedup();
     assert_eq!(deduped.len(), clears.len());

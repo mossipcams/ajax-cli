@@ -361,10 +361,6 @@ fn execute_task_command<R: Registry>(
     })
 }
 
-/// Review and Repair act on Git evidence, so they stop when the task's own
-/// repository could not be observed, or is no longer configured, instead of
-/// using what is on record. A failure in some other repository does not block
-/// them.
 fn refresh_git_evidence_for_task<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,

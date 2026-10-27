@@ -1,6 +1,3 @@
-//! Background-level regressions (issue #1412). Clocks are injected and reads are
-//! fake closures: nothing here spawns a process or runs `ps`.
-
 use super::background_jobs::{
     probe, BackgroundLevel, Step, END_DEBOUNCE, IDLE_POLL_EVERY, POLL_EVERY, POLL_MAX_AGE, SCAN_TTL,
 };
@@ -26,12 +23,10 @@ fn turn_end_with(stop_reason: &str) -> SessionServerEvent {
     }
 }
 
-/// A probe that must never run.
 fn no_read() -> Option<bool> {
     panic!("the background level must not be read here")
 }
 
-/// Apply one root event as the actor does, committing whatever is reported.
 fn apply(
     reporter: &mut SessionActivityReporter,
     event: &SessionServerEvent,
@@ -42,13 +37,11 @@ fn apply(
     Some(activity)
 }
 
-/// The turn-end read as the actor takes it: the level result is recorded as it is returned.
 fn read_at_turn_end(level: &mut BackgroundLevel, read: Option<bool>, now: Instant) -> Option<bool> {
     level.record_turn_end(read, now);
     read
 }
 
-/// One tick as `poll_background_jobs` runs it, with the `ps` read injected.
 fn tick(
     level: &mut BackgroundLevel,
     reporter: &mut SessionActivityReporter,
@@ -73,7 +66,6 @@ fn tick(
     Some(activity)
 }
 
-/// A finished turn whose turn-end read found a live background shell.
 fn turn_ended_with_shell(
     level: &mut BackgroundLevel,
     reporter: &mut SessionActivityReporter,
@@ -193,7 +185,6 @@ fn a_settled_root_polls_an_unheld_level_and_reports_a_shell_started_after_the_tu
     });
     assert_eq!(ended, Some(SessionActivity::TurnEnded));
 
-    // An SDK-initiated turn starts a shell after the level ended: the next idle poll sees it.
     assert_eq!(
         tick(
             &mut level,
@@ -210,7 +201,6 @@ fn a_settled_root_polls_an_unheld_level_and_reports_a_shell_started_after_the_tu
             &mut reporter,
             Some(1),
             || Some(true),
-            // The first idle poll ran at 1 ms, so the next is due one spacing after it.
             start + Duration::from_millis(1) + IDLE_POLL_EVERY
         ),
         Some(SessionActivity::BackgroundRunning)

@@ -252,7 +252,6 @@ pub(super) fn try_finalize_active_prompt(state: &mut TaskSessionState) {
                 if state.unpersisted.is_empty() {
                     let _ = state.append_to_log(events);
                 } else {
-                    // Keep the backlog in the terminal transaction, including on retry.
                     let filtered = state.filter_events_for_log(events);
                     state.unpersisted.extend(filtered);
                 }
@@ -324,9 +323,6 @@ pub(super) fn recover_prompt_ledger(state: &mut TaskSessionState) -> Result<(), 
         });
     }
     if !recovery_events.is_empty() {
-        // The ledger is durable proof a turn was in flight. This slot's reporter
-        // starts with no history, so without it the interruption below would not
-        // count as a failed turn and the task would stay on "Agent working".
         state
             .evidence
             .activity_reporter
@@ -375,8 +371,6 @@ pub(super) fn submit_prompt(
         if let Some(entry) = state.prompts.prompt_ledger.entry(&client_message_id) {
             match entry.phase {
                 PromptPhase::Interrupted => {
-                    // Acknowledge here too, so the ack does not depend on the
-                    // recovery rows surviving the restart (#1434).
                     state.append_to_log(vec![SessionServerEvent::PromptAccepted {
                         client_message_id: client_message_id.clone(),
                     }])?;
@@ -526,10 +520,6 @@ pub(super) fn dispatch_queued_prompt(
     }
 }
 
-/// Events for a prompt whose begin failed. A prompt that was never accepted gets
-/// the same `PromptAccepted` a normal accept sends, so the browser outbox drops it
-/// instead of resending it on every reconnect (#1434). `acknowledged` is true for
-/// queued prompts, which were accepted when they were queued.
 pub(super) fn begin_failure_events(
     client_message_id: Option<&str>,
     message: String,

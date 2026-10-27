@@ -1,7 +1,3 @@
-//! Claude SDK elicitation regression tests: an `onElicitation` call from the
-//! fake SDK must reach the browser as an elicitation request, and both an
-//! accept answer and a turn cancel must let the waiting turn finish.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,8 +14,6 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs")
 }
 
-/// Submit the `ELICIT` prompt and pump until the sidecar's elicitation
-/// request is published to the browser. Returns its request id.
 fn acquire_elicitation_request(dir: &BlockingSessionDirectory) -> String {
     let request_id = std::cell::RefCell::new(None);
     test_support::pump_until(dir, HANDLE, Duration::from_secs(10), |events| {
@@ -54,8 +48,6 @@ fn claude_elicitation_accept_finishes_the_turn() {
         let (state_dir, dir) = setup_and_prompt();
         let request_id = acquire_elicitation_request(&dir);
 
-        // Answering the elicitation must let the waiting turn finish with
-        // the accepted content.
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(dir.inner().answer_elicitation(
             HANDLE,
@@ -85,7 +77,6 @@ fn claude_cancel_resolves_a_pending_elicitation() {
         let (state_dir, dir) = setup_and_prompt();
         acquire_elicitation_request(&dir);
 
-        // Cancelling the turn must resolve the pending elicitation.
         dir.cancel(HANDLE, false).expect("cancel");
 
         test_support::pump_until(&dir, HANDLE, Duration::from_secs(10), |events| {

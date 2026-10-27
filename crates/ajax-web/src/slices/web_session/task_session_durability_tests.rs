@@ -1,5 +1,3 @@
-//! Transcript and metadata persistence failures must reach the operator.
-
 use super::test_support::{fake_acp_fixture, note, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::web_session_acp::with_test_acp_program;
@@ -7,7 +5,6 @@ use crate::adapters::web_session_store;
 use ajax_core::models::AgentClient;
 use std::{fs, path::Path};
 
-/// A directory where the registry database belongs: every read and append fails.
 fn make_transcript_unreadable(dir: &Path, _handle: &str) {
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let _ = fs::remove_file(dir.join(format!("ajax.db{suffix}")));
@@ -15,7 +12,6 @@ fn make_transcript_unreadable(dir: &Path, _handle: &str) {
     fs::create_dir_all(dir.join("ajax.db")).expect("block registry database path");
 }
 
-/// Forces session metadata writes to fail: reads work, the stored id cannot change.
 fn make_metadata_unwritable(_dir: &Path, _handle: &str) {
     web_session_store::set_force_meta_write_fail(true);
 }
@@ -98,7 +94,6 @@ fn issue_1221_clear_context_fails_when_resume_id_stays_on_disk() {
     let directory = BlockingSessionDirectory::new(dir.clone());
     let script = fake_acp_fixture();
 
-    // Detached: no live slot, only the stored id.
     web_session_store::save_meta(&dir, handle, Some("sess-old"), "auto");
     make_metadata_unwritable(&dir, handle);
     assert!(
@@ -114,7 +109,6 @@ fn issue_1221_clear_context_fails_when_resume_id_stays_on_disk() {
 
     restore_metadata_writes();
 
-    // Live: same failure through the session actor.
     let live = "web/clear-fail-1221-live";
     with_test_acp_program(&script, || {
         directory

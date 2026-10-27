@@ -67,11 +67,7 @@ impl TranscriptLog {
         }
     }
 
-    /// Absolute cursors of the newest earlier real (non-marker) version for
-    /// each streamed item in `batch`, sorted and deduped.
     pub(crate) fn superseded_cursors_for(&self, batch: &[SessionServerEvent]) -> Vec<usize> {
-        // ponytail: linear reverse scan over <=2000 entries; add an
-        // item_id->cursor map if profiling shows it.
         let mut cursors = Vec::new();
         for event in batch {
             let SessionServerEvent::Message { item_id, .. } = event else {
@@ -102,7 +98,6 @@ impl TranscriptLog {
         cursors
     }
 
-    /// Clone an in-range message as a marker without changing the log.
     pub(crate) fn marker_for(&self, cursor: usize) -> Option<SessionServerEvent> {
         let mut marker = self.events.get(cursor.checked_sub(self.dropped)?)?.clone();
         let SessionServerEvent::Message {
@@ -120,10 +115,6 @@ impl TranscriptLog {
         Some(marker)
     }
 
-    /// Rewrite the log entries at `cursors` to markers (same role and
-    /// item_id, cleared text/content_blocks/message_id). Out-of-range or
-    /// non-Message entries are ignored; length, dropped and next cursor do
-    /// not change.
     pub(crate) fn mark_superseded(&mut self, cursors: &[usize]) {
         for &cursor in cursors {
             if let Some(marker) = self.marker_for(cursor) {
@@ -208,9 +199,6 @@ impl TranscriptLog {
     }
 }
 
-/// True only for a superseded-version marker: an empty `Message` that still
-/// carries its non-empty `item_id`. A real empty message without an `item_id`
-/// is not a marker.
 pub(crate) fn is_superseded_marker(event: &SessionServerEvent) -> bool {
     matches!(
         event,
