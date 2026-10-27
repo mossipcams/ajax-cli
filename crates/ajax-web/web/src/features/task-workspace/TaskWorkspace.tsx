@@ -77,12 +77,7 @@ export default function TaskWorkspace({
   }, [mode, handle, detail.status, detail.data, onGo]);
 
   const taskDetail = detail.data;
-  const sessionConverging =
-    mode === "chat" &&
-    sessionBusy &&
-    taskDetail?.status !== "running" &&
-    taskDetail?.status !== "waiting" &&
-    taskDetail?.status !== "error";
+  const sessionConverging = mode === "chat" && sessionBusy && taskDetail?.status !== "running";
 
   useEffect(() => {
     if (!sessionConverging) return;
