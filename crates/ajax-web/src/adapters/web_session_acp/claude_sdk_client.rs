@@ -1,5 +1,3 @@
-//! Thin Claude Agent SDK client: drives the Node sidecar through the shared JSONL process, session and client core.
-// A later packet wires this client into the session bridge.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -21,19 +19,13 @@ use super::rpc_session::RpcSession;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.mjs");
 
-/// Timeout for the `get_context_usage` request sent before a prompt finish.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
 
-// ponytail: fixed list; the SDK reports per-model effort support, refine later.
 pub const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
     super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
-/// Context-usage snapshot taken from the sidecar before the turn-finished event:
-/// `totalTokens` / `maxTokens` from the SDK's `getContextUsage()`. Returns
-/// nothing when the request fails, a field is missing, or either value is 0,
-/// so a cancelled turn never resets the live context meter.
 fn claude_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
     let data = session
         .request("get_context_usage", json!({}), USAGE_TIMEOUT)
@@ -47,18 +39,16 @@ fn claude_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
 }
 pub struct ClaudeSdkClient {
     core: RpcClientCore,
-    // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
     state: Box<Mutex<ClaudeState>>,
 }
 
 struct ClaudeState {
-    models: Vec<(String, String)>, // (value, display name)
+    models: Vec<(String, String)>,
     current_model: String,
     current_effort: String,
 }
 
 impl ClaudeSdkClient {
-    /// OS process id of the live child while a session exists; `None` after shutdown.
     pub fn child_pid(&self) -> Option<u32> {
         self.core.child_pid()
     }
@@ -123,12 +113,8 @@ impl ClaudeSdkClient {
                 .map(|model| (model.id.clone(), model.name.clone()))
                 .collect(),
             current_model: model.unwrap_or("default").to_string(),
-            // ponytail: the SDK default is not reported yet; use medium until it is.
             current_effort: "medium".to_string(),
         };
-        // The handshake's advertised commands are exposed through
-        // `take_available_commands` once, like an event, rather than queued as
-        // one.
         let commands: Vec<NativeCommand> = handshake
             .commands
             .iter()
@@ -145,7 +131,6 @@ impl ClaudeSdkClient {
         })
     }
 
-    /// The shared transport core, used by the session client's two-arm dispatch.
     pub(super) fn core(&self) -> &RpcClientCore {
         &self.core
     }
@@ -154,10 +139,6 @@ impl ClaudeSdkClient {
         self.core.session_id()
     }
 
-    /// Slash commands advertised at handshake, returned by the first call
-    /// only (one-shot, like an event) so every later drain yields an empty
-    /// list; ACP `AvailableCommandsUpdated` updates replace the list within
-    /// the same drain.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
         self.core.take_available_commands()
     }
@@ -255,12 +236,10 @@ impl ClaudeSdkClient {
         Ok(())
     }
 
-    /// Begin a prompt run from a plain-text message.
     pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
         self.core.begin_prompt(message)
     }
 
-    /// Begin a prompt run from a text message plus attached images.
     pub fn begin_prompt_with_images(
         &self,
         message: &str,
@@ -277,7 +256,6 @@ impl ClaudeSdkClient {
         self.core.prompt_in_flight()
     }
 
-    /// Send a response for a pending elicitation to the SDK sidecar.
     pub fn respond_elicitation(
         &self,
         request_id: &str,

@@ -1,10 +1,3 @@
-//! Process-wide, non-blocking Cursor SDK login flow. Drives the
-//! `cursor_sdk_login.mjs` sidecar: it reports progress as JSON lines and the
-//! API key never enters this process — only phase/status fields do. Closing
-//! the sidecar's stdin cancels an in-flight login (it then emits a
-//! `failed "cancelled"` line); deadline expiry also closes stdin and is
-//! reported as a timeout.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
@@ -19,8 +12,6 @@ const GLOBAL_TIMEOUT: Duration = Duration::from_secs(300);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Progress of a Cursor SDK login flow. Serializes with a `"phase"` tag; no
-/// variant ever carries an API key value.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum CursorLoginPhase {
@@ -39,8 +30,6 @@ pub enum CursorLoginPhase {
     },
 }
 
-/// Credential state reported by the login sidecar in `--mode status`. No field
-/// carries an API key value.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CursorCredentialStatus {
@@ -57,10 +46,6 @@ struct Inner {
     cancel_flag: Arc<AtomicBool>,
 }
 
-/// One host-wide Cursor login flow. `start` never blocks on the login; a
-/// background thread feeds [`CursorLoginPhase`] from the sidecar. At most one
-/// interactive flow runs at a time; `status` checks are synchronous and do not
-/// interact with it.
 pub struct CursorLogin {
     store_path: Option<PathBuf>,
     timeout: Duration,
@@ -80,7 +65,6 @@ impl CursorLogin {
         }
     }
 
-    /// The process-wide login (default credential store, 300s timeout).
     pub fn global() -> &'static CursorLogin {
         static GLOBAL: OnceLock<CursorLogin> = OnceLock::new();
         GLOBAL.get_or_init(|| Self::new(None, GLOBAL_TIMEOUT))
@@ -94,10 +78,6 @@ impl CursorLogin {
             .clone()
     }
 
-    /// Begin a login flow. Returns immediately with the phase right after
-    /// spawning (Idle, Waiting, or Failed on spawn resolution failure). If a
-    /// flow is already Waiting or Verifying it is returned unchanged without
-    /// spawning another process.
     pub fn start(&self) -> CursorLoginPhase {
         let (flow, cancel_flag) = {
             let mut state = self.lock();
@@ -139,8 +119,6 @@ impl CursorLogin {
         self.phase()
     }
 
-    /// Cancel the in-flight flow (if one is Waiting or Verifying) by closing
-    /// the sidecar's stdin; it then reports `Failed { message: "cancelled" }`.
     pub fn cancel(&self) -> CursorLoginPhase {
         {
             let state = self.lock();
@@ -154,8 +132,6 @@ impl CursorLogin {
         self.phase()
     }
 
-    /// Synchronously ask the sidecar for the credential status of `store_path`
-    /// (or the default store), blocking up to `30s`.
     pub fn status(&self) -> Result<CursorCredentialStatus, String> {
         let (program, args) = cursor_login_launch("status", self.store_path.as_deref())
             .map_err(|error| error.to_string())?;
@@ -210,8 +186,6 @@ fn is_terminal(phase: &CursorLoginPhase) -> bool {
     )
 }
 
-/// Record `next` for `flow` only while it is the current flow and no terminal
-/// phase has been recorded yet (the sidecar's lines arrive in order).
 fn apply_phase(state: &Mutex<Inner>, flow: u64, next: CursorLoginPhase) {
     let mut guard = state.lock().expect("login state lock poisoned");
     if guard.flow_id != flow || is_terminal(&guard.phase) {
@@ -220,10 +194,6 @@ fn apply_phase(state: &Mutex<Inner>, flow: u64, next: CursorLoginPhase) {
     guard.phase = next;
 }
 
-/// Background reader for one login sidecar. Publishes phase transitions, and
-/// closes the sidecar's stdin once on cancel or deadline (the sidecar then
-/// emits its own `failed` line); a deadline expiry is itself reported as a
-/// timeout. The process is dropped (killing its group) when this thread ends.
 fn watch_sidecar(
     state: Arc<Mutex<Inner>>,
     flow: u64,
@@ -274,7 +244,7 @@ fn watch_sidecar(
                     ),
                     _ => {}
                 },
-                Ok(JsonlRecord::Error(_)) => {} // diagnostics only; never phase material
+                Ok(JsonlRecord::Error(_)) => {}
                 Ok(JsonlRecord::Exited) => {
                     apply_phase(
                         &state,
@@ -309,8 +279,6 @@ fn watch_sidecar(
     });
 }
 
-/// Map a sidecar `{"type":"status",...}` record. The apiKey field is never
-/// read or retained.
 fn status_from_value(value: &Value) -> CursorCredentialStatus {
     let present = value
         .get("present")

@@ -1,7 +1,3 @@
-//! Thin Cursor SDK client: drives the Node sidecar through the shared JSONL
-//! process, session and client core. Model and config options arrive in a
-//! later packet.
-// A later packet wires this client into the session bridge.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -27,7 +23,6 @@ pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
     super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
 
-/// One model of the SDK's catalog, flattened for the web model picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CursorCatalogModel {
     pub id: String,
@@ -39,14 +34,14 @@ pub struct CursorCatalogModel {
 struct CursorParam {
     id: String,
     name: String,
-    values: Vec<(String, String)>, // (value, display name)
+    values: Vec<(String, String)>,
 }
 
 struct CursorModel {
     id: String,
     name: String,
     parameters: Vec<CursorParam>,
-    defaults: Vec<(String, String)>, // the default variant's (param id, value)
+    defaults: Vec<(String, String)>,
 }
 
 struct CursorState {
@@ -123,7 +118,6 @@ fn selection_json(selection: &ModelSelection) -> Value {
 }
 pub struct CursorSdkClient {
     core: RpcClientCore,
-    // Box keeps SessionClient variants size-comparable (clippy::large_enum_variant).
     state: Box<Mutex<CursorState>>,
 }
 
@@ -213,12 +207,10 @@ impl CursorSdkClient {
         Ok(client)
     }
 
-    /// OS process id of the live child while a session exists; `None` after shutdown.
     pub fn child_pid(&self) -> Option<u32> {
         self.core.child_pid()
     }
 
-    /// The shared transport core, used by the session client's two-arm dispatch.
     pub(super) fn core(&self) -> &RpcClientCore {
         &self.core
     }
@@ -227,7 +219,6 @@ impl CursorSdkClient {
         self.core.session_id()
     }
 
-    /// Slash commands advertised at handshake, returned by the first call only.
     pub fn take_available_commands(&self) -> Vec<NativeCommand> {
         self.core.take_available_commands()
     }
@@ -252,8 +243,6 @@ impl CursorSdkClient {
         Ok(())
     }
 
-    /// Select a model. `value` is `id` or `id|key=value`; a bare id takes the
-    /// model's default parameters.
     pub fn set_model(&self, value: &str) -> Result<(), String> {
         let mut selection =
             parse_model_selection(value).ok_or_else(|| format!("invalid model: {value}"))?;
@@ -271,7 +260,6 @@ impl CursorSdkClient {
         self.send_selection(selection)
     }
 
-    /// Set one parameter (e.g. `effort`, `fast`) of the current model.
     pub fn set_option(&self, id: &str, value: &str) -> Result<(), String> {
         let selection = {
             let state = self.lock();
@@ -368,9 +356,6 @@ impl CursorSdkClient {
         options
     }
 
-    /// The SDK's model catalog for the web picker. The SDK's `default` model is
-    /// the picker's `auto` entry; `efforts` are the model's `effort` values and
-    /// `has_fast` is true when the model has a `fast` parameter.
     pub fn model_catalog(&self) -> Vec<CursorCatalogModel> {
         let state = self.lock();
         state
@@ -398,7 +383,6 @@ impl CursorSdkClient {
         self.core.begin_prompt(message)
     }
 
-    /// Begin a prompt run with attached images.
     pub fn begin_prompt_with_images(
         &self,
         message: &str,

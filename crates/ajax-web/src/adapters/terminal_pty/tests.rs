@@ -761,7 +761,6 @@ async fn terminal_cleanup_does_not_wait_forever_after_kill() {
     );
 }
 
-// #1235: tmux setup, probe and history calls ran on the async worker itself.
 #[tokio::test(flavor = "current_thread")]
 async fn issue_1235_slow_tmux_command_does_not_block_the_async_worker() {
     let slow = TmuxCommand {

@@ -1,5 +1,3 @@
-//! Native-event mapping tests for [`super::claude_sdk_map`].
-
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
@@ -7,8 +5,6 @@ use super::claude_sdk_map::map_sdk_message;
 
 const SESSION_ID: &str = "acp-session-1";
 
-/// The native event of an event that must be `AgentEvent::Native`, failing on
-/// anything else (an ACP-wrapped event would fail the test here).
 fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
         AgentEvent::Native(native) => native,
@@ -18,10 +14,6 @@ fn native_event(event: &AgentEvent) -> &NativeEvent {
 
 #[test]
 fn synthetic_assistant_text_maps_to_agent_text_1359() {
-    // #1359: local slash-command output (e.g. `/context`) arrives as one full
-    // assistant message whose `message.model` is `"<synthetic>"`, with text
-    // blocks and no preceding stream deltas; the blocks join into exactly one
-    // AgentText event.
     let message = serde_json::json!({
         "type": "assistant",
         "parent_tool_use_id": null,
@@ -45,8 +37,6 @@ fn synthetic_assistant_text_maps_to_agent_text_1359() {
     assert!(!mapping.finished);
     assert!(!mapping.ended_aborted);
 
-    // A real-model assistant message must not re-emit its text: it already
-    // arrived via stream_event deltas, and a second copy would duplicate it.
     let real_model = serde_json::json!({
         "type": "assistant",
         "parent_tool_use_id": null,
@@ -59,7 +49,6 @@ fn synthetic_assistant_text_maps_to_agent_text_1359() {
     let mapping = map_sdk_message(&real_model, SESSION_ID);
     assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
 
-    // A sub-agent assistant message emits no AgentText.
     let sub_agent = serde_json::json!({
         "type": "assistant",
         "parent_tool_use_id": "toolu_task",
@@ -72,8 +61,6 @@ fn synthetic_assistant_text_maps_to_agent_text_1359() {
     let mapping = map_sdk_message(&sub_agent, SESSION_ID);
     assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
 
-    // A synthetic message carrying only a tool_use block emits no AgentText;
-    // the tool_use mapping itself is unchanged.
     let tool_only = serde_json::json!({
         "type": "assistant",
         "parent_tool_use_id": null,
@@ -93,9 +80,6 @@ fn synthetic_assistant_text_maps_to_agent_text_1359() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
-    // A synthetic message with a top-level `error` (e.g. rate-limit) emits no
-    // AgentText: the following `result` message already surfaces it as an
-    // Error, and re-emitting its text would duplicate it.
     let errored = serde_json::json!({
         "type": "assistant",
         "error": "rate_limit",
@@ -110,15 +94,12 @@ fn synthetic_assistant_text_maps_to_agent_text_1359() {
     assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);
 }
 
-/// One Claude sidecar `ajax_plan` line (#1357).
 fn ajax_plan_1357(entries: Value) -> Value {
     serde_json::json!({"type": "ajax_plan", "entries": entries})
 }
 
 #[test]
 fn ajax_plan_maps_to_plan_event_1357() {
-    // #1357: a sidecar `ajax_plan` line carries the full ordered task list and
-    // maps to exactly one Plan event without settling the run.
     let message = ajax_plan_1357(serde_json::json!([
         {"content": "alpha", "status": "completed"},
         {"content": "beta", "status": "pending"}
@@ -140,7 +121,6 @@ fn ajax_plan_maps_to_plan_event_1357() {
     assert!(!mapping.finished);
     assert!(!mapping.ended_aborted);
 
-    // An empty entries array (all tasks deleted) clears the panel.
     let mapping = map_sdk_message(&ajax_plan_1357(serde_json::json!([])), SESSION_ID);
     assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
     match native_event(&mapping.events[0]) {
@@ -148,8 +128,6 @@ fn ajax_plan_maps_to_plan_event_1357() {
         other => panic!("expected a Plan event, got {other:?}"),
     }
 
-    // Entries missing a string `content` or `status` are skipped; the valid
-    // entry survives in order.
     let mapping = map_sdk_message(
         &ajax_plan_1357(serde_json::json!([
             {"content": "gamma"},
@@ -170,7 +148,6 @@ fn ajax_plan_maps_to_plan_event_1357() {
         other => panic!("expected a Plan event, got {other:?}"),
     }
 
-    // A missing or non-array `entries` field emits nothing.
     let missing = serde_json::json!({"type": "ajax_plan"});
     let mapping = map_sdk_message(&missing, SESSION_ID);
     assert!(mapping.events.is_empty(), "events: {:?}", mapping.events);

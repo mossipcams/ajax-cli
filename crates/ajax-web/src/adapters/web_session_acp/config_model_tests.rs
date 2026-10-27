@@ -1,7 +1,3 @@
-//! Round-trip tests for the neutral config model: ACP -> neutral -> ACP must
-//! reproduce every shape `config_options.rs` handles today (select, grouped
-//! select, boolean, categories, descriptions, values).
-
 use super::config_model::{NeutralConfigCategory, NeutralConfigKind, NeutralConfigOption};
 use agent_client_protocol::schema::v1::{
     SessionConfigBoolean, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
@@ -63,7 +59,6 @@ fn select_round_trips_with_descriptions_and_category() {
     let back: SessionConfigOption = (&neutral).into();
     assert_eq!(back, acp);
 
-    // Description and category survive the round trip too.
     let with_meta = SessionConfigOption::new(
         "model".to_string(),
         "Model".to_string(),
@@ -112,7 +107,6 @@ fn grouped_select_flattens_to_ungrouped_and_round_trips() {
 
     let neutral: NeutralConfigOption = (&acp).into();
     match &neutral.kind {
-        // Groups are flattened in group order.
         NeutralConfigKind::Select { choices, .. } => assert_eq!(
             choices.iter().map(|c| c.value.as_str()).collect::<Vec<_>>(),
             vec!["opus", "haiku", "gpt"]
@@ -120,11 +114,7 @@ fn grouped_select_flattens_to_ungrouped_and_round_trips() {
         other => panic!("expected select kind, got {other:?}"),
     }
 
-    // neutral -> ACP is ungrouped with the flattened choice list; equality is
-    // against that canonical form.
     let back: SessionConfigOption = (&neutral).into();
-    // (The `select_option` helper names its option `name-{id}`, so the
-    // expected value is built directly to keep the round-tripped name.)
     let expected = SessionConfigOption::new(
         "model".to_string(),
         "Model".to_string(),
@@ -158,7 +148,6 @@ fn boolean_round_trips() {
     let back: SessionConfigOption = (&neutral).into();
     assert_eq!(back, acp);
 
-    // False flips back identically.
     let off = NeutralConfigOption {
         id: "fast".to_string(),
         name: "Fast mode".to_string(),
@@ -228,7 +217,6 @@ fn absent_category_and_description_round_trip() {
 
 #[test]
 fn select_current_value_round_trips() {
-    // Full both-direction round trip on an option carrying a select current value.
     let acp = select_option("model", "sonnet", vec![choice("sonnet", "Sonnet", None)]);
     let neutral: NeutralConfigOption = (&acp).into();
     let back: SessionConfigOption = (&neutral).into();
@@ -237,10 +225,6 @@ fn select_current_value_round_trips() {
 
 #[test]
 fn unsupported_kind_uses_documented_empty_select_placeholder() {
-    // `NeutralConfigKind::Unsupported` models ACP payload kinds the neutral
-    // model cannot represent. The only constructible check is on the way back
-    // to ACP: it degrades lossily to an empty select placeholder while keeping
-    // id/name/category intact.
     let neutral = NeutralConfigOption {
         id: "future".to_string(),
         name: "Future kind".to_string(),
@@ -265,8 +249,6 @@ fn unsupported_kind_uses_documented_empty_select_placeholder() {
         ))
     );
 
-    // The lossy placeholder reads back as a regular (empty) select, not as
-    // `Unsupported` again.
     let neutral_back: NeutralConfigOption = (&acp).into();
     match neutral_back.kind {
         NeutralConfigKind::Select {

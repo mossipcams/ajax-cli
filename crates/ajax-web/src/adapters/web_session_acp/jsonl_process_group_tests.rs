@@ -1,8 +1,3 @@
-//! Regression tests for process-group cleanup when a [`JsonlProcess`] is dropped.
-//!
-//! The child must be spawned in its own process group and the whole group must
-//! be killed on drop, otherwise grandchildren survive and leak.
-
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::TryRecvError;
@@ -28,8 +23,6 @@ fn pid_dead(pid: u64) -> bool {
 
 #[test]
 fn dropping_the_process_also_kills_its_grandchildren() {
-    // `sh` backgrounds a sleeper (the grandchild), reports its pid as one JSONL
-    // record, then execs another sleeper as the direct child.
     let script = r#"sleep 300 & printf '{"grandchild":%s}\n' "$!"; exec sleep 300"#;
     let process = JsonlProcess::spawn(
         Path::new("sh"),
@@ -38,8 +31,6 @@ fn dropping_the_process_also_kills_its_grandchildren() {
     )
     .expect("spawn sh");
 
-    // Read until a record carrying the grandchild's pid; block with bounded
-    // `try_recv` polls because `recv()` would block forever on a hung child.
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut grandchild: Option<u64> = None;
     while grandchild.is_none() {
@@ -71,14 +62,12 @@ fn dropping_the_process_also_kills_its_grandchildren() {
     );
     drop(process);
 
-    // Poll up to 3s for the grandchild to disappear.
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline && pid_alive(grandchild) {
         std::thread::sleep(Duration::from_millis(100));
     }
     let gone = pid_dead(grandchild);
 
-    // Never leak: if the group kill failed, clean up manually.
     if !gone {
         let _ = Command::new("kill")
             .args(["-9", &grandchild.to_string()])

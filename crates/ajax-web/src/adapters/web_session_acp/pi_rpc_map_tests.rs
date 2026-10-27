@@ -1,6 +1,3 @@
-//! Unit tests for [`super::pi_rpc_map`], replaying trimmed real Pi RPC-mode
-//! transcripts from `tests/fixtures/pi_rpc/`.
-
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -10,14 +7,12 @@ use super::pi_rpc_map::{map_record, run_error};
 
 const SESSION_ID: &str = "acp-session-1";
 
-/// The result of folding [`map_record`] over one whole transcript.
 struct Replay {
     events: Vec<AgentEvent>,
     finished: bool,
     ended_aborted: bool,
 }
 
-/// Load and parse one trimmed transcript fixture.
 fn fixture(name: &str) -> Vec<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/pi_rpc")
@@ -48,8 +43,6 @@ fn replay(records: &[Value]) -> Replay {
     }
 }
 
-/// The native event of an event that must be `AgentEvent::Native`, failing on
-/// anything else (an ACP-wrapped event would fail the test here).
 fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
         AgentEvent::Native(native) => native,
@@ -61,8 +54,6 @@ fn native_event(event: &AgentEvent) -> &NativeEvent {
 fn prompt_transcript_yields_one_message_chunk_and_settles() {
     let replay = replay(&fixture("prompt.jsonl"));
 
-    // The trimmed prompt transcript streams exactly one text delta ("ok").
-    // `setStatus` / `setWidget` / `response` records yield no events.
     assert_eq!(replay.events.len(), 1);
     match native_event(&replay.events[0]) {
         NativeEvent::AgentText(text) => assert_eq!(text, "ok"),
@@ -77,8 +68,6 @@ fn toolcall_transcript_yields_tool_call_and_updates() {
     let replay = replay(&fixture("toolcall.jsonl"));
     let events = &replay.events;
 
-    // Four thought deltas, the tool call, one partial update, the completed
-    // update, then the final "done" message chunk.
     assert_eq!(events.len(), 8);
 
     let thought_text: String = events[..4]
@@ -112,7 +101,6 @@ fn toolcall_transcript_yields_tool_call_and_updates() {
         Some("echo hi")
     );
 
-    // Partial result update: still in progress, carrying the partial text.
     let NativeEvent::ToolCallUpdate {
         id,
         status,
@@ -126,7 +114,6 @@ fn toolcall_transcript_yields_tool_call_and_updates() {
     assert_eq!(status.as_str(), "in_progress");
     assert_eq!(content.as_deref(), Some("hi\n"));
 
-    // Final update: completed with the tool result text.
     let NativeEvent::ToolCallUpdate {
         id,
         status,
@@ -150,7 +137,6 @@ fn toolcall_transcript_yields_tool_call_and_updates() {
 
 #[test]
 fn failed_tool_execution_end_maps_to_failed_status() {
-    // Same shape as the fixture's tool_execution_end record with isError true.
     let record = serde_json::json!({
         "type": "tool_execution_end",
         "toolCallId": "chatcmpl-tool-be93830d9b11882f",
@@ -178,7 +164,6 @@ fn abort_transcript_reports_finished_and_aborted() {
     let replay = replay(&fixture("abort.jsonl"));
     let events = &replay.events;
 
-    // Three thought deltas then three text deltas.
     assert_eq!(events.len(), 6);
     let thought_text: String = events[..3]
         .iter()
@@ -246,7 +231,6 @@ fn non_adapter_records_yield_no_events() {
         })
         .cloned()
         .collect();
-    // The trimmed prompt transcript must still exercise these record types.
     assert!(
         !non_adapter.is_empty(),
         "fixture lost its non-adapter records"
@@ -261,7 +245,6 @@ fn non_adapter_records_yield_no_events() {
         assert!(!mapping.ended_aborted);
     }
 
-    // Unknown record types and synthetic noise behave the same.
     for record in [
         serde_json::json!({ "type": "something_new", "data": 1 }),
         serde_json::json!({ "type": "message_start", "message": { "role": "system" } }),
@@ -294,7 +277,6 @@ fn malformed_records_never_panic() {
         serde_json::json!("just a string"),
         serde_json::json!([1, 2, 3]),
     ] {
-        // No panics; whatever comes back must be a total mapping.
         let mapping = map_record(&record, SESSION_ID);
         assert!(
             !mapping.finished
@@ -390,10 +372,6 @@ fn fire_and_forget_methods_map_to_nothing() {
 
 #[test]
 fn extension_notify_is_surfaced_1361() {
-    // Issue #1361: Pi extension `notify` records were dropped, so commands
-    // like `/extensions` showed nothing in the native chat. Absent and
-    // non-`error` `notifyType` values surface as agent text with a trailing
-    // newline; `"error"` surfaces as an Error event.
     let record = |notify_type: Option<&str>| {
         let mut record = serde_json::json!({
             "type": "extension_ui_request",
@@ -428,7 +406,6 @@ fn extension_notify_is_surfaced_1361() {
         other => panic!("expected an Error event, got {other:?}"),
     }
 
-    // A notify without a non-empty string message surfaces nothing.
     let mut silent = record(None);
     silent["message"] = serde_json::json!("");
     assert!(map_record(&silent, SESSION_ID).events.is_empty());
@@ -447,8 +424,6 @@ fn dialog_without_id_maps_to_nothing() {
     assert!(mapping.events.is_empty());
 }
 
-/// The error text of the single `NativeEvent::Error` in `events`, failing on
-/// any other event count or shape.
 fn sole_error(events: &[AgentEvent]) -> &str {
     let [event] = events else {
         panic!("expected exactly one event, got {events:?}");
@@ -461,7 +436,6 @@ fn sole_error(events: &[AgentEvent]) -> &str {
 
 #[test]
 fn assistant_error_message_end_is_held_not_emitted_1335() {
-    // The assistant error alone is not an event: Pi may still retry it.
     let record = serde_json::json!({
         "type": "message_end",
         "message": { "role": "assistant", "stopReason": "error", "errorMessage": "529 overloaded" },
@@ -532,8 +506,6 @@ fn aborted_compaction_emits_nothing_1335() {
 
 #[test]
 fn manual_compaction_end_failure_emits_nothing_1360() {
-    // The compact command's own failure response already rejects the turn
-    // with this error; emitting it here would show it twice.
     let record = serde_json::json!({
         "type": "compaction_end",
         "reason": "manual",
@@ -615,8 +587,6 @@ fn non_manual_compaction_success_emits_nothing_1360() {
     assert!(!mapping.finished);
 }
 
-/// The text of the single `NativeEvent::AgentText` in `events`, failing on
-/// any other event count or shape.
 fn sole_agent_text(events: &[AgentEvent]) -> &str {
     let [event] = events else {
         panic!("expected exactly one event, got {events:?}");
@@ -643,8 +613,6 @@ fn extension_error_names_extension_and_error_1335() {
     assert!(!mapping.finished);
 }
 
-/// The `NativeEvent::ToolCall` of the single event in `events`, failing on
-/// any other count or shape.
 fn sole_tool_call(events: &[AgentEvent]) -> &NativeEvent {
     let [event] = events else {
         panic!("expected exactly one event, got {events:?}");
@@ -654,7 +622,6 @@ fn sole_tool_call(events: &[AgentEvent]) -> &NativeEvent {
 
 #[test]
 fn tool_kind_and_title_map_by_tool_name_1339() {
-    // (toolName, args) -> expected (kind, title).
     for (name, args, kind, title) in [
         (
             "read",
@@ -676,7 +643,6 @@ fn tool_kind_and_title_map_by_tool_name_1339() {
         ),
         (
             "grep",
-            // `pattern` outranks `path`; the with-path case has its own test.
             serde_json::json!({ "pattern": "foo" }),
             "search",
             "grep: foo",

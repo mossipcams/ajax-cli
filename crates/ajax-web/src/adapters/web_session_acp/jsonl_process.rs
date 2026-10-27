@@ -1,13 +1,3 @@
-//! Transport for a generic child process speaking LF-delimited JSONL over
-//! stdin and stdout.
-//!
-//! Framing rules: stdout splits on LF only; one optional preceding CR is
-//! stripped per line (CRLF children work). U+2028 and U+2029 inside string
-//! values are valid JSONL content and must not split a record. A line that is
-//! not valid JSON is delivered as [`JsonlRecord::Error`] rather than dropped.
-
-// Not yet reachable from the crate surface: nothing wires this in until the
-// connection-loop task lands, so every public item is dead code for now.
 #![allow(dead_code)]
 
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -18,33 +8,20 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-/// Bounded tail of the child's stderr kept for diagnostics.
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
 
-/// How long `Drop` gives an already-closing child before killing it.
 const DROP_GRACE: Duration = Duration::from_secs(2);
 
-/// Maximum bytes (not including the terminating LF) one stdout line may hold
-/// before the reader discards it as an over-sized record. Bounds the reader's
-/// in-flight buffer so a child that never sends an LF cannot grow memory.
 const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
-/// One item delivered by the stdout reader thread of [`JsonlProcess`].
 #[derive(Debug)]
 pub enum JsonlRecord {
-    /// A stdout line that parsed as JSON.
     Record(Value),
-    /// A stdout line that was not valid JSON; carries the raw (lossily decoded)
-    /// text with the trailing LF (and one optional CR) already stripped.
     Error(String),
-    /// The child's stdout reached EOF; delivered exactly once per process.
     Exited,
 }
 
-/// A spawned child process with its JSONL transport wiring in place.
 pub struct JsonlProcess {
-    // `Option` so `close_stdin` can take (and drop) the handle: `ChildStdin`
-    // has no `close()`, dropping it closes the pipe.
     stdin: Option<ChildStdin>,
     records: mpsc::Receiver<JsonlRecord>,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
@@ -53,16 +30,11 @@ pub struct JsonlProcess {
 }
 
 impl JsonlProcess {
-    /// Spawn an agent `program` with `args` (for example `--mode rpc …` for the Pi RPC
-    /// child) in `cwd`, inside nono when the agent sandbox is on. Fails closed:
-    /// a sandbox that cannot be set up is an error, never an unsandboxed spawn.
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
         let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd)?;
         Self::spawn_unsandboxed(&program, &args, cwd)
     }
 
-    /// Spawn `program` with `args` in `cwd` without the agent sandbox. Only for
-    /// non-agent helpers that must keep their current behaviour.
     pub fn spawn_unsandboxed(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
         let mut command = Command::new(program);
         command
@@ -71,7 +43,6 @@ impl JsonlProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // Run as our own process-group leader so drop can kill the whole tree.
         super::process_group::own_group(&mut command);
         let mut child = command.spawn()?;
 
@@ -103,44 +74,32 @@ impl JsonlProcess {
         })
     }
 
-    /// OS process id of the child; useful for verifying it was reaped.
     pub fn child_id(&self) -> u32 {
         self.child.id()
     }
 
-    /// OS process id of the child, for recording it so a restarted host can clean up.
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
 
-    /// Wait for the next stdout record. A `RecvError` means the reader thread
-    /// finished (EOF already delivered [`JsonlRecord::Exited`]).
     pub fn recv(&self) -> Result<JsonlRecord, mpsc::RecvError> {
         self.records.recv()
     }
 
-    /// Poll for the next stdout record without blocking.
     pub fn try_recv(&self) -> Result<JsonlRecord, mpsc::TryRecvError> {
         self.records.try_recv()
     }
 
-    /// The stderr bytes retained so far (bounded to the last 4 KiB), decoded
-    /// lossily. Never mixes into the stdout record channel.
     pub fn stderr_tail(&self) -> String {
         let tail = self.stderr_tail.lock().expect("stderr tail lock poisoned");
         String::from_utf8_lossy(&tail).into_owned()
     }
 
-    /// Write one command: a fresh unique string `id`, `type` set to
-    /// `command_type`, plus the extra fields from `fields`, serialized as one
-    /// JSON object followed by LF. Returns the id; the caller correlates it
-    /// against the child's `{ "type": "response", "id": … }` record itself.
     pub fn send(&mut self, command_type: &str, fields: Value) -> Result<String, String> {
         let mut object = Self::command_fields(fields)?;
 
         self.next_id += 1;
         let id = format!("ajax-rpc-{}", self.next_id);
-        // Ours wins: never let the caller clobber the framing keys.
         object.insert("type".to_owned(), Value::String(command_type.to_owned()));
         object.insert("id".to_owned(), Value::String(id.clone()));
 
@@ -148,9 +107,6 @@ impl JsonlProcess {
         Ok(id)
     }
 
-    /// Write one command with a caller-chosen `id` (for responses such as
-    /// Pi's `extension_ui_response`, which must echo the request's id).
-    /// Same object shape and framing-key protection as [`Self::send`].
     pub fn send_with_id(
         &mut self,
         command_type: &str,
@@ -159,14 +115,12 @@ impl JsonlProcess {
     ) -> Result<(), String> {
         let mut object = Self::command_fields(fields)?;
 
-        // Ours wins: never let the caller clobber the framing keys.
         object.insert("type".to_owned(), Value::String(command_type.to_owned()));
         object.insert("id".to_owned(), Value::String(id.to_owned()));
 
         self.write_record(object)
     }
 
-    /// Extract `fields` as a JSON object map, rejecting non-object values.
     fn command_fields(fields: Value) -> Result<serde_json::Map<String, Value>, String> {
         match fields {
             Value::Object(extra) => Ok(extra),
@@ -178,9 +132,6 @@ impl JsonlProcess {
         }
     }
 
-    /// Serialize one fully assembled command object and write it, plus LF,
-    /// to the child stdin, flushing. The caller owns id allocation and
-    /// framing-key insertion; this only owns the bytes on the wire.
     fn write_record(&mut self, object: serde_json::Map<String, Value>) -> Result<(), String> {
         let mut line = serde_json::to_string(&Value::Object(object))
             .map_err(|error| format!("serialize command: {error}"))?;
@@ -198,23 +149,13 @@ impl JsonlProcess {
         Ok(())
     }
 
-    /// Close the child's stdin to request orderly shutdown. A well-behaved child exits
-    /// cleanly with code 0 once its stdin closes; the reader thread then
-    /// delivers [`JsonlRecord::Exited`] exactly once. Safe to call more than
-    /// once: after the first call the stdin handle is simply gone.
     pub fn close_stdin(&mut self) {
-        // Dropping the handle closes the pipe; there is no explicit `close()`.
         self.stdin.take();
     }
 }
 
 impl Drop for JsonlProcess {
     fn drop(&mut self) {
-        // Close stdin (idempotent), give a child that is already exiting a
-        // brief grace period, then kill the whole process group. `Child::wait`
-        // reaps the leader in every path, so no zombie survives this struct's
-        // lifetime; killing the group also takes down any grandchildren the
-        // leader spawned (issue #1298).
         let pid = self.child.id();
         self.stdin.take();
 
@@ -222,12 +163,11 @@ impl Drop for JsonlProcess {
         loop {
             match self.child.try_wait() {
                 Ok(Some(_)) => {
-                    // Gracefully exited, but it may have left grandchildren behind.
                     super::process_group::kill_group(pid);
                     return;
                 }
                 Ok(None) => {}
-                Err(_) => break, // status no longer available; kill and fall through
+                Err(_) => break,
             }
             if Instant::now() >= deadline {
                 break;
@@ -236,27 +176,15 @@ impl Drop for JsonlProcess {
         }
 
         super::process_group::kill_group(pid);
-        let _ = self.child.kill(); // fallback: group kill is best-effort via kill(1)
-        let _ = self.child.wait(); // reaps; errors (e.g. double wait) are fine here
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
-/// Stream stdout as LF-delimited JSONL onto `sender`, delivering exactly one
-/// [`JsonlRecord::Exited`] at EOF, then dropping the sender so receivers see
-/// a disconnected channel. Line length is bounded by [`MAX_RECORD_BYTES`].
 fn read_stdout_lines(stdout: impl Read + Send, sender: &mpsc::Sender<JsonlRecord>) {
     read_stdout_lines_bounded(stdout, sender, MAX_RECORD_BYTES);
 }
 
-/// The bounded form of [`read_stdout_lines`] with an explicit per-line limit,
-/// exposed for tests that exercise the over-sized path with a small cap.
-///
-/// The bound is applied *on the read*: each line is read through
-/// `take(max_bytes + 1)`, so the buffer can never grow past one byte more than
-/// the limit. A line with no LF within the first `max_bytes + 1` bytes yields
-/// exactly one [`JsonlRecord::Error`]; the remainder of that line is drained
-/// from the buffered reader without being buffered, so normal parsing resumes
-/// on the next line.
 pub(super) fn read_stdout_lines_bounded(
     stdout: impl Read + Send,
     sender: &mpsc::Sender<JsonlRecord>,
@@ -271,14 +199,8 @@ pub(super) fn read_stdout_lines_bounded(
             .take(max_bytes as u64 + 1)
             .read_until(b'\n', &mut bytes)
         {
-            Ok(0) => break, // EOF: nothing more will arrive on this pipe
+            Ok(0) => break,
             Ok(_) if bytes.last() == Some(&b'\n') || bytes.len() <= max_bytes => {
-                // A complete line within the limit — `take` counts the LF in
-                // `max_bytes + 1`, so at most `max_bytes` content bytes are
-                // read — or a final line at EOF without a trailing LF.
-                // Byte-level framing: split on LF only, then strip one optional
-                // preceding CR. Decoding with `from_utf8_lossy` means U+2028 /
-                // U+2029 and invalid bytes can never break the frame.
                 let mut line: &[u8] = bytes.as_slice();
                 if line.last() == Some(&b'\n') {
                     line = &line[..line.len() - 1];
@@ -290,55 +212,44 @@ pub(super) fn read_stdout_lines_bounded(
 
                 let record = match serde_json::from_str::<Value>(&text) {
                     Ok(value) => JsonlRecord::Record(value),
-                    Err(_) => {
-                        // Non-JSON output is a protocol anomaly, not data loss:
-                        // deliver it as an Error record for the caller to judge.
-                        JsonlRecord::Error(text.into_owned())
-                    }
+                    Err(_) => JsonlRecord::Error(text.into_owned()),
                 };
                 if sender.send(record).is_err() {
-                    break; // receiver gone: stop draining this pipe
+                    break;
                 }
             }
             Ok(_) => {
-                // Over-sized: no LF within the first `max_bytes + 1` bytes.
-                // Deliver exactly one Error, then discard the rest of this
-                // line without buffering it, so the buffer never grows.
                 let oversized = format!("jsonl line exceeds {max_bytes} bytes; discarded");
                 if sender.send(JsonlRecord::Error(oversized)).is_err() {
-                    break; // receiver gone: stop draining this pipe
+                    break;
                 }
                 let drained_to_eof = loop {
                     match reader.fill_buf() {
                         Ok(buf) => {
                             if buf.is_empty() {
-                                break true; // EOF while discarding
+                                break true;
                             }
                             if let Some(pos) = buf.iter().position(|b| *b == b'\n') {
                                 reader.consume(pos + 1);
-                                break false; // line discarded; resume normal reads
+                                break false;
                             }
                             let len = buf.len();
-                            reader.consume(len); // no LF in view: consume and keep draining
+                            reader.consume(len);
                         }
-                        Err(_) => break true, // read error while discarding: like EOF
+                        Err(_) => break true,
                     }
                 };
                 if drained_to_eof {
                     break;
                 }
             }
-            Err(_) => break, // underlying read error: treat like EOF below
+            Err(_) => break,
         }
     }
 
-    // EOF delivers Exited exactly once; if the receiver is already gone this
-    // send fails and that is fine.
     let _ = sender.send(JsonlRecord::Exited);
 }
 
-/// Drain the child's stderr into `tail`, retaining only the last
-/// [`STDERR_TAIL_BYTES`] bytes. Stderr never enters the record channel.
 fn drain_stderr(stderr: impl Read + Send, tail: &Mutex<Vec<u8>>) {
     let mut reader = BufReader::new(stderr);
     let mut chunk = [0_u8; 1024];
@@ -354,7 +265,7 @@ fn drain_stderr(stderr: impl Read + Send, tail: &Mutex<Vec<u8>>) {
                     kept.drain(..excess);
                 }
             }
-            Err(_) => break, // nothing more to retain once the pipe errors out
+            Err(_) => break,
         }
     }
 }

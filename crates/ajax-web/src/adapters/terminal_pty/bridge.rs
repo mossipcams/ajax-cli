@@ -223,8 +223,6 @@ pub(crate) async fn send_error_and_close(socket: &mut WebSocket, error: String) 
     let _ = socket.send(Message::Close(None)).await;
 }
 
-/// Run a tmux command off the async worker thread. A slow or hung tmux would
-/// otherwise stall every other terminal and session task on that worker.
 pub(crate) async fn run_tmux_command(
     command: &TmuxCommand,
 ) -> std::io::Result<std::process::Output> {
