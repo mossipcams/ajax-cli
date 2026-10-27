@@ -184,6 +184,25 @@ fn backlog_retry_backs_off_from_two_seconds_to_a_thirty_second_cap() {
 }
 
 #[test]
+fn backlog_formed_by_an_append_failure_waits_the_initial_delay_before_retrying() {
+    let start = Instant::now();
+    let mut backoff = BacklogRetryBackoff::default();
+    backoff.record_failure_if_unscheduled(start);
+
+    assert!(
+        !backoff.is_due(start + Duration::from_millis(1999)),
+        "the first tick after an append failure must not retry the backlog"
+    );
+    assert!(backoff.is_due(start + Duration::from_secs(2)));
+
+    backoff.record_failure_if_unscheduled(start + Duration::from_secs(1));
+    assert!(
+        backoff.is_due(start + Duration::from_secs(2)),
+        "a backlog that grows while a retry is scheduled keeps the schedule"
+    );
+}
+
+#[test]
 fn backlog_retry_backoff_resets_after_a_successful_commit() {
     let start = Instant::now();
     let mut backoff = BacklogRetryBackoff::default();

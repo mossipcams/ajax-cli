@@ -277,6 +277,8 @@ impl TaskSessionState {
             &rewrites,
         ) {
             self.unpersisted = filtered;
+            self.backlog_retry
+                .record_failure_if_unscheduled(Instant::now());
             let reason = format!("transcript could not be saved: {error}");
             self.evidence
                 .note_transcript_durability_fault(reason.clone());

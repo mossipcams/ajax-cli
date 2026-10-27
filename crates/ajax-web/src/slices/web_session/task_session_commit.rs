@@ -25,6 +25,12 @@ impl BacklogRetryBackoff {
         self.next_attempt = Some(now + delay);
     }
 
+    pub(super) fn record_failure_if_unscheduled(&mut self, now: Instant) {
+        if self.next_attempt.is_none() {
+            self.record_failure(now);
+        }
+    }
+
     pub(super) fn record_success(&mut self) {
         *self = Self::default();
     }
