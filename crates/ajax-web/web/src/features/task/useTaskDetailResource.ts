@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, fetchDetail, requestId } from "@/shared/lib/api";
 import { queryKeys } from "@/shared/lib/queryClient";
+import { REFRESH_INTERVAL_TERMINAL_MS } from "@/shared/lib/polling";
 import type { BrowserCockpitView, BrowserTaskDetail, RemoteResource } from "@/shared/lib/types";
 import { useTaskOperationMutation } from "./useTaskOperationMutation";
 
@@ -43,6 +44,7 @@ export function useTaskDetailResource(
       return data;
     },
     enabled: Boolean(handle),
+    refetchInterval: REFRESH_INTERVAL_TERMINAL_MS,
   });
 
   useEffect(() => {

@@ -11,6 +11,8 @@ use super::{
     SessionServerEvent, SessionStorage,
 };
 
+pub(crate) type DeferredActivityPending = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 async fn send_command<T>(
     tx: &TaskSessionSender,
     build: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> TaskSessionCommand,
@@ -42,6 +44,7 @@ pub(crate) struct TaskSessionDirectory {
     ownership: std::sync::Arc<ExecutionOwnership>,
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
+    deferred_activity_pending: Mutex<Option<DeferredActivityPending>>,
     headless_scanned: std::sync::atomic::AtomicBool,
     headless_handed_out: Mutex<HashSet<String>>,
 }
@@ -55,6 +58,7 @@ impl TaskSessionDirectory {
             ownership,
             storage,
             report_activity: Mutex::new(None),
+            deferred_activity_pending: Mutex::new(None),
             headless_scanned: std::sync::atomic::AtomicBool::new(false),
             headless_handed_out: Mutex::new(HashSet::new()),
         })
@@ -62,6 +66,10 @@ impl TaskSessionDirectory {
 
     pub(crate) fn set_report_session_activity(&self, report: ReportSessionActivity) {
         *self.report_activity.lock().unwrap() = Some(report);
+    }
+
+    pub(crate) fn set_deferred_activity_pending(&self, pending: DeferredActivityPending) {
+        *self.deferred_activity_pending.lock().unwrap() = Some(pending);
     }
 
     pub(crate) fn startup_dispatch_handles(&self) -> Result<Vec<String>, String> {
@@ -138,6 +146,9 @@ impl TaskSessionDirectory {
         };
         let mut failed = Vec::new();
         for handle in self.ownership.take_recovered_handles() {
+            if self.has_live_actor(&handle) || self.run_started_this_boot(&handle) {
+                continue;
+            }
             if !report(&handle, super::SessionActivity::TurnFailed) {
                 failed.push(handle);
             }
@@ -145,8 +156,23 @@ impl TaskSessionDirectory {
         self.ownership.requeue_recovered_handles(failed);
     }
 
+    fn has_live_actor(&self, handle: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(handle)
+    }
+
+    fn run_started_this_boot(&self, handle: &str) -> bool {
+        matches!(
+            self.storage.registry_store().latest_run_for_task(handle),
+            Ok(Some(run)) if run.owner_boot_id.as_deref() == Some(self.ownership.boot_id())
+        )
+    }
+
     fn report_activity_for_spawn(&self) -> Option<ReportSessionActivity> {
         self.report_activity.lock().unwrap().clone()
+    }
+
+    fn deferred_activity_pending_for_spawn(&self) -> Option<DeferredActivityPending> {
+        self.deferred_activity_pending.lock().unwrap().clone()
     }
 
     #[cfg(test)]
@@ -166,6 +192,7 @@ impl TaskSessionDirectory {
             handle.to_string(),
             self.storage.clone(),
             self.report_activity_for_spawn(),
+            self.deferred_activity_pending_for_spawn(),
             self.ownership.clone(),
         );
         sessions.insert(
@@ -202,6 +229,7 @@ impl TaskSessionDirectory {
             handle.to_string(),
             self.storage.clone(),
             self.report_activity_for_spawn(),
+            self.deferred_activity_pending_for_spawn(),
             self.ownership.clone(),
         );
         sessions.insert(

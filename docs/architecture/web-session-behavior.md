@@ -427,7 +427,7 @@ append the same authentication error repeatedly.
   holders, no in-flight turn, empty host queue). That keeps host exit and late
   ACP events observable before reconnect and avoids unnecessary respawn on
   backgrounded tabs.
-- Idle LRU eviction must not drop slots with a non-empty host queue **or an in-flight turn**.
+- Idle LRU eviction must not drop slots with a non-empty host queue, an in-flight turn, **or a held background level**. The hold has no upper bound: a long-running background shell keeps its ACP child alive past `MAX_IDLE_SESSIONS`.
 - The per-task Tokio command loop continues after the last WebSocket subscriber
   detaches while a turn is in flight or the host queue is non-empty, and keeps
   draining idle grace-retained slots until eviction or shutdown.
@@ -973,6 +973,15 @@ only the chat live head knew a turn was in flight.
 - Only tasks with `skip_interactive_agent()` accept this evidence. An interactive
   tmux task is the supervisor's to observe, and two producers writing one field
   is how a status starts oscillating.
+- An actor that ends while its last report was running reports `TurnFailed`
+  (`Agent stopped`), so the card does not stay `Agent working`. A drop or remove
+  (`Shutdown { close: true }`) reports nothing: the task is being removed.
+- Startup settle: a chat whose persisted status reads running and that has no run
+  owned by this boot is reported `TurnFailed` once the execution owner is claimed. A
+  chat that gains a live actor or a run from this boot before that report is skipped.
+- First-attach settle: a fresh actor whose persisted status reads running reports
+  `TurnFailed`, unless a deferred report for that chat is still queued in the
+  control-lane backlog; the queued report then decides the status.
 - Reporting is best-effort and off the turn's critical path: a lost race with
   another writer defers the transition and retries on the session poll tick and
   on outbound collect without blocking the session loop or waiting for another

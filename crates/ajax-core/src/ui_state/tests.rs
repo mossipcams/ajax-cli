@@ -1,5 +1,6 @@
 use super::{
     attention_band, derive_operator_status, AttentionBand, TaskStatus, AGENT_PROCESS_ALIVE_KEY,
+    SUMMARY_BACKGROUND_WORK_RUNNING,
 };
 use crate::{
     lifecycle::{
@@ -361,6 +362,44 @@ fn active_lifecycle_with_tests_running_live_status_is_running() {
     task.live_status = Some(LiveObservation::new(LiveStatusKind::TestsRunning, "tests"));
 
     assert_eq!(derive_operator_status(&task).status, TaskStatus::Running);
+}
+
+#[test]
+fn background_work_observation_keeps_its_running_explanation() {
+    let mut task = base_task();
+    mark_active(&mut task).unwrap();
+    crate::live::apply_observation_at(
+        &mut task,
+        LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            SUMMARY_BACKGROUND_WORK_RUNNING,
+        ),
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+    );
+
+    let status = derive_operator_status(&task);
+
+    assert_eq!(status.status, TaskStatus::Running);
+    assert_eq!(
+        status.explanation.as_deref(),
+        Some(SUMMARY_BACKGROUND_WORK_RUNNING)
+    );
+}
+
+#[test]
+fn plain_agent_running_observation_keeps_agent_working_explanation() {
+    let mut task = base_task();
+    mark_active(&mut task).unwrap();
+    crate::live::apply_observation_at(
+        &mut task,
+        LiveObservation::new(LiveStatusKind::AgentRunning, "Agent working"),
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+    );
+
+    let status = derive_operator_status(&task);
+
+    assert_eq!(status.status, TaskStatus::Running);
+    assert_eq!(status.explanation.as_deref(), Some("Agent working"));
 }
 
 #[test]

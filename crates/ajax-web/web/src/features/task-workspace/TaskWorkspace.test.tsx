@@ -364,6 +364,24 @@ describe("TaskWorkspace", () => {
       expect(onMutated).toHaveBeenCalledTimes(afterRunning);
     });
 
+    it("keeps refetching a waiting status while the stream is busy, then stops once running", () => {
+      const onMutated = vi.fn();
+      const view = render(chatTree("waiting", onMutated));
+      emit(false);
+      emit(true);
+      const afterFlip = onMutated.mock.calls.length;
+
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 1);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(onMutated).toHaveBeenCalledTimes(afterFlip + 2);
+
+      view.rerender(chatTree("running", onMutated));
+      const afterRunning = onMutated.mock.calls.length;
+      act(() => vi.advanceTimersByTime(3000));
+      expect(onMutated).toHaveBeenCalledTimes(afterRunning);
+    });
+
     it("does not interval-refetch when the stream is not busy", () => {
       const onMutated = vi.fn();
       render(chatTree("idle", onMutated));

@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use ajax_core::registry::SqliteRegistryStore;
+use ajax_core::adapters::acp_launch_for_agent;
+use ajax_core::models::{LiveStatusKind, Task};
+use ajax_core::registry::{Registry, SqliteRegistryStore};
 
 use super::SessionServerEvent;
 use crate::adapters::web_session_store::prompt_ledger as ledger_module;
@@ -94,7 +96,68 @@ pub(crate) fn recover_interrupted_prompts(
             }
         }
     }
+    settle_running_chats(store, current_boot_id, &mut result);
     result
+}
+
+fn settle_running_chats(
+    store: &SqliteRegistryStore,
+    current_boot_id: &str,
+    result: &mut RecoveryResult,
+) {
+    let registry = match store.load_tasks_only() {
+        Ok(registry) => registry,
+        Err(error) => {
+            tracing::warn!(target: "ajax_web", %error, "startup recovery: cannot load tasks");
+            result.complete = false;
+            return;
+        }
+    };
+    for task in registry.list_tasks() {
+        if !persisted_chat_running(task) {
+            continue;
+        }
+        let handle = task.qualified_handle();
+        if result.recovered_handles.contains(&handle) {
+            continue;
+        }
+        match store.latest_run_for_task(&handle) {
+            Ok(Some(run)) if run.owner_boot_id.as_deref() == Some(current_boot_id) => continue,
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    target: "ajax_web",
+                    handle = %handle,
+                    %error,
+                    "startup recovery: cannot read run row for running chat"
+                );
+                result.complete = false;
+                continue;
+            }
+        }
+        result.recovered_handles.push(handle);
+    }
+}
+
+pub(super) fn persisted_chat_running(task: &Task) -> bool {
+    task.live_status.as_ref().is_some_and(|live| {
+        matches!(
+            live.kind,
+            LiveStatusKind::AgentRunning
+                | LiveStatusKind::CommandRunning
+                | LiveStatusKind::TestsRunning
+        )
+    }) && task.skip_interactive_agent()
+        && acp_launch_for_agent(task.selected_agent).is_some()
+}
+
+pub(super) fn persisted_chat_running_for(store: &SqliteRegistryStore, handle: &str) -> bool {
+    store.load_tasks_only().is_ok_and(|registry| {
+        registry
+            .list_tasks()
+            .into_iter()
+            .any(|task| task.qualified_handle() == handle && persisted_chat_running(task))
+    })
 }
 
 pub(crate) struct QueuedScan {

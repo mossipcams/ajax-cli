@@ -40,6 +40,18 @@ const CONTROL_LANE_BUSY_ERROR: &str = "control lane busy; session activity repor
 pub(crate) type DeferredActivityReports =
     Mutex<VecDeque<(String, crate::slices::web_session::SessionActivity)>>;
 
+pub(crate) fn deferred_activity_pending(
+    deferred: Arc<DeferredActivityReports>,
+) -> impl Fn(&str) -> bool + Send + Sync + 'static {
+    move |handle| {
+        deferred
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|(queued, _)| queued == handle)
+    }
+}
+
 pub(crate) fn moonshine_provider_from_config(config: &Config) -> Arc<Mutex<MoonshineProvider>> {
     Arc::new(Mutex::new(MoonshineProvider::new(
         config.stt.provider_command.clone(),
@@ -370,7 +382,8 @@ where
                 let next = deferred
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .pop_front();
+                    .front()
+                    .cloned();
                 let Some((handle, activity)) = next else {
                     break;
                 };
@@ -392,6 +405,10 @@ where
                         "deferred session activity report panicked"
                     ),
                 }
+                deferred
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front();
             }
         });
     }
@@ -403,10 +420,13 @@ where
     {
         let state = self.clone();
         let deferred: Arc<DeferredActivityReports> = Arc::new(Mutex::new(VecDeque::new()));
+        let pending = Arc::clone(&deferred);
         self.task_session_directory
             .set_report_session_activity(Arc::new(move |handle, activity| {
                 state.report_or_defer_task_session_activity(&deferred, handle, activity)
             }));
+        self.task_session_directory
+            .set_deferred_activity_pending(Arc::new(deferred_activity_pending(pending)));
     }
 
     pub(crate) fn persist_task_session_model(

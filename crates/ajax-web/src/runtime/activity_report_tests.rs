@@ -154,6 +154,63 @@ async fn free_control_lane_applies_activity_synchronously() {
     assert!(deferred.lock().unwrap().is_empty());
 }
 
+#[test]
+fn deferred_activity_pending_matches_only_queued_handles() {
+    let deferred: Arc<super::state::DeferredActivityReports> =
+        Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let pending = super::state::deferred_activity_pending(Arc::clone(&deferred));
+    deferred
+        .lock()
+        .unwrap()
+        .push_back(("web/fix-login".to_string(), SessionActivity::TurnStarted));
+
+    assert!(pending("web/fix-login"));
+    assert!(!pending("web/other"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deferred_activity_stays_pending_until_it_is_applied() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, _cookie, _app) = app_with(context, TestBridge::default(), "deferred-activity-d");
+    let deferred = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let pending = super::state::deferred_activity_pending(Arc::clone(&deferred));
+
+    let lane = state.control_lane.lock().await;
+    let state_for_report = state.clone();
+    let deferred_for_report = Arc::clone(&deferred);
+    let accepted = tokio::spawn(async move {
+        state_for_report.report_or_defer_task_session_activity(
+            &deferred_for_report,
+            "web/fix-login",
+            SessionActivity::TurnStarted,
+        )
+    })
+    .await
+    .expect("report worker should not panic");
+    assert!(accepted, "TurnStarted must be accepted while lane is busy");
+    let applying = state.shared();
+    drop(lane);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        pending("web/fix-login"),
+        "a queued report must stay pending while the drainer applies it"
+    );
+    drop(applying);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while live_kind(&state, "web/fix-login") != Some(LiveStatusKind::AgentRunning) {
+        assert!(
+            Instant::now() < deadline,
+            "drainer never applied the deferred report; live status is {:?}",
+            live_kind(&state, "web/fix-login")
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!pending("web/fix-login"));
+}
+
 #[derive(Clone)]
 struct DivergedDiskBridge {
     disk: ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,

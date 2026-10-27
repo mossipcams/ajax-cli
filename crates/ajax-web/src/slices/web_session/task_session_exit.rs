@@ -18,6 +18,15 @@ pub(super) fn is_acp_exit_error(event: &SessionServerEvent) -> bool {
     )
 }
 
+pub(super) fn settle_running_activity_on_end(state: &mut TaskSessionState) {
+    if !state.evidence.activity_reporter.last_reported_running() {
+        return;
+    }
+    state
+        .evidence
+        .report(&state.qualified_handle, super::SessionActivity::TurnFailed);
+}
+
 pub(super) fn persist_prompt_ledger(state: &TaskSessionState) -> Result<(), SessionError> {
     crate::adapters::web_session_store::prompt_ledger::try_persist(
         &state.storage.registry_store(),

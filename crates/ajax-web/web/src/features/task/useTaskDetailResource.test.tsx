@@ -4,6 +4,7 @@ import taskDetailFixture from "@/fixtures/task-detail.json";
 import type { BrowserCockpitView, BrowserTaskDetail } from "@/shared/lib/types";
 import { ApiError } from "@/shared/lib/api";
 import { IncompatibleResponseError } from "@/shared/lib/contracts";
+import { REFRESH_INTERVAL_TERMINAL_MS } from "@/shared/lib/polling";
 import { useTaskDetailResource } from "./useTaskDetailResource";
 
 const taskDetail = taskDetailFixture as BrowserTaskDetail;
@@ -279,6 +280,31 @@ describe("useTaskDetailResource", () => {
     rerender({ handle: "web/fix-login" });
     rerender({ handle: "web/fix-login" });
     expect(result.current.reload).toBe(firstReload);
+  });
+
+  it("picks up a server status change while the stream is idle within one poll interval", async () => {
+    vi.useFakeTimers();
+    try {
+      postOperation.mockResolvedValue({ ok: false, response: {} });
+      fetchDetail
+        .mockResolvedValueOnce({ ...taskDetail, status: "idle" })
+        .mockResolvedValue({ ...taskDetail, status: "waiting" });
+      const deps = stableDeps();
+      const { result } = renderHook(() => useTaskDetailResource("web/fix-login", deps));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(result.current.detail.data?.status).toBe("idle");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_TERMINAL_MS);
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(result.current.detail.data?.status).toBe("waiting");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("posts resume at most once while the same handle stays open", async () => {
