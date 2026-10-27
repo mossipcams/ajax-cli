@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    process::ExitStatus,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -158,20 +159,7 @@ async fn supervise_launch<P: ProcessProtocol>(
         protocol.stdout_parser(),
     ));
 
-    let stderr_hang_detector = hang_detector.clone();
-    let stderr_events = events.clone();
-    let stderr_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Some(line) = lines.next_line().await? {
-            observe_output(stderr_hang_detector.as_ref());
-            send_event(
-                &stderr_events,
-                MonitorEvent::Process(ProcessEvent::Stderr { line }),
-            )
-            .await?;
-        }
-        Ok::<(), SupervisorError>(())
-    });
+    let stderr_task = tokio::spawn(read_stderr_lines(stderr, events.clone()));
 
     let status = tokio::select! {
         status = child.wait() => {
@@ -186,6 +174,13 @@ async fn supervise_launch<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
+                    // Terminal event before terminating: a child that ignores SIGTERM can outlast the
+                    // consumer's cancel drain. A signal-terminated child has no exit code anyway.
+                    let _ = send_event(
+                        &events,
+                        MonitorEvent::Process(ProcessEvent::Exited { code: None }),
+                    )
+                    .await;
                     terminate(&mut child).await?;
                     Err(SupervisorError::Process("process cancelled".to_string()))
                 }
@@ -262,7 +257,7 @@ fn agent_command(
 
 /// Stops the direct child the way a terminal Ctrl-C would: SIGTERM first, so a wrapper such as
 /// `nono` can forward it to the agent, then SIGKILL if it has not exited within 2 seconds.
-async fn terminate(child: &mut Child) -> Result<(), SupervisorError> {
+async fn terminate(child: &mut Child) -> Result<ExitStatus, SupervisorError> {
     if let Some(pid) = child.id() {
         // ponytail: shells out to kill(1) like ajax-web's process_group does; use nix::sys::signal::kill(Pid, SIGTERM) if nix becomes a dependency.
         let _ = std::process::Command::new("kill")
@@ -271,17 +266,14 @@ async fn terminate(child: &mut Child) -> Result<(), SupervisorError> {
             .stderr(std::process::Stdio::null())
             .status();
     }
-    if tokio::time::timeout(Duration::from_secs(2), child.wait())
-        .await
-        .is_ok()
-    {
-        return Ok(());
+    if let Ok(Ok(status)) = tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
+        return Ok(status);
     }
     child.start_kill()?;
-    tokio::time::timeout(Duration::from_secs(2), child.wait())
+    let status = tokio::time::timeout(Duration::from_secs(2), child.wait())
         .await
         .map_err(|_| SupervisorError::Process("cancelled process did not exit".to_string()))??;
-    Ok(())
+    Ok(status)
 }
 
 async fn read_stdout_lines<R>(
@@ -295,11 +287,34 @@ where
 {
     let mut lines = BufReader::new(stdout).lines();
     while let Some(line) = lines.next_line().await? {
-        observe_output(hang_detector.as_ref());
-        let event = parse_line(&line)
-            .map(MonitorEvent::Agent)
-            .unwrap_or_else(|| MonitorEvent::Process(ProcessEvent::Stdout { line }));
+        // Only parsed agent events count as progress; raw stdout is forwarded without resetting the hang timer.
+        let event = match parse_line(&line) {
+            Some(event) => {
+                observe_output(hang_detector.as_ref());
+                MonitorEvent::Agent(event)
+            }
+            None => MonitorEvent::Process(ProcessEvent::Stdout { line }),
+        };
         send_event(&events, event).await?;
+    }
+    Ok(())
+}
+
+/// Stderr never counts as progress, so this reader has no hang detector to reset.
+async fn read_stderr_lines<R>(
+    stderr: R,
+    events: mpsc::Sender<MonitorEvent>,
+) -> Result<(), SupervisorError>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+{
+    let mut lines = BufReader::new(stderr).lines();
+    while let Some(line) = lines.next_line().await? {
+        send_event(
+            &events,
+            MonitorEvent::Process(ProcessEvent::Stderr { line }),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -567,14 +582,17 @@ mod launch_tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::Arc,
+        sync::{atomic::AtomicBool, Arc, Mutex},
         time::{Duration, Instant},
     };
 
-    use ajax_core::events::AgentEvent;
+    use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::{mpsc, watch};
 
-    use super::{agent_command, supervise_launch, ProcessProtocol, SandboxInputs, StdoutParser};
+    use super::{
+        agent_command, read_stderr_lines, read_stdout_lines, send_hung_if_quiet, supervise_launch,
+        HangDetector, ProcessProtocol, SandboxInputs, StdoutParser,
+    };
     use crate::{agent::codex::CodexAdapter, SupervisorError};
 
     fn scratch_dir(name: &str) -> PathBuf {
@@ -776,5 +794,142 @@ mod launch_tests {
             !process_alive(grandchild),
             "grandchild {grandchild} survived cancel"
         );
+    }
+
+    #[tokio::test]
+    async fn issue_1237_cancel_ends_event_stream_with_terminal_event() {
+        let dir = scratch_dir("issue-1237-cancel-terminal");
+        let pid_file = dir.join("agent.pid");
+        let protocol = ShellProtocol(format!("echo $$ > {}; sleep 30", pid_file.display()));
+        let (tx, mut rx) = mpsc::channel(8);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let canceller = tokio::spawn(async move {
+            read_pid(&pid_file).await;
+            cancel_tx.send(true).unwrap();
+        });
+
+        let error = supervise_launch(
+            &protocol,
+            "ignored",
+            tx,
+            None,
+            cancel_rx,
+            None,
+            SandboxInputs {
+                enabled: false,
+                nono: || panic!("nono must not be resolved when the sandbox is off"),
+                profile_dir: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        canceller.await.unwrap();
+
+        let mut events = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = rx.recv().await {
+                events.push(event);
+            }
+        })
+        .await
+        .expect("event stream should close after cancellation");
+
+        assert!(
+            matches!(&error, SupervisorError::Process(message) if message == "process cancelled"),
+            "{error}"
+        );
+        assert!(
+            matches!(
+                events.last(),
+                Some(MonitorEvent::Process(ProcessEvent::Exited { .. }))
+            ),
+            "cancelled run ended its event stream without a terminal lifecycle event; events: {events:?}"
+        );
+    }
+
+    /// A detector whose last output was 10 seconds ago, so it is hung unless output resets it.
+    fn stale_hang_detector() -> Arc<Mutex<HangDetector>> {
+        Arc::new(Mutex::new(HangDetector::new(
+            Instant::now() - Duration::from_secs(10),
+            Duration::from_secs(1),
+        )))
+    }
+
+    /// Runs the same check as the hang task and reports whether it would emit `Hung`.
+    async fn would_report_hung(detector: &Arc<Mutex<HangDetector>>) -> bool {
+        let (tx, _rx) = mpsc::channel(1);
+        send_hung_if_quiet(Some(detector), &tx, &AtomicBool::new(false))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn unparsed_stdout_does_not_reset_hang_detection() {
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
+        let parse_line: StdoutParser = Arc::new(|_line: &str| None::<AgentEvent>);
+
+        read_stdout_lines(
+            &b"heartbeat 0\nheartbeat 1\n"[..],
+            tx,
+            Some(Arc::clone(&detector)),
+            parse_line,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "heartbeat 0".to_string()
+            }))
+        );
+        assert!(would_report_hung(&detector).await);
+    }
+
+    #[tokio::test]
+    async fn stderr_does_not_reset_hang_detection() {
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        read_stderr_lines(&b"heartbeat 0\nheartbeat 1\n"[..], tx)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Stderr {
+                line: "heartbeat 0".to_string()
+            }))
+        );
+        assert!(would_report_hung(&detector).await);
+    }
+
+    #[tokio::test]
+    async fn parsed_agent_events_keep_hang_detection_quiet() {
+        let detector = stale_hang_detector();
+        let (tx, mut rx) = mpsc::channel(8);
+        let parse_line: StdoutParser = Arc::new(|line: &str| {
+            line.strip_prefix("AGENT ").map(|text| AgentEvent::Message {
+                text: text.to_string(),
+            })
+        });
+
+        read_stdout_lines(
+            &b"AGENT tick 0\n"[..],
+            tx,
+            Some(Arc::clone(&detector)),
+            parse_line,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            rx.recv().await,
+            Some(MonitorEvent::Agent(AgentEvent::Message {
+                text: "tick 0".to_string()
+            }))
+        );
+        assert!(!would_report_hung(&detector).await);
     }
 }

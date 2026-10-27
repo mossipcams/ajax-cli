@@ -17,6 +17,7 @@ use crate::{
 };
 
 const GIT_SNAPSHOT_MIN_INTERVAL: Duration = Duration::from_millis(500);
+const CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SupervisorAgent {
@@ -187,32 +188,47 @@ async fn forward_monitor_events(
     event_log: Option<EventLog>,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<(), SupervisorError> {
+    let mut drain_deadline = None;
     loop {
-        if *cancel.borrow() {
-            break;
+        if drain_deadline.is_none() && *cancel.borrow() {
+            drain_deadline = Some(tokio::time::Instant::now() + CANCEL_DRAIN_TIMEOUT);
         }
 
-        tokio::select! {
-            biased;
-
-            changed = cancel.changed() => match changed {
-                Ok(()) if *cancel.borrow() => break,
-                Ok(()) => continue,
+        let event = match drain_deadline {
+            // After cancel, keep forwarding what the observer sends while it terminates the child
+            // (its terminal `Exited`), until the raw channel closes or the deadline passes.
+            Some(deadline) => match tokio::time::timeout_at(deadline, raw_receiver.recv()).await {
+                Ok(event) => event,
                 Err(_) => break,
             },
-            event = raw_receiver.recv() => {
-                let Some(event) = event else {
-                    break;
-                };
-                if let Some(event_log) = &event_log {
-                    if let Err(error) = event_log.append(&event) {
-                        eprintln!("ajax supervisor: failed to append event log: {error}");
-                    }
-                }
-                if events.send(event).await.is_err() {
-                    break;
-                }
+            None => tokio::select! {
+                biased;
+
+                changed = cancel.changed() => match changed {
+                    Ok(()) => continue,
+                    Err(_) => break,
+                },
+                event = raw_receiver.recv() => event,
+            },
+        };
+        let Some(event) = event else {
+            break;
+        };
+        if let Some(event_log) = &event_log {
+            if let Err(error) = event_log.append(&event) {
+                eprintln!("ajax supervisor: failed to append event log: {error}");
             }
+        }
+        // Bound the send too once draining: a full consumer channel must not hang cancellation.
+        let sent = match drain_deadline {
+            Some(deadline) => matches!(
+                tokio::time::timeout_at(deadline, events.send(event)).await,
+                Ok(Ok(()))
+            ),
+            None => events.send(event).await.is_ok(),
+        };
+        if !sent {
+            break;
         }
     }
 
@@ -411,11 +427,68 @@ mod tests {
         ));
         handle.cancel();
 
+        let mut events = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(event) = receiver.recv().await {
+                events.push(event);
+            }
+        })
+        .await
+        .expect("receiver should close after cancellation");
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
-                .await
-                .expect("receiver should close after cancellation")
-                .is_none()
+            matches!(
+                events.last(),
+                Some(MonitorEvent::Process(ProcessEvent::Exited { .. }))
+            ),
+            "cancelled run ended its event stream without a terminal lifecycle event; events: {events:?}"
+        );
+
+        let _ = handle.wait().await;
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn runtime_cancel_ends_event_stream_with_exited_event() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-runtime-cancel-exited-{}", std::process::id()));
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nsleep 10\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::codex_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let started = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("process should start")
+            .expect("monitor should emit process start");
+        assert!(matches!(
+            started,
+            MonitorEvent::Process(ProcessEvent::Started { .. })
+        ));
+        handle.cancel();
+
+        let mut events = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = receiver.recv().await {
+                events.push(event);
+            }
+        })
+        .await
+        .expect("event stream should close after cancellation");
+
+        assert!(
+            matches!(
+                events.last(),
+                Some(MonitorEvent::Process(ProcessEvent::Exited { .. }))
+            ),
+            "cancelled run ended its event stream without a terminal lifecycle event; events: {events:?}"
         );
 
         let _ = handle.wait().await;
@@ -695,5 +768,109 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
         assert!(saw_blocked);
         let _ = handle.wait().await;
         let _ = fs::remove_file(script);
+    }
+
+    /// Waits until the script writes its pid to `path`. The script writes it only after installing its trap.
+    async fn wait_for_pid_file(path: &std::path::Path) {
+        for _ in 0..400 {
+            if fs::read_to_string(path).is_ok_and(|text| text.trim().parse::<u32>().is_ok()) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("pid never written to {}", path.display());
+    }
+
+    #[tokio::test]
+    async fn runtime_cancel_delivers_exited_when_child_ignores_sigterm() {
+        let script = std::env::temp_dir().join(format!(
+            "ajax-runtime-cancel-sigterm-{}",
+            std::process::id()
+        ));
+        let pid_file = std::env::temp_dir().join(format!(
+            "ajax-runtime-cancel-sigterm-{}.pid",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&pid_file);
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ntrap '' TERM\necho $$ > {}\nsleep 30\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::codex_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let started = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("process should start")
+            .expect("monitor should emit process start");
+        assert!(matches!(
+            started,
+            MonitorEvent::Process(ProcessEvent::Started { .. })
+        ));
+        wait_for_pid_file(&pid_file).await;
+        handle.cancel();
+
+        let exited = tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(event) = receiver.recv().await {
+                if matches!(event, MonitorEvent::Process(ProcessEvent::Exited { .. })) {
+                    return true;
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+        assert!(
+            exited,
+            "SIGTERM-ignoring child delivered no Exited within 2s of cancel"
+        );
+
+        let _ = handle.wait().await;
+        let _ = fs::remove_file(script);
+        let _ = fs::remove_file(pid_file);
+    }
+
+    #[tokio::test]
+    async fn event_forwarder_cancel_bounds_send_to_stalled_consumer() {
+        let (raw_events, raw_receiver) = mpsc::channel(4);
+        // Capacity 1 and never drained: the second forwarded event has nowhere to go.
+        let (events, _stalled_consumer) = mpsc::channel(1);
+        let (cancel, cancel_rx) = watch::channel(false);
+        let forwarder = tokio::spawn(super::forward_monitor_events(
+            raw_receiver,
+            events,
+            None,
+            cancel_rx,
+        ));
+
+        // The forwarder has not run yet (current-thread runtime), so it observes cancel first.
+        raw_events
+            .send(MonitorEvent::Process(ProcessEvent::Started {
+                pid: Some(1),
+            }))
+            .await
+            .expect("raw event receiver should be open");
+        cancel.send(true).expect("cancel receiver should be open");
+        raw_events
+            .send(MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "after cancel".to_string(),
+            }))
+            .await
+            .expect("raw event receiver should be open");
+
+        tokio::time::timeout(Duration::from_secs(3), forwarder)
+            .await
+            .expect("forwarder must finish after cancel even when the consumer is stalled")
+            .expect("forwarder should join")
+            .expect("forwarder should not fail");
     }
 }
