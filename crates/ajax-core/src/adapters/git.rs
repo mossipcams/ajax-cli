@@ -153,8 +153,11 @@ impl GitAdapter {
                 local_flag = local_flag
             )
         } else {
+            // A missing local branch is already the desired end state, so skip the
+            // delete instead of letting the failed existence probe surface as a bare
+            // `sh exited with status 1` with empty stderr.
             format!(
-                "ref=\"refs/heads/$2\"; del_err=$(git -C \"$1\" show-ref --verify --quiet \"$ref\" && git -C \"$1\" branch {local_flag} \"$2\" 2>&1) || {{ printf '%s\\n' \"$del_err\" >&2; exit 1; }}"
+                "ref=\"refs/heads/$2\"; git -C \"$1\" show-ref --verify --quiet \"$ref\" || exit 0; del_err=$(git -C \"$1\" branch {local_flag} \"$2\" 2>&1) || {{ printf '%s\\n' \"$del_err\" >&2; exit 1; }}"
             )
         };
         CommandSpec::new(
@@ -484,5 +487,78 @@ origin/HEAD -> origin/main
         assert!(!command.args[1].contains("push origin --delete"));
         assert!(!command.args[1].contains("update-ref"));
         assert!(!command.args[1].contains("refs/remotes/origin"));
+    }
+
+    #[test]
+    fn delete_branch_substrate_non_ajax_branch_runs_against_real_repo() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ajax-delete-branch-test-{}-{nanos}",
+            std::process::id()
+        ));
+        let repo = root.to_string_lossy().into_owned();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args([
+                    "-c",
+                    "user.name=Ajax Test",
+                    "-c",
+                    "user.email=test@example.com",
+                ])
+                .args(args)
+                .output()
+                .expect("git should run");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir_all(&root).expect("temp repo dir should be created");
+        git(&["init", "--quiet"]);
+        git(&["commit", "--quiet", "--allow-empty", "-m", "init"]);
+        git(&["branch", "fix/present"]);
+
+        let adapter = GitAdapter::new("git");
+        let run = |branch: &str| {
+            let command = adapter.delete_branch_substrate(&repo, branch, false);
+            std::process::Command::new(&command.program)
+                .args(&command.args)
+                .output()
+                .expect("delete script should run")
+        };
+
+        let gone = run("fix/gone");
+        assert!(
+            gone.status.success(),
+            "missing local branch should be a no-op: {}",
+            String::from_utf8_lossy(&gone.stderr)
+        );
+
+        let present = run("fix/present");
+        assert!(
+            present.status.success(),
+            "existing local branch should be deleted: {}",
+            String::from_utf8_lossy(&present.stderr)
+        );
+        let still_there = std::process::Command::new("git")
+            .args([
+                "-C",
+                &repo,
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/fix/present",
+            ])
+            .status()
+            .expect("show-ref should run");
+        assert!(!still_there.success(), "fix/present should be gone");
+
+        std::fs::remove_dir_all(&root).expect("temp repo dir should be removed");
     }
 }
