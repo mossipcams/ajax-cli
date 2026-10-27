@@ -533,6 +533,22 @@ fn issue_1439_recovered_handle_with_a_live_actor_is_not_settled() {
             )
             .expect("acquire");
     });
+    let store = ajax_core::registry::SqliteRegistryStore::new(dir.join("ajax.db"));
+    let run_id = store
+        .latest_run_for_task(&handle)
+        .expect("read run")
+        .expect("acquire records a run")
+        .run_id;
+    store
+        .commit_execution(&ajax_core::registry::ExecutionCommit {
+            run_id,
+            run_update: Some(ajax_core::registry::RunUpdate {
+                owner_boot_id: Some(Some("foreign-boot".to_owned())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .expect("record foreign owner boot");
     directory
         .inner()
         .requeue_recovered_handles_for_test(vec![handle.clone()]);
