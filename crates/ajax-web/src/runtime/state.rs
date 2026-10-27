@@ -226,7 +226,11 @@ where
         &self,
         handle: &str,
         activity: crate::slices::web_session::SessionActivity,
-    ) -> Result<(), String> {
+    ) -> Result<(), String>
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
         let handle = handle.to_string();
         let state = self.clone();
         tokio::task::block_in_place(|| {
@@ -243,7 +247,11 @@ where
         &self,
         handle: &str,
         activity: crate::slices::web_session::SessionActivity,
-    ) -> Result<(), String> {
+    ) -> Result<(), String>
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
         let _lane = self
             .control_lane
             .try_lock()
@@ -256,8 +264,26 @@ where
         &self,
         handle: &str,
         activity: crate::slices::web_session::SessionActivity,
-    ) -> Result<(), String> {
-        let (mut context, runner, bridge, base_revision) = {
+    ) -> Result<(), String>
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
+        self.apply_task_session_activity(handle, activity, false)
+            .or_else(|_| self.apply_task_session_activity(handle, activity, true))
+    }
+
+    fn apply_task_session_activity(
+        &self,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+        reload: bool,
+    ) -> Result<(), String>
+    where
+        C: Send + 'static,
+        B: Send + 'static,
+    {
+        let (mut context, runner, mut bridge, base_revision) = {
             let guard = self.shared();
             (
                 guard.context.clone(),
@@ -266,6 +292,11 @@ where
                 guard.revision,
             )
         };
+        if reload {
+            bridge
+                .reload_registry_from_disk(&mut context)
+                .map_err(|error| error.to_string())?;
+        }
         crate::slices::web_session::record_session_activity(
             &mut context,
             handle,
@@ -278,7 +309,11 @@ where
             bridge,
             base_revision,
             "cockpit state changed while reporting session activity",
-        )
+        )?;
+        if reload {
+            self.cleanup_unowned_sessions();
+        }
+        Ok(())
     }
 
     /// Reports session activity without dropping it when the control lane is busy (#1472).
