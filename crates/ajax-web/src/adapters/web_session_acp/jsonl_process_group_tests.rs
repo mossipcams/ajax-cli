@@ -83,6 +83,7 @@ fn dropping_the_process_also_kills_its_grandchildren() {
 #[test]
 fn failed_reader_thread_start_kills_and_reaps_the_child() {
     FAIL_READER_SPAWN.with(|fail| fail.set(true));
+    LAST_SPAWNED_PID.with(|pid| pid.set(0));
     let result = JsonlProcess::spawn_unsandboxed(
         Path::new("sh"),
         &["-c".to_string(), "exec sleep 300".to_string()],
@@ -93,6 +94,10 @@ fn failed_reader_thread_start_kills_and_reaps_the_child() {
     assert!(
         result.is_err(),
         "spawn must fail when a reader thread cannot start"
+    );
+    assert!(
+        pid != 0,
+        "spawn must record the child pid before the reader thread starts"
     );
     let alive = pid_alive(pid);
     if alive {

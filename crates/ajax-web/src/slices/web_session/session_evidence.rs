@@ -36,8 +36,10 @@ impl SessionEvidence {
     }
 
     pub(super) fn note_transcript_durability_fault(&mut self, reason: String) {
+        if self.transcript_durability_fault.as_deref() != Some(reason.as_str()) {
+            self.pending_transcript_error_snapshot = true;
+        }
         self.transcript_durability_fault = Some(reason);
-        self.pending_transcript_error_snapshot = true;
     }
 
     pub(super) fn transcript_error(&self) -> Option<String> {
@@ -272,6 +274,26 @@ mod tests {
         evidence.flush_pending_activity_report("web/fix-login");
 
         assert!(evidence.transcript_error().is_none());
+        assert!(evidence.pending_transcript_error_snapshot);
+    }
+
+    #[test]
+    fn repeated_durability_fault_with_the_same_text_does_not_reflag_the_snapshot() {
+        let mut evidence = idle_evidence();
+        evidence
+            .note_transcript_durability_fault("transcript could not be saved: disk".to_string());
+        assert!(evidence.pending_transcript_error_snapshot);
+
+        evidence.pending_transcript_error_snapshot = false;
+        evidence
+            .note_transcript_durability_fault("transcript could not be saved: disk".to_string());
+        assert!(
+            !evidence.pending_transcript_error_snapshot,
+            "an unchanged fault must not republish the error snapshot on every retry"
+        );
+
+        evidence
+            .note_transcript_durability_fault("transcript could not be saved: full".to_string());
         assert!(evidence.pending_transcript_error_snapshot);
     }
 }

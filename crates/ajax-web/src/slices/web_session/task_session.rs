@@ -5,6 +5,7 @@ use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
 use super::session_evidence::SessionEvidence;
+use super::task_session_commit::BacklogRetryBackoff;
 use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
@@ -159,6 +160,7 @@ pub(crate) struct TaskSessionState {
     pub(super) log: TranscriptLog,
     pub(super) stored_loaded: bool,
     pub(super) unpersisted: Vec<SessionServerEvent>,
+    pub(super) backlog_retry: BacklogRetryBackoff,
     pub(super) stream_normalizer: StreamNormalizer,
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
@@ -251,7 +253,10 @@ impl TaskSessionState {
         self.commit_with_backlog(events)
     }
 
-    fn commit_with_backlog(&mut self, events: Vec<SessionServerEvent>) -> Result<(), SessionError> {
+    pub(super) fn commit_with_backlog(
+        &mut self,
+        events: Vec<SessionServerEvent>,
+    ) -> Result<(), SessionError> {
         let mut filtered = std::mem::take(&mut self.unpersisted);
         filtered.extend(events);
         if filtered.is_empty() {
@@ -280,30 +285,8 @@ impl TaskSessionState {
         self.report_committed_events(&filtered);
         self.log.mark_superseded(&cursors);
         self.log.append(filtered);
+        self.backlog_retry.record_success();
         Ok(())
-    }
-
-    pub(super) fn retry_unpersisted_backlog(&mut self) {
-        if self.unpersisted.is_empty() || self.prompts.active_prompt.is_some() {
-            return;
-        }
-        let _ = self.commit_with_backlog(Vec::new());
-    }
-
-    pub(super) fn flush_unpersisted_backlog(&mut self) {
-        if self.unpersisted.is_empty() {
-            return;
-        }
-        if self
-            .prompts
-            .active_prompt
-            .as_ref()
-            .is_some_and(|active| active.terminal.is_some())
-        {
-            try_finalize_active_prompt(self);
-        } else {
-            let _ = self.commit_with_backlog(Vec::new());
-        }
     }
 
     fn is_idle(&self) -> bool {
@@ -438,6 +421,7 @@ pub(crate) fn spawn_task_session(
             log: TranscriptLog::default(),
             stored_loaded: false,
             unpersisted: Vec::new(),
+            backlog_retry: BacklogRetryBackoff::default(),
             stream_normalizer: StreamNormalizer::default(),
             last_released: None,
             agent: AgentClient::Cursor,
