@@ -493,6 +493,36 @@ fn issue_1439_running_chat_without_dispatching_prompt_settles_on_startup() {
 
     let directory = BlockingSessionDirectory::new(dir.clone());
     let reported = record_reports(&directory, &context);
+    directory
+        .inner()
+        .requeue_recovered_handles_for_test(vec![handle.clone()]);
+    directory
+        .inner()
+        .startup_dispatch_handles()
+        .expect("startup dispatch");
+
+    assert!(
+        reported
+            .lock()
+            .expect("reported lock")
+            .contains(&SessionActivity::TurnFailed),
+        "startup must settle a running chat that has no dispatching prompt before any actor attaches"
+    );
+    assert_ne!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "a chat stuck running after a host restart must clear its status"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1439_recovered_handle_with_a_live_actor_is_not_settled() {
+    let (handle, _) = provisioned_handle_context();
+    let dir = scratch_dir("issue-1439-recovered-live-actor");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_activities(&directory);
+
     with_test_acp_program(&super::test_support::fake_acp_fixture(), || {
         directory
             .acquire(
@@ -503,18 +533,116 @@ fn issue_1439_running_chat_without_dispatching_prompt_settles_on_startup() {
             )
             .expect("acquire");
     });
+    directory
+        .inner()
+        .requeue_recovered_handles_for_test(vec![handle.clone()]);
+    directory.inner().heartbeat_execution_ownership();
 
     assert!(
-        reported
+        !reported
             .lock()
             .expect("reported lock")
             .contains(&SessionActivity::TurnFailed),
-        "startup must settle a running chat that has no dispatching prompt"
+        "a recovered chat that gained a live actor before the report must not be settled as stopped"
     );
-    assert_ne!(
-        task_status(&context, &handle),
-        TaskStatus::Running,
-        "a chat stuck running after a host restart must clear its status"
+    directory.detach_session(&handle);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1475_first_attach_waits_for_a_deferred_report() {
+    use ajax_core::registry::SqliteRegistryStore;
+
+    let (handle, context) = provisioned_handle_context();
+    let dir = scratch_dir("issue-1475-attach-deferred");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_reports(&directory, &context);
+    let pending_handle = handle.clone();
+    directory
+        .inner()
+        .set_deferred_activity_pending(Arc::new(move |candidate: &str| {
+            candidate == pending_handle
+        }));
+    let fixture = super::test_support::fake_acp_fixture();
+
+    with_test_acp_program(&fixture, || {
+        directory
+            .acquire(
+                &handle,
+                &dir,
+                "auto",
+                ajax_core::models::AgentClient::Cursor,
+            )
+            .expect("first acquire");
+    });
+    directory.detach_session(&handle);
+
+    record_session_activity(
+        &mut context.lock().expect("context lock"),
+        &handle,
+        SessionActivity::TurnStarted,
+        SystemTime::now(),
+    )
+    .expect("turn started");
+    SqliteRegistryStore::new(dir.join("ajax.db"))
+        .save(&context.lock().expect("context lock").registry)
+        .expect("seed registry");
+
+    with_test_acp_program(&fixture, || {
+        directory
+            .acquire(
+                &handle,
+                &dir,
+                "auto",
+                ajax_core::models::AgentClient::Cursor,
+            )
+            .expect("second acquire");
+    });
+    directory.detach_session(&handle);
+
+    assert!(
+        !reported
+            .lock()
+            .expect("reported lock")
+            .contains(&SessionActivity::TurnFailed),
+        "a first attach must not settle while a deferred report for the chat is still queued"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn issue_1439_dropping_a_chat_mid_turn_reports_no_settle() {
+    let (handle, _) = provisioned_handle_context();
+    let dir = scratch_dir("issue-1439-drop-running");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_activities(&directory);
+
+    with_test_acp_program(&super::test_support::fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &handle,
+                &dir,
+                "auto",
+                ajax_core::models::AgentClient::Cursor,
+            )
+            .expect("acquire");
+    });
+    directory.record(
+        &handle,
+        SessionServerEvent::PromptAccepted {
+            client_message_id: "c1".to_string(),
+        },
+    );
+    wait_for_last_activity(&reported, SessionActivity::TurnStarted);
+
+    directory.drop_session(&handle);
+
+    assert!(
+        !reported
+            .lock()
+            .expect("reported lock")
+            .contains(&SessionActivity::TurnFailed),
+        "a chat dropped mid-turn is removed, so its actor must not settle a status"
     );
     let _ = std::fs::remove_dir_all(dir);
 }

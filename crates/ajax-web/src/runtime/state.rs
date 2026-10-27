@@ -368,9 +368,18 @@ where
     {
         let state = self.clone();
         let deferred: Arc<DeferredActivityReports> = Arc::new(Mutex::new(VecDeque::new()));
+        let pending = Arc::clone(&deferred);
         self.task_session_directory
             .set_report_session_activity(Arc::new(move |handle, activity| {
                 state.report_or_defer_task_session_activity(&deferred, handle, activity)
+            }));
+        self.task_session_directory
+            .set_deferred_activity_pending(Arc::new(move |handle: &str| {
+                pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                    .any(|(queued, _)| queued == handle)
             }));
     }
 

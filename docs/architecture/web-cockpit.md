@@ -150,8 +150,10 @@ session stream's `busy` flag only stands in for an idle or done server status (t
 has not caught up with a just-sent prompt); a running, waiting, or errored server status always
 wins, and `busy` drives the head alone when task detail is unavailable. Each change of `busy`
 triggers an immediate task-detail refresh, and while a busy stream and a non-running server
-status still disagree, the refresh repeats every 1 second, so the head converges to server
-truth without waiting for the 10 second terminal poll. The head label stays `Working` for a server-running task. The server
+status still disagree, the refresh repeats every 1 second; `waiting` and `error` count as settled,
+so the loop stops on them too, and the head converges to server truth without waiting for the
+10 second terminal poll. Task detail also refetches on that 10 second cockpit cadence, so a server status that
+changes while the stream is idle still reaches the head. The head label stays `Working` for a server-running task. The server
 explanation is shown as the detail line under it only when the stream is idle (for example
 "Background work running"); a busy stream shows live activity instead. The quiet `No recent
 activity` state applies only to a busy stream, so a server-running head with an idle stream

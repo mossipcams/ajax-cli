@@ -1,5 +1,6 @@
 use super::{
     attention_band, derive_operator_status, AttentionBand, TaskStatus, AGENT_PROCESS_ALIVE_KEY,
+    SUMMARY_BACKGROUND_WORK_RUNNING,
 };
 use crate::{
     lifecycle::{
@@ -369,7 +370,10 @@ fn background_work_observation_keeps_its_running_explanation() {
     mark_active(&mut task).unwrap();
     crate::live::apply_observation_at(
         &mut task,
-        LiveObservation::new(LiveStatusKind::AgentRunning, "Background work running"),
+        LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            SUMMARY_BACKGROUND_WORK_RUNNING,
+        ),
         std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
     );
 
@@ -378,7 +382,7 @@ fn background_work_observation_keeps_its_running_explanation() {
     assert_eq!(status.status, TaskStatus::Running);
     assert_eq!(
         status.explanation.as_deref(),
-        Some("Background work running")
+        Some(SUMMARY_BACKGROUND_WORK_RUNNING)
     );
 }
 

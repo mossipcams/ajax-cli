@@ -258,7 +258,7 @@ fn workflow_boundary_is_acknowledged(task: &Task) -> bool {
         .is_some_and(|acknowledged_at| acknowledged_at >= task.last_activity_at)
 }
 
-const SUMMARY_BACKGROUND_WORK_RUNNING: &str = "Background work running";
+pub const SUMMARY_BACKGROUND_WORK_RUNNING: &str = "Background work running";
 
 fn live_running_explanation(live: &LiveObservation) -> Option<&'static str> {
     if live.kind == LiveStatusKind::AgentRunning

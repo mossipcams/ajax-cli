@@ -349,6 +349,7 @@ pub(crate) fn spawn_task_session(
     qualified_handle: String,
     storage: SessionStorage,
     report_activity: Option<super::ReportSessionActivity>,
+    deferred_activity_pending: Option<super::task_session_directory::DeferredActivityPending>,
     ownership: std::sync::Arc<ExecutionOwnership>,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
@@ -420,10 +421,11 @@ pub(crate) fn spawn_task_session(
         };
         let persisted_running =
             persisted_chat_running_for(&state.storage.registry_store(), &state.qualified_handle);
-        if let Some(attach) = state
-            .evidence
-            .activity_reporter
-            .attach_activity(persisted_running)
+        let deferred_pending = deferred_activity_pending
+            .as_ref()
+            .is_some_and(|pending| pending(&state.qualified_handle));
+        if let Some(attach) =
+            super::session_activity::first_attach_activity(persisted_running, deferred_pending)
         {
             state.evidence.report(&state.qualified_handle, attach);
         }
@@ -483,7 +485,9 @@ pub(crate) fn spawn_task_session(
             state.prompts.child_exit_reconciled = true;
             state.acp.acp_alive = false;
         }
-        settle_running_activity_on_end(&mut state);
+        if !close_on_exit {
+            settle_running_activity_on_end(&mut state);
+        }
     });
     (tx, join)
 }

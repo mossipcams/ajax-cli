@@ -44,9 +44,10 @@ impl SessionActivity {
             Self::AwaitingInput => {
                 LiveObservation::new(LiveStatusKind::WaitingForInput, "Waiting for input")
             }
-            Self::BackgroundRunning => {
-                LiveObservation::new(LiveStatusKind::AgentRunning, "Background work running")
-            }
+            Self::BackgroundRunning => LiveObservation::new(
+                LiveStatusKind::AgentRunning,
+                ajax_core::ui_state::SUMMARY_BACKGROUND_WORK_RUNNING,
+            ),
         }
     }
 }
@@ -97,6 +98,13 @@ pub(crate) fn try_report_session_activity(
     Err(SessionError::persist(format!(
         "task activity report failed after {ACTIVITY_REPORT_MAX_ATTEMPTS} attempts ({activity:?})"
     )))
+}
+
+pub(crate) fn first_attach_activity(
+    persisted_running: bool,
+    deferred_pending: bool,
+) -> Option<SessionActivity> {
+    (persisted_running && !deferred_pending).then_some(SessionActivity::TurnFailed)
 }
 
 pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
@@ -193,11 +201,6 @@ impl SessionActivityReporter {
         };
         self.state.apply(event, now);
         self.background = held;
-    }
-
-    pub(crate) fn attach_activity(&self, persisted_running: bool) -> Option<SessionActivity> {
-        (persisted_running && !self.turn_running() && !self.background)
-            .then_some(SessionActivity::TurnFailed)
     }
 
     fn reduce_activity(&self, now: SystemTime) -> Option<SessionActivity> {
