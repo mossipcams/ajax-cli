@@ -209,7 +209,6 @@ fn issue_1132_deferred_turn_end_retries_on_session_poll_without_later_append() {
     );
 }
 
-// #1176: a turn cut off by a host restart left the task on "Agent working".
 #[test]
 fn issue_1176_turn_interrupted_by_restart_clears_agent_working() {
     use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger};

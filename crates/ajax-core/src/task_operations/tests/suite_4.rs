@@ -128,7 +128,6 @@ fn sweep_cleanup_treats_missing_tmux_session_as_already_removed_and_continues() 
             .expect("candidate task");
         task.lifecycle_status = LifecycleStatus::Merged;
     }
-    // The stale cached tmux status is what makes the plan include kill-session.
     context
         .registry
         .get_task_mut(&TaskId::new("web/fix-login"))
@@ -145,7 +144,6 @@ fn sweep_cleanup_treats_missing_tmux_session_as_already_removed_and_continues() 
         })
         .expect("first candidate should plan a kill-session command");
     let mut outputs = sweep_success_runner_outputs(&context);
-    // Outputs are ordered: trash sweeps, shared list-sessions, then each candidate's plan.
     outputs[trash_sweeps.len() + 1 + kill_session_index] =
         output(1, "", "can't find session: ajax-web-fix-login");
     let mut runner = RecordingQueuedRunner::new(outputs);

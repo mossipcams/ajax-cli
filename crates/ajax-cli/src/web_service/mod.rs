@@ -16,7 +16,6 @@ mod tests;
 pub(crate) const DEFAULT_WEB_HOST: &str = "0.0.0.0";
 pub(crate) const DEFAULT_WEB_PORT: &str = "8787";
 
-/// Copied from the installing shell when set. The restart profile and port are never copied; they describe the installed job.
 const FORWARDED_ENV_KEYS: [&str; 10] = [
     "PATH",
     "LANG",
@@ -42,7 +41,6 @@ struct ServiceConfig {
     host: String,
     port: String,
     ajax_executable: PathBuf,
-    /// Global path flags given explicitly on the install invocation, e.g. `--home <path>`.
     global_args: Vec<String>,
     home_dir: PathBuf,
     working_dir: PathBuf,
@@ -135,14 +133,12 @@ impl ServiceConfig {
     }
 }
 
-/// The `ajax web service ...` matches, when that route was requested.
 pub(crate) fn service_subcommand(matches: &ArgMatches) -> Option<&ArgMatches> {
     matches
         .subcommand_matches("web")?
         .subcommand_matches("service")
 }
 
-/// Global path flags typed on this invocation, forwarded so the job resolves the same paths.
 pub(crate) fn explicit_path_args(matches: &ArgMatches) -> Vec<String> {
     ["home", "config", "state", "worktree-root"]
         .into_iter()
@@ -180,7 +176,6 @@ pub(crate) fn run_web_service_command(
         ajax_executable: std::env::current_exe()
             .map_err(|error| CliError::CommandFailed(format!("could not locate ajax: {error}")))?,
         global_args: global_args.to_vec(),
-        // The restart script is found by searching up from the working directory.
         working_dir: std::env::current_dir().unwrap_or_else(|_| home_dir.clone()),
         home_dir,
     };
@@ -190,7 +185,6 @@ pub(crate) fn run_web_service_command(
     run_web_service_action(service, &config, &domain, &mut runner)
 }
 
-/// The dev profile keeps its own port so `web service install` does not collide with stable.
 fn default_port_for(profile: &str) -> String {
     if profile == DEV_PROFILE {
         DEV_PORT.to_string()
@@ -199,7 +193,6 @@ fn default_port_for(profile: &str) -> String {
     }
 }
 
-/// Environment baked into the plist. The restart profile and port always describe the installed job.
 fn forwarded_env(
     profile: &str,
     port: &str,
@@ -254,7 +247,6 @@ fn install_with_unload_timeout(
     let target = service_target(domain, &config.label());
     let plist = config.plist_path().display().to_string();
 
-    // A first install has nothing loaded to boot out; a re-install replaces the job.
     run_launchctl_tolerant(runner, &["bootout", &target])?;
     wait_until_unloaded(runner, &target, unload_timeout)?;
     run_launchctl(runner, &["bootstrap", domain, &plist])?;
@@ -262,7 +254,6 @@ fn install_with_unload_timeout(
     Ok(format!("installed {} at {plist}\n", config.label()))
 }
 
-/// Rejects bad bind values before the plist is written or launchctl is called.
 fn validate_bind(host: &str, port: &str) -> Result<(), CliError> {
     if host.trim().is_empty() {
         return Err(CliError::CommandFailed(
@@ -277,7 +268,6 @@ fn validate_bind(host: &str, port: &str) -> Result<(), CliError> {
     }
 }
 
-/// `bootout` returns before launchd finishes unloading, and a `bootstrap` in that window fails.
 fn wait_until_unloaded(
     runner: &mut impl CommandRunner,
     target: &str,
@@ -309,7 +299,6 @@ fn uninstall(
     run_launchctl_tolerant(runner, &["bootout", &target])?;
 
     let plist = config.plist_path();
-    // A missing plist is already uninstalled.
     match std::fs::remove_file(&plist) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             Err(CliError::CommandFailed(format!(
@@ -339,7 +328,6 @@ fn start(
     if is_loaded(runner, &target)? {
         run_launchctl(runner, &["kickstart", &target])?;
     } else {
-        // RunAtLoad starts a freshly bootstrapped job, so no kickstart is needed.
         run_launchctl(runner, &["bootstrap", domain, &plist])?;
     }
 
@@ -351,7 +339,6 @@ fn stop(
     domain: &str,
     runner: &mut impl CommandRunner,
 ) -> Result<String, CliError> {
-    // Bootout rather than kill: KeepAlive would respawn a killed job.
     let target = service_target(domain, &config.label());
     run_launchctl_tolerant(runner, &["bootout", &target])?;
 
@@ -417,8 +404,6 @@ fn run_launchctl(
     Ok(output)
 }
 
-/// `launchctl` exits non-zero for "not loaded" and "already loaded"; those are
-/// expected here, so a non-zero exit maps to `None` and other failures still surface.
 fn run_launchctl_tolerant(
     runner: &mut impl CommandRunner,
     args: &[&str],

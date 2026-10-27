@@ -1,7 +1,3 @@
-//! Equivalence tests for `native_map`: every [`NativeEvent`] variant must map to
-//! exactly the same [`SessionServerEvent`] values that `acp_map` produces for
-//! the equivalent ACP session update.
-
 use agent_client_protocol::schema::v1::{
     Content, ContentBlock, ContentChunk, Plan as AcpPlan, PlanEntry as AcpPlanEntry,
     PlanEntryPriority, PlanEntryStatus, SessionNotification, SessionUpdate, TextContent,
@@ -13,8 +9,6 @@ use super::acp_map::map_acp_session_notification;
 use super::native_map::map_native_event;
 use crate::adapters::web_session_acp::NativeEvent;
 
-/// The `acp_map` output for one typed ACP session update, via the same typed
-/// mapping (`map_acp_session_notification`) the ACP pipeline uses.
 fn acp_events(update: &SessionUpdate) -> Vec<super::SessionServerEvent> {
     let notification = SessionNotification::new("s1".to_string(), update.clone());
     map_acp_session_notification(&notification)
@@ -193,8 +187,6 @@ fn zero_size_usage_matches_acp_empty_output() {
     );
 }
 
-/// The `content` blocks of the single [`SessionServerEvent::ToolCall`] a
-/// native event maps to; panics if the shape differs.
 fn tool_call_content(events: Vec<super::SessionServerEvent>) -> Vec<super::ToolContent> {
     match events.as_slice() {
         [super::SessionServerEvent::ToolCall { content, .. }] => content.clone(),

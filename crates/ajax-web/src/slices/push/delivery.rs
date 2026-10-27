@@ -1,12 +1,8 @@
-//! Background delivery of declarative push with a bounded retry.
-
 use super::{build_push_request, PushHub, PushSubscription};
 use axum::http::Request;
 use std::{process::Stdio, sync::Arc, thread::JoinHandle, time::Duration};
 use web_push_native::jwt_simple::algorithms::ES256KeyPair;
 
-// ponytail: in-process retry only; a restart drops pending pushes. Move to a
-// durable outbox if missed notifications across restarts matter.
 const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(30)];
 
 pub(super) struct PushJob {
@@ -15,8 +11,6 @@ pub(super) struct PushJob {
     pub(super) vapid_subject: String,
 }
 
-/// Deliver off the caller's thread: the caller holds the Cockpit control
-/// lane, and a slow push service must not stall it (#1230).
 pub(super) fn spawn(hub: Arc<PushHub>, key_pair: ES256KeyPair, jobs: Vec<PushJob>) {
     spawn_with(
         hub,
@@ -42,8 +36,6 @@ fn spawn_with(
     })
 }
 
-/// Deliver every job, retrying transient failures (#1231). Returns the
-/// endpoints the push service reported gone.
 fn deliver_jobs(
     key_pair: &ES256KeyPair,
     jobs: Vec<PushJob>,
@@ -59,7 +51,6 @@ fn deliver_jobs(
         }
         let mut failed = Vec::new();
         for job in pending {
-            // Rebuilt per attempt: the VAPID token is short-lived.
             let request = match build_push_request(
                 job.subscription.clone(),
                 job.payload.clone(),
@@ -68,7 +59,6 @@ fn deliver_jobs(
             ) {
                 Ok(request) => request,
                 Err(error) => {
-                    // Not a delivery result: never prune or retry on it.
                     eprintln!("declarative push build failed: {error}");
                     continue;
                 }
@@ -92,8 +82,6 @@ fn deliver_jobs(
     dead
 }
 
-/// Only curl's own HTTP status report counts. A bare "404"/"410" also shows
-/// up in addresses and timings, and a false match deletes a live subscription.
 fn is_gone_endpoint(error: &str) -> bool {
     error.contains("returned error: 404") || error.contains("returned error: 410")
 }
@@ -241,7 +229,6 @@ mod tests {
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel::<()>();
         let release_rx = Mutex::new(release_rx);
-        // Returning at all while the endpoint hangs is the regression check.
         let worker = spawn_with(
             Arc::clone(&hub),
             ES256KeyPair::generate(),
@@ -256,7 +243,6 @@ mod tests {
         started_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("delivery runs in the background");
-        // The hub stays usable while delivery is still in flight.
         hub.apply_unsubscribe(&UnsubscribeRequest {
             endpoint: None,
             all: true,

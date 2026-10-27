@@ -1,12 +1,3 @@
-// Regression coverage for the merged/closed PR short-circuit in scripts/gh-pr-create.
-//
-// Issue #1267: `gh pr view <branch>` matches any state, so a previously merged
-// or closed PR for the same branch name made the script short-circuit and
-// never reach `gh pr create`. The fix narrows the existence check to OPEN
-// pull requests only. These tests build an isolated fake `bin` on PATH with
-// stub `git` and `gh` executables that record every invocation, so the
-// regression scenario can be reproduced without touching the real repo.
-
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,11 +20,6 @@ case "$1" in
 esac
 `;
 
-// The gh stub records every invocation. For `gh pr view <branch>` it returns
-// success with a URL (matching the pre-fix short-circuit path). For
-// `gh pr list --head <branch> --state open` it returns either an empty
-// payload (regression scenario) or a URL (open PR already exists). The
-// REGRESSION env var is set by the test to pick the scenario.
 const GH_STUB = `#!/usr/bin/env bash
 echo "gh $*" >> "$LOG_FILE"
 case "$2" in
@@ -70,7 +56,6 @@ function setupStubs(t, regression) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // best-effort cleanup
     }
   });
   return { binDir, logFile };

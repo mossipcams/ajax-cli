@@ -198,12 +198,10 @@ fn superseded_cursors_find_the_newest_earlier_real_version_per_item() {
         version("i2", "v1"),
     ]);
 
-    // A brand-new item has no superseded version.
     assert_eq!(
         log.superseded_cursors_for(&[version("i3", "x")]),
         Vec::<usize>::new()
     );
-    // The newest earlier real version of i1 is v2 at cursor 2; i2's is cursor 3.
     let cursors = log.superseded_cursors_for(&[version("i1", "v3"), version("i2", "v2")]);
     assert_eq!(cursors, vec![2, 3]);
 }
@@ -212,7 +210,7 @@ fn superseded_cursors_find_the_newest_earlier_real_version_per_item() {
 fn superseded_cursors_never_return_markers_and_skip_past_them() {
     let mut log = TranscriptLog::default();
     log.append(vec![version("i1", "v1"), version("i1", "v2")]);
-    log.mark_superseded(&[0]); // v1 becomes a marker
+    log.mark_superseded(&[0]);
 
     assert_eq!(log.superseded_cursors_for(&[version("i1", "v3")]), vec![1]);
 }
@@ -220,19 +218,16 @@ fn superseded_cursors_never_return_markers_and_skip_past_them() {
 #[test]
 fn superseded_cursors_are_sorted_deduped_and_absolute() {
     let mut log = TranscriptLog::default();
-    // Force a trim so dropped > 0: cursors must stay absolute.
     log.append(
         (0..MAX_LOG_EVENTS)
             .map(|i| note(&format!("pad-{i}")))
             .collect(),
     );
-    log.append(vec![version("i1", "v1")]); // cursor MAX_LOG_EVENTS
-    log.append(vec![version("i2", "v1"), version("i2", "v2")]); // cursors +1, +2
+    log.append(vec![version("i1", "v1")]);
+    log.append(vec![version("i2", "v1"), version("i2", "v2")]);
 
     let cursors =
         log.superseded_cursors_for(&[version("i1", "v2"), version("i2", "v3"), version("i2", "x")]);
-    // i1 v1 sits at MAX_LOG_EVENTS; the newest real i2 version (v2) is two
-    // cursors after it, and the duplicate i2 entry dedupes to one cursor.
     assert_eq!(cursors, vec![MAX_LOG_EVENTS, MAX_LOG_EVENTS + 2]);
 }
 
@@ -242,7 +237,6 @@ fn mark_superseded_writes_the_marker_in_place_and_keeps_cursors_stable() {
     log.append(vec![version("i1", "v1"), note("b"), version("i2", "v9")]);
     let next_before = log.absolute_next_cursor();
 
-    // Out-of-range and non-Message cursors are ignored.
     log.mark_superseded(&[0, 1, 3, 99]);
 
     assert_eq!(log.events[0], marker("i1"));
@@ -275,11 +269,8 @@ fn mark_superseded_writes_the_marker_in_place_and_keeps_cursors_stable() {
 #[test]
 fn reads_skip_markers_but_keep_the_absolute_cursors_of_other_events() {
     let mut log = TranscriptLog::default();
-    // Cursors: 0 = i1 v1 (real), 1 = b.
     log.append(vec![version("i1", "v1"), note("b")]);
 
-    // Streaming the next version compacts the newest earlier real version
-    // (cursor 0) into a marker, then appends i1 v2 at cursor 2.
     let cursors = log.superseded_cursors_for(&[version("i1", "v2")]);
     assert_eq!(cursors, vec![0]);
     log.mark_superseded(&cursors);

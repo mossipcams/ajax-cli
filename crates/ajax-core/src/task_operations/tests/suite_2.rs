@@ -1,272 +1,6 @@
 use super::*;
 
 #[test]
-fn repair_adopts_observed_named_branch_without_recreating_task() {
-    let mut context = context_with_named_checkout_mismatch();
-    let task_before = context
-        .registry
-        .get_task(&TaskId::new("web/fix-login"))
-        .unwrap()
-        .clone();
-    let events_before: Vec<_> = context
-        .registry
-        .events_for_task(&TaskId::new("web/fix-login"))
-        .iter()
-        .map(|event| (event.kind, event.message.clone()))
-        .collect();
-
-    let repair_plan = plan_task_command_operation(
-        &context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        OpenMode::Attach,
-    )
-    .unwrap();
-    let mut runner = RecordingQueuedRunner::default();
-
-    let (outputs, state_changed) = execute_task_command_operation(
-        &mut context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        &repair_plan,
-        true,
-        &mut runner,
-    )
-    .unwrap();
-
-    assert!(outputs.is_empty());
-    assert!(state_changed);
-    assert!(runner.commands.is_empty());
-
-    let task_after = context
-        .registry
-        .get_task(&TaskId::new("web/fix-login"))
-        .unwrap();
-    assert_eq!(task_after.branch, "fix/pane-stuck");
-    assert_eq!(task_after.id, task_before.id);
-    assert_eq!(task_after.handle, task_before.handle);
-    assert_eq!(task_after.title, task_before.title);
-    assert_eq!(task_after.worktree_path, task_before.worktree_path);
-    assert_eq!(task_after.tmux_session, task_before.tmux_session);
-    assert_eq!(task_after.task_window, task_before.task_window);
-    assert_eq!(task_after.lifecycle_status, task_before.lifecycle_status);
-    assert_eq!(task_after.agent_attempts, task_before.agent_attempts);
-    assert!(!task_after.has_checkout_mismatch());
-    assert!(!task_after.has_side_flag(SideFlag::BranchMissing));
-
-    let git_before = task_before.git_status.as_ref().unwrap();
-    let git_after = task_after.git_status.as_ref().unwrap();
-    assert!(!git_before.branch_exists);
-    assert!(git_after.branch_exists);
-    assert_eq!(git_after.current_branch.as_deref(), Some("fix/pane-stuck"));
-    assert_ne!(task_before.branch, task_after.branch);
-    assert_ne!(
-        task_before.runtime_projection.health,
-        task_after.runtime_projection.health
-    );
-
-    let events_after: Vec<_> = context
-        .registry
-        .events_for_task(&TaskId::new("web/fix-login"))
-        .iter()
-        .map(|event| (event.kind, event.message.clone()))
-        .collect();
-    assert_eq!(
-        events_after.len(),
-        events_before.len() + 1,
-        "expected one adoption event"
-    );
-    for (index, event) in events_before.iter().enumerate() {
-        assert_eq!(&events_after[index], event);
-    }
-    assert_eq!(
-        events_after.last().unwrap().0,
-        crate::registry::RegistryEventKind::SubstrateChanged
-    );
-    assert_eq!(
-        events_after.last().unwrap().1,
-        "task branch adopted from ajax/fix-login to fix/pane-stuck"
-    );
-}
-
-#[test]
-fn repair_rejects_declined_or_stale_branch_adoption() {
-    const STALE_REASON: &str = "checkout changed since repair was planned; refresh and retry";
-
-    let mut context = context_with_named_checkout_mismatch();
-    let repair_plan = plan_task_command_operation(
-        &context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        OpenMode::Attach,
-    )
-    .unwrap();
-    let branch_before = context
-        .registry
-        .get_task(&TaskId::new("web/fix-login"))
-        .unwrap()
-        .branch
-        .clone();
-    let event_count_before = context
-        .registry
-        .events_for_task(&TaskId::new("web/fix-login"))
-        .len();
-
-    let (error, state_changed) = execute_task_command_operation(
-        &mut context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        &repair_plan,
-        false,
-        &mut RecordingQueuedRunner::default(),
-    )
-    .unwrap_err();
-    assert!(matches!(error, CommandError::ConfirmationRequired));
-    assert!(!state_changed);
-    assert_eq!(
-        context
-            .registry
-            .get_task(&TaskId::new("web/fix-login"))
-            .unwrap()
-            .branch,
-        branch_before
-    );
-    assert_eq!(
-        context
-            .registry
-            .events_for_task(&TaskId::new("web/fix-login"))
-            .len(),
-        event_count_before
-    );
-
-    let mut tampered_plan = repair_plan.clone();
-    tampered_plan.requires_confirmation = false;
-    let (error, state_changed) = execute_task_command_operation(
-        &mut context,
-        TaskCommandKind::Repair,
-        "web/fix-login",
-        &tampered_plan,
-        false,
-        &mut RecordingQueuedRunner::default(),
-    )
-    .unwrap_err();
-    assert!(matches!(error, CommandError::ConfirmationRequired));
-    assert!(!state_changed);
-
-    type StaleCase = (
-        &'static str,
-        Box<dyn Fn(&mut CommandContext<InMemoryRegistry>)>,
-    );
-    let stale_cases: Vec<StaleCase> = vec![
-        (
-            "observed branch changed",
-            Box::new(|context| {
-                context
-                    .registry
-                    .get_task_mut(&TaskId::new("web/fix-login"))
-                    .unwrap()
-                    .git_status
-                    .as_mut()
-                    .unwrap()
-                    .current_branch = Some("other/branch".to_string());
-            }),
-        ),
-        (
-            "detached checkout",
-            Box::new(|context| {
-                context
-                    .registry
-                    .get_task_mut(&TaskId::new("web/fix-login"))
-                    .unwrap()
-                    .git_status
-                    .as_mut()
-                    .unwrap()
-                    .current_branch = None;
-            }),
-        ),
-        (
-            "missing worktree",
-            Box::new(|context| {
-                let task = context
-                    .registry
-                    .get_task_mut(&TaskId::new("web/fix-login"))
-                    .unwrap();
-                task.git_status.as_mut().unwrap().worktree_exists = false;
-                task.add_side_flag(SideFlag::WorktreeMissing);
-            }),
-        ),
-        (
-            "task intent changed",
-            Box::new(|context| {
-                context
-                    .registry
-                    .get_task_mut(&TaskId::new("web/fix-login"))
-                    .unwrap()
-                    .branch = "ajax/other-branch".to_string();
-            }),
-        ),
-    ];
-
-    for (label, mutate) in stale_cases {
-        let mut stale_context = context_with_named_checkout_mismatch();
-        let stale_plan = plan_task_command_operation(
-            &stale_context,
-            TaskCommandKind::Repair,
-            "web/fix-login",
-            OpenMode::Attach,
-        )
-        .unwrap();
-        mutate(&mut stale_context);
-        let branch_before = stale_context
-            .registry
-            .get_task(&TaskId::new("web/fix-login"))
-            .unwrap()
-            .branch
-            .clone();
-        let events_before = stale_context
-            .registry
-            .events_for_task(&TaskId::new("web/fix-login"))
-            .len();
-
-        let (error, state_changed) = execute_task_command_operation(
-            &mut stale_context,
-            TaskCommandKind::Repair,
-            "web/fix-login",
-            &stale_plan,
-            true,
-            &mut RecordingQueuedRunner::default(),
-        )
-        .unwrap_err();
-
-        assert!(
-            matches!(
-                &error,
-                CommandError::PlanBlocked(reasons) if reasons == &[STALE_REASON.to_string()]
-            ),
-            "case {label}: got {error:?}"
-        );
-        assert!(!state_changed, "case {label}");
-        assert_eq!(
-            stale_context
-                .registry
-                .get_task(&TaskId::new("web/fix-login"))
-                .unwrap()
-                .branch,
-            branch_before,
-            "case {label}"
-        );
-        assert_eq!(
-            stale_context
-                .registry
-                .events_for_task(&TaskId::new("web/fix-login"))
-                .len(),
-            events_before,
-            "case {label}"
-        );
-    }
-}
-
-#[test]
 fn successful_repair_check_makes_task_reviewable() {
     let mut context = context_with_reviewable_task();
     let task = context
@@ -805,9 +539,6 @@ fn drop_force_worktree_teardown_succeeds_with_poisoned_repo_config_and_inherited
 
 #[test]
 fn drop_operation_preserves_main_checkout_and_drops_task_only() {
-    // #1216: dropping a task whose worktree path is the repo's main
-    // checkout must verify the work landed, then remove only registry
-    // state — never trash/remove the checkout or its branches.
     let root = std::env::temp_dir().join(format!(
         "ajax-drop-1216-{}-{}",
         std::process::id(),
@@ -855,8 +586,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
     });
     context.registry.create_task(task).unwrap();
 
-    // One output for the task-only-drop verification, then absent drop
-    // observations for execute and completion.
     let mut outputs = vec![output(0, "", "")];
     outputs.extend(absent_drop_observation_outputs());
     outputs.extend(absent_drop_observation_outputs());
@@ -874,7 +603,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
         .get_task(&TaskId::new("web/fix-login"))
         .is_none());
 
-    // The drop verified the work landed on origin first.
     assert!(
         runner.commands.iter().any(|command| {
             command.program == "sh"
@@ -884,7 +612,6 @@ fn drop_operation_preserves_main_checkout_and_drops_task_only() {
         runner.commands
     );
 
-    // The checkout and its branches were never touched.
     for command in runner
         .commands
         .iter()

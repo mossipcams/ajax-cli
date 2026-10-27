@@ -1,7 +1,3 @@
-//! Spawn path for the Cursor SDK transport: launch resolution, the Node
-//! version floor, fail-closed restore, operator-pin application and the spawn
-//! report. Mirrors `claude_sdk_spawn`.
-// A later packet wires this module into the SessionClient variant.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -13,10 +9,8 @@ use super::PromptCapabilityDescriptor;
 
 const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
 const LOGIN_HINT: &str = "Cursor rejected the SDK credential - sign in again from Settings > Cursor in Ajax Web, or set CURSOR_API_KEY for the ajax-web host";
-/// `@cursor/sdk` requires Node.js 22.13; Claude's Node 20 floor is unaffected.
 const MIN_NODE: (u32, u32) = (22, 13);
 
-/// Whether `node --version` output (e.g. `v22.13.0`) meets the Cursor SDK floor.
 pub(super) fn node_version_ok(text: &str) -> bool {
     let mut parts = text.trim().trim_start_matches('v').split('.');
     let major = parts.next().and_then(|p| p.parse::<u32>().ok());
@@ -40,7 +34,6 @@ fn node_version(program: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// The SDK entry point under a global npm root, when installed there.
 pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
     let path = root
         .join("@cursor")
@@ -50,8 +43,6 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
         .join("index.js");
     path.is_file().then_some(path)
 }
-/// Resolve the Node binary (at the Cursor SDK version floor) and the loadable
-/// `@cursor/sdk` entry point from the user's global npm root.
 fn resolve_node_and_sdk() -> Result<(PathBuf, PathBuf), AcpSpawnError> {
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
         AcpSpawnError::Message("node is not installed - install Node.js 22.13 or newer".to_string())
@@ -67,8 +58,6 @@ fn resolve_node_and_sdk() -> Result<(PathBuf, PathBuf), AcpSpawnError> {
             }
         )));
     }
-    // Resolve the SDK only from the user's global npm root and load it as an
-    // explicit absolute path, so a task worktree can never redirect it.
     let root = crate::adapters::program::global_npm_root().ok_or_else(|| {
         AcpSpawnError::Message(format!(
             "no loadable @cursor/sdk module: npm root -g failed - {INSTALL_HINT}"
@@ -104,8 +93,6 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     ))
 }
 
-/// Classify a spawn failure: restore failures fail closed, authentication
-/// failures name the fix, everything else passes through.
 pub(super) fn spawn_error(text: String, resume_session_id: Option<&str>) -> AcpSpawnError {
     if let Some(id) = resume_session_id {
         if text.contains("not found") || text.contains("resumed a different session") {
@@ -125,11 +112,8 @@ pub(super) fn spawn_error(text: String, resume_session_id: Option<&str>) -> AcpS
     }
     AcpSpawnError::Message(text)
 }
-/// The embedded login sidecar script; launched via `sidecar_launch_args`.
 const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
 
-/// Node argv for the Cursor SDK login/status sidecar (`--mode login|status`,
-/// optionally pinned to a store path).
 pub(super) fn cursor_login_launch(
     mode: &str,
     store_path: Option<&Path>,
@@ -170,8 +154,6 @@ pub(super) fn spawn_cursor_sdk(
     resume_session_id: Option<&str>,
 ) -> Result<(CursorSdkClient, SpawnReport<super::NeutralConfigOption>), AcpSpawnError> {
     let (program, args) = cursor_launch()?;
-    // Spawn on the default model, then apply the pin: an unknown pin is
-    // reported without failing the session, as the Claude path does.
     let client = CursorSdkClient::spawn(
         &program,
         &args,
@@ -191,7 +173,6 @@ pub(super) fn spawn_cursor_sdk(
         model_apply_error,
         config_options: Some(client.config_options()),
         prompt_capabilities: PromptCapabilityDescriptor {
-            // Images are forwarded to the SDK; embedded context is not yet.
             image: true,
             embedded_context: false,
         },
@@ -199,9 +180,6 @@ pub(super) fn spawn_cursor_sdk(
     Ok((client, report))
 }
 
-/// Apply a persisted pin in any of its historical encodings
-/// (`grok-4.6|effort=high`, `cursor-grok-4.6-high`, `grok-4.6[effort=high]`).
-/// Returns the first error; a parameter the model does not have is skipped.
 pub(super) fn apply_pin_to_cursor(client: &CursorSdkClient, pin: &str) -> Option<String> {
     if super::is_unspecified_model(Some(pin)) {
         return None;
@@ -231,10 +209,6 @@ pub(super) fn apply_pin_to_cursor(client: &CursorSdkClient, pin: &str) -> Option
 #[cfg(test)]
 static TEST_CURSOR_SDK_MODULE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
-// Tests run in parallel and each registers a per-test SDK module file; the
-// fake's release sentinel lives next to whichever file the sidecar loads, so an
-// overlapping registration would make a sidecar watch the wrong directory.
-// Serialize every with_test_cursor_sdk_module section across the whole suite.
 #[cfg(test)]
 static TEST_CURSOR_SDK_MODULE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -248,7 +222,6 @@ pub(crate) fn with_test_cursor_sdk_module<F, R>(sdk_module: &Path, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    // Held until after the global is reset (declared first, dropped last).
     let _guard = TEST_CURSOR_SDK_MODULE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

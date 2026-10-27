@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-// Prepare an isolated Ajax Web instance tree for exploratory CI.
-// Creates config, a disposable git repo, and result directories.
-// Does not start the server (workflow / run-agent owns process lifecycle).
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
@@ -18,10 +15,6 @@ import {
 } from "./lib.mjs";
 
 function git(args, cwd) {
-  // Husky/git hooks export GIT_DIR / GIT_INDEX_FILE / etc. If inherited, a
-  // nested `git -C <sandbox>` still mutates the parent worktree. Strip GIT_*
-  // so the disposable demo repo stays isolated even when prepare runs under
-  // `git commit` hooks / `npm test`.
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (key.startsWith("GIT_")) delete env[key];
@@ -48,7 +41,6 @@ function prepareRepo(repoPath, bareRemotePath) {
   git(["add", "README.md"], repoPath);
   git(["commit", "-m", "chore: seed exploratory demo repo"], repoPath);
 
-  // Ajax start plans fetch origin/<default_branch> before worktree add.
   git(["init", "--bare", bareRemotePath], repoPath);
   git(["remote", "add", "origin", bareRemotePath], repoPath);
   git(["push", "-u", "origin", "main"], repoPath);

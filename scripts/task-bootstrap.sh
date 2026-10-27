@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Per-task worktree setup for ajax-cli (intended as managed-repo `bootstrap`).
-#
-# Ensures Node 22 (CI pin), installs JS deps + husky via `npm ci`, and — when
-# present — restores local ajax-model-router dispatch symlinks into scripts/
-# (run-delegate, analyze-task, router-log, …).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

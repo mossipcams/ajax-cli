@@ -66,7 +66,6 @@ pub async fn supervise_process<P: ProcessProtocol>(
     supervise_process_with_cancellation(protocol, prompt, events, hang_after, cancel_rx, None).await
 }
 
-/// Runs the agent in `worktree` (inherits the current dir when `None`), wrapped in nono when `AJAX_SANDBOX` is on.
 pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
     protocol: &P,
     prompt: &str,
@@ -174,8 +173,6 @@ async fn supervise_launch<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
-                    // Terminal event before terminating: a child that ignores SIGTERM can outlast the
-                    // consumer's cancel drain. A signal-terminated child has no exit code anyway.
                     let _ = send_event(
                         &events,
                         MonitorEvent::Process(ProcessEvent::Exited { code: None }),
@@ -218,7 +215,6 @@ async fn supervise_launch<P: ProcessProtocol>(
     Ok(status_code)
 }
 
-/// nono inputs for the agent launch. Production reads them from the environment; tests inject them.
 struct SandboxInputs<N> {
     enabled: bool,
     nono: N,
@@ -255,11 +251,8 @@ fn agent_command(
     Ok(command)
 }
 
-/// Stops the direct child the way a terminal Ctrl-C would: SIGTERM first, so a wrapper such as
-/// `nono` can forward it to the agent, then SIGKILL if it has not exited within 2 seconds.
 async fn terminate(child: &mut Child) -> Result<ExitStatus, SupervisorError> {
     if let Some(pid) = child.id() {
-        // ponytail: shells out to kill(1) like ajax-web's process_group does; use nix::sys::signal::kill(Pid, SIGTERM) if nix becomes a dependency.
         let _ = std::process::Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .stdout(std::process::Stdio::null())
@@ -287,7 +280,6 @@ where
 {
     let mut lines = BufReader::new(stdout).lines();
     while let Some(line) = lines.next_line().await? {
-        // Only parsed agent events count as progress; raw stdout is forwarded without resetting the hang timer.
         let event = match parse_line(&line) {
             Some(event) => {
                 observe_output(hang_detector.as_ref());
@@ -300,7 +292,6 @@ where
     Ok(())
 }
 
-/// Stderr never counts as progress, so this reader has no hang detector to reset.
 async fn read_stderr_lines<R>(
     stderr: R,
     events: mpsc::Sender<MonitorEvent>,
@@ -604,7 +595,6 @@ mod launch_tests {
         dir
     }
 
-    /// Runs `/bin/sh -c <script>` as the agent.
     struct ShellProtocol(String);
 
     impl ProcessProtocol for ShellProtocol {
@@ -734,7 +724,6 @@ mod launch_tests {
             .is_ok_and(|status| status.success())
     }
 
-    /// Polls until the script writes a pid to `path`, then returns it.
     async fn read_pid(path: &Path) -> u32 {
         for _ in 0..400 {
             if let Some(pid) = fs::read_to_string(path)
@@ -752,7 +741,6 @@ mod launch_tests {
     async fn cancel_terminates_grandchild_through_term_forwarding_parent() {
         let dir = scratch_dir("cancel-term");
         let pid_file = dir.join("grandchild.pid");
-        // Stands in for nono: the direct child forwards SIGTERM to the agent it spawned.
         let protocol = ShellProtocol(format!(
             "trap 'kill $CHILD; exit 143' TERM; sleep 30 & CHILD=$!; echo $CHILD > {}; wait",
             pid_file.display()
@@ -847,7 +835,6 @@ mod launch_tests {
         );
     }
 
-    /// A detector whose last output was 10 seconds ago, so it is hung unless output resets it.
     fn stale_hang_detector() -> Arc<Mutex<HangDetector>> {
         Arc::new(Mutex::new(HangDetector::new(
             Instant::now() - Duration::from_secs(10),
@@ -855,7 +842,6 @@ mod launch_tests {
         )))
     }
 
-    /// Runs the same check as the hang task and reports whether it would emit `Hung`.
     async fn would_report_hung(detector: &Arc<Mutex<HangDetector>>) -> bool {
         let (tx, _rx) = mpsc::channel(1);
         send_hung_if_quiet(Some(detector), &tx, &AtomicBool::new(false))

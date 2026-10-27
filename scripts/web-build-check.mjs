@@ -1,10 +1,4 @@
 #!/usr/bin/env node
-// Build-layout check. Runs the production build and asserts the
-// emitted shell is deterministic and serving-compatible:
-//   - shell, stylesheet, and app script exist
-//   - the HTML keeps the __AJAX_APP_VERSION__ placeholder Rust replaces
-//   - exactly one local module script and one local stylesheet
-// Run via `npm run web:build:check`. Exits non-zero on any violation.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, writeFileSync, readdirSync } from "node:fs";
@@ -15,7 +9,6 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(repoRoot, "crates/ajax-web/web/dist");
 const failures = [];
 
-/** Blank lines with only spaces/tabs normalize to empty lines (macOS vs CI vite). */
 export function normalizeDistBlankLines(contents) {
   return contents.replace(/^[ \t]+$/gm, "");
 }
@@ -29,7 +22,6 @@ export function shouldNormalizeDistAsset(name) {
   );
 }
 
-/** When rebuild differs from HEAD only on blank-line whitespace, keep HEAD bytes. */
 export function reconcileDistContents(rebuilt, head) {
   const normalizedRebuilt = normalizeDistBlankLines(rebuilt);
   const normalizedHead = normalizeDistBlankLines(head);

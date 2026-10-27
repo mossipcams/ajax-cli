@@ -1,5 +1,3 @@
-//! Registry mutations must not report success when the snapshot was not saved.
-
 use super::*;
 use ajax_core::{models::TaskId, registry::Registry as _};
 

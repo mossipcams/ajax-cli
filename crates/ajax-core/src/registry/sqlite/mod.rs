@@ -43,7 +43,6 @@ impl SqliteRegistryStore {
         }
     }
 
-    /// Requires this lease boot ID for execution commits without an explicit fence.
     pub fn with_owner_fence(mut self, boot_id: impl Into<String>) -> Self {
         self.owner_fence = Some(boot_id.into());
         self
@@ -77,8 +76,6 @@ impl SqliteRegistryStore {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
         }
-        // On unix, create a new database file owner-only before SQLite sees it, so
-        // it is never briefly world-readable under the process umask.
         #[cfg(unix)]
         if !self.path.exists() {
             use std::os::unix::fs::OpenOptionsExt;
@@ -96,8 +93,6 @@ impl SqliteRegistryStore {
         let connection = Connection::open(&self.path).map_err(database_error)?;
         #[cfg(unix)]
         {
-            // Chat transcripts and prompt text live here: owner-only, like the ledger file was.
-            // SQLite gives its -journal/-wal files the same mode as the database, so nothing more is needed for them.
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&self.path)
                 .map(|meta| meta.permissions().mode())
@@ -107,7 +102,6 @@ impl SqliteRegistryStore {
                     .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
             }
         }
-        // Freed transcript and prompt content is overwritten with zeros, not left in free pages.
         connection
             .pragma_update(None, "secure_delete", "ON")
             .map_err(database_error)?;

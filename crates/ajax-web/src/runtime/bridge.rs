@@ -19,6 +19,10 @@ pub struct ActionFailure {
 }
 
 pub trait RuntimeBridge<C: CommandRunner> {
+    /// Probes for cockpit state (reload-if-stale, tmux/git/gh) and reports whether
+    /// the probe changed the context. It does not persist: the caller runs it
+    /// outside the control lane and persists under the lane only if the
+    /// probe applied. The caller persists via `persist_registry_snapshot`.
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -90,8 +94,6 @@ pub(crate) struct MobileActionRequest {
     pub(crate) action: String,
     #[serde(default)]
     pub(crate) confirmed: bool,
-    #[serde(default)]
-    pub(crate) branch_adoption: Option<ajax_core::commands::BranchAdoptionPlan>,
 }
 
 pub(crate) fn handle_action_request<C: CommandRunner>(
@@ -109,7 +111,6 @@ pub(crate) fn handle_action_request<C: CommandRunner>(
             task_handle: request.task_handle,
             action: request.action,
             confirmed: request.confirmed,
-            branch_adoption: request.branch_adoption,
         },
         context,
         runner,
@@ -177,8 +178,7 @@ pub(crate) fn operation_error_response(
 
 pub(crate) fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
     let operator_action = OperatorAction::from_label(action)?;
-    // Repair reaches operate, which accepts only a confirmed branch adoption.
-    if supported_web_action(operator_action) || operator_action == OperatorAction::Repair {
+    if supported_web_action(operator_action) {
         return None;
     }
     let message = match operator_action {

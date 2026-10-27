@@ -90,8 +90,6 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
     }
 }
 
-/// Read the Cursor model catalog from a Cursor SDK sidecar handshake.
-/// Empty when the sidecar cannot be launched or fails to start.
 pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::CursorCatalogModel> {
     let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch() else {
         return Vec::new();
@@ -111,8 +109,6 @@ pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::Curs
     models
 }
 
-/// `Some(models)` when Cursor runs on the SDK transport and its catalog
-/// could be read; `None` otherwise (the caller falls back).
 pub fn read_cursor_catalog_if_sdk(
     cwd: &Path,
 ) -> Option<Vec<super::cursor_sdk_client::CursorCatalogModel>> {
@@ -125,9 +121,6 @@ pub fn read_cursor_catalog_if_sdk(
     (!models.is_empty()).then_some(models)
 }
 
-/// Build the model catalog for a Pi RPC agent from its handshake config
-/// options, parsed natively from the neutral values instead of an ACP
-/// session/new round trip.
 pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
     let Ok((program, extra_args)) = super::session_client::pi_program_and_args() else {
         return AgentModelCatalog::empty();
@@ -146,9 +139,6 @@ pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
     catalog_from_neutral(&options)
 }
 
-/// Build a model catalog directly from neutral config options, mirroring the
-/// lookups and group construction of [`parse_session_new_catalog`] without any
-/// ACP JSON.
 pub(super) fn catalog_from_neutral(options: &[super::NeutralConfigOption]) -> AgentModelCatalog {
     let reasoning = neutral_option_in(
         options,
@@ -173,8 +163,6 @@ pub(super) fn catalog_from_neutral(options: &[super::NeutralConfigOption]) -> Ag
     }
 }
 
-/// Find the first option with the given category, else the first with the
-/// fallback id (mirrors `config_option_in`).
 fn neutral_option_in<'a>(
     options: &'a [super::NeutralConfigOption],
     category: &super::NeutralConfigCategory,
@@ -186,8 +174,6 @@ fn neutral_option_in<'a>(
         .or_else(|| options.iter().find(|option| option.id == fallback_id))
 }
 
-/// Convert a select-style neutral option into an [`AgentOptionGroup`], or
-/// `None` for non-select kinds and empty choice lists (mirrors `option_group`).
 fn neutral_option_group(option: &super::NeutralConfigOption) -> Option<AgentOptionGroup> {
     let (current, choices) = match &option.kind {
         super::NeutralConfigKind::Select {
@@ -210,8 +196,6 @@ fn neutral_option_group(option: &super::NeutralConfigOption) -> Option<AgentOpti
     })
 }
 
-/// Build the model catalog for a Claude Agent SDK agent from its handshake
-/// config options, parsed natively from the neutral values.
 pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
     let Ok((program, extra_args)) = super::claude_sdk_spawn::claude_launch() else {
         return AgentModelCatalog::empty();

@@ -85,9 +85,7 @@ export interface SessionSnapshot {
   turnState: "idle" | "busy";
   reset: boolean;
   agentPending?: boolean;
-  /** Host transcript fault message; shown for every source. */
   transcriptError?: string;
-  /** Set only for the durability fault; gates Send, Attach and Mic while true. */
   promptsBlocked?: boolean;
   pendingPermission?: {
     requestId: string;
@@ -100,17 +98,7 @@ export interface SessionSnapshot {
     schema: unknown;
   };
   transcript?: SessionTranscriptEvent[];
-  /**
-   * Absolute cursor of the first event included in `transcript`. Present when
-   * the server sends a tail-only inline transcript; replay envelopes below it
-   * must be discarded wholesale.
-   */
   transcriptFrom?: number;
-  /**
-   * Retention floor cursor: the oldest cursor of history the server still
-   * retains. Older retrievable history exists when
-   * `transcriptFrom > transcriptFloor`.
-   */
   transcriptFloor?: number;
 }
 

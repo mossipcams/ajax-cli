@@ -1,6 +1,3 @@
-// Enforces per-file total line counts on files changed in a PR.
-// Warn at WARN_AT lines; fail at FAIL_AT lines.
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +24,6 @@ const EXCLUDED_PATH_PARTS = [
   "/target/",
 ];
 
-/** wc-style line count for a UTF-8 string. */
 export function countLines(text) {
   if (!text) {
     return 0;
@@ -88,7 +84,6 @@ function evaluateMetric(path, lines, { warnAt, failAt, label }) {
   return null;
 }
 
-/** Classifies one changed file by its total line count at HEAD. */
 export function evaluateFileLoc(
   path,
   lines,

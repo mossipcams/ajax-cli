@@ -86,8 +86,6 @@ fn database_file_is_owner_only_and_reapplied_on_open() {
 fn database_file_precreated_wider_is_opened_and_tightened() {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let path = temp_path("pre-created-0644");
-    // Pre-create the file empty with world-readable permissions, as a process
-    // under a lax umask once did.
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

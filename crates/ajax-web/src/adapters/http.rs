@@ -174,7 +174,6 @@ mod tests {
 
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         assert_eq!(response.headers()["referrer-policy"], "no-referrer");
-        // #1242: Same-origin microphone is required for speech-to-text getUserMedia.
         assert_eq!(
             response.headers()["permissions-policy"],
             "camera=(), microphone=(self), geolocation=()"

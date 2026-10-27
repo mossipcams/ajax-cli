@@ -14,8 +14,6 @@ test("default (Test in Stable) path rebuilds web then force-installs ajax-cli", 
   assert.match(script, /npm --prefix "\$source_root" run web:build/);
   assert.match(script, /touch "\$embed_rs"/);
 
-  // Non-worktree install must force-overwrite so a same-version embed refresh
-  // always lands in ~/.cargo/bin (parity with husky + Test in Dev).
   assert.match(
     script,
     /cargo install --path "\$SOURCE_ROOT\/crates\/ajax-cli" --locked --force/,

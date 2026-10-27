@@ -1,11 +1,3 @@
-//! Unified session client for the web session slice.
-//!
-//! Wraps an ACP stdio client, a Pi RPC client, a Claude Agent SDK,
-//! or a Cursor SDK
-//! client behind exactly the
-//! method set the web session slice already uses on `AcpStdioClient`.
-//! Spawning routes through [`SessionClient::spawn_with_operator_pin`].
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -32,15 +24,10 @@ use super::{
 
 use ajax_core::models::AgentClient;
 
-/// The spawn report shape the web session slice receives: ACP fields with a
-/// harness-neutral [`NeutralConfigOption`] list.
 pub type SessionSpawnReport = SpawnReport<NeutralConfigOption>;
 
-/// The apply-config outcome shape the web session slice receives.
 pub type SessionConfigOutcome = ApplyModelOutcome<NeutralConfigOption>;
 
-/// One live session transport: ACP stdio, Pi RPC, Claude Agent SDK, or
-/// Cursor Agent SDK.
 pub enum SessionClient {
     Acp(AcpStdioClient),
     Pi(PiSession),
@@ -48,37 +35,28 @@ pub enum SessionClient {
     Cursor(CursorSession),
 }
 
-/// State for the Pi RPC variant of [`SessionClient`].
 pub struct PiSession {
     client: PiRpcClient,
     session_id: String,
     session_new_result: serde_json::Value,
 }
 
-/// State for the Claude Agent SDK variant of [`SessionClient`].
 pub struct ClaudeSession {
     client: ClaudeSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
 }
 
-/// State for the Cursor SDK variant of [`SessionClient`].
 pub struct CursorSession {
     client: CursorSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
 }
 
-/// Minimal event surface shared by the ACP stdio client and the unified
-/// session client, so drain helpers can serve both.
 pub trait AcpEventSource {
     fn session_new_result(&self) -> &serde_json::Value;
     fn poll_event(&self) -> Option<AgentEvent>;
 
-    /// Slash commands newly advertised since the last drain. Native sources
-    /// yield the handshake list exactly once (one-shot, like an event), so a
-    /// repeated drain delivers no snapshot; empty for sources without a
-    /// native command list.
     fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
         Vec::new()
     }
@@ -94,7 +72,6 @@ impl AcpEventSource for AcpStdioClient {
     }
 }
 
-/// Maps native harness commands onto the wire descriptor shape.
 fn native_command_descriptors(commands: &[NativeCommand]) -> Vec<AvailableCommandDescriptor> {
     commands
         .iter()
@@ -122,7 +99,6 @@ impl AcpEventSource for SessionClient {
     }
 }
 
-/// The two shapes a transport takes for the methods every harness implements identically.
 enum Transport<'a> {
     Acp(&'a AcpStdioClient),
     Native(&'a RpcClientCore),
@@ -186,11 +162,6 @@ impl SessionClient {
         })
     }
 
-    /// Spawn the live session for `agent` at `worktree_path`, resuming
-    /// `resume_session_id` when given. The transport is selected by
-    /// `transport_for`: Cursor and Claude agents take their SDK paths,
-    /// Pi agents take the Pi RPC path (Pi in production), and every other
-    /// agent goes through the ACP stdio spawn unchanged.
     pub fn spawn_with_operator_pin(
         agent: AgentClient,
         worktree_path: &Path,
@@ -219,9 +190,6 @@ impl SessionClient {
         }
     }
 
-    /// Pi RPC spawn path. The `operator_pin` is applied after the restore
-    /// check and the report is built from the post-pin client; a pin error
-    /// never fails the spawn, it is surfaced as `model_apply_error`.
     fn spawn_pi_rpc(
         worktree_path: &Path,
         operator_pin: &str,
@@ -237,7 +205,6 @@ impl SessionClient {
         )
         .map_err(AcpSpawnError::Message)?;
 
-        // Fail closed on restore: never fall back to a fresh session.
         if let Some(expected) = resume_session_id {
             let actual = client.session_id();
             if actual != expected {
@@ -278,7 +245,6 @@ impl SessionClient {
     }
 
     pub fn shutdown(&mut self) -> Option<String> {
-        // RPC shutdown returns a session ID, not the optional error used by the slice.
         match self.transport_mut() {
             TransportMut::Acp(client) => return client.shutdown(),
             TransportMut::Native(core) => {
@@ -291,7 +257,6 @@ impl SessionClient {
     pub fn detach(&mut self) -> Option<String> {
         match self.transport_mut() {
             TransportMut::Acp(client) => client.detach(),
-            // RPC transports have no detached-host semantics.
             TransportMut::Native(_) => self.shutdown(),
         }
     }
@@ -305,7 +270,6 @@ impl SessionClient {
 
     #[cfg(test)]
     pub(crate) fn kill_host_for_test(&mut self) {
-        // Native transports have no kill hook, so they fall back to shutdown.
         match self.transport_mut() {
             TransportMut::Acp(client) => client.kill_host_for_test(),
             TransportMut::Native(core) => {
@@ -314,10 +278,6 @@ impl SessionClient {
         }
     }
 
-    /// OS process id of the live agent child while the transport is alive. The
-    /// ACP and Pi variants always report a pid; the Claude and Cursor SDK
-    /// variants report `None` once their host has been shut down.
-    /// `None` once its host has been shut down.
     pub fn child_pid(&self) -> Option<u32> {
         match self.transport() {
             Transport::Acp(client) => Some(client.child_id()),
@@ -371,7 +331,6 @@ impl SessionClient {
                 }
             }
         }
-        // Releasing an idle live RPC host needs no abort; transport failures still propagate.
         Ok(CancelOutcome {
             permissions: vec![],
             elicitations: vec![],
@@ -392,7 +351,6 @@ impl SessionClient {
     ) -> Result<(), String> {
         match self {
             SessionClient::Acp(client) => client.respond_client_request(id, result),
-            // ponytail: follow up when Pi RPC needs request responses.
             SessionClient::Pi(_) => {
                 Err("Pi RPC mode has no permission or elicitation requests".to_string())
             }
@@ -541,7 +499,6 @@ impl SessionClient {
                     ("mode", SessionConfigValue::Select(value)) => {
                         session.client.set_mode(&value).err()
                     }
-                    // Every other select is a parameter of the current model (effort, fast, ...).
                     (id, SessionConfigValue::Select(value)) => {
                         session.client.set_option(id, &value).err()
                     }
@@ -573,10 +530,6 @@ impl SessionClient {
     }
 }
 
-/// The transport `agent` spawns on, from the core launch table.
-///
-/// Under test a native transport is selected only while its program/module
-/// override is installed, so ordinary tests keep the ACP path.
 pub(super) fn transport_for(agent: AgentClient) -> ajax_core::adapters::HarnessTransport {
     let transport = ajax_core::adapters::acp_launch_for_agent(agent)
         .map_or(ajax_core::adapters::HarnessTransport::Acp, |launch| {
@@ -601,10 +554,6 @@ pub(super) fn transport_for(agent: AgentClient) -> ajax_core::adapters::HarnessT
     transport
 }
 
-/// Apply a persisted operator pin (`model|configId=value|...`) to a Pi RPC
-/// client. Returns the first error text, if any; a parse failure or an
-/// unspecified model applies nothing. Errors never stop later steps from
-/// applying.
 fn apply_pin_to_pi(client: &PiRpcClient, pin: &str) -> Option<String> {
     let selection = ajax_core::adapters::parse_model_selection(pin)?;
     let mut first_error = None;
@@ -623,7 +572,6 @@ fn apply_pin_to_pi(client: &PiRpcClient, pin: &str) -> Option<String> {
     first_error
 }
 
-/// Resolve the Pi program and its extra spawn arguments.
 pub(super) fn pi_program_and_args() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     #[cfg(test)]
     if let Some(pair) = pi_program_override() {
@@ -646,8 +594,6 @@ fn pi_program_override() -> Option<(PathBuf, Vec<String>)> {
     TEST_PI_PROGRAM.lock().unwrap().clone()
 }
 
-/// Run `f` with the Pi program override installed as `path` plus
-/// `extra_args`; mirrors [`super::client::with_test_acp_program`].
 #[cfg(test)]
 pub(crate) fn with_test_pi_program<F, R>(path: &Path, extra_args: &[&str], f: F) -> R
 where
@@ -660,8 +606,6 @@ where
     result
 }
 
-/// Split ACP content blocks into the plain-text prompt and its images, for
-/// transports that accept images natively.
 pub(super) fn prompt_parts(blocks: &[ContentBlock]) -> (String, Vec<NativeImage>) {
     let mut parts: Vec<String> = Vec::new();
     let mut images = Vec::new();
@@ -673,15 +617,12 @@ pub(super) fn prompt_parts(blocks: &[ContentBlock]) -> (String, Vec<NativeImage>
                 data: image.data.clone(),
                 mime_type: image.mime_type.clone(),
             }),
-            // ponytail: audio and embedded resources are not forwarded yet.
             _ => parts.push("[attachment omitted]".to_string()),
         }
     }
     (parts.join("\n\n"), images)
 }
 
-/// Flatten ACP content blocks into a single plain-text prompt.
-// ponytail: only the placeholder-flattening test still uses this; delete both together.
 #[cfg(test)]
 pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -694,7 +635,6 @@ pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
             ContentBlock::ResourceLink(rl @ ResourceLink { .. }) => {
                 parts.push(rl.uri.clone());
             }
-            // ponytail: images are not forwarded yet — only a placeholder is emitted
             _ => {
                 parts.push("[image omitted]".to_string());
             }

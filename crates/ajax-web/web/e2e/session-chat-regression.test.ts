@@ -145,7 +145,6 @@ for (const harness of HARNESSES) {
   });
 }
 
-// What the real server reports for the task while a prompt is held in flight.
 const HELD_TURN_DETAIL = {
   ...DETAIL_FIXTURE,
   agent: "Cursor",
@@ -181,7 +180,6 @@ async function mockHeldTurn(page: Page) {
         clientMessageId?: string;
       };
       if (event.type === "prompt" && event.text) {
-        // Flip the detail before the turn is visible so the busy-change reload sees it.
         await setTaskDetailOverride(page, HELD_TURN_DETAIL);
         if (event.clientMessageId) {
           send({ type: "prompt_accepted", clientMessageId: event.clientMessageId });
@@ -287,9 +285,6 @@ test("#1301 paints an inline retained transcript at its actual live bottom", asy
   );
   expect(firstAgentText).toContain("Earlier answer 11");
   const geometry = await page.getByTestId("session-thread").evaluate((thread) => {
-    // Measure the last turn wrapper (which includes the MessageTime
-    // footnote rendered after each message), not the agent message element,
-    // as the transcript's actual live bottom.
     const turns = thread.querySelectorAll(".session-turn");
     const last = turns.item(turns.length - 1);
     return {
@@ -321,8 +316,6 @@ test("#1301 keeps the current message fixed when earlier history is revealed", a
   );
 
   const thread = page.getByTestId("session-thread");
-  // Midway, away from the live edge but outside the auto-load band (auto-load
-  // is armed from the start and would reveal before the manual click).
   await thread.evaluate((node) => {
     node.scrollTop = Math.round((node.clientHeight - node.scrollHeight) / 2);
   });
@@ -381,8 +374,6 @@ test("opens at the latest content and holds a follow-up until the turn resolves"
       .__threadSamples;
     return {
       overflowed: samples.filter((sample) => sample.overflow > 48).length,
-      // Reversed container: live edge is scrollTop 0; straddled means scrolled
-      // more than the 48px threshold toward history (negative) while overflowed.
       stranded: samples.filter((sample) => sample.overflow > 48 && sample.top < -48).length,
     };
   });

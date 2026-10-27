@@ -1,12 +1,3 @@
-// Guards the trigger matrix the CI and Release Please workflows encode. These
-// are structural properties GitHub will not tell you about until a run misfires
-// in production — a Release Please PR quietly running the full suite again, or a
-// normal PR having its expensive jobs skipped by a stale `if:`.
-//
-// Replaces the old scripts/verify-ci-release-pr-bypass.mjs, which asserted the
-// blanket skip-CI bypass this pipeline no longer has. Parses the YAML rather
-// than regexing it, so reindentation cannot make an assertion silently vacuous.
-
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -14,8 +5,6 @@ import { parse } from "yaml";
 
 const RELEASE_BRANCH = "release-please--branches--main";
 
-// Jobs that must never run on the generated release PR: its commits were all
-// tested on the PRs that produced them.
 const RELEASE_SKIP_JOBS = [
   "file-loc",
   "invariants",
@@ -176,7 +165,7 @@ function verifyExploratory(workflow, fail) {
 }
 
 function verifyCi(ci, fail, root) {
-  const on = ci.on ?? ci.true; // `on:` is YAML-truthy unless quoted.
+  const on = ci.on ?? ci.true;
   const triggers = Object.keys(on ?? {});
 
   if (!triggers.includes("pull_request")) {

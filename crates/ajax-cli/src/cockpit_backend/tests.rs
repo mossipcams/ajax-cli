@@ -694,8 +694,6 @@ fn live_refresh_does_not_probe_generic_error_task_without_live_attention() {
 
     let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
-    // The CI monitor's PR discovery is the only write this task may receive (#1456):
-    // its empty `gh pr list` answer is recorded as a probe error ("ci_probe_error").
     let after = context.registry.get_task(&TaskId::new("task-1")).unwrap();
     assert_eq!(after.lifecycle_status, before.lifecycle_status);
     assert_eq!(after.live_status, before.live_status);

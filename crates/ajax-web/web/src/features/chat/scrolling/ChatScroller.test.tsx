@@ -171,8 +171,6 @@ describe("ChatScroller integration", () => {
     expect(rule).toMatch(/flex-direction:\s*column-reverse/);
     const innerRule =
       stylesSource.match(/\.session-thread-inner\s*\{([^}]*)\}/)?.[1] ?? "";
-    // The inner column stays chronological (oldest at top) and unpinned, so
-    // the reversed outer container is what makes scrollTop = 0 the live edge.
     expect(innerRule).not.toMatch(/column-reverse/);
     expect(innerRule).toMatch(/flex-direction:\s*column/);
     expect(innerRule).toMatch(/flex:\s*0 0 auto/);
@@ -358,7 +356,6 @@ describe("server history controls", () => {
     expect(screen.queryByText("Earlier row 99")).not.toBeInTheDocument();
     expect(screen.getByText("Earlier row 100")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("session-load-earlier"));
-    // The remainder reveals locally, exhausting the fetched page (rows 0–199).
     expect(screen.getAllByText(/^Earlier row /)).toHaveLength(200);
     expect(screen.getByText("Earlier row 0")).toBeInTheDocument();
     expect(screen.getByText("Recent message")).toBeInTheDocument();

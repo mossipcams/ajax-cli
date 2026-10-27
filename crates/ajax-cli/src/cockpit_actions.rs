@@ -110,16 +110,10 @@ pub(crate) fn cockpit_action_outcome(
             )
             .map_err(command_error_as_io)?;
             if plan.requires_confirmation {
-                let message = if let Some(adoption) = &plan.branch_adoption {
-                    format!(
-                        "press enter again to adopt branch {} (expected {})",
-                        adoption.observed_branch, adoption.expected_branch
-                    )
-                } else {
-                    "press enter again to confirm repair".to_string()
-                };
                 *retained_plan = Some(plan);
-                return Ok(ajax_tui::ActionOutcome::Confirm(message));
+                return Ok(ajax_tui::ActionOutcome::Confirm(
+                    "press enter again to confirm repair".to_string(),
+                ));
             }
             Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
                 task_handle: handle.clone(),

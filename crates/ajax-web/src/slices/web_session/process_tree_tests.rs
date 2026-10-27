@@ -1,7 +1,3 @@
-//! Fixtures are shaped like the live census in
-//! `.planning/spikes/delegate-run-identity/census.md`: nono root, node sidecar,
-//! harness `claude`, MCP servers, delegate chains and multicall `ugrep`.
-
 use super::process_tree::{
     background_shells, cached_table, has_background_shell, is_shell, snapshot, ProcessEntry,
 };
@@ -30,8 +26,6 @@ fn shell_pids(table: &[ProcessEntry], root: u32) -> Vec<u32> {
         .collect()
 }
 
-/// Claude SDK session: nono(10) -> node sidecar(11) + log(12); sidecar ->
-/// harness claude(13) -> iwdp-mcp(14), codeburn node(15), opensafari node(16).
 fn sdk_session_rows() -> Vec<(u32, u32, &'static str)> {
     vec![
         (10, 1, "nono"),
@@ -246,9 +240,6 @@ fn snapshot_returns_table_containing_this_process() {
 
 #[test]
 fn snapshot_lists_a_spawned_shell_as_a_child_of_this_process() {
-    // `read` is a shell builtin that blocks on stdin without forking, so the shell
-    // stays a shell with no child process. A `sleep` grandchild would survive
-    // kill() and keep the inherited handles open.
     let mut child = Command::new("sh")
         .args(["-c", "read _"])
         .stdin(Stdio::piped())

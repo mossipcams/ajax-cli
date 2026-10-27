@@ -1,12 +1,5 @@
-//! Pure domain model for durable agent execution.
-//!
-//! Execution states, the transition table, replay policy, and recovery
-//! resolution are defined here without I/O or SQLite dependencies.
-
-/// Checkpoint schema version written by the current kernel.
 pub const CHECKPOINT_SCHEMA_VERSION: u32 = 1;
 
-/// Lifecycle state of an execution task or run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionState {
     Pending,
@@ -20,7 +13,6 @@ pub enum ExecutionState {
 }
 
 impl ExecutionState {
-    /// Snake-case wire name of the state.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -34,7 +26,6 @@ impl ExecutionState {
         }
     }
 
-    /// Parse a snake-case wire name; `None` when unrecognised.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "pending" => Some(Self::Pending),
@@ -49,19 +40,16 @@ impl ExecutionState {
         }
     }
 
-    /// True only for Completed, Failed, and Cancelled.
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
     }
 }
 
-/// Rejected execution state transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InvalidTransition {
     Disallowed(ExecutionState, ExecutionState),
 }
 
-/// Check the one-step transition table; `Err` for everything not allowed.
 pub fn transition(from: ExecutionState, to: ExecutionState) -> Result<(), InvalidTransition> {
     let allowed = matches!(
         (from, to),
@@ -96,7 +84,6 @@ pub fn transition(from: ExecutionState, to: ExecutionState) -> Result<(), Invali
     }
 }
 
-/// How an unfinished checkpoint may be handled on recovery.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ReplayPolicy {
     Safe,
@@ -106,7 +93,6 @@ pub enum ReplayPolicy {
 }
 
 impl ReplayPolicy {
-    /// Snake-case wire name of the policy.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Safe => "safe",
@@ -115,7 +101,6 @@ impl ReplayPolicy {
         }
     }
 
-    /// Parse a snake-case wire name; unknown strings fall back to `Unsafe`.
     pub fn parse(value: &str) -> Self {
         match value {
             "safe" => Self::Safe,
@@ -125,7 +110,6 @@ impl ReplayPolicy {
     }
 }
 
-/// Operation recorded in an execution checkpoint intent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
     SessionStart,
@@ -138,7 +122,6 @@ pub enum Operation {
 }
 
 impl Operation {
-    /// Snake-case wire name of the operation.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SessionStart => "session_start",
@@ -151,7 +134,6 @@ impl Operation {
         }
     }
 
-    /// Parse a snake-case wire name; `None` when unrecognised.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "session_start" => Some(Self::SessionStart),
@@ -166,7 +148,6 @@ impl Operation {
     }
 }
 
-/// Default replay policy for an operation given adapter capabilities.
 pub fn default_replay_policy(operation: Operation, supports_reconciliation: bool) -> ReplayPolicy {
     match operation {
         Operation::SessionStart | Operation::SessionRestore | Operation::StateQuery => {
@@ -179,20 +160,14 @@ pub fn default_replay_policy(operation: Operation, supports_reconciliation: bool
     }
 }
 
-/// An unfinished checkpoint loaded from persistence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnfinishedCheckpoint {
-    /// `None` when the stored operation string was not recognised.
     pub operation: Option<Operation>,
-    /// Replay policy recorded with the checkpoint intent.
     pub policy: ReplayPolicy,
-    /// Checkpoint schema version that wrote this row.
     pub schema_version: u32,
-    /// True when the checkpoint already stores a result.
     pub has_result: bool,
 }
 
-/// Why an interrupted task cannot be recovered automatically.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterruptReason {
     UnsupportedSchema,
@@ -201,7 +176,6 @@ pub enum InterruptReason {
     ReconcileInconclusive,
 }
 
-/// Action the recovery scheduler must take for an unfinished checkpoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecoveryAction {
     Cancel,
@@ -212,11 +186,6 @@ pub enum RecoveryAction {
     Interrupt(InterruptReason),
 }
 
-/// Resolve the recovery action for an unfinished checkpoint.
-///
-/// Rules apply in order: newer schema interrupts; a stored result resumes; a
-/// cancel request cancels; an unknown operation interrupts; then the replay
-/// policy decides (safe replays, reconcile reconciles, unsafe interrupts).
 pub fn resolve_recovery(
     checkpoint: &UnfinishedCheckpoint,
     cancel_requested: bool,
@@ -240,7 +209,6 @@ pub fn resolve_recovery(
     }
 }
 
-/// What reconciliation observed about the external operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReconcileOutcome {
     Executed,
@@ -248,7 +216,6 @@ pub enum ReconcileOutcome {
     Unknown,
 }
 
-/// Resolve the recovery action after a reconcile query.
 pub fn resolve_reconciled(outcome: ReconcileOutcome) -> RecoveryAction {
     match outcome {
         ReconcileOutcome::Executed => RecoveryAction::AdoptExternal,
@@ -259,7 +226,6 @@ pub fn resolve_reconciled(outcome: ReconcileOutcome) -> RecoveryAction {
     }
 }
 
-/// True only when every child is terminal (an empty slice qualifies).
 pub fn children_allow_completion(children: &[ExecutionState]) -> bool {
     !children.iter().any(|state| !state.is_terminal())
 }
@@ -279,17 +245,15 @@ mod tests {
         ExecutionState::Interrupted,
     ];
 
-    /// Allowed transitions: rows = from, columns = to in `ALL_STATES` order.
     const ALLOWED: [[bool; 8]; 8] = [
-        //   P     R     W     Cmpl  Done  F     X     I
-        [false, true, false, false, false, false, true, false], // Pending
-        [false, false, true, true, false, true, true, true],    // Running
-        [false, true, false, false, false, true, true, true],   // Waiting
-        [false, false, false, false, true, true, false, true],  // Completing
-        [false; 8],                                             // Completed
-        [false; 8],                                             // Failed
-        [false; 8],                                             // Cancelled
-        [true, false, false, false, false, true, true, false],  // Interrupted
+        [false, true, false, false, false, false, true, false],
+        [false, false, true, true, false, true, true, true],
+        [false, true, false, false, false, true, true, true],
+        [false, false, false, false, true, true, false, true],
+        [false; 8],
+        [false; 8],
+        [false; 8],
+        [true, false, false, false, false, true, true, false],
     ];
 
     #[test]

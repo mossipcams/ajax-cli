@@ -62,6 +62,9 @@ pub(super) struct TestBridge {
     persist_result: Result<(), crate::WebError>,
     acknowledge_probe: AcknowledgeProbe,
     drop_task_on_refresh: Option<String>,
+    pub(super) notification_calls: Arc<AtomicUsize>,
+    notification_entered: Option<Arc<Notify>>,
+    notification_release: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
 
 type AcknowledgeProbe = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
@@ -106,6 +109,9 @@ impl Default for TestBridge {
             persist_result: Ok(()),
             acknowledge_probe: Arc::new(Mutex::new(None)),
             drop_task_on_refresh: None,
+            notification_calls: Arc::new(AtomicUsize::new(0)),
+            notification_entered: None,
+            notification_release: None,
         }
     }
 }
@@ -136,6 +142,44 @@ pub(super) fn release_gate(release: &Arc<(Mutex<bool>, Condvar)>) {
     cvar.notify_all();
 }
 
+/// A bridge whose first cockpit refresh probe signals `entered` and then blocks
+/// until `release` is opened.
+pub(super) fn blocking_refresh_bridge(
+    entered: Arc<Notify>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+) -> TestBridge {
+    TestBridge {
+        refresh_entered: Some(entered),
+        refresh_release: Some(release),
+        ..TestBridge::default()
+    }
+}
+
+/// A bridge whose agent-notification delivery signals `entered` and then blocks
+/// until `release` is opened.
+pub(super) fn blocking_notification_bridge(
+    entered: Arc<Notify>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+) -> TestBridge {
+    TestBridge {
+        notification_entered: Some(entered),
+        notification_release: Some(release),
+        ..TestBridge::default()
+    }
+}
+
+/// A notification-delivery bridge whose registry snapshot persist fails with
+/// "disk full". Delivery itself succeeds through the already-open `release` gate.
+pub(super) fn unsaved_notification_bridge(
+    entered: Arc<Notify>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+) -> TestBridge {
+    TestBridge {
+        persist_result: Err(crate::WebError::CommandFailed("disk full".to_string())),
+        ..blocking_notification_bridge(entered, release)
+    }
+}
+
 impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
     fn refresh_cockpit(
         &mut self,
@@ -159,13 +203,30 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         let Some(handle) = self.drop_task_on_refresh.as_ref() else {
             return Ok(false);
         };
-        // Simulates a reload that finds the task dropped from another surface.
         use ajax_core::registry::Registry as _;
         context
             .registry
             .delete_task(&ajax_core::models::TaskId::new(handle))
             .expect("drop task on refresh");
         Ok(true)
+    }
+
+    fn deliver_agent_notification(
+        &mut self,
+        _context: &CommandContext<InMemoryRegistry>,
+        _runner: &mut R,
+        _task: &ajax_core::models::Task,
+        _notification: &ajax_core::agent_notification::AgentNotification,
+    ) -> Result<ajax_core::agent_notification::AgentNotificationDeliveryStatus, String> {
+        if self.notification_entered.is_none() && self.notification_release.is_none() {
+            return Err("native agent notification delivery unavailable".to_string());
+        }
+        let call_index = self.notification_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(entered) = self.notification_entered.as_ref() {
+            entered.notify_one();
+        }
+        wait_for_release(&self.notification_release, call_index);
+        Ok(ajax_core::agent_notification::AgentNotificationDeliveryStatus::Accepted)
     }
 
     fn execute_operate(

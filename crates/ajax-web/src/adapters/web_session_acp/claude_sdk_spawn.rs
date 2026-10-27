@@ -1,5 +1,3 @@
-//! Spawn path for the Claude Agent SDK transport: launch resolution, fail-closed restore, operator-pin application and the spawn report. Mirrors the Pi path in session_client.rs.
-// A later packet wires this module into the SessionClient variant.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -7,7 +5,6 @@ use std::path::{Path, PathBuf};
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::PromptCapabilityDescriptor;
-/// Resolve the Node program and its sidecar spawn arguments.
 pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     #[cfg(test)]
     if let Some(module) = claude_sdk_module_override() {
@@ -26,10 +23,6 @@ pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
         AcpSpawnError::Message("node is not installed - install Node.js 20 or newer".to_string())
     })?;
-    // Resolve the SDK from a trusted location (the user's global npm root,
-    // queried from the home directory) and load it only as an explicit
-    // absolute path, so a repository .npmrc or node_modules in a task
-    // worktree can never redirect module resolution.
     let root = crate::adapters::program::global_npm_root().ok_or_else(|| {
         AcpSpawnError::Message(
             "no loadable claude-agent-sdk module: npm root -g failed - npm install -g @anthropic-ai/claude-agent-sdk".into(),
@@ -47,9 +40,6 @@ pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     ))
 }
 
-/// The first existing Claude Agent SDK entry point under a global npm root:
-/// the direct package location, then the copy nested under the ACP bundle.
-/// Pure; returns None when neither exists.
 pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
     const DIRECT: &[&str] = &["@anthropic-ai", "claude-agent-sdk", "sdk.mjs"];
     const NESTED: &[&str] = &[
@@ -71,9 +61,6 @@ pub(super) fn sdk_module_from_npm_root(root: &Path) -> Option<PathBuf> {
     }
     None
 }
-/// Claude Agent SDK spawn path. The `operator_pin` is applied after the
-/// restore check and the report is built from the post-pin client; a pin error
-/// never fails the spawn, it is surfaced as `model_apply_error`.
 pub(super) fn spawn_claude_sdk(
     worktree_path: &Path,
     operator_pin: &str,
@@ -89,7 +76,6 @@ pub(super) fn spawn_claude_sdk(
         super::client::HANDSHAKE_TIMEOUT,
     )
     .map_err(|text| {
-        // Fail closed on restore: never fall back to a fresh session.
         if let Some(id) = resume_session_id {
             if text.contains("session not found") || text.contains("resumed a different session") {
                 return AcpSpawnError::Restore(RestoreFailure::Rejected {
@@ -128,10 +114,6 @@ pub(super) fn spawn_claude_sdk(
     Ok((client, report))
 }
 
-/// Apply a persisted operator pin (`model|configId=value|...`) to a Claude Agent SDK
-/// client. Returns the first error text, if any; a parse failure or an
-/// unspecified model applies nothing. Errors never stop later steps from
-/// applying. Unknown option ids are ignored.
 pub(super) fn apply_pin_to_claude(client: &ClaudeSdkClient, pin: &str) -> Option<String> {
     let selection = ajax_core::adapters::parse_model_selection(pin)?;
     let mut first_error = None;
@@ -158,8 +140,6 @@ pub(super) fn claude_sdk_module_override() -> Option<PathBuf> {
     TEST_CLAUDE_SDK_MODULE.lock().unwrap().clone()
 }
 
-/// Run `f` with the fake Claude Agent SDK module installed as `sdk_module`;
-/// mirrors [`super::session_client::with_test_pi_program`].
 #[cfg(test)]
 pub(crate) fn with_test_claude_sdk_module<F, R>(sdk_module: &Path, f: F) -> R
 where

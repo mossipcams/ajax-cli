@@ -1,8 +1,3 @@
-//! Tests for [`super::cursor_login`]: a fake `@cursor/sdk` module in a
-//! fresh temp dir lets the real `cursor_sdk_login.mjs` sidecar run a bounded,
-//! deterministic login flow. Every test body runs inside
-//! `with_test_cursor_sdk_module` and uses `CursorLogin::new` (never the global).
-
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -12,11 +7,6 @@ const FAKE_KEY: &str = "sk-RUST-FAKE-SECRET";
 const LOGIN_URL: &str = "https://cursor.test/login?x=1";
 const EXPIRES_AT_MS: u64 = 4_102_444_800_000;
 
-/// A fake `@cursor/sdk` entry point: login reports a URL, blocks until a
-/// `release` file appears next to this module (aborting on `signal`), then
-/// persists the creds and resolves. `me` only accepts the fake key. The key is
-/// kept out of everything the sidecar emits by the real sidecar's redaction;
-/// these tests assert Rust never surfaces it either.
 const FAKE_SDK: &str = r#"
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -83,10 +73,6 @@ export const Cursor = {
 export function sdkVersion() { return "0.0.0-fake"; }
 "#;
 
-/// A fake `@cursor/sdk` whose login reports a URL and then hangs forever,
-/// ignoring `options.signal`; the module-level interval keeps the Node process
-/// alive so closing stdin does not end it. Used to prove the Rust-side deadline
-/// reclaims a flow whose sidecar survives cancellation.
 const FAKE_SDK_HANG: &str = r#"
 import { writeFileSync } from "node:fs";
 
@@ -120,16 +106,8 @@ export const Cursor = {
 export function sdkVersion() { return "0.0.0-fake-hang"; }
 "#;
 
-/// Content-identical to `FAKE_SDK`: tests run in parallel and swap a shared
-/// global SDK module path, so every registered file must behave identically.
-/// The argv-conditional "leak-exit" branch inside FAKE_SDK's login() fires only
-/// for sidecars whose --store-path contains that marker (fresh_dir("leak-exit")): it
-/// writes the key straight to stderr, then exits non-zero without emitting a
-/// terminal line — proving Rust never surfaces sidecar stderr in a Failed phase.
 const FAKE_SDK_LEAK_EXIT: &str = FAKE_SDK;
 
-/// A fresh temp dir for one test; returns (dir, fake SDK module path). The
-/// sidecar's `release` sentinel is created next to the SDK module (`<dir>`).
 fn fresh_dir(label: &str) -> (PathBuf, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
         "ajax-cursor-login-test-{}-{}",
@@ -141,9 +119,6 @@ fn fresh_dir(label: &str) -> (PathBuf, PathBuf) {
     (dir.clone(), dir.join("fake_cursor_sdk.mjs"))
 }
 
-/// Poll `login.phase()` every 20ms until `matches` holds or the deadline.
-/// Returns the last observed phase; records each observation in `observed`
-/// for the serialization-leak assertion.
 fn poll_until(
     login: &CursorLogin,
     matches: impl Fn(&CursorLoginPhase) -> bool,
@@ -184,7 +159,6 @@ fn start_returns_fast_and_reaches_succeeded_after_release() {
         let login = CursorLogin::new(Some(store.clone()), Duration::from_secs(30));
         let mut observed: Vec<serde_json::Value> = Vec::new();
 
-        // start() must not block on the (still-unreleased) fake login.
         let started = Instant::now();
         login.start();
         assert!(
@@ -192,7 +166,6 @@ fn start_returns_fast_and_reaches_succeeded_after_release() {
             "start() blocked"
         );
 
-        // Waiting{url} is observed BEFORE the release file exists.
         let phase = poll_until(
             &login,
             |p| matches!(p, CursorLoginPhase::Waiting { .. }),
@@ -347,7 +320,6 @@ fn status_reports_absent_then_valid_creds() {
         let absent = poll_status(&login, &mut observed);
         assert!(!absent.present, "no store file means present:false");
 
-        // A successful login makes the same status report valid creds.
         let release = dir.join("release");
         login.start();
         poll_until(
@@ -405,8 +377,6 @@ fn serialized_phases_and_status_never_contain_api_key() {
         );
         let status = poll_status(&login, &mut observed);
 
-        // The store file on disk does carry the key; none of the serialized
-        // Rust-side observations may.
         assert!(std::fs::read_to_string(&store)
             .expect("store exists")
             .contains(FAKE_KEY));
@@ -426,7 +396,6 @@ fn cancel_with_unresponsive_sidecar_times_out_and_allows_restart() {
     let (dir, sdk) = fresh_dir("hang-cancel");
     std::fs::write(&sdk, FAKE_SDK_HANG).expect("write hanging fake SDK");
     with_test_cursor_sdk_module(&sdk, || {
-        // Short timeout so the deadline fires quickly after cancel.
         let login = CursorLogin::new(Some(dir.join("auth.json")), Duration::from_millis(800));
         let mut observed: Vec<serde_json::Value> = Vec::new();
 
@@ -438,8 +407,6 @@ fn cancel_with_unresponsive_sidecar_times_out_and_allows_restart() {
             &mut observed,
         );
 
-        // The sidecar ignores the cancellation (signal) and keeps running;
-        // only the Rust-side deadline can end the flow.
         login.cancel();
         let phase = poll_until(
             &login,
@@ -455,8 +422,6 @@ fn cancel_with_unresponsive_sidecar_times_out_and_allows_restart() {
             other => panic!("expected Failed after cancel, got {other:?}"),
         }
 
-        // A later start() must not return the stale Waiting of the dead flow;
-        // it begins a fresh flow (Idle, a new Waiting, or Failed).
         let restarted = login.start();
         assert!(
             matches!(

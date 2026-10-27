@@ -1,7 +1,3 @@
-//! Tests for [`super::claude_sdk_spawn`]: the Claude Agent SDK spawn path,
-//! fail-closed restore, operator-pin application and the spawn report, running
-//! the real sidecar against the fake Claude Agent SDK fixture.
-
 use std::path::Path;
 
 use ajax_core::adapters::HarnessTransport;
@@ -15,12 +11,10 @@ fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The fake Claude Agent SDK fixture path under the crate.
 fn fake_sdk() -> std::path::PathBuf {
     manifest_dir().join("tests/fixtures/fake_claude_sdk.mjs")
 }
 
-/// Run `f` with the fake SDK module override installed and the crate as cwd.
 fn with_fake_sdk<R>(f: impl FnOnce(&Path) -> R) -> R {
     let dir = manifest_dir();
     with_test_claude_sdk_module(&fake_sdk(), || f(dir))
@@ -41,7 +35,6 @@ fn missing_sdk_error_names_the_install_command() {
     }
 }
 
-/// The current value of one select config option, panicking when it is absent.
 fn current_value(options: &[super::NeutralConfigOption], id: &str) -> String {
     let option = options
         .iter()
@@ -157,7 +150,6 @@ fn pin_unknown_option_id_is_ignored() {
 
 #[test]
 fn uses_claude_sdk_gating() {
-    // Outside the override no agent takes the SDK path.
     assert!(transport_for(AgentClient::Claude) != HarnessTransport::ClaudeSdk);
 
     with_fake_sdk(|_cwd| {

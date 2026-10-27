@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Select deterministic primary/fallback missions for this nightly run.
 
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";

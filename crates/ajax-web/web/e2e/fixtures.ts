@@ -295,10 +295,6 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
   }, routes);
 }
 
-/**
- * Swaps the task detail returned by `/api/tasks/:handle` for the rest of the
- * page's life (until navigation). `null` restores the mockFetch `__detail__`.
- */
 export async function setTaskDetailOverride(
   page: Page,
   detail: Record<string, unknown> | null,

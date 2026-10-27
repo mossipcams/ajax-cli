@@ -1,16 +1,9 @@
 #!/usr/bin/env node
-// Minimal `pi --mode rpc` stand-in for jsonl_process tests. Reads LF-delimited
-// JSONL commands from stdin, emits JSONL records on stdout in scripted order,
-// and exits 0 when stdin closes (the documented orderly-shutdown path).
 'use strict';
 
 const readline = require('readline');
 
 const sessionId = 'fake-pi-rpc-session-1';
-// A `--session-id <id>` argv pair (as sent by resuming clients) overrides the
-// fixed session id reported by get_state; without it behavior is unchanged.
-// `--ignore-session` suppresses that override, so get_state keeps the fixed
-// id even when --session-id is present (fail-closed restore fixture behavior).
 const sessionArgIndex = process.argv.indexOf('--session-id');
 const ignoreSession = process.argv.includes('--ignore-session');
 const overriddenSessionId =
@@ -18,10 +11,6 @@ const overriddenSessionId =
     ? process.argv[sessionArgIndex + 1]
     : null;
 
-// Real Pi refuses to resume a session it has never persisted: `--session` only
-// matches session files already on disk (issue #1283), and a chat that started
-// but received no prompt was never written. Mimic that: exit nonzero with the
-// real Pi error before any JSON is emitted.
 const legacySessionArgIndex = process.argv.indexOf('--session');
 if (
   legacySessionArgIndex >= 0 &&
@@ -41,7 +30,6 @@ const fakeModel = {
   contextWindow: 131072,
   maxTokens: 8192,
 };
-// Same model id as fakeModel under a different provider (--shared-model-ids).
 const sharedOtherModel = { ...fakeModel, provider: 'other-provider' };
 
 function emit(record) {
@@ -50,54 +38,36 @@ function emit(record) {
 
 const flags = new Set(process.argv.slice(2));
 
-// Handshake-mode switches. Each flag is independent; defaults keep the
-// original fixture behavior for jsonl_process tests unchanged.
-const stateFail = flags.has('--state-fail'); // get_state answers success:false
-const noSessionId = flags.has('--no-session-id'); // get_state data lacks sessionId
-const silentState = flags.has('--silent-state'); // get_state is never answered
-const degradeOptionals = flags.has('--degrade-optionals'); // the three discovery commands fail
-const interleaveEvent = flags.has('--interleave-event'); // one event mid-handshake
-const rejectPrompt = flags.has('--reject-prompt'); // prompt answers success:false, no events
-const holdRun = flags.has('--hold-run'); // prompt starts the run, which settles only on abort
-const uiConfirm = flags.has('--ui-confirm'); // prompt emits a confirm dialog, then waits for its answer
-// Host-crash tests kill the host mid-turn: stdin then closes while the harness
-// is a live orphan. With this flag the fixture survives that close so the
-// restart sweep has an orphan to reap; default behavior is unchanged.
+const stateFail = flags.has('--state-fail');
+const noSessionId = flags.has('--no-session-id');
+const silentState = flags.has('--silent-state');
+const degradeOptionals = flags.has('--degrade-optionals');
+const interleaveEvent = flags.has('--interleave-event');
+const rejectPrompt = flags.has('--reject-prompt');
+const holdRun = flags.has('--hold-run');
+const uiConfirm = flags.has('--ui-confirm');
 const surviveStdinClose = flags.has('--survive-stdin-eof');
-const exitAfterState = flags.has('--exit-after-state'); // child exits right after answering get_state
-const interleaveText = flags.has('--interleave-text'); // one text_delta mid-handshake
-const silentStats = flags.has('--silent-stats'); // get_session_stats is never answered
-const chatterState = flags.has('--chatter-state'); // get_state is never answered; unrelated records flood stdout instead
-const sharedModelIds = flags.has('--shared-model-ids'); // a second provider exposes the same model id; get_state selects it
+const exitAfterState = flags.has('--exit-after-state');
+const interleaveText = flags.has('--interleave-text');
+const silentStats = flags.has('--silent-stats');
+const chatterState = flags.has('--chatter-state');
+const sharedModelIds = flags.has('--shared-model-ids');
 
-// Scripted stdout output. Emitted before any command handling; libuv preserves
-// write order on the pipe, so these lines precede every later record.
 if (flags.has('--emit-u2028')) {
-  // One JSON line containing U+2028 inside a string value. It must reach the
-  // reader as exactly ONE record: JSONL framing splits only on LF, and the
-  // parser must not treat U+2028/U+2029 as line separators.
   process.stdout.write('{"type":"note","text":"one\u2028two"}\n');
 }
 if (flags.has('--emit-garbage')) {
-  // A stdout line that is not JSON at all; the reader must surface it as an
-  // error record instead of dropping or panicking.
   process.stdout.write('this line is not json\n');
 }
 if (flags.has('--emit-stderr')) {
-  // One short stderr write; it must land in the stderr tail and never in the
-  // stdout record channel.
   process.stderr.write('fake pi rpc stderr noise\n');
 }
 if (flags.has('--emit-stderr-noise')) {
-  // More than 4 KiB of stderr: the retained tail must keep only the last 4 KiB,
-  // so the head marker below must be dropped.
   process.stderr.write('STDERR-HEAD-BEGIN ' + 'x'.repeat(8 * 1024) + ' STDERR-TAIL-END\n');
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
-// Set once --exit-after-state has answered get_state: the child is dying, so
-// the commands already buffered on stdin must not be answered.
 let exiting = false;
 
 rl.on('line', (raw) => {
@@ -107,16 +77,13 @@ rl.on('line', (raw) => {
   try {
     command = JSON.parse(text);
   } catch {
-    return; // Malformed input framing is not exercised through this fixture.
+    return;
   }
   if (!command || typeof command !== 'object') return;
 
   switch (command.type) {
     case 'get_state':
       if (chatterState) {
-        // Never answer get_state, but keep the stream busy with unrelated
-        // records so the handshake never sees an empty channel. Self-terminates
-        // after a bound so a failing test cannot leave an orphan behind.
         const chatterUntil = Date.now() + 15_000;
         let seq = 0;
         const chatter = () => {
@@ -130,7 +97,6 @@ rl.on('line', (raw) => {
         break;
       }
       if (silentState) {
-        // Never answer: handshake tests expect the overall deadline to fire.
         break;
       }
       if (stateFail) {
@@ -150,25 +116,17 @@ rl.on('line', (raw) => {
         isStreaming: false,
         messageCount: 0,
       };
-      // The sessionId is required by the handshake; --no-session-id omits it.
-      // A --session <id> argv pair overrides the fixed id (resume path).
       if (!noSessionId) stateData.sessionId = overriddenSessionId ?? sessionId;
       emit({ id: command.id, type: 'response', command: 'get_state', success: true, data: stateData });
       if (exitAfterState) {
-        // Exit once the get_state line is flushed; the three discovery
-        // responses are never sent.
         exiting = true;
         process.stdout.write('', () => process.exit(1));
         break;
       }
       if (interleaveEvent) {
-        // A non-response record between the four handshake responses; the
-        // handshake must collect it into pending, not drop it.
         emit({ type: 'extension_ui_request', action: 'menu', payload: { items: ['a'] } });
       }
       if (interleaveText) {
-        // A mappable text record between the four handshake responses; the
-        // session must surface it as its first step.
         emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'pending-text' } });
       }
       break;
@@ -178,7 +136,6 @@ rl.on('line', (raw) => {
         emit({ id: command.id, type: 'response', command: 'get_available_models', success: false, error: 'degraded for test' });
         break;
       }
-      // Real Pi shape: data.models is an array of ModelInfo entries.
       emit({
         id: command.id,
         type: 'response',
@@ -205,8 +162,6 @@ rl.on('line', (raw) => {
         emit({ id: command.id, type: 'response', command: 'get_commands', success: false, error: 'degraded for test' });
         break;
       }
-      // Real Pi shape: data.commands is an array of {name, description, source};
-      // the last entry has no description to exercise the Option<String>.
       emit({
         id: command.id,
         type: 'response',
@@ -230,7 +185,6 @@ rl.on('line', (raw) => {
 
     case 'get_session_stats':
       if (silentStats) {
-        // Never answer: request tests expect the deadline to fire.
         break;
       }
       emit({
@@ -263,19 +217,13 @@ rl.on('line', (raw) => {
       emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'ok' } });
       if (Array.isArray(command.images) && command.images.length > 0) {
         const first = command.images[0];
-        // Report what the fixture received so tests can verify the wire shape.
         emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: `images=${command.images.length}:${first.type}/${first.mimeType}` } });
       }
       if (uiConfirm) {
-        // A confirm dialog, then the run stops here (no agent_end, no
-        // agent_settled); it settles only when the extension_ui_response
-        // for id ui-1 arrives.
         emit({ type: 'extension_ui_request', id: 'ui-1', method: 'confirm', title: 'Run the tool?', message: 'Allow bash?' });
         break;
       }
       if (holdRun) {
-        // The run stops here (no agent_end, no agent_settled); it settles
-        // only once an `abort` command arrives.
         break;
       }
       emit({ type: 'agent_end', messages: [], willRetry: false });
@@ -283,8 +231,6 @@ rl.on('line', (raw) => {
       break;
 
     case 'compact':
-      // Real Pi settles the compaction with start/end events and its own
-      // success response, which ends the run (issue #1360).
       emit({ type: 'compaction_start', reason: 'manual' });
       emit({ type: 'compaction_end', reason: 'manual', aborted: false, willRetry: false, result: { tokensBefore: 100, estimatedTokensAfter: 40 } });
       emit({ id: command.id, type: 'response', command: 'compact', success: true, data: { summary: 's', tokensBefore: 100, estimatedTokensAfter: 40 } });
@@ -295,8 +241,6 @@ rl.on('line', (raw) => {
       break;
 
     case 'extension_ui_response':
-      // Pi's dialog answer carries its own `id`, no command envelope. Answer
-      // with a mappable text_delta, then settle the run.
       if (command.id === 'ui-1') {
         const answer = command.cancelled ? 'cancelled' : command.confirmed ? 'confirmed:true' : 'confirmed:false';
         emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: answer } });
@@ -307,8 +251,6 @@ rl.on('line', (raw) => {
 
     case 'abort':
       if (holdRun) {
-        // Real Pi shape: stopReason is nested under `message`, and the run
-        // settles with agent_end + agent_settled after the message ends.
         emit({ id: command.id, type: 'response', command: 'abort', success: true });
         emit({ type: 'message_end', message: { role: 'assistant', stopReason: 'aborted' } });
         emit({ type: 'agent_end', messages: [], willRetry: false });
@@ -321,14 +263,10 @@ rl.on('line', (raw) => {
       break;
 
     default:
-      // Unknown commands are ignored on purpose so behavior stays deterministic.
   }
 });
 
-// With --survive-stdin-eof there are no other live handles after stdin
-// closes, so keep the event loop alive for the orphan premise.
 if (surviveStdinClose) setInterval(() => {}, 60_000);
-// Closing stdin is pi's documented orderly shutdown: exit cleanly with code 0.
 rl.on('close', () => {
   if (surviveStdinClose) return;
   process.exit(0);

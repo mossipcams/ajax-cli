@@ -1,7 +1,3 @@
-//! Tests for [`read_stdout_lines_bounded`]: the per-line byte cap is applied on
-//! the read, an over-sized line yields exactly one `Error`, and normal framing
-//! (LF/CRLF, final unterminated line, U+2028 inside records) is unchanged.
-
 use std::io::Cursor;
 use std::sync::mpsc;
 
@@ -9,11 +5,8 @@ use serde_json::json;
 
 use super::jsonl_process::{read_stdout_lines_bounded, JsonlRecord};
 
-/// Small cap so the over-sized path is exercised with tiny inputs.
 const CAP: usize = 16;
 
-/// Feed `input` through the bounded reader on a detached channel and collect
-/// every record (dropping the sender explicitly so the iterator can end).
 fn drain(input: Vec<u8>) -> Vec<JsonlRecord> {
     let (sender, receiver) = mpsc::channel();
     read_stdout_lines_bounded(Cursor::new(input), &sender, CAP);
@@ -57,7 +50,6 @@ fn oversized_line_between_short_lines_yields_one_error_and_keeps_parsing() {
         JsonlRecord::Error(text) => assert!(text.contains("exceeds"), "got {text}"),
         other => panic!("expected Error, got {other:?}"),
     }
-    // The line after the discarded one is still parsed.
     match &records[2] {
         JsonlRecord::Record(value) => assert_eq!(value, &json!({ "a": 1 })),
         other => panic!("expected Record, got {other:?}"),
@@ -67,7 +59,6 @@ fn oversized_line_between_short_lines_yields_one_error_and_keeps_parsing() {
 
 #[test]
 fn line_of_exactly_cap_bytes_is_a_record() {
-    // `{"a":"12345678"}` is exactly 16 content bytes.
     let input = b"{\"a\":\"12345678\"}\n".to_vec();
     assert_eq!(input.len() - 1, CAP);
 
@@ -82,7 +73,6 @@ fn line_of_exactly_cap_bytes_is_a_record() {
 
 #[test]
 fn line_of_cap_plus_one_bytes_is_an_error() {
-    // `{"a":"123456789"}` is 17 content bytes.
     let input = b"{\"a\":\"123456789\"}\n".to_vec();
     assert_eq!(input.len() - 1, CAP + 1);
 
@@ -141,9 +131,8 @@ fn crlf_terminated_short_line_still_parses() {
 
 #[test]
 fn u2028_inside_record_shorter_than_cap_is_one_record() {
-    // U+2028 (3 UTF-8 bytes) inside the JSON string; total 13 content bytes < CAP.
     let mut input = b"{\"s\":\"a".to_vec();
-    input.extend([0xE2, 0x80, 0xA8]); // U+2028
+    input.extend([0xE2, 0x80, 0xA8]);
     input.extend(b"b\"}\n");
 
     let records = drain(input);

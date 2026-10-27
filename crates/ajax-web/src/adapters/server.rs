@@ -22,12 +22,8 @@ const MAIN_CHECKOUT_DIR: &str = "ajax-cli";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartLaunch {
     Respawn,
-    /// Under launchd with no restart script: exit and let KeepAlive respawn.
     Exit,
-    Script {
-        path: String,
-        args: Vec<String>,
-    },
+    Script { path: String, args: Vec<String> },
 }
 
 pub fn restart_launch_from_env(

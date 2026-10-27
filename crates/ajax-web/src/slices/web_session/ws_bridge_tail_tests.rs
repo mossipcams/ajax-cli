@@ -9,7 +9,6 @@ use crate::adapters::web_session_acp::with_test_acp_program;
 use ajax_core::models::AgentClient;
 use std::path::Path;
 
-/// One seeded prompt inside the ACP fixture scope.
 fn tail_seed(directory: &BlockingSessionDirectory, dir: &Path, handle: &str) {
     let mut generation = directory.generation(handle);
     let rt = tokio::runtime::Runtime::new().unwrap();

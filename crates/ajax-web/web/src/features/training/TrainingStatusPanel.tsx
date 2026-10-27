@@ -49,7 +49,6 @@ export default function TrainingStatusPanel({
   onTrain,
 }: TrainingStatusPanelProps) {
   return (
-    // Status hero: what is happening right now, with raw state as tooltip only.
     <section
       className={`training-hero is-${heroMode}`}
       data-testid="training-hero"

@@ -69,8 +69,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     let tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
     let mut changed =
         refresh_runtime_substrate(context, runner, agent_status_source, tier, tasks.clone())?;
-    // Runs after the probe gate and tmux early returns so that a merged PR still
-    // reaches Merged when no task needed a live-substrate probe (#1456).
     if tier == RefreshTier::Full {
         ci_monitor::refresh_ci_monitor(
             context,
@@ -125,7 +123,6 @@ fn refresh_runtime_substrate<R: Registry>(
         })
         .collect::<Vec<_>>();
     let mut changed = if needs_git_substrate_refresh(&tasks) {
-        // One unreachable repository must not fail the refresh for the rest.
         let mut unobserved = Vec::new();
         let changed =
             commands::refresh_observable_git_substrate_evidence(context, runner, &mut unobserved)?;
@@ -526,10 +523,6 @@ fn refresh_runtime_substrate<R: Registry>(
                     Some(selected) => task
                         .live_status_observed_at
                         .is_some_and(|current| current >= selected),
-                    // An untimestamped projection (the `now` fallback) cannot be
-                    // newer than a stored observation, so an equal kind is unchanged.
-                    // Without a stored timestamp, stamp it so waiting tasks still
-                    // get acknowledgment timing.
                     None => task.live_status_observed_at.is_some(),
                 };
             let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning

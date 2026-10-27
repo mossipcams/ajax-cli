@@ -73,17 +73,11 @@ export interface TaskDiffView {
   judgment: DiffJudgmentView;
 }
 
-export interface BranchAdoptionPlan {
-  expected_branch: string;
-  observed_branch: string;
-}
-
 export interface WebAction {
   action: string;
   label: string;
   destructive: boolean;
   confirmation_required: boolean;
-  branch_adoption?: BranchAdoptionPlan;
 }
 
 export interface RepoSummary {
@@ -194,7 +188,6 @@ export interface OperationRequest {
   action: string;
   request_id: string;
   confirmed?: boolean;
-  branch_adoption?: BranchAdoptionPlan;
 }
 
 export interface OperationResponse {

@@ -1,5 +1,3 @@
-// Prove the fake ACP wrapper handles Ajax argv and can complete a prompt.
-
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";

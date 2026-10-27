@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Poll isolated Ajax Web health until ready or timeout.
 
 import { join } from "node:path";
 import { BASE_URL, readJson, resultsDir, writeJson } from "./lib.mjs";
@@ -11,7 +10,6 @@ async function check() {
   const url = `${BASE_URL}/api/health`;
   const response = await fetch(url, {
     signal: AbortSignal.timeout(5_000),
-    // Node fetch against self-signed HTTPS needs undici dispatcher; use curl fallback.
   }).catch(() => null);
   if (response?.ok) return true;
   return false;

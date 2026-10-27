@@ -1,9 +1,8 @@
 use ajax_core::{
-    commands::{merge_task_plan, BranchAdoptionPlan, CommandContext, OpenMode},
+    commands::{merge_task_plan, CommandContext},
     models::OperatorAction,
     output::TaskCard,
     registry::Registry,
-    task_operations::repair::plan_repair_operation,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -12,8 +11,6 @@ pub struct WebAction {
     pub label: String,
     pub destructive: bool,
     pub confirmation_required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_adoption: Option<BranchAdoptionPlan>,
 }
 
 pub fn web_action(action: OperatorAction) -> Option<WebAction> {
@@ -25,7 +22,6 @@ pub fn web_action(action: OperatorAction) -> Option<WebAction> {
         label: operator_action_label(action).to_string(),
         destructive: action == OperatorAction::Drop,
         confirmation_required: action == OperatorAction::Drop,
-        branch_adoption: None,
     })
 }
 
@@ -46,7 +42,6 @@ pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOpti
         label: option.label.clone(),
         destructive: false,
         confirmation_required: false,
-        branch_adoption: None,
     }
 }
 
@@ -76,34 +71,12 @@ fn web_action_for_card<R: Registry>(
     card: &TaskCard,
     action: OperatorAction,
 ) -> Option<WebAction> {
-    if action == OperatorAction::Repair {
-        return web_branch_adoption_for_card(context, card);
-    }
     let mut state = web_action(action)?;
     if action == OperatorAction::Ship {
-        // Core decides whether merging needs confirmation (e.g. unpushed commits);
-        // the browser must send confirmed:true when it does.
         state.confirmation_required = merge_task_plan(context, &card.qualified_handle)
             .is_ok_and(|plan| plan.requires_confirmation);
     }
     Some(state)
-}
-
-/// Repair reaches the web only as a confirmed branch adoption, for a worktree
-/// that core observes on another named branch. Every other repair stays CLI-only.
-fn web_branch_adoption_for_card<R: Registry>(
-    context: &CommandContext<R>,
-    card: &TaskCard,
-) -> Option<WebAction> {
-    let plan = plan_repair_operation(context, &card.qualified_handle, OpenMode::NoAttach).ok()?;
-    let branch_adoption = plan.branch_adoption?;
-    Some(WebAction {
-        action: OperatorAction::Repair.as_str().to_string(),
-        label: format!("Adopt {}", branch_adoption.observed_branch),
-        destructive: false,
-        confirmation_required: true,
-        branch_adoption: Some(branch_adoption),
-    })
 }
 
 pub fn supported_web_action(action: OperatorAction) -> bool {
@@ -208,63 +181,6 @@ mod tests {
 
         assert_eq!(fix_ci.label, "Fix CI");
         assert!(supported_browser_action(FIX_CI));
-    }
-
-    #[test]
-    fn renamed_branch_task_offers_repair_as_confirmed_branch_adoption() {
-        let mut task = crate::test_support::fix_login_task();
-        task.lifecycle_status = LifecycleStatus::Active;
-        task.git_status = Some(ajax_core::models::GitStatus {
-            worktree_exists: true,
-            branch_exists: false,
-            current_branch: Some("fix/web/login".to_string()),
-            dirty: false,
-            ahead: 0,
-            behind: 0,
-            merged: false,
-            untracked_files: 0,
-            unpushed_commits: 0,
-            conflicted: false,
-            last_commit: None,
-        });
-        let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
-        let card = TaskCard {
-            id: TaskId::new("web/fix-login"),
-            qualified_handle: "web/fix-login".to_string(),
-            title: "Fix login".to_string(),
-            status: ajax_core::ui_state::TaskStatus::Error,
-            status_explanation: Some(
-                "Worktree on fix/web/login; expected ajax/fix-login".to_string(),
-            ),
-            lifecycle: LifecycleStatus::Active,
-            last_activity_at: std::time::UNIX_EPOCH,
-            annotations: Vec::new(),
-            primary_action: OperatorAction::Resume,
-            available_actions: vec![
-                OperatorAction::Repair,
-                OperatorAction::Resume,
-                OperatorAction::Drop,
-            ],
-            remediations: Vec::new(),
-            attention: ajax_core::ui_state::AttentionBand::NeedsYou,
-        };
-
-        let states = browser_actions(&context, &card);
-        let repair = states
-            .iter()
-            .find(|state| state.action == "repair")
-            .expect("repair adoption action");
-
-        assert_eq!(repair.label, "Adopt fix/web/login");
-        assert!(!repair.destructive);
-        assert!(repair.confirmation_required);
-        assert_eq!(
-            repair.branch_adoption,
-            Some(ajax_core::commands::BranchAdoptionPlan {
-                expected_branch: "ajax/fix-login".to_string(),
-                observed_branch: "fix/web/login".to_string(),
-            })
-        );
     }
 
     #[test]

@@ -84,9 +84,7 @@ fn recreated_task_with_same_handle_starts_with_no_chat_run_after_cli_drop() {
     assert!(!other_events.is_empty());
     assert_eq!(other_prompts.len(), 1);
 
-    // CLI drop: the task leaves the registry and the whole registry is saved.
     store.save(&registry(&["repo/other"])).unwrap();
-    // Recreate a task with the same handle.
     store
         .save(&registry(&["repo/handle", "repo/other"]))
         .unwrap();

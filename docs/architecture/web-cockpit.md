@@ -1383,7 +1383,7 @@ override headline status from them. The browser may style the first returned
 action as prominent; it does not receive or invent a separate `primary_action`
 contract. Dashboard task rows (`features/task/TaskList.tsx`,
 `styles/task/list.css`) keep the `drop` action behind the full-width
-row (Repair appears in Web Cockpit only as a confirmed branch adoption, `Adopt <observed branch>`, when the worktree is on another named branch); left swipe exposes `Drop` at `--task-row-reveal-width` (158px) via
+row (with `Repair` excluded from Web Cockpit actions); left swipe exposes `Drop` at `--task-row-reveal-width` (158px) via
 `useSwipeReveal` on `.task-row-wrap` (touchstart inside `.task-row-reveal` is
 ignored). Swipe right on the wrap closes a revealed row (offset returns to 0);
 only one row may be revealed at a time; a settled reveal auto-hides after 10s
@@ -1392,11 +1392,7 @@ status, attention, and relative time only — not Fix CI/Drop/Repair chips.
 Confirmation taps use `.task-row.is-revealed { pointer-events: none }` so the
 revealed `ActionBar` receives the hit. Close animations honor
 `prefers-reduced-motion` via the global motion stylesheet. Drop and other
-actions remain on task details/workspace. Confirmation-required actions that carry a typed `BranchAdoptionPlan`
-expose the exact expected/observed branch pair from core; the browser retains
-that payload between activations and resubmits it unchanged. Core alone
-revalidates the pair and mutates task truth; stale or altered evidence is
-rejected.
+actions remain on task details/workspace.
 
 ### `ajax-web::slices::operate`
 
@@ -1418,10 +1414,7 @@ route dispatches the `resume` operation (acknowledging attention through core,
 exactly like Enter in the native Cockpit) before mounting Ajax Chat or Ajax
 Terminal. The browser renders no separate resume control; the implicit
 open=resume acknowledgment is best-effort and never derives task truth in
-JavaScript. Confirmed operator
-actions must echo the exact `branch_adoption` plan core attached to the action;
-the slice forwards that payload to core without recomputing branch policy or
-comparing branches in the browser.
+JavaScript.
 
 #### Operation failure envelopes
 
@@ -1564,8 +1557,28 @@ outside the shared-state lock.
 
 Runtime coordination contract (implemented):
 
-- One `tokio::sync::Mutex<()>` process-local async control lane serializes
-  refresh, notify, action, and start context replacement.
+- One `tokio::sync::Mutex<()>` process-local async control lane (`control_lane`)
+  serializes in-process state replacement and persistence: refresh apply,
+  notification delivery recording, actions, task start, harness swap, and
+  session writes.
+- A separate `tokio::sync::Mutex<()>` `refresh_flight` is the cockpit refresh
+  single-flight. Refresh probes (reload-if-stale, tmux/git/gh) run under
+  `refresh_flight` without `control_lane`; the probe result is then applied
+  under `control_lane`, which is released before deliveries.
+- Agent-notification and web-push delivery run under `refresh_flight` without
+  `control_lane`, on a snapshot of the applied state, and persist nothing. Their
+  delivered status is then recorded under `control_lane`: if the shared revision
+  is unchanged, the snapshot is swapped in and the revision bumped, and the
+  snapshot is persisted; if a brief session write moved it, the snapshot is still
+  persisted through the three-way merge and not swapped, and the next probe
+  reloads the delivered marks before it computes pending. A persist failure is
+  logged as an error; the delivered marks stay in memory, so they are not resent
+  until restart.
+- Lock order is `refresh_flight` then `control_lane`, everywhere. Actions, task
+  start, and harness swap take `refresh_flight` before the lane, so they still
+  wait for an in-flight refresh (#555 action contract: the refresh result is
+  committed, not discarded). Session-path writers (activity reports, session
+  model persist, attach) take only the lane and never wait on refresh probes.
 - Shared `std::sync::Mutex` guards are held only to clone or replace
   in-memory state, never across commands, persistence, probes, or `.await`.
 - The CLI bridge and SQLite optimistic revision/merge remain the cross-process
@@ -1576,14 +1589,27 @@ Runtime coordination contract (implemented):
   measurement justifies it.
 - Lightweight health/static/detail reads and PTY work remain outside the
   control lane after short snapshot reads.
-- Cockpit reads may serve the current server-owned projection from shared
-  state when refresh, notify, action, or start work already holds the control
-  lane; they do not cache that fallback response. Later polls use the normal
-  refresh path when the lane is available or the cache TTL expires.
+- Cockpit reads serve the current server-owned projection from shared state
+  while a refresh is in flight (`refresh_flight` is held); they do not cache that
+  fallback response. Later polls use the normal refresh path when the flight is
+  free or the cache TTL expires.
+- The apply step holds `control_lane` briefly with a blocking lock. A refresh
+  whose base revision moved before apply (a brief session write) is discarded
+  and redone by the next poll. Its probe result is never persisted, delivered,
+  or swapped in.
+- Session activity reports from chat session actors try the control lane
+  without waiting. When the lane is busy the report is deferred to a FIFO
+  queue that a dedicated thread applies under the lane once it frees; later
+  reports queue behind deferred ones so they apply in arrival order (#1472).
+  The session actor never waits on the lane (#1083). Non-lane failures
+  (missing task, unsaved registry) still fail the report so the chat
+  surfaces them.
 
-The control lane (`control_lane`) is acquired by the cockpit refresh path and,
-after operation admission, by the action and task-start handlers, pinned by two
-runtime concurrency tests.
+The control lane (`control_lane`) is acquired by the cockpit refresh apply step
+(blocking) and, after `refresh_flight` and operation admission, by the action,
+task-start, and harness-swap handlers, pinned by runtime concurrency tests. The
+refresh probe holds only `refresh_flight`; the browser GET takes `refresh_flight`
+with `try_lock` and the push tick with `blocking_lock`.
 
 ### Post-startup runtime refresh
 

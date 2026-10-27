@@ -1,16 +1,4 @@
 #!/usr/bin/env bash
-# Sync/install ajax-cli and restart web under launchd.
-#
-# Default (no --worktree, Test in Stable): fetch origin/main from the host
-# clone (REPO_ROOT), reset/build only a dedicated detached main worktree
-# (AJAX_STABLE_MAIN_WORKTREE, default ~/.ajax-dev/worktrees/<repo>-main),
-# install into ~/.cargo/bin, then cut over the selected profile. Never resets
-# the Settings-host checkout. pid/logs stay under REPO_ROOT/.ajax-dev-web.
-#
-# --worktree PATH (Test in Dev): build that worktree as-is (including dirty
-# files), install into .ajax-dev-web/bin so stable's cargo bin is untouched,
-# then restart only the selected profile (normally dev / 8788). Never runs
-# git reset/clean/checkout against the task worktree.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -101,7 +89,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Default ports by profile when --port is omitted.
 if [[ -z "$PORT" ]]; then
   case "$PROFILE" in
     stable) PORT="8787" ;;
@@ -109,7 +96,6 @@ if [[ -z "$PORT" ]]; then
   esac
 fi
 
-# Test in Dev must never target stable.
 if [[ -n "$WORKTREE" && "$PROFILE" == "stable" ]]; then
   echo "refusing --worktree deploy for profile=stable" >&2
   exit 2
@@ -127,9 +113,6 @@ CARGO_BIN_DIR="$RUN_DIR/cargo-bin"
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/ajax-cli"
 CARGO_BIN_PREV="$CARGO_BIN_DIR/ajax-cli.prev"
 
-# Per-profile restart lock. launchd KeepAlive respawns the old server while this
-# script builds, so a second Restart click must not run concurrently. The lock is
-# a mkdir dir holding the owner pid; a dead owner pid means the lock is stale.
 RESTART_LOCK="$RUN_DIR/${PROFILE}-restart.lock"
 
 release_restart_lock() {
@@ -176,9 +159,6 @@ sync_main() {
   echo "main tip: $(git -C "$MAIN_WORKTREE" log -1 --oneline)"
 }
 
-# ponytail: git clean removes untracked ajax-model-router script symlinks.
-# Ceiling: local/optional tooling; skip when the router repo is absent.
-# Upgrade: skills call a fixed router path so worktrees need no local links.
 restore_model_router_symlinks() {
   local router="${AJAX_MODEL_ROUTER:-}"
   local candidate installer
@@ -200,16 +180,12 @@ restore_model_router_symlinks() {
   "$installer" --target "$MAIN_WORKTREE" --force
 }
 
-# ponytail: only rewrite ~/.claude|codex|cursor|pi hooks when definitions moved.
-# Ceiling: path-based diff vs prior HEAD / origin/main; misses renames outside
-# agent_hooks.rs. Upgrade: compare `ajax-cli agent-hooks install` dry-run output.
 HOOKS_PATH="crates/ajax-cli/src/agent_hooks.rs"
 HOOKS_CHANGED=0
 
 agent_hooks_differs() {
   local work_tree="$1"
   shift
-  # `git diff --quiet` exits 1 when different; keep set -e safe via `if !`.
   if ! git -C "$work_tree" diff --quiet "$@" -- "$HOOKS_PATH"; then
     return 0
   fi
@@ -245,10 +221,6 @@ mkdir -p "$RUN_DIR"
 BIN_CMD=(ajax-cli)
 USE_SLOT_BIN=0
 
-# ponytail: vite dist must be rebuilt before cargo embed; release-committed dist
-# can lag main. Ceiling: needs local Node/npm (nvm 22 preferred).
-# include_bytes! in assets.rs only re-reads dist when that .rs is rebuilt — touch
-# it after vite so cargo cannot serve a stale embed.
 rebuild_web() {
   local source_root="$1"
   local embed_rs="$source_root/crates/ajax-web/src/adapters/assets.rs"
@@ -258,8 +230,6 @@ rebuild_web() {
     . "$NVM_DIR/nvm.sh"
     nvm use 22 >/dev/null
   fi
-  # Always ci: a present but stale node_modules (lockfile added deps) makes
-  # vite fail mid-build and leaves stable down after Test in Stable exits first.
   echo "Installing npm deps in $source_root (npm ci) ..."
   npm --prefix "$source_root" ci
   echo "Building frontend (web:build) in $source_root ..."
@@ -289,9 +259,6 @@ if [[ "$INSTALL" -eq 1 ]]; then
     BIN_CMD=("$SLOT_BIN")
     USE_SLOT_BIN=1
   else
-    # Test in Stable (and any non-worktree restart): always rebuild the web
-    # embed then force-reinstall. Without --force, same-version cargo install
-    # can leave ~/.cargo/bin/ajax-cli on a stale embed after web:build.
     rebuild_web "$SOURCE_ROOT"
     mkdir -p "$CARGO_BIN_DIR"
     if [[ -x "$CARGO_BIN" ]]; then
@@ -321,8 +288,6 @@ fi
 stop_listener() {
   local port="$1"
   local pids
-  # Absolute lsof: agent shells often lack /usr/sbin on PATH, and a missing
-  # lsof makes the post-start probe fail and kill a healthy launchd web session.
   pids="$(/usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
   if [[ -z "$pids" ]]; then
     return 0
@@ -363,13 +328,10 @@ stop_pid_file() {
   rm -f "$PID_FILE"
 }
 
-# Unload the launchd job before killing its pid: KeepAlive would respawn it.
 stop_launchd_job() {
   launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
 }
 
-# Legacy cleanup: servers before the launchd supervisor ran in tmux session
-# ajax-web-<profile>. Tolerates tmux being absent.
 stop_tmux_session() {
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
@@ -387,18 +349,13 @@ start_web() {
 
   if [[ "$FOREGROUND" -eq 1 ]]; then
     echo "Starting ${cmd_display[*]} (foreground) ..."
-    # exec skips EXIT traps, so release the restart lock explicitly.
     release_restart_lock
     exec "$bin_path" --profile "$PROFILE" web --host "$HOST" --port "$PORT"
   fi
 
   echo "Starting ${cmd_display[*]} (launchd job $LAUNCHD_LABEL) ..."
   mkdir -p "$(dirname "$SERVICE_LOG")"
-  # Append, never truncate: crash output from the previous run is still useful.
   echo "=== dev-web-restart $(date '+%F %T') starting ${PROFILE} ===" >>"$SERVICE_LOG"
-  # install writes the plist (embedding the AJAX_WEB_RESTART_* env exported above),
-  # then boots out the old job and bootstraps the new one. Run from REPO_ROOT so
-  # the job's WorkingDirectory can discover scripts/dev-web-restart.sh.
   if ! (cd "$REPO_ROOT" && "$bin_path" --profile "$PROFILE" web service install --host "$HOST" --port "$PORT"); then
     echo "launchd install failed for $LAUNCHD_LABEL" >&2
     return 1
@@ -455,7 +412,6 @@ if [[ "$USE_SLOT_BIN" -eq 0 ]]; then
   BIN_PATH="$(command -v ajax-cli)"
 fi
 
-# Build finished successfully before we touch the running process.
 if [[ -n "$WORKTREE" ]]; then
   echo "AJAX_DEV_DEPLOY_PHASE=restarting"
 fi
@@ -507,7 +463,6 @@ if [[ -n "$OLD_PID" && -n "$NEW_PID" && "$OLD_PID" == "$NEW_PID" ]]; then
   exit 1
 fi
 
-# Health check against the local listener (not the Cloudflare URL).
 if command -v curl >/dev/null 2>&1; then
   if ! curl -skf --max-time 5 "https://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "${PROFILE} web started but /api/health failed; see $SERVICE_LOG" >&2

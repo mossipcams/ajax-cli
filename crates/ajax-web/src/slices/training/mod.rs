@@ -34,7 +34,6 @@ fn is_valid_profile_name(name: &str) -> bool {
             .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-'))
 }
 
-// Matches ^\d{8}T\d{6}Z-[0-9a-f]{8}$
 fn is_valid_run_id(run_id: &str) -> bool {
     let bytes = run_id.as_bytes();
     bytes.len() == 25

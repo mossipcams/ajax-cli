@@ -383,7 +383,6 @@ pub enum SessionRouteError {
     TaskNotFound,
     WorktreeMissing,
     NotOrchestrationChat,
-    /// The task was promoted to ACP Chat but the registry could not be saved.
     PromotionNotSaved,
 }
 

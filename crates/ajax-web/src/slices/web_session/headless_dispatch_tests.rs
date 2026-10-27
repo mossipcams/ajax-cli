@@ -1,9 +1,3 @@
-//! End-to-end headless dispatch tests with the Claude fake: a foreign-owned
-//! chat's queued prompts are dispatched without a browser attached. Each test
-//! seeds its own scratch dir, runs on one shared multi-threaded tokio runtime
-//! (the session actor needs worker threads), and bounds every wait by a
-//! deadline so a bug fails the test instead of hanging it.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -23,8 +17,6 @@ fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Seed a foreign-owned run (`foreign-boot` owner) whose ledger holds one
-/// `Queued` prompt, exactly as the startup scan expects to find.
 fn seed_queued(dir: &Path, handle: &str, prompt_id: &str, prompt_text: &str) {
     let store = SqliteRegistryStore::new(dir.join("ajax.db"));
     record_child_identity(&store, dir, handle, "claude", None, "foreign-boot")
@@ -126,11 +118,6 @@ fn a_failing_chat_does_not_block_the_next_one() {
                 .enable_all()
                 .build()
                 .expect("build runtime");
-            // The first target's worktree directory does not exist, so its
-            // Claude sidecar spawn fails fast; the second Claude target must
-            // still run to completion, in input order. No real harness is ever
-            // started.
-            // target must still run to completion, in input order.
             let results = rt.block_on(async {
                 run_all(
                     &directory,
@@ -194,8 +181,6 @@ fn a_turn_that_never_finishes_times_out_and_releases() {
                 .enable_all()
                 .build()
                 .expect("build runtime");
-            // The fake streams until interrupted, so the turn never finishes:
-            // the runner must hit its 1 s deadline and give up.
             let (results, elapsed) = rt.block_on(async {
                 let started = Instant::now();
                 let results = run_all(
@@ -222,8 +207,6 @@ fn a_turn_that_never_finishes_times_out_and_releases() {
         },
     );
 
-    // The prompt was never dispatched to completion; it stays queued so a
-    // later browser attach can pick it up.
     let store = SqliteRegistryStore::new(dir.join("ajax.db"));
     let ledger = prompt_ledger::try_load(&store, &dir, "web/slow").expect("load ledger");
     assert_ne!(
@@ -241,8 +224,6 @@ fn an_incomplete_scan_is_rescanned_without_rehanding_out_issue_1326() {
 
     let directory = TaskSessionDirectory::new(SessionStorage::under(dir.clone()));
 
-    // A malformed legacy sidecar shadows web/b's durable (SQLite) ledger, so
-    // the first scan cannot read it; deleting it clears the failure.
     let broken_ledger = prompt_ledger::ledger_path(&dir, "web/b");
     std::fs::create_dir_all(broken_ledger.parent().unwrap()).expect("create ledger dir");
     std::fs::write(&broken_ledger, "malformed ledger").expect("corrupt ledger");

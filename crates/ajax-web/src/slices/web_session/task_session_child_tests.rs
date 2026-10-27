@@ -1,6 +1,3 @@
-//! The live agent child's identity (pid, start token, owner boot id) must be
-//! recorded on the run row at acquire time and updated again on respawn.
-
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::SessionStorage;
 use crate::adapters::web_session_acp::with_test_acp_program;

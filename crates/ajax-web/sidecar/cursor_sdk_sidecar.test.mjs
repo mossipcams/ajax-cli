@@ -1,7 +1,3 @@
-// node:test coverage for cursor_sdk_sidecar.mjs, driven against the fake
-// @cursor/sdk fixture. Each test spawns a fresh sidecar with HOME and cwd set
-// to throwaway mkdtemp directories so the real home is never read.
-
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -31,7 +27,7 @@ class Sidecar {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.stdoutLines = [];
-    this.consumedResponses = {}; // command type -> how many responses were already handed out
+    this.consumedResponses = {};
     this.consumedResults = 0;
     this.stdoutDataHandlers = new Set();
     let stdoutBuffer = "";
@@ -53,8 +49,6 @@ class Sidecar {
     this.proc.stderr.on("data", (chunk) => {
       this.stderrText += chunk.toString();
     });
-    // Every stdout line must be valid JSON protocol; "sdk noise" from the fake
-    // console.log must never appear here. This check is global to all tests.
     for (const line of this.stdoutLines) {
       let parsed;
       assert.doesNotThrow(() => {
@@ -73,7 +67,7 @@ class Sidecar {
   }
 
   lines() {
-    for (const line of this.stdoutLines) JSON.parse(line); // keep the JSON-only invariant hot
+    for (const line of this.stdoutLines) JSON.parse(line);
     return this.stdoutLines.map((line) => JSON.parse(line));
   }
 
@@ -147,7 +141,6 @@ class Sidecar {
     try {
       this.proc.kill();
     } catch {
-      // already dead
     }
   }
 }
@@ -207,13 +200,11 @@ test("prompt streams forwarded messages in order and ends with one finished resu
     );
     assert.equal(events[2].message.content[0].text, "echo[default]: hello world");
 
-    // The tool_call call_id embeds a newline; it must survive as ONE JSON line.
     const rawToolLines = sidecar.stdoutLines.filter((line) => line.includes("call-1"));
     assert.equal(rawToolLines.length, 2);
     for (const line of rawToolLines) {
       const parsed = JSON.parse(line);
       assert.equal(parsed.call_id, "call-1\nfc_1");
-      // The newline in call_id must be escaped inside one physical JSONL line.
       assert.ok(line.includes('"call-1\\nfc_1"'), `newline not escaped within one line: ${line}`);
     }
 
@@ -222,7 +213,6 @@ test("prompt streams forwarded messages in order and ends with one finished resu
     assert.equal(result.error, undefined);
     assert.deepEqual(result.usage, { inputTokens: 1, outputTokens: 2, totalTokens: 3 });
 
-    // The fake logged to console; it must have landed on stderr, not stdout.
     assert.ok(sidecar.stderrText.includes("sdk noise"));
   } finally {
     sidecar.close();
@@ -241,7 +231,6 @@ test("slash command expands project file text plus remainder; project wins over 
     sidecar.send({ type: "init", cwd: sidecar.cwd, model: { id: "default" } });
     const initResponse = await sidecar.readResponse("init");
     assert.equal(initResponse.success, true);
-    // Both commands are visible; greet's description comes from the project file.
     assert.deepEqual(
       initResponse.data.commands.map((command) => command.name),
       ["greet", "onlyuser"],
@@ -252,15 +241,13 @@ test("slash command expands project file text plus remainder; project wins over 
     let result = await sidecar.readResult();
     assert.equal(result.status, "finished");
     const assistantText = sidecar.events().find((message) => message.type === "assistant").message.content[0].text;
-    // Project file text wins over the user file with the same name.
     assert.equal(assistantText, "echo[default]: GREET PROJECT BODY\n\nextra words");
 
-    // An unknown slash command is sent unchanged.
     sidecar.send({ type: "prompt", message: "/nope stay" });
     await sidecar.readResponse("prompt");
     result = await sidecar.readResult();
     assert.equal(result.status, "finished");
-    const events = sidecar.events().slice(7); // skip the first run's seven messages
+    const events = sidecar.events().slice(7);
     const unchangedText = events.find((message) => message.type === "assistant").message.content[0].text;
     assert.equal(unchangedText, "echo[default]: /nope stay");
   } finally {
@@ -278,7 +265,6 @@ test("abort during a SLOW prompt yields cancelled and the next prompt works", as
     const promptResponse = await sidecar.readResponse("prompt");
     assert.equal(promptResponse.success, true);
 
-    // Let the RUNNING status stream first, then abort.
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
     sidecar.send({ type: "abort" });
     const abortResponse = await sidecar.readResponse("abort");
@@ -288,7 +274,6 @@ test("abort during a SLOW prompt yields cancelled and the next prompt works", as
     assert.equal(result.status, "cancelled");
     assert.ok(sidecar.events().some((message) => message.type === "status" && message.status === "CANCELLED"));
 
-    // A following prompt still works.
     sidecar.send({ type: "prompt", message: "back to work" });
     await sidecar.readResponse("prompt");
     const secondResult = await sidecar.readResult();
@@ -327,13 +312,11 @@ test("init with a missing resume id fails and never falls back to create", async
     assert.equal(initResponse.success, false);
     assert.match(initResponse.error, /Agent agent-missing not found/);
 
-    // No create fallback happened: the session is not initialized.
     sidecar.send({ type: "prompt", message: "any" });
     const promptResponse = await sidecar.readResponse("prompt");
     assert.equal(promptResponse.success, false);
     assert.match(promptResponse.error, /not initialized/);
 
-    // A valid resume does initialize.
     sidecar.send({ type: "init", cwd: sidecar.cwd, model: { id: "default" }, resume: "agent-resumed-42" });
     const secondInit = await sidecar.readResponse("init");
     assert.equal(secondInit.success, true);
@@ -378,7 +361,6 @@ test("non-JSON input line produces a parse error response with no id", async () 
     assert.equal(response.id, undefined);
     assert.match(response.error, /invalid JSON/);
 
-    // The session still works afterwards.
     sidecar.send({ type: "init", cwd: sidecar.cwd, model: { id: "default" } });
     const initResponse = await sidecar.readResponse("init");
     assert.equal(initResponse.success, true);
@@ -417,13 +399,10 @@ test("abort before the run exists (late send) still cancels it", async () => {
     sidecar.send({ type: "init", cwd: sidecar.cwd, model: { id: "default" } });
     await sidecar.readResponse("init");
 
-    // The fake send() for LATE text resolves only after 100ms, so this abort
-    // lands while state.run is still null (the race the fix covers).
     sidecar.send({ type: "prompt", message: "LATE SLOW" });
     const promptResponse = await sidecar.readResponse("prompt");
     assert.equal(promptResponse.success, true);
 
-    // Immediately, without waiting for any stream event.
     sidecar.send({ type: "abort" });
     const abortResponse = await sidecar.readResponse("abort");
     assert.equal(abortResponse.success, true);
@@ -449,7 +428,6 @@ test("shutdown with an active run cancels it and exits 0 under 3s", async () => 
     sidecar.send({ type: "shutdown" });
     await sidecar.readResponse("shutdown");
 
-    // The terminal result line is written before the process exits.
     await sidecar.waitFor(() => sidecar.results().length > 0, "cancelled result line");
 
     const code = await Promise.race([
@@ -487,13 +465,11 @@ test("prompt images echo the count; an invalid image shape is rejected without a
     const assistantText = sidecar.events().find((message) => message.type === "assistant").message.content[0].text;
     assert.equal(assistantText, "echo[default]: with pics images=2");
 
-    // Invalid shape: rejected, and no run starts.
     sidecar.send({ type: "prompt", message: "bad images", images: [{ nope: 1 }] });
     const badResponse = await sidecar.readResponse("prompt");
     assert.equal(badResponse.success, false);
     assert.match(badResponse.error, /prompt images must be \{url\} or \{data,mimeType\}/);
 
-    // Proof no run started: the next prompt is not rejected as busy.
     sidecar.send({ type: "prompt", message: "after bad images" });
     const secondPrompt = await sidecar.readResponse("prompt");
     assert.equal(secondPrompt.success, true);
@@ -506,7 +482,6 @@ test("prompt images echo the count; an invalid image shape is rejected without a
 });
 
 test("set_mode validates and the mode reaches the next send; init mode is validated too", async () => {
-  // init rejects a bogus mode.
   const badInitSidecar = new Sidecar();
   badInitSidecar.send({ type: "init", cwd: badInitSidecar.cwd, model: { id: "default" }, mode: "bogus" });
   const badInit = await badInitSidecar.readResponse("init");

@@ -119,7 +119,6 @@ export function useTrainingCatalog() {
     setError(failure?.status === "rejected" ? messageOf(failure.reason) : null);
   }, []);
 
-  // Polls only while the page is mounted; the interval is cleared on unmount.
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), CATALOG_POLL_MS);

@@ -1,6 +1,3 @@
-// Classifies changed paths into CI lanes for path-filtered jobs.
-// Emits rust/web/lockfile/full booleans to GITHUB_OUTPUT when present.
-
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { listChangedFiles } from "./check-file-loc.mjs";
@@ -11,7 +8,6 @@ const FULL_TRIGGER_PATHS = new Set([
   "scripts/ci-changed-paths.test.mjs",
 ]);
 
-/** Normalize repo-relative paths to forward slashes. */
 export function normalizePath(path) {
   return path.replaceAll("\\", "/");
 }

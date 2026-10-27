@@ -1,8 +1,3 @@
-//! Tests for the `SessionClient::Cursor` variant of [`super::session_client::SessionClient`]:
-//! the Cursor SDK transport reachable through the unified enum, driven by the
-//! fake Cursor SDK fixture so every assertion goes through the enum's own
-//! match arms.
-
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,14 +8,12 @@ use super::cursor_sdk_spawn::{spawn_cursor_sdk, with_test_cursor_sdk_module};
 use super::session_client::SessionClient;
 use super::SessionConfigValue;
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn fake_sdk() -> PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cursor_sdk.mjs")
 }
 
-/// Build the Cursor session without going through the launch table.
 fn session() -> SessionClient {
     let fake = fake_sdk();
     let cwd = std::env::temp_dir().join(format!(

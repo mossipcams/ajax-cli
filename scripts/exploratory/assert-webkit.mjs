@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// Assert exploratory Playwright MCP is WebKit-only and WebKit is installable.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,10 +13,6 @@ function browserArgValue(args) {
   return args[idx + 1] ?? null;
 }
 
-/**
- * Validate MCP config rules without launching a browser.
- * @param {object} mcp parsed mcp.json
- */
 export function assertWebkitMcpConfig(mcp) {
   const playwright = mcp?.mcpServers?.playwright;
   if (!playwright) {

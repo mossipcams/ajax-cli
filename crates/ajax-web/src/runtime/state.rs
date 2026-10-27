@@ -35,6 +35,10 @@ pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
 pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
     "Could not save the session model. Try again in a moment.";
+const CONTROL_LANE_BUSY_ERROR: &str = "control lane busy; session activity report deferred";
+/// Session activity reports that found the control lane busy, in arrival order.
+pub(crate) type DeferredActivityReports =
+    Mutex<VecDeque<(String, crate::slices::web_session::SessionActivity)>>;
 
 pub(crate) fn moonshine_provider_from_config(config: &Config) -> Arc<Mutex<MoonshineProvider>> {
     Arc::new(Mutex::new(MoonshineProvider::new(
@@ -48,6 +52,8 @@ pub struct WebAppState<C, B> {
     pub(crate) shared: Arc<Mutex<WebSharedState<C, B>>>,
     pub(crate) operations: Arc<Mutex<OperationCoordinator>>,
     pub(crate) control_lane: Arc<tokio::sync::Mutex<()>>,
+    /// Single-flight for cockpit refresh probes; the probes run outside `control_lane`.
+    pub(crate) refresh_flight: Arc<tokio::sync::Mutex<()>>,
     pub(crate) state_dir: Arc<PathBuf>,
     pub(crate) push: Arc<PushHub>,
     pub(crate) browser_session: Arc<BrowserSession>,
@@ -84,6 +90,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             shared: Arc::clone(&self.shared),
             operations: Arc::clone(&self.operations),
             control_lane: Arc::clone(&self.control_lane),
+            refresh_flight: Arc::clone(&self.refresh_flight),
             state_dir: Arc::clone(&self.state_dir),
             push: Arc::clone(&self.push),
             browser_session: Arc::clone(&self.browser_session),
@@ -106,11 +113,6 @@ where
     C: Clone + CommandRunner,
     B: Clone + RuntimeBridge<C>,
 {
-    /// After a registry reload removed owned tasks, shuts down live chat
-    /// sessions for handles this host no longer owns. Ownership is re-read from
-    /// the current shared context when cleanup runs, so a task recreated under
-    /// the same handle keeps its session. Spawned so the shared lock is never
-    /// held across the cleanup; without a runtime there are no live actors.
     pub(crate) fn cleanup_unowned_sessions(&self)
     where
         C: Send + 'static,
@@ -245,7 +247,16 @@ where
         let _lane = self
             .control_lane
             .try_lock()
-            .map_err(|_| "control lane busy; session activity report deferred".to_string())?;
+            .map_err(|_| CONTROL_LANE_BUSY_ERROR.to_string())?;
+        self.record_task_session_activity_under_lane(handle, activity)
+    }
+
+    /// Applies a session activity report; the caller must already hold the control lane.
+    fn record_task_session_activity_under_lane(
+        &self,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> Result<(), String> {
         let (mut context, runner, bridge, base_revision) = {
             let guard = self.shared();
             (
@@ -270,15 +281,96 @@ where
         )
     }
 
+    /// Reports session activity without dropping it when the control lane is busy (#1472).
+    /// Reports queue behind any already-deferred ones so they apply in arrival order; a
+    /// drainer thread applies the queue once the lane frees. Returns true once accepted.
+    pub(crate) fn report_or_defer_task_session_activity(
+        &self,
+        deferred: &Arc<DeferredActivityReports>,
+        handle: &str,
+        activity: crate::slices::web_session::SessionActivity,
+    ) -> bool
+    where
+        C: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        let mut queue = deferred
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if queue.is_empty() {
+            match self.report_task_session_activity(handle, activity) {
+                Ok(()) => return true,
+                Err(error) if error == CONTROL_LANE_BUSY_ERROR => {}
+                Err(error) => {
+                    tracing::warn!(
+                        target: "ajax_web",
+                        handle,
+                        ?activity,
+                        %error,
+                        "session activity report failed"
+                    );
+                    return false;
+                }
+            }
+        }
+        let was_empty = queue.is_empty();
+        queue.push_back((handle.to_string(), activity));
+        if was_empty {
+            self.spawn_deferred_activity_drainer(Arc::clone(deferred));
+        }
+        true
+    }
+
+    /// Applies queued reports on a std thread holding the control lane. Uses `blocking_lock`
+    /// here, never on the session actor, so the actor never waits on the lane (#1472).
+    fn spawn_deferred_activity_drainer(&self, deferred: Arc<DeferredActivityReports>)
+    where
+        C: Send + Sync + 'static,
+        B: Send + Sync + 'static,
+    {
+        let state = self.clone();
+        std::thread::spawn(move || {
+            let _lane = state.control_lane.blocking_lock();
+            loop {
+                let next = deferred
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pop_front();
+                let Some((handle, activity)) = next else {
+                    break;
+                };
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    state.record_task_session_activity_under_lane(&handle, activity)
+                })) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(
+                        target: "ajax_web",
+                        handle = %handle,
+                        ?activity,
+                        %error,
+                        "deferred session activity report failed"
+                    ),
+                    Err(_) => tracing::warn!(
+                        target: "ajax_web",
+                        handle = %handle,
+                        ?activity,
+                        "deferred session activity report panicked"
+                    ),
+                }
+            }
+        });
+    }
+
     fn wire_session_activity_reporter(&self)
     where
         C: Send + Sync + 'static,
         B: Send + Sync + 'static,
     {
         let state = self.clone();
+        let deferred: Arc<DeferredActivityReports> = Arc::new(Mutex::new(VecDeque::new()));
         self.task_session_directory
             .set_report_session_activity(Arc::new(move |handle, activity| {
-                state.report_task_session_activity(handle, activity).is_ok()
+                state.report_or_defer_task_session_activity(&deferred, handle, activity)
             }));
     }
 
@@ -363,7 +455,6 @@ where
         if guard.revision != base_revision {
             return Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat);
         }
-        // A promotion that is not on disk would revert on restart (#1225).
         if promoted
             && bridge
                 .clone()
@@ -380,8 +471,6 @@ where
         Ok(plan)
     }
 
-    /// Commit a control-lane mutation only once its registry snapshot is on
-    /// disk, so success means durable and shared state never runs ahead of it.
     fn commit_durable(
         &self,
         mut context: CommandContext<InMemoryRegistry>,
@@ -420,8 +509,6 @@ impl<C, B> WebAppState<C, B> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Records a finished operation's outcome, then writes it with the
-    /// operations lock already released so disk I/O never blocks other requests.
     pub(crate) fn finish_operation(
         &self,
         request_id: Option<&str>,
@@ -463,6 +550,7 @@ impl<C, B> WebAppState<C, B> {
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             control_lane: Arc::new(tokio::sync::Mutex::new(())),
+            refresh_flight: Arc::new(tokio::sync::Mutex::new(())),
             state_dir,
             push: PushHub::ephemeral(),
             browser_session: Arc::new(BrowserSession::test_default()),
@@ -537,6 +625,7 @@ impl<C, B> WebAppState<C, B> {
             })),
             operations: Arc::new(Mutex::new(operations)),
             control_lane: Arc::new(tokio::sync::Mutex::new(())),
+            refresh_flight: Arc::new(tokio::sync::Mutex::new(())),
             state_dir,
             push,
             browser_session: Arc::new(browser_session),
@@ -631,9 +720,7 @@ pub(crate) struct OperationCoordinator {
     pub(crate) in_flight_requests: BTreeSet<String>,
     pub(crate) in_flight_tasks: BTreeSet<String>,
     pub(crate) store_path: Option<PathBuf>,
-    /// Sequence number of the newest outcome snapshot captured for persistence.
     pub(crate) write_seq: u64,
-    /// Sequence number of the newest snapshot written; held only for the write.
     pub(crate) persisted_seq: Arc<Mutex<u64>>,
 }
 
@@ -643,8 +730,6 @@ pub(crate) enum GateRejection {
 }
 
 impl OperationCoordinator {
-    /// An outcome older than the replay window is treated as absent, in memory
-    /// as well as on disk, so a long-lived host cannot replay it indefinitely.
     pub(crate) fn completed_response(&self, request_id: &str) -> Option<Response> {
         let completed_at = *self.completed_at.get(request_id)?;
         if now_unix_secs().saturating_sub(completed_at) > MAX_OUTCOME_AGE_SECS {
@@ -684,8 +769,6 @@ impl OperationCoordinator {
         Ok(())
     }
 
-    /// Releases the in-flight markers and records the outcome. The returned
-    /// write must be persisted by the caller after the operations lock is dropped.
     pub(crate) fn finish(
         &mut self,
         request_id: Option<&str>,

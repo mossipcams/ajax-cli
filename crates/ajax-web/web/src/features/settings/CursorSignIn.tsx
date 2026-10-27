@@ -52,7 +52,6 @@ export default function CursorSignIn() {
         if (value.phase === "waiting" || value.phase === "verifying") setActive(true);
       })
       .catch(() => {
-        // Keep the idle phase; sign-in can still be started from the button.
       });
 
     return () => {
@@ -115,7 +114,6 @@ export default function CursorSignIn() {
       const cancelled = await api.cancelCursorLogin();
       if (mountedRef.current) setPhase(cancelled);
     } catch {
-      // Leave the current phase visible; the operator can retry.
     }
   }
 

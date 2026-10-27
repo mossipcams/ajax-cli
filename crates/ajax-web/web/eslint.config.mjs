@@ -1,17 +1,3 @@
-// ESLint 9 flat config for the Ajax web frontend.
-//
-// Syntactic rules only — no type-aware linting (no projectService / parserOptions.project).
-// Type-aware rules would require the parser to load a TS program; that is out
-// of scope for this slice. The typechecker contract is owned by `web:check`,
-// which runs TypeScript 7 via the `typescript-7` npm alias.
-//
-// Four rules must ship as `error` and pass clean against existing source:
-//   @typescript-eslint/no-explicit-any, react-hooks/rules-of-hooks,
-//   react-hooks/exhaustive-deps, import-x/no-cycle.
-//
-// Enabling the jsx-a11y / testing-library / import-x / vitest rule sets (plus
-// the recommended core sets). Slice 12 cleared the deferred backlog; tests use
-// accessible queries or explicit data-testid hooks — no permanent rule exemptions.
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -62,7 +48,6 @@ export default tseslint.config(
     },
     rules: {
       ...jsxA11y.flatConfigs.recommended.rules,
-      // Backdrop dialog uses click-only dismiss; Escape is owned by Radix (see NewTaskSheet).
     },
   },
   {
@@ -108,7 +93,6 @@ export default tseslint.config(
     },
   },
   {
-    // Production layering: shared/ is the leaf and must not import app or features.
     ignores: ["**/*.test.{ts,tsx}"],
     files: ["**/src/shared/**/*.{ts,tsx}"],
     rules: {

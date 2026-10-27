@@ -1,7 +1,3 @@
-//! Tests for startup recovery of prompts cut off by a host restart. Each
-//! nextest case runs in its own process, so scratch directories cannot collide
-//! between tests.
-
 use std::path::{Path, PathBuf};
 
 use ajax_core::registry::SqliteRegistryStore;
@@ -9,7 +5,6 @@ use ajax_core::registry::SqliteRegistryStore;
 use super::startup_recovery::{queued_prompt_handles, recover_interrupted_prompts};
 use crate::adapters::web_session_store::prompt_ledger::{self, PromptLedger, PromptPhase};
 
-/// A scratch state dir plus a fresh registry store inside it.
 fn scratch_store(label: &str) -> (PathBuf, SqliteRegistryStore) {
     let dir = std::env::temp_dir().join(format!(
         "ajax-startup-recovery-{}-{label}",
@@ -20,7 +15,6 @@ fn scratch_store(label: &str) -> (PathBuf, SqliteRegistryStore) {
     (dir, store)
 }
 
-/// Set the run row's owning boot id exactly as a live session would.
 fn record_owner(store: &SqliteRegistryStore, state_dir: &Path, handle: &str, owner_boot_id: &str) {
     crate::adapters::web_session_store::record_child_identity(
         store,
@@ -33,8 +27,6 @@ fn record_owner(store: &SqliteRegistryStore, state_dir: &Path, handle: &str, own
     .expect("record child identity");
 }
 
-/// Persist a ledger with `dispatching` prompts in the Dispatching phase and
-/// `queued` prompts in the Queued phase.
 fn persist_ledger(
     store: &SqliteRegistryStore,
     state_dir: &Path,

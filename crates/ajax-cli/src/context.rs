@@ -341,7 +341,6 @@ fn merge_registries(
         }
     }
 
-    // #1398: honor deletions this writer made when the disk revision moved since load.
     for baseline_task in baseline.list_tasks() {
         if in_memory.get_task(&baseline_task.id).is_some() {
             continue;

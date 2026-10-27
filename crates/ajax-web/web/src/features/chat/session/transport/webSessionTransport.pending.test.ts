@@ -109,7 +109,6 @@ describe("connectWebSessionTransport early agentPending snapshots", () => {
 
     expect(onAgentPending).toHaveBeenCalledTimes(1);
     expect(cbs.onReady).not.toHaveBeenCalled();
-    // No synthetic ready event while the harness is still spawning.
     expect(cbs.onEvent).not.toHaveBeenCalled();
     expect(onSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -119,7 +118,6 @@ describe("connectWebSessionTransport early agentPending snapshots", () => {
         transcript: expect.any(Array),
       }),
     );
-    // Inline-transcript consumption keeps the existing cursor bookkeeping.
     expect(onCursorAdvance).toHaveBeenCalledTimes(1);
     expect(onCursorAdvance).toHaveBeenCalledWith(105);
 
@@ -153,7 +151,6 @@ describe("connectWebSessionTransport early agentPending snapshots", () => {
     expect(prompts).toHaveLength(1);
     expect(JSON.parse(prompts[0]).clientMessageId).toBe(id);
 
-    // Envelopes whose cursor sits inside the early inline transcript dedupe.
     vi.mocked(cbs.onEvent).mockClear();
     for (let cursor = 100; cursor < 105; cursor += 1) {
       socket.emit("message", {
@@ -186,11 +183,9 @@ describe("connectWebSessionTransport early agentPending snapshots", () => {
     expect(onCursorAdvance).not.toHaveBeenCalled();
     expect(cbs.onEvent).not.toHaveBeenCalled();
 
-    // The normal snapshot completes the first-ready path.
     socket.emit("message", { data: nonPendingSnapshotJson() } as MessageEvent);
     expect(cbs.onReady).toHaveBeenCalledTimes(1);
 
-    // A pending snapshot arriving when ready is already true must not call onReady again.
     socket.emit("message", { data: pendingSnapshotJson({ cursor: 106 }) } as MessageEvent);
     expect(cbs.onReady).toHaveBeenCalledTimes(1);
     expect(onAgentPending).toHaveBeenCalledTimes(2);

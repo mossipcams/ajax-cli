@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
-try:  # prefer /tmp; fall back to the repo's target/ if it is denied
+try:
     _T = tempfile.TemporaryDirectory()
 except OSError:  # pragma: no cover - only hit when /tmp is unavailable
     tgt = HERE.parent.parent / "target"
@@ -25,18 +25,17 @@ def out(fn, *a):
     return json.loads(buf.getvalue())
 
 
-RID_A = "20250701T000000Z-aaaaaaaa"  # newest
+RID_A = "20250701T000000Z-aaaaaaaa"
 RID_B = "20250630T121111Z-bbbbbbbb"
 
 
 class GpuCtlTest(unittest.TestCase):
     def setUp(self):
-        # gcu is a dynamically loaded script module; every gcu.* assignment below is deliberate monkeypatching
         self.tmp = Path(_T.name)
         self.rundir = self.tmp / "run"
         self.state = self.tmp / "state"
         self.evals = self.tmp / "evals"
-        for d in (self.state, self.evals):  # fresh per test: the shared temp root would leak fixtures
+        for d in (self.state, self.evals):
             shutil.rmtree(d, ignore_errors=True)
             d.mkdir(parents=True)
         self.rundir.mkdir(exist_ok=True)
@@ -46,12 +45,11 @@ class GpuCtlTest(unittest.TestCase):
         setattr(gcu, "STATE", self.state)
         setattr(gcu, "EVAL_RESULTS", self.evals)
         setattr(gcu, "HOST_ROOT", self.tmp)
-        # keep docker/pgrep/ps out of the tests
         setattr(gcu, "runtime_up", lambda: False)
         setattr(gcu, "generating", lambda: False)
         setattr(gcu, "procs", lambda: [])
         setattr(gcu, "job", _ORIG_JOB)
-        setattr(gcu, "busy", _ORIG_BUSY)  # per-test: earlier patches must not leak
+        setattr(gcu, "busy", _ORIG_BUSY)
 
     def _stage_dataset(self, rid, dataset=None, flags=()):
         rec = {"dataset_path": str(dataset), **{f: True for f in flags}}
@@ -66,7 +64,6 @@ class GpuCtlTest(unittest.TestCase):
         self._stage_dataset(RID_B, db, flags=("validated", "canary_passed"))
         (self.state / "current.json").write_text(json.dumps({"run_id": RID_A}))
         (self.state / "promoted_dataset.json").write_text(json.dumps({"run_id": RID_B}))
-        # noise that must be skipped: non-matching stems + unparsable record
         (self.state / "noise-selection.json").write_text("{}")
         (self.state / "20250702T000000Z-cccccccc.json").write_text("not json")
         r = out(gcu.datasets)
@@ -77,7 +74,7 @@ class GpuCtlTest(unittest.TestCase):
         self.assertFalse(a["promoted"])
         self.assertTrue(b["promoted"])
         self.assertEqual(a["size_bytes"], da.stat().st_size)
-        self.assertIsNone(b["size_bytes"])  # dataset file missing
+        self.assertIsNone(b["size_bytes"])
         self.assertTrue(a["validated"])
         self.assertFalse(a["canary_passed"])
 
@@ -99,7 +96,6 @@ class GpuCtlTest(unittest.TestCase):
         self.assertEqual(json.loads((self.state / "current.json").read_text()), {"run_id": RID_B})
 
     def test_evals(self):
-        # real host shapes: suite/gate_label live in metadata.json; total/passed/rates live under summary.summary
         runs = (
             ("checkpoint-600", "2026-10-22T13:43:57.169553+00:00", 24, 8, 0.3333,
              {"aliases": 0.0}, False, ["overall pass rate 0.3333 < 0.7"]),
@@ -116,7 +112,6 @@ class GpuCtlTest(unittest.TestCase):
             (d / "summary.json").write_text(json.dumps({
                 "summary": {"total": total, "passed": passed, "overall_pass_rate": rate, "category_pass_rate": cats},
                 "promotion": {"passed": ok, "failures": failures}}))
-        # skipped: summary without sibling metadata.json; unreadable summary
         orphan = self.evals / "group-b" / "orphan"
         orphan.mkdir(parents=True, exist_ok=True)
         (orphan / "summary.json").write_text("{}")
@@ -126,7 +121,7 @@ class GpuCtlTest(unittest.TestCase):
         (broken / "summary.json").write_text("nope")
         r = out(gcu.evals)
         ids = [e["id"] for e in r["evals"]]
-        self.assertEqual(ids, ["group-a/final", "group-a/checkpoint-600"])  # newest first, noise skipped
+        self.assertEqual(ids, ["group-a/final", "group-a/checkpoint-600"])
         fin, ck = r["evals"]
         self.assertEqual(fin["kind"], "final")
         self.assertEqual(ck["kind"], "checkpoint")
@@ -144,15 +139,15 @@ class GpuCtlTest(unittest.TestCase):
         self.assertEqual(fin["pass_rate"], 0.75)
         (self.state / "promoted_model.json").write_text(json.dumps(
             {"run_id": RID_A, "checkpoint": "final", "eval_metrics": {"overall_pass_rate": 0.75}}))
-        self.assertEqual(r["champion"], None)  # champion written after this call
+        self.assertEqual(r["champion"], None)
         r2 = out(gcu.evals)
         self.assertEqual(r2["champion"], {"run_id": RID_A, "checkpoint": "final", "pass_rates": {"promotion": 0.75}})
 
     def test_champion_formats(self):
         pm = self.state / "promoted_model.json"
-        self.assertIsNone(gcu.champion())  # missing
+        self.assertIsNone(gcu.champion())
         pm.write_text("not json")
-        self.assertIsNone(gcu.champion())  # invalid
+        self.assertIsNone(gcu.champion())
         pm.write_text(json.dumps({"run_id": RID_A, "checkpoint": "final", "eval_metrics": {
             "promotion": {"summary": {"overall_pass_rate": 0.6}, "promotion": {}},
             "context": {"summary": {"overall_pass_rate": 0.5}, "promotion": {}}}}))
@@ -167,12 +162,10 @@ class GpuCtlTest(unittest.TestCase):
         s = out(gcu.status)
         self.assertIsNone(s["pipeline"])
         self.assertIsNone(s["device"])
-        # current dataset with a missing record: flags all False
         (self.state / "current.json").write_text(json.dumps({"run_id": RID_B}))
         s = out(gcu.status)
         self.assertEqual(s["pipeline"]["run_id"], RID_B)
         self.assertFalse(any(s["pipeline"][f] for f in gcu.STAGES))
-        # training state -> gpu + flags from the record
         (self.state / f"{RID_B}.json").write_text(json.dumps({"validated": True, "trained": True}))
         (self.rundir / "gpu.state").write_text("train:ajax 1 2 1700000000\n")
         s = out(gcu.status)
@@ -263,7 +256,7 @@ class GpuCtlTest(unittest.TestCase):
         (orphan / "metadata.json").write_text(json.dumps({"gate_label": "shadow"}))
         self.assertEqual(gcu.evals_in_flight()[0]["done"], ["promotion", "gold", "shadow"])
         self.assertIsNone(gcu.evals_in_flight()[0]["current"])
-        argv[-1] = str(group)  # host-native paths work too
+        argv[-1] = str(group)
         self.assertIsNone(gcu.evals_in_flight()[0]["current"])
         for invalid in (argv[:2], argv[:4], argv[:-1], [*argv[:4], "invalid", *argv[5:]],
                         ["python", "unrelated.py", *argv[2:]]):

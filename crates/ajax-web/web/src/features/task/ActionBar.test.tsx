@@ -24,10 +24,6 @@ const repair: WebAction = {
   label: "Repair",
   destructive: false,
   confirmation_required: true,
-  branch_adoption: {
-    expected_branch: "ajax/fix-login",
-    observed_branch: "fix/pane-stuck",
-  },
 };
 
 function confirmFromShell(
@@ -372,40 +368,7 @@ describe("ActionBar", () => {
         task_handle: "web/x",
         action: "repair",
         confirmed: true,
-        branch_adoption: {
-          expected_branch: "ajax/fix-login",
-          observed_branch: "fix/pane-stuck",
-        },
         request_id: expect.any(String),
-      }),
-    );
-  });
-
-  it("retains the adoption pair from the first tap through shell confirm", async () => {
-    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
-    const onResult = vi.fn();
-    const dropHandles = {
-      dropTimerRef: { current: null as ReturnType<typeof setTimeout> | null },
-      dropResolvedRef: { current: false },
-    };
-    const refreshedRepair: WebAction = {
-      ...repair,
-      branch_adoption: {
-        expected_branch: "ajax/fix-login",
-        observed_branch: "fix/new-checkout",
-      },
-    };
-    const { rerender } = render(<ActionBar actions={[repair]} handle="web/x" onResult={onResult} />);
-    fireEvent.click(screen.getByText("Repair"));
-    rerender(<ActionBar actions={[refreshedRepair]} handle="web/x" onResult={onResult} />);
-    confirmFromShell(onResult, { onResult }, dropHandles);
-    await vi.runAllTimersAsync();
-    expect(spy).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        branch_adoption: {
-          expected_branch: "ajax/fix-login",
-          observed_branch: "fix/pane-stuck",
-        },
       }),
     );
   });
@@ -435,7 +398,6 @@ describe("ActionBar", () => {
         request_id: expect.any(String),
       }),
     );
-    expect(spy.mock.calls[0][0]).not.toHaveProperty("branch_adoption");
   });
 
   it("surfaces coded operation failures through onResult", async () => {

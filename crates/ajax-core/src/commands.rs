@@ -19,7 +19,7 @@ pub(crate) use check::check_task_plan_after_worktree_recreate;
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
-pub use context::{BranchAdoptionPlan, CommandContext, CommandError, CommandPlan, OpenMode};
+pub use context::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
@@ -326,9 +326,6 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
     refresh_git_substrate_by_repo(context, runner, None)
 }
 
-/// Like [`refresh_git_substrate_evidence`], but a repository whose Git
-/// observation fails is skipped and named in `unobserved` instead of failing
-/// the refresh for every other repository. Its tasks keep their prior evidence.
 pub fn refresh_observable_git_substrate_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,

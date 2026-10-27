@@ -556,7 +556,6 @@ fn tmux_probe_failure_renders_unavailable_without_marking_session_missing() {
     struct FailingTmuxRunner;
     impl CommandRunner for FailingTmuxRunner {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            // The CI monitor runs on every Full refresh (#1456); no PR is open here.
             if command.program == "gh" {
                 return Ok(CommandOutput {
                     status_code: 0,

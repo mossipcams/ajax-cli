@@ -1,7 +1,3 @@
-//! Tests for applying the operator pin to a Pi RPC session at spawn and for
-//! the Pi variant's `apply_model_pin` / `apply_config_option`, running the
-//! fake Pi RPC fixture through [`SessionClient::spawn_with_operator_pin`].
-
 use std::path::{Path, PathBuf};
 
 use super::session_client::{with_test_pi_program, SessionClient};

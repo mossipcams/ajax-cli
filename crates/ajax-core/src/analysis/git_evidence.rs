@@ -4,11 +4,6 @@ use crate::{
 };
 use std::path::Path;
 
-/// Matches a `git worktree list` path against a task's configured worktree path.
-///
-/// Git prints the resolved real path, so a configured path that goes through a symlink
-/// only matches after both sides are canonicalised. Raw equality is the fallback when
-/// either path cannot be canonicalised (for example, a worktree that no longer exists).
 pub fn worktree_path_matches(listed: &str, expected: &Path) -> bool {
     let listed = Path::new(listed);
     if listed == expected {

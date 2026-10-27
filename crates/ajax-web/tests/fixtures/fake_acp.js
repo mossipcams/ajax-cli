@@ -14,9 +14,6 @@ const loadDelayMs = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 })();
 const holdPromptMode = process.argv.includes('--hold-prompt');
-// Host-crash tests kill the host mid-turn: stdin then reaches EOF while the
-// harness is a live orphan. With this flag the fixture survives that EOF so
-// the restart sweep has an orphan to reap; default behavior is unchanged.
 const surviveStdinEof = process.argv.includes('--survive-stdin-eof');
 const malformedMode = process.argv.includes('--malformed');
 const badInitialize = process.argv.includes('--bad-initialize');
@@ -56,13 +53,9 @@ const thoughtOnly = process.argv.includes('--thought-only');
 const toolOnly = process.argv.includes('--tool-only');
 const noAgentText = process.argv.includes('--no-agent-text');
 const promptFail = process.argv.includes('--prompt-fail');
-// Background-work tests: each prompt leaves one real shell running as a direct
-// child of this agent, so it sits in the session's process subtree.
 const backgroundShell = process.argv.includes('--background-shell');
-// Like an SDK-initiated turn: the turn ends first, then a shell starts after it.
 const backgroundShellAfterTurn = process.argv.includes('--background-shell-after-turn');
 const sessionId = 'fake-sess-1';
-// `; :` keeps sh from exec-ing sleep, so the shell stays in the process table as a direct child.
 function spawnBackgroundShell(script) {
   const shell = childProcess.spawn('/bin/sh', ['-c', script], {
     detached: false,
@@ -70,8 +63,6 @@ function spawnBackgroundShell(script) {
   });
   shell.unref();
 }
-// ponytail: isolate fixture sidecar files under FAKE_ACP_STATE_DIR or a per-pid tmp dir
-// so verification does not litter the crate root when cwd is not the worktree.
 const configuredStateRoot = process.env.FAKE_ACP_STATE_DIR;
 const stateRoot = configuredStateRoot || path.join(os.tmpdir(), `fake-acp-${process.pid}`);
 fs.mkdirSync(stateRoot, { recursive: true });
@@ -152,7 +143,6 @@ function assertExclusiveSessionNew() {
   try {
     const pid = parseInt(fs.readFileSync(exclusiveLockPath, 'utf8'), 10);
     if (Number.isFinite(pid) && pid !== process.pid && pidAlive(pid)) {
-      // Live Cursor rejects a second ACP child with transport close during session/new.
       process.exit(1);
     }
   } catch {}
@@ -163,21 +153,15 @@ function spawnModelFromArgv() {
   if (ignoreSpawnModelOnce && firstSpawnAttempt) {
     return null;
   }
-  // #1151: unconditional variant so a later generation can simulate a
-  // restored session whose model differs from the spawn argv model.
   if (process.argv.includes('--ignore-spawn-model')) {
     return null;
   }
-  // #952: --model-refuse simulates a harness that keeps its own default and
-  // rejects operator pins at spawn as well as in-band.
   if (modelRefuse) {
     return null;
   }
   const idx = process.argv.indexOf('--model');
   if (idx >= 0 && idx + 1 < process.argv.length) {
     const model = process.argv[idx + 1];
-    // Live Cursor accepts cursor-grok catalog ids on spawn argv; other cursor-
-    // prefixed catalog ids are ignored until in-band apply.
     if (model.startsWith('cursor-grok-')) {
       return model;
     }
@@ -416,8 +400,6 @@ function handleRequest(msg) {
   if (method === 'session/new') {
     assertExclusiveSessionNew();
     persistSession(sessionId);
-    // #1151: sidecar counter so tests can prove a spawn restored instead of
-    // silently creating a fresh session behind the stored id.
     const counterPath = path.join(stateRoot, '.fake-acp-session-new-count');
     let sessionNewCount = 0;
     try {
@@ -501,8 +483,6 @@ function handleRequest(msg) {
     respond();
     return;
   }
-  // Model selection: echo what the client asked for so tests can assert the
-  // request shape each harness family uses.
   if (method === 'session/set_model' || method === 'session/set_config_option') {
     const configId = params?.configId;
     const rawValue = params?.value ?? params?.modelId;
@@ -690,7 +670,6 @@ function handleRequest(msg) {
       return;
     }
     if (backgroundShell) {
-      // Spawned before the reply so the turn-end probe sees it.
       spawnBackgroundShell('sleep 2; :');
     }
     const kinds = Array.isArray(params?.prompt)
@@ -703,14 +682,11 @@ function handleRequest(msg) {
     }
     send({ jsonrpc: '2.0', id, result: { stopReason: 'end_turn' } });
     if (backgroundShellAfterTurn) {
-      // Spawned after the reply, so the turn has already ended when the shell starts.
       setTimeout(() => spawnBackgroundShell('sleep 12; :'), 1000);
     }
     return;
   }
   if (method === 'session/cancel') {
-    // Every installed harness rejects cancel as a request; it is a
-    // notification. Answer like they do so the client cannot regress.
     send({
       jsonrpc: '2.0',
       id,
@@ -736,8 +712,6 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.method && msg.id === undefined) {
-    // ACP cancellation is a notification: it ends the in-flight turn with
-    // stopReason "cancelled".
     if (msg.method === 'session/cancel' && heldPromptId !== null) {
       send({
         jsonrpc: '2.0',
@@ -778,8 +752,6 @@ rl.on('line', (line) => {
     handleRequest(msg);
   }
 });
-// With --survive-stdin-eof there are no other live handles after stdin EOF,
-// so keep the event loop alive for the orphan premise.
 if (surviveStdinEof) setInterval(() => {}, 60_000);
 process.stdin.on('end', () => {
   if (surviveStdinEof) return;

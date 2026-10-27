@@ -1,9 +1,3 @@
-//! Integration tests for [`super::pi_rpc_handshake`], running the real `node`
-//! child behind the fake Pi RPC fixture (LF-delimited JSONL over stdin/stdout)
-//! and asserting that the four discovery commands are id-correlated into a
-//! typed [`RpcHandshake`] — including pending-record collection, failure and
-//! degradation paths, and the pre-get_state timeout path with stderr tail.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -14,13 +8,8 @@ use super::pi_rpc_handshake::handshake;
 use super::rpc_handshake::RpcHandshake;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Generous bound for "this must not hang" negative tests.
-/// Tight timeout for the deliberate deadline test; node startup on a loaded
-/// machine can exceed 300ms, so keep it well below HANDSHAKE_TIMEOUT.
 const DEADLINE_TEST_TIMEOUT: Duration = Duration::from_millis(1_500);
 
-/// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
-/// fixture script. Fails loudly (panics) when `node` is missing.
 fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
@@ -76,7 +65,6 @@ fn handshake_full_success_types_all_four_responses() {
     assert_eq!(commands[1].name, "extensions");
     assert!(commands[1].description.is_none());
 
-    // No extra records are pending when the fake only answers the four.
     assert!(
         handshake.pending.is_empty(),
         "unexpected pending: {:?}",
@@ -143,16 +131,12 @@ fn handshake_times_out_with_silent_state_and_includes_stderr_tail() {
     let error = handshake(&mut process, DEADLINE_TEST_TIMEOUT).expect_err("must time out");
 
     assert!(error.contains("timed out"), "timeout message: {error}");
-    // The pre-get_state failure path must surface the process stderr tail.
     assert!(
         error.contains("fake pi rpc stderr noise"),
         "stderr tail missing from: {error}"
     );
 }
 
-/// GitHub #1276: a child that exits right after answering get_state never sends
-/// the remaining discovery responses. That is a dead session, so the handshake
-/// must fail instead of returning a healthy-looking RpcHandshake with empty lists.
 #[test]
 fn pi_startup_child_exit_after_get_state_is_not_healthy_1276() {
     let mut process = spawn_fake_pi(&["--exit-after-state"]);
@@ -174,7 +158,6 @@ fn handshake_degrades_failed_optional_commands_to_empty_lists() {
 
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");
 
-    // get_state itself is unaffected: the handshake must still succeed.
     assert_eq!(handshake.session_id, "fake-pi-rpc-session-1");
     assert!(
         handshake.models.is_empty(),
@@ -193,11 +176,6 @@ fn handshake_degrades_failed_optional_commands_to_empty_lists() {
     );
 }
 
-/// GitHub #1277: a child that keeps emitting unrelated records but never
-/// answers get_state must still fail at the handshake deadline. The deadline
-/// was only checked when the record channel was empty, so a busy stream could
-/// keep the handshake running indefinitely. The handshake runs on a worker
-/// thread with a bounded wait so a regression fails fast instead of hanging.
 #[test]
 fn pi_handshake_deadline_enforced_while_records_keep_arriving_1277() {
     let mut process = spawn_fake_pi(&["--chatter-state"]);

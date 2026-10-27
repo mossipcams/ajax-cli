@@ -1,8 +1,3 @@
-//! Tests for the sidecar's fail-closed resume check: a `resume` id that the
-//! SDK reports as missing fails init with "session not found" (leaving the
-//! sidecar uninitialized), while a lookup that throws, or an SDK without
-//! `getSessionInfo`, degrades to resuming as before.
-
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
 use std::thread::sleep;
@@ -13,9 +8,7 @@ use serde_json::{json, Value};
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 
-/// Generous per-step bound: node startup plus one scripted turn.
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
-/// Idle poll interval while waiting for records.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 fn manifest_dir() -> &'static Path {
@@ -30,7 +23,6 @@ fn fixture(name: &str) -> PathBuf {
     manifest_dir().join("tests/fixtures").join(name)
 }
 
-/// Spawn the sidecar under `node` against a named SDK fixture.
 fn spawn_sidecar_with(sdk_fixture: &str) -> JsonlProcess {
     let args = vec![
         sidecar_path().to_string_lossy().into_owned(),
@@ -46,7 +38,6 @@ fn cwd() -> String {
     manifest_dir().to_string_lossy().into_owned()
 }
 
-/// Poll until `predicate` holds over the records drained so far; return them.
 fn drain_until(
     process: &mut JsonlProcess,
     label: &str,
@@ -82,7 +73,6 @@ fn drain_until(
     records
 }
 
-/// Send an init command and return its response.
 fn init(process: &mut JsonlProcess, fields: Value) -> Value {
     process
         .send("init", fields)
@@ -132,7 +122,6 @@ fn resume_missing_session_fails_closed_and_sidecar_stays_usable() {
         .unwrap_or_default();
     assert!(error.contains("session not found"), "error: {error}");
 
-    // The sidecar must remain uninitialized: a plain init still succeeds.
     let followup = init(&mut process, json!({ "cwd": cwd() }));
     assert_eq!(
         followup.get("success").and_then(Value::as_bool),

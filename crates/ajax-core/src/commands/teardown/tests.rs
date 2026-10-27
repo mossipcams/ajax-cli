@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 use super::mark_task_cleanup_step_completed;
 use super::*;
 use crate::{
-    adapters::{CommandMode, CommandSpec},
+    adapters::{CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec},
     commands::CommandContext,
     config::{Config, ManagedRepo},
     models::{AgentClient, GitStatus, LifecycleStatus, Task, TaskId},
@@ -132,4 +132,78 @@ fn drop_resource_catalog_preserves_order_states_and_step_keys() {
         ]
     );
     assert_eq!(step_keys.len(), BTreeSet::from_iter(step_keys).len());
+}
+
+struct ScriptedObservationRunner {
+    outputs: VecDeque<CommandOutput>,
+}
+
+impl CommandRunner for ScriptedObservationRunner {
+    fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        self.outputs
+            .pop_front()
+            .ok_or_else(|| CommandRunError::SpawnFailed("missing scripted output".to_string()))
+    }
+}
+
+fn observe_branch_state(
+    branch: &str,
+    local_branches: &str,
+    remote_branches: &str,
+) -> ResourceState {
+    let mut context = context_with_task();
+    let mut task = context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .unwrap()
+        .clone();
+    task.branch = branch.to_string();
+    let mut runner = ScriptedObservationRunner {
+        outputs: VecDeque::from([
+            CommandOutput {
+                status_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status_code: 0,
+                stdout: local_branches.to_string(),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status_code: 0,
+                stdout: remote_branches.to_string(),
+                stderr: String::new(),
+            },
+        ]),
+    };
+
+    observe_drop_resources(&mut context, &task, &mut runner)
+        .unwrap()
+        .branch
+}
+
+#[test]
+fn drop_observation_counts_remote_refs_only_for_ajax_branches() {
+    assert_eq!(
+        observe_branch_state(
+            "fix/sandbox/denylist-profile",
+            "main\n",
+            "origin/main\norigin/fix/sandbox/denylist-profile\n",
+        ),
+        ResourceState::Absent
+    );
+    assert_eq!(
+        observe_branch_state(
+            "ajax/fix-login",
+            "main\n",
+            "origin/main\norigin/ajax/fix-login\n"
+        ),
+        ResourceState::Present
+    );
 }

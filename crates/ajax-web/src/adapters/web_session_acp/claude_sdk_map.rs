@@ -1,34 +1,11 @@
-//! Pure mapping from Claude Agent SDK stream messages (JSON) to the native
-//! [`AgentEvent`] values consumed by the web session adapter.
-//!
-//! The Claude client connection loop (a later packet) calls
-//! [`map_sdk_message`] once per parsed message and folds the returned
-//! [`RpcMapping`] values: each emitted event is forwarded to the session in
-//! order, and `finished` / `ended_aborted` track whether the run settled and
-//! whether it ended aborted. Messages that carry no adapter meaning (`system`,
-//! `rate_limit_event`, malformed `elicitation_request` records, unknown types)
-//! map to an empty result and never panic
-//! on missing or malformed fields.
-
 use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
 
-/// Map one parsed Claude Agent SDK message to adapter events and run state.
-///
-/// `session_id` is retained for interface parity with the ACP mappers; native
-/// events carry no session id (the session slice binds them). The mapping is
-/// total: any message — including non-objects, `system` records, and unknown
-/// types — returns an empty result instead of panicking.
 pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
     let mut events = Vec::new();
     let kind = message.get("type").and_then(Value::as_str).unwrap_or("");
-    // Sub-agent (Task) messages carry a non-null `parent_tool_use_id`. Their
-    // tool calls and tool results map like main-loop ones, so the rows sit flat
-    // under the parent Task row (tool ids are unique; no parent field is needed).
-    // Their stream deltas would interleave into the parent's message and their
-    // `result` must not settle the run, so every other type is dropped.
     let sub_agent = message
         .get("parent_tool_use_id")
         .is_some_and(|id| !id.is_null());
@@ -74,9 +51,6 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
             }
             (false, false)
         }
-        // `system` (init/status/hook/thinking_tokens records),
-        // `rate_limit_event`, malformed `elicitation_request` records, and
-        // unknown message types produce no events.
         _ => (false, false),
     };
     RpcMapping {
@@ -86,9 +60,6 @@ pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
     }
 }
 
-/// Map one `stream_event` wrapper: text/thinking deltas become native text
-/// events, tool-use content-block starts open a tool call. Argument
-/// (`input_json_delta`) and all other delta types carry no adapter output.
 fn map_stream_event(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     if let Some(event) = message.get("event") {
         match event.get("type").and_then(Value::as_str) {
@@ -126,10 +97,6 @@ fn map_delta(event: &Value, events: &mut Vec<AgentEvent>) {
     }
 }
 
-/// `content_block_start` opening a `tool_use` block: the tool call id, name, and
-/// (possibly empty) initial input. Non-tool blocks produce no event. The kind
-/// and status strings are exactly what the ACP mapping would emit ("read",
-/// "edit", ..., "in_progress").
 fn tool_call_started(event: &Value) -> Option<NativeEvent> {
     let block = event.get("content_block")?;
     if block.get("type").and_then(Value::as_str)? != "tool_use" {
@@ -149,8 +116,6 @@ fn tool_call_started(event: &Value) -> Option<NativeEvent> {
     })
 }
 
-/// The ACP wire string for the tool kind implied by a Claude Agent SDK tool
-/// name. Unrecognized names fall back to `"other"`.
 fn tool_kind_for_name(name: &str) -> String {
     let kind = match name {
         "Bash" => "execute",
@@ -164,16 +129,6 @@ fn tool_kind_for_name(name: &str) -> String {
     kind.to_string()
 }
 
-/// Assistant message content blocks: with `includePartialMessages` the text and
-/// thinking were already streamed as deltas (re-emitting them would duplicate
-/// the output), so only `tool_use` blocks matter — they carry the complete
-/// input. Each block emits a [`NativeEvent::ToolCall`] with a descriptive
-/// title, kind, and the complete raw input, upgrading the row opened at
-/// `content_block_start`. A main-loop `TodoWrite` block additionally emits a
-/// [`NativeEvent::Plan`] carrying one (content, status) pair per todo. A
-/// sub-agent `TodoWrite` keeps its tool row but emits no Plan: it must not
-/// replace the parent turn's plan (#1342).
-/// Text/thinking/unknown blocks produce no events.
 fn map_assistant_tool_calls(message: &Value, sub_agent: bool, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
@@ -209,22 +164,10 @@ fn map_assistant_tool_calls(message: &Value, sub_agent: bool, events: &mut Vec<A
     }
 }
 
-/// Main-loop assistant messages whose `message.model` is `"<synthetic>"` are
-/// not the output of a real model: the SDK returns local slash-command
-/// responses (e.g. `/context`) as one full message with text blocks and no
-/// preceding stream deltas, so their text must be emitted here (#1359).
-/// Real-model assistant messages already streamed their text as deltas —
-/// re-emitting it would duplicate the output — and sub-agent messages are
-/// dropped, as are messages carrying a top-level `error` (the following
-/// `result` message already surfaces that text as an Error). The text blocks
-/// (in order) join into one `AgentText` event.
 fn map_synthetic_assistant_text(message: &Value, sub_agent: bool, events: &mut Vec<AgentEvent>) {
     if sub_agent {
         return;
     }
-    // A top-level `error` (e.g. "rate_limit") marks a synthetic message whose
-    // text the following `result` message already surfaces as an Error; emit
-    // nothing to avoid duplicating it.
     if message.get("error").is_some_and(|e| !e.is_null()) {
         return;
     }
@@ -248,9 +191,6 @@ fn map_synthetic_assistant_text(message: &Value, sub_agent: bool, events: &mut V
     }
 }
 
-/// The (content, status) pairs of a `TodoWrite` block's input `todos` array,
-/// in order. Missing or non-array todos yield no plan; each todo contributes
-/// one pair, passing its `content` and `status` strings through.
 fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
     let todos = input?.get("todos")?.as_array()?;
     Some(
@@ -271,10 +211,6 @@ fn todo_write_plan(input: Option<&Value>) -> Option<Vec<(String, String)>> {
             .collect(),
     )
 }
-/// The (content, status) pairs of one Claude sidecar `ajax_plan` line's
-/// `entries` array, in order. Missing or non-array entries yield no plan; each
-/// entry must carry string `content` and `status` fields, otherwise it is
-/// skipped (#1357). An empty entries array clears the panel.
 fn ajax_plan_entries(message: &Value) -> Option<Vec<(String, String)>> {
     let entries = message.get("entries")?.as_array()?;
     Some(
@@ -289,10 +225,6 @@ fn ajax_plan_entries(message: &Value) -> Option<Vec<(String, String)>> {
     )
 }
 
-/// The descriptive tool-call title for one assistant `tool_use` block: the bare
-/// name, suffixed with `: detail` when the input carries a recognizable target
-/// (e.g. `Bash: ls -la`). Tools without a mapped detail field keep the bare
-/// name.
 fn tool_title(name: &str, input: Option<&Value>) -> String {
     let key = match name {
         "Bash" => "command",
@@ -314,9 +246,6 @@ fn tool_title(name: &str, input: Option<&Value>) -> String {
     }
 }
 
-/// User message content blocks of type `tool_result` settle the matching tool
-/// call; plain text user blocks (e.g. `[Request interrupted by user]`) produce
-/// no events.
 fn map_user_tool_results(message: &Value, events: &mut Vec<AgentEvent>) {
     let Some(blocks) = message
         .get("message")
@@ -350,8 +279,6 @@ fn map_user_tool_results(message: &Value, events: &mut Vec<AgentEvent>) {
     }
 }
 
-/// The text of one `tool_result` block: a string as is; an array of text
-/// blocks joined with newlines; anything else the empty string.
 fn tool_result_text(block: &Value) -> String {
     match block.get("content") {
         Some(Value::String(text)) => text.clone(),
@@ -369,14 +296,6 @@ fn tool_result_text(block: &Value) -> String {
     }
 }
 
-/// `result` message: settles the run. Marks the run finished (aborted for
-/// `error_during_execution` / `aborted_streaming`). A non-aborted error result
-/// additionally emits an [`NativeEvent::Error`]. API errors can use subtype
-/// `success` with `is_error: true`; their `result` text carries the provider's
-/// explanation (including quota resets). Context fill is not taken from here:
-/// the `usage` field sums the whole turn and `modelUsage` is cumulative, so
-/// both are wrong for the live meter; it comes from the client's
-/// run-finished hook instead.
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     let subtype = message
         .get("subtype")

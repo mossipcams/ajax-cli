@@ -1,6 +1,3 @@
-//! Unit tests for [`super::claude_sdk_map`], replaying trimmed real Claude
-//! Agent SDK transcripts from `tests/fixtures/claude_sdk/`.
-
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -11,7 +8,6 @@ use super::rpc_session::RpcMapping;
 
 const SESSION_ID: &str = "acp-session-1";
 
-/// Load and parse one trimmed transcript fixture.
 fn fixture(name: &str) -> Vec<Value> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/claude_sdk")
@@ -25,8 +21,6 @@ fn fixture(name: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Map every record of one transcript, keeping the per-message mappings so a
-/// test can reason about which message produced which events.
 fn replay(records: &[Value]) -> Vec<RpcMapping> {
     records
         .iter()
@@ -34,7 +28,6 @@ fn replay(records: &[Value]) -> Vec<RpcMapping> {
         .collect()
 }
 
-/// All events of all mappings, flattened in order.
 fn all_events(mappings: &[RpcMapping]) -> Vec<&AgentEvent> {
     mappings
         .iter()
@@ -42,8 +35,6 @@ fn all_events(mappings: &[RpcMapping]) -> Vec<&AgentEvent> {
         .collect()
 }
 
-/// The native event of an event that must be `AgentEvent::Native`, failing on
-/// anything else (an ACP-wrapped event would fail the test here).
 fn native_event(event: &AgentEvent) -> &NativeEvent {
     match event {
         AgentEvent::Native(native) => native,
@@ -57,9 +48,6 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
     let mappings = replay(&records);
     let events = all_events(&mappings);
 
-    // Every streamed chunk event must be a text/thought native event; the text
-    // is emitted exactly once (the assistant message re-emits nothing), and no
-    // chunk is empty.
     let mut message_text: Vec<&str> = Vec::new();
     for event in &events {
         match native_event(event) {
@@ -75,8 +63,6 @@ fn prompt_transcript_maps_text_usage_and_finishes_once() {
         "expected exactly one 'ok' text chunk, got {message_text:?}"
     );
 
-    // #1334: the result message's `usage` is a whole-turn sum and must not
-    // become the context meter; no mapping in the transcript emits a Usage event.
     assert!(
         !events
             .iter()
@@ -96,7 +82,6 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
     let mappings = replay(&records);
     let events = all_events(&mappings);
 
-    // The content_block_start opens an Edit tool call in progress.
     let tool_call_position = events
         .iter()
         .position(|event| matches!(native_event(event), NativeEvent::ToolCall { .. }))
@@ -109,8 +94,6 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
-    // #1339: the later assistant tool_use message re-emits a ToolCall carrying
-    // the complete raw input and a descriptive title, upgrading the opened row.
     let _assistant_tool_call_position: usize = events[tool_call_position + 1..]
         .iter()
         .position(|event| match native_event(event) {
@@ -126,7 +109,6 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
         .map(|offset| tool_call_position + 1 + offset)
         .expect("expected a later ToolCall with a file_path raw_input");
 
-    // The tool_result settles the call as completed with non-empty text.
     let completed_position = events[tool_call_position + 1..]
         .iter()
         .position(|event| matches!(native_event(event), NativeEvent::ToolCallUpdate { status, .. } if *status == "completed"))
@@ -140,8 +122,6 @@ fn toolcall_transcript_opens_updates_and_completes_a_tool_call() {
         } if !content.is_empty()
     ));
 
-    // #1334: no Usage event comes from the transcript (the meter is fed by the
-    // client's run-finished hook, not the result message).
     assert!(
         !events
             .iter()
@@ -160,7 +140,6 @@ fn interrupt_transcript_aborts_then_restarts() {
     let finished: Vec<&RpcMapping> = mappings.iter().filter(|mapping| mapping.finished).collect();
     assert_eq!(finished.len(), 2, "expected exactly two finished mappings");
 
-    // The interrupted run is aborted and must not emit a zero usage event.
     assert!(finished[0].ended_aborted, "first run must be aborted");
     assert!(
         !finished[0]
@@ -170,8 +149,6 @@ fn interrupt_transcript_aborts_then_restarts() {
         "aborted zero-usage run must not emit a Usage event"
     );
 
-    // The restarted run finishes cleanly; no Usage event comes from either
-    // result message (context fill is fetched by the client's hook, #1334).
     assert!(!finished[1].ended_aborted, "second run must not be aborted");
     assert!(
         !finished[1]
@@ -181,7 +158,6 @@ fn interrupt_transcript_aborts_then_restarts() {
         "the restarted run's result must not emit a Usage event"
     );
 
-    // The '[Request interrupted by user]' user message produces no events.
     let interrupt_records: Vec<&Value> = records
         .iter()
         .filter(|record| record.to_string().contains("[Request interrupted by user]"))
@@ -212,7 +188,6 @@ fn sub_agent_messages_map_to_empty() {
     assert!(!mapping.ended_aborted);
 }
 
-/// A sub-agent (Task) assistant message carrying one `tool_use` block.
 fn sub_agent_tool_use_1342(parent: &str, id: &str, name: &str, input: Value) -> Value {
     serde_json::json!({
         "type": "assistant",
@@ -223,7 +198,6 @@ fn sub_agent_tool_use_1342(parent: &str, id: &str, name: &str, input: Value) -> 
     })
 }
 
-/// A sub-agent user message carrying one `tool_result` block.
 fn sub_agent_tool_result_1342(parent: &str, id: &str, text: &str) -> Value {
     serde_json::json!({
         "type": "user",
@@ -377,7 +351,6 @@ fn sub_agent_todowrite_does_not_replace_the_plan_1342() {
         "a sub-agent TodoWrite must not emit a Plan event: {:?}",
         mapping.events
     );
-    // The tool row itself still shows, like any other sub-agent tool call.
     assert_eq!(mapping.events.len(), 1);
     match native_event(&mapping.events[0]) {
         NativeEvent::ToolCall { id, title, .. } => {
@@ -387,7 +360,6 @@ fn sub_agent_todowrite_does_not_replace_the_plan_1342() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
-    // The main loop's TodoWrite still replaces the plan (#1338 unchanged).
     let main_todo = serde_json::json!({
         "type": "assistant",
         "parent_tool_use_id": null,
@@ -486,13 +458,11 @@ fn elicitation_request_maps_to_a_native_elicitation_event() {
 #[test]
 fn malformed_elicitation_requests_map_to_empty() {
     for message in [
-        // Missing id.
         serde_json::json!({
             "type": "elicitation_request",
             "message": "hi",
             "schema": {"questions": []}
         }),
-        // Non-object schema.
         serde_json::json!({
             "type": "elicitation_request",
             "id": "req-9",
@@ -611,9 +581,6 @@ fn result_without_usage_finishes_silently() {
 
 #[test]
 fn rate_limited_turn_displays_claude_session_limit_text() {
-    // #1287: native transcript d78a4640, line 89, supplies the assistant error.
-    // SDK 0.3.296's result path carries its text in SDKResultSuccess.result
-    // with is_error=true; Ajax event 60 previously reduced this to "success".
     let assistant = serde_json::json!({
         "type": "assistant",
         "error": "rate_limit",
@@ -647,9 +614,6 @@ fn rate_limited_turn_displays_claude_session_limit_text() {
     });
     let mapping = map_sdk_message(&result, SESSION_ID);
 
-    // Existing turn-end behavior is preserved: the result finishes the turn,
-    // not aborted, emitting exactly the error event. Its summed `usage` must
-    // not become a Usage meter event (#1334).
     assert!(mapping.finished);
     assert!(!mapping.ended_aborted);
     assert_eq!(
@@ -721,9 +685,6 @@ fn result_text_does_not_emit_an_error_on_success_or_cancellation() {
 
 #[test]
 fn result_with_summed_usage_emits_no_usage_event_1334() {
-    // #1334: a `result` message whose whole-turn summed `usage` is large and
-    // whose cumulative `modelUsage` window is present must not emit a Usage
-    // event; the live context meter comes from the client's run-finished hook.
     let message = serde_json::json!({
         "type": "result",
         "subtype": "success",
@@ -772,8 +733,6 @@ fn todo_write_assistant_message_emits_plan_1338() {
         mapping.events
     );
 
-    // The TodoWrite row itself keeps today's behavior: an in-progress call with
-    // the complete raw input (bare name title — no detail field for it).
     match native_event(&mapping.events[0]) {
         NativeEvent::ToolCall {
             id,
@@ -796,8 +755,6 @@ fn todo_write_assistant_message_emits_plan_1338() {
         other => panic!("expected a ToolCall event, got {other:?}"),
     }
 
-    // #1338: additionally emits a Plan with one (content, status) pair per todo,
-    // in order.
     match native_event(&mapping.events[1]) {
         NativeEvent::Plan(entries) => assert_eq!(
             entries,
@@ -826,8 +783,6 @@ fn assistant_tool_calls_carry_descriptive_titles_1339() {
     });
     let mapping = map_sdk_message(&message, SESSION_ID);
 
-    // Each tool_use block emits exactly one ToolCall; the titles are descriptive
-    // and the kinds match today's mapping.
     assert_eq!(
         mapping.events.len(),
         5,
@@ -860,8 +815,6 @@ fn assistant_tool_calls_carry_descriptive_titles_1339() {
         }
     }
 
-    // Bare name when the input carries no mapped detail field (e.g. Task with
-    // no description).
     let bare = serde_json::json!({
         "type": "assistant",
         "message": {"role": "assistant", "content": [

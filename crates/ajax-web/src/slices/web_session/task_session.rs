@@ -81,8 +81,6 @@ pub(crate) enum TaskSessionCommand {
     },
     ClearContext {
         worktree_path: PathBuf,
-        /// Whether the caller still needs a holder taken for its attach
-        /// (restore-recovery Start fresh) rather than running under one.
         take_holder: bool,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
@@ -159,10 +157,7 @@ pub(crate) struct TaskSessionState {
     pub(super) generation: u64,
     pub(super) holders: HolderCount,
     pub(super) log: TranscriptLog,
-    /// True once the stored transcript and prompt ledger have been adopted. A
-    /// cold actor (false) must load them before it writes to the log (#1432).
     pub(super) stored_loaded: bool,
-    // ponytail: 2000-event ceiling matches run retention; enforcing it needs durable spill to avoid holes.
     pub(super) unpersisted: Vec<SessionServerEvent>,
     pub(super) stream_normalizer: StreamNormalizer,
     pub(super) last_released: Option<Instant>,
@@ -189,7 +184,6 @@ impl TaskSessionState {
         self.holders.reset_to_one();
     }
 
-    /// Drops duplicate spawn errors without changing evidence or reporting activity.
     pub(super) fn filter_events_for_log(
         &self,
         events: Vec<SessionServerEvent>,
@@ -229,15 +223,12 @@ impl TaskSessionState {
             .client
             .as_ref()
             .and_then(|client| client.child_pid());
-        // ponytail: the turn-end read runs synchronously in the actor, on one cached `ps` that the
-        // tick usually shares. Upgrade path: harness-native background signals, where a harness exposes them.
         let mut read_level = || {
             let read = probe(root, PROBE_MAX_AGE);
             self.background.record_turn_end(read, Instant::now());
             read
         };
         for event in events {
-            // Advance the dedupe checkpoint only for durable events.
             self.evidence
                 .should_skip_duplicate_spawn_error(self.generation, event);
             self.evidence.report_activity_for_event_with_probe(
@@ -454,8 +445,6 @@ pub(crate) fn spawn_task_session(
                 }
             }
         }
-        // Last chance for a report that was deferred while the lane was busy:
-        // nothing retries it once this loop is gone (#1176).
         state
             .evidence
             .retry_pending_activity_report(&state.qualified_handle);
@@ -617,7 +606,6 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         #[cfg(test)]
         TaskSessionCommand::Pump => state.pump(),
         TaskSessionCommand::EvictionSnapshot { reply } => {
-            // Unreadable metadata is not evictable: eviction relies on a restore.
             let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
                 &state.storage.registry_store(),
                 &state.storage.state_dir,

@@ -86,7 +86,6 @@ fn failed_ledger_commit_writes_no_events() {
     );
     persist(&dir, handle, &first).expect("persist p1");
 
-    // Absent prompt is cancelled; the id then collides with the tombstone row.
     persist(&dir, handle, &PromptLedger::default()).expect("cancel p1");
     let mut again = PromptLedger::default();
     again.upsert_queued(
@@ -283,7 +282,6 @@ fn legacy_ledger_seen_after_import_is_renamed_not_imported() {
     );
     persist(&dir, handle, &ledger).expect("persist p1");
 
-    // A legacy sidecar appearing after the run exists is not trusted content.
     let path = ledger_path(&dir, handle);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(

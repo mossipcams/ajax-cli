@@ -60,7 +60,6 @@ describe("DESIGN.md color lock", () => {
     expect(css.ok).toBe(css["done-sage"]);
   });
 
-  // #1406: Apple system grays (#1c1c1e, #252528) gave the cockpit a muddy blue-violet cast.
   it("keeps charcoal surfaces neutral gray (R=G=B)", () => {
     const css = rootCustomProps(stylesCss);
     const charcoal = Object.keys(css).filter((name) => name.startsWith("soft-charcoal"));

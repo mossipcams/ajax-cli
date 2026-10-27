@@ -1,5 +1,3 @@
-// Deterministic mission catalog and selection for nightly exploratory runs.
-
 import { FINDING_AREAS, MISSION_COOLDOWN_RUNS, MISSION_NO_SIGNAL_COOLDOWN_MS } from "./lib.mjs";
 
 export const MISSIONS = [

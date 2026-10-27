@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Create a GitHub PR from a conventional branch name and strip Cursor footer lines.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,15 +42,10 @@ if [[ -z "$(git log "origin/$BASE_BRANCH..HEAD" --oneline)" ]]; then
 fi
 
 git push origin "$BRANCH"
-# Sandboxed agents cannot write .git/config (#1409); upstream tracking is a convenience.
 if ! git branch --set-upstream-to="origin/$BRANCH" >/dev/null 2>&1; then
   echo "note: could not record upstream for $BRANCH (.git/config not writable); push succeeded" >&2
 fi
 
-# `gh pr view <branch>` matches ANY state, so a previously merged or closed
-# PR for this branch name would make us short-circuit and never create a
-# fresh open one (issue #1267). Use `gh pr list --state open` to check
-# only for an actually open pull request.
 existing_url="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
 if [[ -n "$existing_url" ]]; then
   printf '%s\n' "$existing_url"

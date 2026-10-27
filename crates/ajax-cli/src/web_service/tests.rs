@@ -441,7 +441,6 @@ struct FakeLaunchctl {
     commands: Vec<CommandSpec>,
     failing_verb: Option<&'static str>,
     stdout: String,
-    /// `print` reports the job loaded (exit 0) for this many calls, then not loaded.
     loaded_prints: usize,
 }
 
@@ -456,7 +455,6 @@ impl CommandRunner for FakeLaunchctl {
             self.loaded_prints -= 1;
             return Ok(output(0, &self.stdout, ""));
         }
-        // Mirrors ProcessCommandRunner: a non-zero exit is an Ok output, not an Err.
         if verb == self.failing_verb || verb == Some("print") {
             return Ok(output(113, "", "boom"));
         }
@@ -472,7 +470,6 @@ fn output(status_code: i32, stdout: &str, stderr: &str) -> CommandOutput {
     }
 }
 
-/// Lookup over fixed pairs, standing in for the process environment.
 fn env_from<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |key| {
         pairs
@@ -507,7 +504,6 @@ fn command<const N: usize>(args: [&str; N]) -> CommandSpec {
     CommandSpec::new("launchctl", args)
 }
 
-/// Scratch home under the worktree's target/ dir, never the real HOME or /tmp.
 fn temp_config(name: &str) -> ServiceConfig {
     let home = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/ajax-web-service-tests")

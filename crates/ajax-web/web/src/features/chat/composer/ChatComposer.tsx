@@ -52,7 +52,6 @@ export default function ChatComposer({
 
   const hotbarRef = useRef<HTMLDivElement>(null);
   const canPrompt = connected && promptingEnabled;
-  // /clear never reaches the prompt path, so it stays sendable while prompting is blocked.
   const canSend = connected && (promptingEnabled || isBuiltInClearCommand(draft));
   const transcriptNotice = transcriptError?.trim() || null;
 

@@ -42,9 +42,6 @@ fn resolve_on_path(program: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// The user's global npm root, resolved by running `npm root -g` from the home
-/// directory so that no repository-controlled `.npmrc` (task worktree or
-/// process cwd) is ever read. Returns None on any failure or a non-absolute result.
 pub(crate) fn global_npm_root() -> Option<PathBuf> {
     let npm = resolve_program("npm")?;
     let home = std::env::var_os("HOME")?;
@@ -113,8 +110,6 @@ pub fn harness_command(program: &str) -> Option<Command> {
     Some(command)
 }
 
-/// [`harness_command`] for a worktree launch: `program args` runs inside nono
-/// when the agent sandbox is on. `cwd` is the task worktree.
 pub(crate) fn sandboxed_harness_command(
     program: &str,
     args: &[String],
@@ -133,9 +128,6 @@ pub(crate) fn sandboxed_harness_command(
     Ok(command)
 }
 
-/// Wraps `program args` for a launch in `cwd` with nono when the agent sandbox
-/// is on; identity when it is off. Fails closed: a missing nono or an
-/// unwritable profile is an error, never an unsandboxed launch.
 pub(crate) fn sandboxed_program(
     program: &Path,
     args: &[String],
@@ -152,14 +144,10 @@ pub(crate) fn sandboxed_program(
     .map_err(io::Error::other)
 }
 
-/// nono on the process PATH, then the login shell PATH (which the merged
-/// harness PATH is built from).
 fn resolve_nono_for_launch() -> Result<PathBuf, String> {
     resolve_nono().or_else(|error| resolve_program("nono").ok_or(error))
 }
 
-/// Pure core of [`sandboxed_program`]: the sandbox decision and nono lookup are
-/// injected so tests never touch process-global environment.
 fn sandbox_launch(
     enabled: bool,
     nono: impl FnOnce() -> Result<PathBuf, String>,
@@ -180,8 +168,6 @@ fn sandbox_launch(
     Ok((PathBuf::from(wrapped), wrapped_args))
 }
 
-/// Sets the harness PATH: the login-shell PATH ahead of our own, so agent
-/// CLIs and nono resolve the way they do in a terminal.
 fn apply_shell_path(command: &mut Command) {
     if let Some(shell_path) = shell_path() {
         let own = std::env::var("PATH").unwrap_or_default();
@@ -228,10 +214,6 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
-    // nvm and friends export PATH from `.zshrc`, which a plain login shell does
-    // not read — the daemon then cannot see any harness the operator installed.
-    // An ACP adapter spawns the harness CLI itself, so it needs a PATH that
-    // names it — resolving only our own child is not enough.
     #[test]
     fn a_harness_command_carries_the_shell_path() {
         let command = harness_command("sh").expect("sh is installed");
@@ -339,7 +321,6 @@ mod tests {
 
     #[test]
     fn an_enabled_launch_fails_closed_when_the_profile_cannot_be_written() {
-        // A regular file where the profile directory should be makes the write fail.
         let blocker = scratch_dir("blocked").join("not-a-dir");
         std::fs::write(&blocker, "file").unwrap();
 

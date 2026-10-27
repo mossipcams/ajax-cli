@@ -66,10 +66,6 @@ function getOptions(timeoutMs: number = GET_REQUEST_TIMEOUT_MS, querySignal?: Ab
 
 export const AJAX_FOREGROUND_HEADER = "X-Ajax-Foreground";
 
-/**
- * Marks protected API requests as AJAX so Cloudflare Access fails an expired
- * session with a direct 401/4xx response instead of an HTML login redirect.
- */
 export const AJAX_PROTECTED_HEADERS = { "X-Requested-With": "XMLHttpRequest" };
 
 function documentIsForeground(): boolean {
@@ -103,11 +99,6 @@ let browserSessionRenewal: Promise<void> | null = null;
 const SESSION_RECOVERY_GUARD_KEY = "ajax.pwa.session-expiry-recovered";
 let sessionExpiryNavigationStarted = false;
 
-/**
- * Clears the one-shot recovery guard after a protected request succeeds
- * (successful reauthentication): the expiry episode is over, so a later
- * expiry may navigate once again in the same tab session.
- */
 function clearSessionRecoveryGuard(): void {
   sessionExpiryNavigationStarted = false;
   try {
@@ -115,24 +106,15 @@ function clearSessionRecoveryGuard(): void {
       sessionStorage.removeItem(SESSION_RECOVERY_GUARD_KEY);
     }
   } catch {
-    // Ignore; the in-memory guard resets on page load.
   }
 }
 
-/**
- * One-shot top-level navigation when the browser session has unrecoverably
- * expired (e.g. Cloudflare Access re-auth on a deployed PWA). A sessionStorage
- * guard plus an in-memory flag ensure concurrent stale requests trigger at most
- * one navigation per page load / tab session. Returns true only when navigation
- * was initiated; callers must still surface the stale-session error.
- */
 export function attemptSessionExpiryNavigation(): boolean {
   if (sessionExpiryNavigationStarted) return false;
   try {
     if (sessionStorage.getItem(SESSION_RECOVERY_GUARD_KEY)) return false;
     sessionStorage.setItem(SESSION_RECOVERY_GUARD_KEY, "1");
   } catch {
-    // Storage unavailable: fall back to the in-memory guard only.
   }
   sessionExpiryNavigationStarted = true;
   try {
@@ -187,10 +169,6 @@ export async function renewBrowserSession(): Promise<void> {
 }
 
 function rejectedProtectedFetch(error: unknown): ApiError {
-  // A rejected protected fetch is a plain network failure (outage, offline,
-  // WebKit transient drop). It is retryable and must NOT trigger session
-  // expiry navigation; only 401s with failed renewal navigate (see
-  // fetchProtectedWithSessionRenewal) under the one-shot recovery guard.
   return new ApiError("network", error instanceof Error ? error.message : String(error));
 }
 
@@ -209,7 +187,6 @@ export async function fetchProtectedWithSessionRenewal(path: string, init: Reque
   try {
     await renewBrowserSession();
   } catch (error) {
-    // Every renewal failure is an unrecoverable session expiry here.
     attemptSessionExpiryNavigation();
     throw error;
   }

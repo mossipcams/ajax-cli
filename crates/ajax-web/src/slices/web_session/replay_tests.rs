@@ -208,7 +208,6 @@ fn reset_snapshot_carries_only_tail_with_transcript_from() {
     assert_eq!(transcript.first().map(|e| e.cursor), Some(first_cursor));
     assert_eq!(snapshot.transcript_from, Some(first_cursor));
 
-    // Compat replay is unchanged: the full retained range.
     assert_eq!(replayed.len(), MAX_LOG_EVENTS);
     assert_eq!(replayed.first().map(|e| e.cursor), Some(log.dropped));
 }
@@ -227,7 +226,6 @@ fn reset_snapshot_small_log_transcript_from_is_retention_floor() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    // Whole retained log, starting at the retention floor.
     assert_eq!(transcript, replayed);
     assert_eq!(transcript.len(), 2);
     assert_eq!(snapshot.transcript_from, Some(log.dropped));
@@ -245,7 +243,6 @@ fn reset_snapshot_empty_log_transcript_from_is_next_cursor() {
     );
     assert!(snapshot.reset);
     assert_eq!(snapshot.transcript, Some(Vec::new()));
-    // Empty tail: transcriptFrom is the snapshot next cursor (0 for a fresh log).
     let next = log.dropped + log.events.len();
     assert_eq!(snapshot.transcript_from, Some(next));
     assert_eq!(snapshot.transcript_floor, Some(log.dropped));
@@ -295,7 +292,6 @@ fn open_permission_older_than_tail_limit_stays_inside_transcript() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    // Tail extended back to the open request event at cursor 0.
     assert_eq!(transcript, replayed);
     assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 101);
     assert_eq!(snapshot.transcript_from, Some(0));
@@ -308,8 +304,6 @@ fn open_permission_older_than_tail_limit_stays_inside_transcript() {
 
 #[test]
 fn reset_tail_snaps_back_to_user_message_boundary() {
-    // One user message followed by enough agent events that the naive tail
-    // start lands mid-turn, with the user message within TAIL_EVENT_LIMIT.
     let mut events = vec![user_note("go")];
     events.extend(
         (0..TAIL_EVENT_LIMIT + 9)
@@ -330,7 +324,6 @@ fn reset_tail_snaps_back_to_user_message_boundary() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    // Snapped back to the user message at cursor 0.
     assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 10);
     assert_eq!(transcript.first().map(|e| e.cursor), Some(0));
     assert!(matches!(
@@ -342,8 +335,6 @@ fn reset_tail_snaps_back_to_user_message_boundary() {
 
 #[test]
 fn reset_tail_falls_back_to_naive_start_when_user_message_beyond_limit() {
-    // The only user message is further than TAIL_EVENT_LIMIT events before the
-    // naive tail start (or dropped past the log cap), so the tail keeps the naive start.
     let mut events = vec![user_note("go")];
     events.extend(
         (0..TAIL_EVENT_LIMIT * 2)
@@ -402,7 +393,6 @@ fn read_before_returns_preceding_events_ascending() {
         note("f"),
     ]);
     let page = read_before(&log, 6, 3);
-    // No user message in the log: no snap, plain newest-3 page.
     assert_eq!(page.events.len(), 3);
     assert_eq!(
         page.events.iter().map(|e| e.cursor).collect::<Vec<_>>(),
@@ -423,7 +413,6 @@ fn read_before_snaps_back_to_user_message() {
         note("d"),
     ]);
     let page = read_before(&log, 5, 4);
-    // Naive start is cursor 1; snapped back to the user message at cursor 0.
     assert_eq!(page.from, 0);
     assert!(matches!(
         page.events[0].payload,
@@ -510,10 +499,6 @@ fn walking_back_with_from_reproduces_full_retained_log() {
 
 #[test]
 fn read_before_empty_page_past_filtered_permissions_still_walks_to_floor() {
-    // The only events in [before - limit, before) are permission requests
-    // that resolve later in the log, so the filtered read drops them and the
-    // page is empty. `from` must still be strictly less than `before` so a
-    // cursor walk makes progress.
     let mut log = TranscriptLog::default();
     log.append(vec![
         user_note("go"),
@@ -538,7 +523,6 @@ fn read_before_empty_page_past_filtered_permissions_still_walks_to_floor() {
             approved: false,
         },
     ]);
-    // before sits just past the two requests; their resolutions are newer.
     let before = 5;
     let page = read_before(&log, before, 2);
     assert!(page.events.is_empty());
@@ -548,7 +532,6 @@ fn read_before_empty_page_past_filtered_permissions_still_walks_to_floor() {
         "empty page must make progress; got from == end"
     );
 
-    // Walking back with `from` reaches the floor in finite steps.
     let mut cursor = page.from;
     let mut steps = 0;
     while cursor > log.dropped {
@@ -624,15 +607,12 @@ fn attach_inline_tail_open_permission_older_than_limit_stays_inside() {
     let transcript = snapshot
         .transcript
         .expect("attached snapshot carries transcript");
-    // Tail extended back to the open request event at cursor 0.
     assert_eq!(transcript.len(), TAIL_EVENT_LIMIT + 51);
     assert_eq!(snapshot.transcript_from, Some(0));
 }
 
 #[test]
 fn attach_inline_tail_uses_snapshot_pending_ids_not_log() {
-    // The replayed log has an open p1 request older than the tail limit, but
-    // the snapshot carries a different pending id (p2), so no extension.
     let mut events = vec![SessionServerEvent::PermissionRequest {
         request_id: "p1".to_string(),
         title: Some("Run?".to_string()),
@@ -669,7 +649,6 @@ fn attach_inline_tail_empty_events_gives_empty_transcript_and_next_cursor() {
     assert_eq!(snapshot.transcript_floor, Some(2));
 }
 
-/// A streamed message version with a controlled `item_id` and content blocks.
 fn stream_msg(
     text: &str,
     item_id: &str,
@@ -708,10 +687,10 @@ fn tool_call(call_id: &str) -> SessionServerEvent {
 fn attach_compacts_streamed_message_versions_issue_1352() {
     let mut log = TranscriptLog::default();
     log.append(vec![
-        user_note("go"),                                      // cursor 0
-        stream_msg("he", "i1", Vec::new()),                   // cursor 1 (first occurrence)
-        stream_msg("hel", "i1", vec![resource_block("a")]),   // cursor 2
-        stream_msg("hello", "i1", vec![resource_block("b")]), // cursor 3 (last)
+        user_note("go"),
+        stream_msg("he", "i1", Vec::new()),
+        stream_msg("hel", "i1", vec![resource_block("a")]),
+        stream_msg("hello", "i1", vec![resource_block("b")]),
     ]);
     let (snapshot, _) = build_attach(
         &log,
@@ -723,7 +702,6 @@ fn attach_compacts_streamed_message_versions_issue_1352() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    // Three i1 versions collapse to one envelope at the first cursor.
     assert_eq!(transcript.len(), 2);
     assert_eq!(transcript[0].cursor, 0);
     assert_eq!(transcript[1].cursor, 1);
@@ -734,14 +712,12 @@ fn attach_compacts_streamed_message_versions_issue_1352() {
             item_id,
             ..
         } => {
-            // Final payload of the stream.
             assert_eq!(text, "hello");
             assert_eq!(*content_blocks, vec![resource_block("b")]);
             assert_eq!(item_id, "i1");
         }
         other => panic!("expected Message payload, got {other:?}"),
     }
-    // Window selection and cursors are unchanged by compaction.
     assert_eq!(snapshot.cursor, 4);
     assert_eq!(snapshot.transcript_from, Some(0));
     assert_eq!(snapshot.transcript_floor, Some(0));
@@ -749,13 +725,12 @@ fn attach_compacts_streamed_message_versions_issue_1352() {
 
 #[test]
 fn attach_compaction_keeps_first_seen_item_order() {
-    // Interleaved streams: thought i1 v1, agent i2 v1, thought i1 v2, agent i2 v2.
     let mut log = TranscriptLog::default();
     log.append(vec![
-        stream_msg("t1", "i1", Vec::new()),                // cursor 0
-        stream_msg("a1", "i2", Vec::new()),                // cursor 1
-        stream_msg("t2", "i1", vec![resource_block("x")]), // cursor 2
-        stream_msg("a2", "i2", vec![resource_block("y")]), // cursor 3
+        stream_msg("t1", "i1", Vec::new()),
+        stream_msg("a1", "i2", Vec::new()),
+        stream_msg("t2", "i1", vec![resource_block("x")]),
+        stream_msg("a2", "i2", vec![resource_block("y")]),
     ]);
     let (snapshot, _) = build_attach(
         &log,
@@ -767,7 +742,6 @@ fn attach_compaction_keeps_first_seen_item_order() {
     let transcript = snapshot
         .transcript
         .expect("reset snapshot carries transcript");
-    // First-seen order: i1 then i2, each with its last payload.
     assert_eq!(transcript.len(), 2);
     assert_eq!(transcript[0].cursor, 0);
     assert_eq!(transcript[1].cursor, 1);
@@ -798,10 +772,10 @@ fn attach_compaction_keeps_first_seen_item_order() {
 fn attach_compaction_leaves_tool_calls_and_empty_item_ids_alone() {
     let mut log = TranscriptLog::default();
     log.append(vec![
-        stream_msg("same", "", Vec::new()), // cursor 0: empty item_id
-        stream_msg("same", "", Vec::new()), // cursor 1: identical, still kept
-        tool_call("c1"),                    // cursor 2: repeated call_id is not an item_id
-        tool_call("c1"),                    // cursor 3: both kept, in order
+        stream_msg("same", "", Vec::new()),
+        stream_msg("same", "", Vec::new()),
+        tool_call("c1"),
+        tool_call("c1"),
     ]);
     let (snapshot, _) = build_attach(
         &log,
@@ -835,9 +809,9 @@ fn attach_compaction_leaves_tool_calls_and_empty_item_ids_alone() {
 fn read_before_compacts_streamed_versions_and_keeps_from() {
     let mut log = TranscriptLog::default();
     log.append(vec![
-        user_note("go"),                    // cursor 0: page start (no earlier user boundary)
-        stream_msg("he", "i1", Vec::new()), // cursor 1 (first occurrence)
-        stream_msg("hello", "i1", vec![resource_block("z")]), // cursor 2 (last)
+        user_note("go"),
+        stream_msg("he", "i1", Vec::new()),
+        stream_msg("hello", "i1", vec![resource_block("z")]),
     ]);
     let page = read_before(&log, 3, 3);
     assert_eq!(page.from, 0);

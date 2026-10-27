@@ -1,9 +1,3 @@
-//! End-to-end background-work tests (issue #1412). Nothing is injected: the fake
-//! ACP agent spawns a real shell (`--background-shell`), and the host probes the
-//! real process table through `ps` at turn end and on the actor ticks. CI runs
-//! these unsandboxed. Under the nono sandbox `ps` is denied, so acquire fails
-//! with "start-time token unreadable", exactly like the other directory tests.
-
 use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::{record_session_activity, SessionActivity};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
@@ -19,10 +13,7 @@ use std::{
 
 type SharedContext = Arc<Mutex<CommandContext<InMemoryRegistry>>>;
 
-/// Upper bound for each wait. The shell lives 2 s, then the level holds for
-/// `END_DEBOUNCE` (5 s) and the next tick poll (`POLL_EVERY`, 2 s) clears it.
 const DEADLINE: Duration = Duration::from_secs(15);
-/// Upper bound for a shell started after the turn ended: idle detection can take up to `IDLE_POLL_EVERY` plus the idle table max age (about 10 s), so the shell must outlive that.
 const AFTER_TURN_DEADLINE: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(50);
 
@@ -37,9 +28,6 @@ fn provisioned_handle_context() -> (String, SharedContext) {
     (handle, context)
 }
 
-/// Wire the report hook into the registry, and record every activity it is
-/// handed. The push comes after the registry write, so a value seen in the
-/// vector is already reflected in the task status.
 fn record_reports(
     directory: &BlockingSessionDirectory,
     context: &SharedContext,
@@ -63,7 +51,6 @@ fn record_reports(
     reported
 }
 
-/// Poll the recorded activities until `found` holds, and return them.
 fn wait_for(
     reported: &Mutex<Vec<SessionActivity>>,
     found: impl Fn(&[SessionActivity]) -> bool,
@@ -125,8 +112,6 @@ fn background_shell_reports_background_running_then_turn_ended() {
                 .expect("submit prompt");
         });
 
-        // (a) The turn-end probe sees the live shell, so the turn is held as
-        // background work and TurnEnded is not reported before it.
         let seen = wait_for(&reported, |activity| {
             activity.contains(&SessionActivity::BackgroundRunning)
         });
@@ -144,8 +129,6 @@ fn background_shell_reports_background_running_then_turn_ended() {
             "background work must read as the task still running"
         );
 
-        // (b) Once the shell exits and END_DEBOUNCE passes, the level clears and
-        // TurnEnded follows BackgroundRunning.
         let seen = wait_for(&reported, turn_ended_after_background);
         assert!(
             turn_ended_after_background(&seen),
@@ -214,8 +197,6 @@ fn background_shell_started_after_the_turn_ended_reports_background_running() {
                 .expect("submit prompt");
         });
 
-        // The turn ends first, with no shell yet. Then the shell starts after the
-        // turn ended, and the level read finds it without any further turn end.
         let seen = wait_for_within(&reported, AFTER_TURN_DEADLINE, |activity| {
             activity.contains(&SessionActivity::BackgroundRunning)
         });
@@ -229,7 +210,6 @@ fn background_shell_started_after_the_turn_ended_reports_background_running() {
             "background work started after the turn must read as the task still running"
         );
 
-        // The shell exits, END_DEBOUNCE passes, and the next idle poll clears the level.
         let seen = wait_for_within(&reported, AFTER_TURN_DEADLINE, turn_ended_after_background);
         assert!(
             turn_ended_after_background(&seen),

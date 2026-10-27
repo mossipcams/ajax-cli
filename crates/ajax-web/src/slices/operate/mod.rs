@@ -3,7 +3,7 @@ use ajax_core::{
         environment::{local_branch_exists, origin_fetch_age},
         CommandOutput, CommandRunError, CommandRunner,
     },
-    commands::{self, BranchAdoptionPlan, CommandContext, CommandError, NewTaskRequest, OpenMode},
+    commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
     remediation::{self, RemediationError},
@@ -26,7 +26,6 @@ pub struct OperateRequest {
     pub task_handle: String,
     pub action: String,
     pub confirmed: bool,
-    pub branch_adoption: Option<BranchAdoptionPlan>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -110,9 +109,6 @@ fn operate_inner<R: Registry>(
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
         )),
-        OperatorAction::Repair if request.branch_adoption.is_some() => {
-            execute_task_command(context, runner, TaskCommandKind::Repair, &request)
-        }
         OperatorAction::Repair => Err(OperateError::UnsupportedCapability(
             "repair is not supported in Web Cockpit; use Drop or CLI repair",
         )),
@@ -352,14 +348,9 @@ fn execute_task_command<R: Registry>(
     } else {
         OpenMode::Attach
     };
-    let mut plan = plan_task_command_operation(context, kind, task_handle, open_mode)
+    let plan = plan_task_command_operation(context, kind, task_handle, open_mode)
         .map_err(|error| OperateError::Command(error, false))?;
-    if kind == TaskCommandKind::Repair {
-        if let Some(request_adoption) = &request.branch_adoption {
-            plan.branch_adoption = Some(request_adoption.clone());
-        }
-    }
-    let confirmed = task_command_confirmed(kind, request, &plan);
+    let confirmed = !plan.requires_confirmation || request.confirmed;
     let (outputs, state_changed) =
         execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
             .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
@@ -370,10 +361,6 @@ fn execute_task_command<R: Registry>(
     })
 }
 
-/// Review and Repair act on Git evidence, so they stop when the task's own
-/// repository could not be observed, or is no longer configured, instead of
-/// using what is on record. A failure in some other repository does not block
-/// them.
 fn refresh_git_evidence_for_task<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -408,21 +395,6 @@ fn refresh_git_evidence_for_task<R: Registry>(
     {
         Some((_, error)) => Err(OperateError::Command(error, changed)),
         None => Ok(()),
-    }
-}
-
-fn task_command_confirmed(
-    kind: TaskCommandKind,
-    request: &OperateRequest,
-    plan: &commands::CommandPlan,
-) -> bool {
-    if kind == TaskCommandKind::Repair && plan.branch_adoption.is_some() {
-        return request.branch_adoption.is_some() && request.confirmed;
-    }
-    if plan.requires_confirmation {
-        request.confirmed
-    } else {
-        true
     }
 }
 

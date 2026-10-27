@@ -1,19 +1,3 @@
-//! The transport-neutral session driver core on top of [`JsonlProcess`].
-//! A [`RpcSession`] owns a handshaken child process, sends `prompt` and `abort`
-//! commands through the id-correlated transport, and turns the record stream
-//! (handshake pending records first, then live stdout) into [`RpcStep`] values
-//! for the caller. It keeps only run state — no usage stats, no restore.
-//!
-//! Step rules: a `response` record whose id matches the active prompt decides
-//! that run (`success:false` rejects it with the response's error text, a
-//! success response to a command run (`command` other than `"prompt"`) or
-//! `data.disposition == "handled"` finishes it). Every other record is folded
-//! through the injected record mapper — events are surfaced in order, and a
-//! mapper-reported finish ends the run with the remembered aborted flag.
-//! `next_step` returns at most one step per call; records that carry no adapter
-//! meaning are consumed inside the same call until a step-worthy result arrives
-//! or the timeout elapses ([`RpcStep::Idle`]).
-
 #![allow(dead_code)]
 
 use std::collections::{HashMap, VecDeque};
@@ -27,74 +11,42 @@ use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::pi_rpc_map::{run_error, PiRunError};
 use super::rpc_handshake::RpcHandshake;
 
-/// How long each `try_recv` gap sleeps before re-polling the record channel.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
-/// Maps one transport record into adapter events and run state.
 pub type RecordMapper = fn(&Value, &str) -> RpcMapping;
 
-/// What one inbound transport record means for the web session adapter.
 pub struct RpcMapping {
-    /// Adapter events to forward, in order. Empty for non-mappable records.
     pub events: Vec<AgentEvent>,
-    /// The agent run has settled.
     pub finished: bool,
-    /// The run was reported aborted.
     pub ended_aborted: bool,
 }
 
-/// One step of a run as seen by the session driver.
 #[derive(Debug)]
 pub enum RpcStep {
-    /// Adapter events to forward, in order.
     Events(Vec<AgentEvent>),
-    /// The agent run has settled; `aborted` reflects the injected record mapper's stop reason.
     RunFinished { aborted: bool },
-    /// The prompt was rejected before any run started; carries the response's error text.
     PromptRejected(String),
-    /// A stdout line that was not valid JSON; carries the raw text.
     Error(String),
-    /// The child process exited; no more records will arrive.
     Exited,
-    /// No step-worthy record arrived within the timeout.
     Idle,
 }
 
-/// A handshaken JSONL session: prompt/abort commands in, [`RpcStep`]s out.
 pub struct RpcSession {
     mapper: RecordMapper,
     process: JsonlProcess,
     session_id: String,
-    /// Handshake pending records, replayed before any live stdout record.
     queued: VecDeque<Value>,
-    /// The id allocated by the last `begin_prompt` or `begin_command`; `None` until one is sent.
     pub(super) prompt_id: Option<String>,
     run_active: bool,
-    /// Set when a record in the current run reports an aborted stop reason;
-    /// folded into the next [`RpcStep::RunFinished`] and reset on every run end.
     ended_aborted: bool,
-    /// An assistant error the current run may still retry, surfaced as an
-    /// [`NativeEvent::Error`] just before [`RpcStep::RunFinished`] unless a
-    /// retry or a later assistant message clears it; reset on every run end.
     pending_error: Option<String>,
-    /// Set when `Exited` was read while a [`Self::request`] was in flight; the
-    /// next [`Self::next_step`] reports it exactly once and clears this flag.
     exited: bool,
-    /// Set when a finishing record also carried events; the [`RpcStep::RunFinished`] it implies is delivered on the next call, after those events.
     deferred_finish: Option<bool>,
-    /// When true, image objects in `prompt` commands carry an extra
-    /// `"type": "image"` key (required by Pi RPC); default shape stays
-    /// `{data, mimeType}` for consumers that validate by exact key count.
     image_type_tag: bool,
-    /// Tool call ids to their last-seen input objects, so a later update with
-    /// no `raw_input` can carry the opening call's input; cleared on every run end.
     tool_inputs: HashMap<String, Value>,
 }
 
 impl RpcSession {
-    /// Adopt a handshaken process. `handshake.session_id` binds every generated
-    /// notification and `handshake.pending` is queued so those records are
-    /// processed first, in order, by [`Self::next_step`].
     pub fn new(process: JsonlProcess, handshake: RpcHandshake, mapper: RecordMapper) -> Self {
         Self {
             mapper,
@@ -112,38 +64,27 @@ impl RpcSession {
         }
     }
 
-    /// Mark this session for consumers whose `prompt` image objects must carry
-    /// a `"type": "image"` key alongside `data` and `mimeType` (e.g. Pi RPC).
     pub fn with_image_type_tag(mut self) -> Self {
         self.image_type_tag = true;
         self
     }
 
-    /// The ACP session id this stream is bound to.
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
 
-    /// OS process id of the child driving this session.
     pub fn child_pid(&self) -> u32 {
         self.process.pid()
     }
 
-    /// Whether a prompt run is currently active (sent, not yet settled).
     pub fn run_active(&self) -> bool {
         self.run_active
     }
 
-    /// Send a `prompt` command and mark the run active. Fails when a run is
-    /// already active or the child's stdin is closed.
     pub fn begin_prompt(&mut self, text: &str) -> Result<(), String> {
         self.begin_prompt_with_images(text, &[])
     }
 
-    /// Like [`Self::begin_prompt`], attaching images as `images:` entries when
-    /// any are given. Each entry is `{data, mimeType}` by default; when
-    /// [`Self::with_image_type_tag`] was used it is
-    /// `{"type": "image", data, mimeType}` (required by Pi RPC).
     pub fn begin_prompt_with_images(
         &mut self,
         text: &str,
@@ -166,16 +107,11 @@ impl RpcSession {
         self.begin_run("prompt", fields)
     }
 
-    /// Send a built-in Pi command (e.g. `compact`, `set_session_name`) in place
-    /// of a prompt, tracked by the same request id. Its success response ends
-    /// the run; a failure response rejects it. Same guards as
-    /// [`Self::begin_prompt_with_images`].
-    #[allow(dead_code)] // Called by the Pi client's /compact and /name paths (slice B of #1360).
+    #[allow(dead_code)]
     pub fn begin_command(&mut self, command: &str, fields: Value) -> Result<(), String> {
         self.begin_run(command, fields)
     }
 
-    /// Send `record_type` as the tracked run record and mark the run active.
     fn begin_run(&mut self, record_type: &str, fields: Value) -> Result<(), String> {
         if self.run_active {
             return Err("a prompt run is already active".to_owned());
@@ -188,7 +124,6 @@ impl RpcSession {
         Ok(())
     }
 
-    /// Send an `abort` command for the active run. Fails when no run is active.
     pub fn abort(&mut self) -> Result<(), String> {
         if !self.run_active {
             return Err("no active prompt run to abort".to_owned());
@@ -197,20 +132,10 @@ impl RpcSession {
         Ok(())
     }
 
-    /// Write one response line carrying a caller-chosen `id` (e.g. Pi's
-    /// `extension_ui_response`, which must echo the id of its
-    /// `extension_ui_request`). No auto-generated id is allocated.
     pub fn respond(&mut self, command_type: &str, id: &str, fields: Value) -> Result<(), String> {
         self.process.send_with_id(command_type, id, fields)
     }
 
-    /// Send a one-shot command and wait for its `response` record. Unlike
-    /// [`Self::next_step`], this reads straight from the process stream (the
-    /// `queued` pending records are never consumed here); every other record
-    /// read while waiting is pushed onto the BACK of `queued` in arrival order
-    /// so a later `next_step` processes it. A transport error, child exit, or
-    /// deadline elapse without the matching response is an `Err`; on success
-    /// the response's `data` field is returned (`Null` when absent).
     pub fn request(
         &mut self,
         command_type: &str,
@@ -222,10 +147,7 @@ impl RpcSession {
 
         loop {
             match self.process.try_recv() {
-                // No record yet: keep polling until the deadline below.
                 Err(mpsc::TryRecvError::Empty) => {}
-                // Disconnected only happens after `Exited` was already
-                // consumed, so this is a terminal no-response path.
                 Err(mpsc::TryRecvError::Disconnected) => break,
                 Ok(record) => match record {
                     JsonlRecord::Record(value)
@@ -243,7 +165,6 @@ impl RpcSession {
                             _ => Ok(value.get("data").cloned().unwrap_or(Value::Null)),
                         };
                     }
-                    // Not this command's response: preserve it for `next_step`.
                     JsonlRecord::Record(value) => self.queued.push_back(value),
                     JsonlRecord::Error(text) => {
                         return Err(format!(
@@ -272,16 +193,7 @@ impl RpcSession {
         ))
     }
 
-    /// Take the next step of the run: a child exit observed during a prior
-    /// [`Self::request`] is reported first (exactly once), then queued pending
-    /// records, then the process stream, polling `try_recv` every 5 ms until
-    /// `timeout` elapses.
-    /// Returns at most one [`RpcStep`] per call ([`RpcStep::Idle`] on timeout);
-    /// records without adapter meaning are consumed inside this call so the
-    /// caller never sees them.
     pub fn next_step(&mut self, timeout: Duration) -> RpcStep {
-        // A child exit observed inside a `request` is reported here exactly
-        // once, before any queued record could mask it.
         if self.exited {
             self.exited = false;
             self.run_active = false;
@@ -292,7 +204,6 @@ impl RpcSession {
             return RpcStep::Exited;
         }
 
-        // A deferred finish is delivered before any new record is read.
         if let Some(aborted) = self.deferred_finish.take() {
             self.run_active = false;
             self.prompt_id = None;
@@ -310,8 +221,6 @@ impl RpcSession {
             };
 
             match record {
-                // Transport-level anomalies surface immediately; a prompt in
-                // flight cannot settle after the child is gone.
                 JsonlRecord::Error(text) => return RpcStep::Error(text),
                 JsonlRecord::Exited => {
                     self.run_active = false;
@@ -321,8 +230,6 @@ impl RpcSession {
                     self.tool_inputs.clear();
                     return RpcStep::Exited;
                 }
-                // No adapter meaning keeps the loop consuming within this
-                // call; only a step-worthy fold stops it.
                 JsonlRecord::Record(value) => {
                     if let Some(step) = self.step_for_record(&value) {
                         return step;
@@ -336,8 +243,6 @@ impl RpcSession {
         }
     }
 
-    /// Fold one parsed record into a step. `None` means the record carries no
-    /// adapter meaning for this session and the loop keeps consuming.
     fn step_for_record(&mut self, value: &Value) -> Option<RpcStep> {
         if let Some(step) = self.prompt_response_step(value) {
             return Some(step);
@@ -352,7 +257,6 @@ impl RpcSession {
         if mapping.finished {
             let aborted = self.ended_aborted;
             if mapping.events.is_empty() {
-                // The run has settled: clear it so a later prompt starts fresh.
                 self.run_active = false;
                 self.prompt_id = None;
                 self.ended_aborted = false;
@@ -360,8 +264,6 @@ impl RpcSession {
                 self.tool_inputs.clear();
                 return Some(RpcStep::RunFinished { aborted });
             }
-            // A finishing record that also carries events surfaces the
-            // events first; the finish is delivered on the next call.
             self.deferred_finish = Some(aborted);
             return Some(RpcStep::Events(mapping.events));
         }
@@ -371,9 +273,6 @@ impl RpcSession {
         None
     }
 
-    /// The outcome of the active prompt's `response` record, when this is one.
-    /// Responses to other commands (handshake leftovers, `abort`) pass through
-    /// to the injected record mapper.
     pub(super) fn prompt_response_step(&mut self, value: &Value) -> Option<RpcStep> {
         if value.get("type").and_then(Value::as_str) != Some("response") {
             return None;
@@ -400,14 +299,11 @@ impl RpcSession {
             _ => {
                 let handled =
                     value.pointer("/data/disposition").and_then(Value::as_str) == Some("handled");
-                // A command run (`compact`, `set_session_name`, ...) is settled by its own
-                // success response; a prompt's response carries `command: "prompt"`.
                 let command_run = value
                     .get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|command| command != "prompt");
                 if handled || command_run {
-                    // The response reports the prompt or command fully handled: the run is over.
                     self.run_active = false;
                     self.prompt_id = None;
                     self.ended_aborted = false;
@@ -415,16 +311,12 @@ impl RpcSession {
                     self.tool_inputs.clear();
                     Some(RpcStep::RunFinished { aborted: false })
                 } else {
-                    // e.g. `disposition: "started"` — acknowledgement only; the
-                    // run keeps going, so keep the prompt id for correlation.
                     None
                 }
             }
         }
     }
 
-    /// The next record to process: a queued pending record (no waiting) or the
-    /// first live stdout record before `deadline`; `None` on timeout.
     fn next_record(&mut self, deadline: Instant) -> Option<JsonlRecord> {
         if let Some(value) = self.queued.pop_front() {
             return Some(JsonlRecord::Record(value));
@@ -434,8 +326,6 @@ impl RpcSession {
             match self.process.try_recv() {
                 Ok(record) => return Some(record),
                 Err(mpsc::TryRecvError::Empty) => {}
-                // The reader thread only disconnects after delivering `Exited`,
-                // which is already in the channel; unreachable, but drain-safe.
                 Err(mpsc::TryRecvError::Disconnected) => return None,
             }
 
@@ -447,12 +337,6 @@ impl RpcSession {
     }
 }
 
-/// Fold one Pi record's run-error meaning into the pending assistant error.
-/// An assistant error sets `pending`; a retry, a later assistant message, or a
-/// failed run clears it; an extension notice passes through untouched. When
-/// `mapping` finishes the run with an error still pending, that error is
-/// appended as the run's final [`NativeEvent::Error`]. Claude and Cursor
-/// records never carry the Pi types classified here, so they pass through.
 pub(super) fn fold_pending_error(
     pending: &mut Option<String>,
     record: &Value,
@@ -472,10 +356,6 @@ pub(super) fn fold_pending_error(
     }
 }
 
-/// Re-attach tool call inputs to their later updates: an update whose
-/// `raw_input` is missing but whose id was remembered from the opening
-/// `ToolCall` (or an earlier input-bearing event) gets that input, and a
-/// terminal (`completed`/`failed`) update drops its memo entry afterwards.
 pub(super) fn carry_tool_inputs(memo: &mut HashMap<String, Value>, events: &mut [AgentEvent]) {
     for event in events.iter_mut() {
         let AgentEvent::Native(native) = event else {

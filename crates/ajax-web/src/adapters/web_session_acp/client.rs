@@ -897,9 +897,7 @@ fn spawn_acp_process(
             worktree_path,
         ) {
             Ok(command) => command,
-            // Not installed: try the next candidate.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            // Sandbox refused (nono missing or profile unwritable): fail closed.
             Err(error) => return Err(error.to_string()),
         };
         command

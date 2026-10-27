@@ -92,7 +92,6 @@ fn operate_slice_delegates_resume_to_core_operation_without_attach() {
             task_handle: "web/fix-login".to_string(),
             action: "resume".to_string(),
             confirmed: false,
-            branch_adoption: None,
         },
     )
     .unwrap();
@@ -126,7 +125,6 @@ fn operate_slice_ship_with_unpushed_commits_runs_once_confirmed() {
             task_handle: "web/fix-login".to_string(),
             action: "ship".to_string(),
             confirmed: true,
-            branch_adoption: None,
         },
     )
     .unwrap();
@@ -147,44 +145,12 @@ fn operate_slice_rejects_repair_as_unsupported_capability() {
             task_handle: "web/fix-login".to_string(),
             action: "repair".to_string(),
             confirmed: false,
-            branch_adoption: None,
         },
     )
     .unwrap_err();
 
     assert!(matches!(error, OperateError::UnsupportedCapability(_)));
     assert!(runner.commands().is_empty());
-}
-
-#[test]
-fn operate_slice_runs_confirmed_repair_branch_adoption_for_renamed_branch() {
-    let mut context = context_with_renamed_branch();
-    let mut runner = RecordingCommandRunner::default();
-
-    let outcome = operate(
-        &mut context,
-        &mut runner,
-        OperateRequest {
-            task_handle: "web/fix-login".to_string(),
-            action: "repair".to_string(),
-            confirmed: true,
-            branch_adoption: Some(ajax_core::commands::BranchAdoptionPlan {
-                expected_branch: "ajax/fix-login".to_string(),
-                observed_branch: "fix/web/login".to_string(),
-            }),
-        },
-    )
-    .unwrap();
-
-    assert!(outcome.state_changed);
-    assert_eq!(
-        context
-            .registry
-            .get_task(&TaskId::new("web/fix-login"))
-            .unwrap()
-            .branch,
-        "fix/web/login"
-    );
 }
 
 #[test]
@@ -198,7 +164,6 @@ fn operate_slice_delegates_review_to_core_operation_and_returns_output() {
             task_handle: "web/fix-login".to_string(),
             action: "review".to_string(),
             confirmed: false,
-            branch_adoption: None,
         },
     )
     .unwrap();
@@ -232,7 +197,6 @@ fn operate_slice_runs_fix_ci_remediation_via_tmux() {
             task_handle: "web/fix-login".to_string(),
             action: remediation::FIX_CI.to_string(),
             confirmed: false,
-            branch_adoption: None,
         },
     )
     .unwrap();
@@ -667,8 +631,6 @@ fn is_tmux_command(command: &CommandSpec) -> bool {
     command.program == "tmux"
 }
 
-/// Simulates a host where the `tmux` binary is not installed: every `tmux`
-/// spawn fails with the same error the OS reports for a missing executable.
 struct TmuxMissingRunner {
     inner: RecordingCommandRunner,
 }

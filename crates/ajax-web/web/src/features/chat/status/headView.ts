@@ -3,10 +3,6 @@ import type { ChatSessionView, Decision, ElicitationDecision } from "../session/
 
 export type HeadState = "decision" | "working" | "attention" | "idle";
 
-/**
- * Server task status projected onto the head. TaskWorkspace passes the loaded
- * task detail's status and explanation; `null` means detail is unavailable.
- */
 export interface ChatTaskAttention {
   status: TaskStatus;
   explanation?: string | null;
@@ -25,7 +21,6 @@ export interface ChatHeadView {
   attentionText: string | null;
   showHeadLine: boolean;
   workingText?: string | null;
-  /** Browser session stream `turn.busy`; gates the quiet ("No recent activity") state. */
   streamBusy?: boolean;
 }
 
@@ -41,11 +36,6 @@ export function headStateLabel(state: HeadState, quiet: boolean): string {
   return STATE_LABELS[state];
 }
 
-/**
- * Server task status wins whenever it is running, waiting, or errored. A busy
- * stream only stands in for an idle/done server status (the server has not
- * caught up with a just-sent prompt), and is the fallback when detail is unavailable.
- */
 export function headState(
   decision: Decision | null,
   elicitation: ElicitationDecision | null,

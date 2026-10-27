@@ -218,8 +218,6 @@ pub fn try_load(
             .prompts_for_run(&run_id)
             .map_err(|_| LedgerLoadError::Unreadable)?;
         if current.is_empty() {
-            // The ledger content is now durable in the database: delete the
-            // legacy file instead of preserving it.
             let commit = kernel::plan_commit(&run_id, &[], &legacy)
                 .map_err(|_| LedgerLoadError::Unreadable)?;
             if legacy.entries.is_empty() || commit.is_some() {
@@ -233,8 +231,6 @@ pub fn try_load(
                 migrate_legacy_file(state_dir, handle)?;
             }
         } else {
-            // The database already has prompts for the run; the sidecar was not
-            // imported, so preserve it under a `.migrated` name.
             migrate_legacy_file(state_dir, handle)?;
         }
     }
@@ -249,8 +245,6 @@ pub fn try_load(
     }
 }
 
-/// Delete a legacy ledger file whose content was imported into the database in
-/// this call. `NotFound` is fine; any other failure is `Unreadable`.
 fn delete_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
     match fs::remove_file(ledger_path(state_dir, handle)) {
         Ok(()) => Ok(()),
@@ -259,9 +253,6 @@ fn delete_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadEr
     }
 }
 
-/// Rename the legacy ledger file to the first free `.migrated` name; never
-/// overwrite. Used only when an import was skipped because the database already
-/// has prompts for the run and the sidecar content was not trusted into it.
 fn migrate_legacy_file(state_dir: &Path, handle: &str) -> Result<(), LedgerLoadError> {
     let path = ledger_path(state_dir, handle);
     if !path.try_exists().map_err(|_| LedgerLoadError::Unreadable)? {
@@ -300,7 +291,6 @@ pub fn try_persist(
     try_persist_with_events::<serde_json::Value>(store, state_dir, handle, ledger, &[])
 }
 
-/// Persist the prompt ledger and transcript events in one database transaction.
 pub fn try_persist_with_events<T: serde::Serialize>(
     store: &ajax_core::registry::SqliteRegistryStore,
     state_dir: &Path,
@@ -311,7 +301,6 @@ pub fn try_persist_with_events<T: serde::Serialize>(
     try_persist_with_events_and_rewrites(store, state_dir, handle, ledger, events, &[])
 }
 
-/// Persist the ledger, appended events, and replacements in one transaction.
 pub fn try_persist_with_events_and_rewrites<T: serde::Serialize>(
     store: &ajax_core::registry::SqliteRegistryStore,
     state_dir: &Path,
@@ -369,7 +358,6 @@ pub fn try_persist_with_events_and_rewrites<T: serde::Serialize>(
         }
         None => return Ok(()),
     }
-    // A retention failure must not make a committed append look unsuccessful.
     if let Err(error) = store.prune_execution_events(&run_id, super::MAX_LOG_EVENTS as u64) {
         tracing::warn!(%error, handle, "failed to prune web session transcript");
     }

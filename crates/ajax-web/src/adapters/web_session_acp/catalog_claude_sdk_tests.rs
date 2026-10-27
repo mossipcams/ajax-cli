@@ -1,7 +1,3 @@
-//! Tests for the Claude Agent SDK model-catalog path of [`super::catalog`],
-//! running the fake Claude SDK fixture and asserting that the Claude model
-//! catalog comes from the SDK handshake config options.
-
 use std::path::{Path, PathBuf};
 
 use super::catalog::read_agent_model_catalog;

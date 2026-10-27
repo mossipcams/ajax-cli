@@ -1,5 +1,3 @@
-//! Checks that the session driver delegates record meaning to its mapper.
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -14,8 +12,6 @@ use super::rpc_session::{RecordMapper, RpcMapping, RpcSession, RpcStep};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Spawn the fake pi RPC child under `node`, passing `extra_flags` to the
-/// fixture script. Fails loudly (panics) when `node` is missing.
 fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
     let mut args: Vec<String> = vec![Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/fake_pi_rpc.js")
@@ -27,7 +23,6 @@ fn spawn_fake_pi(extra_flags: &[&str]) -> JsonlProcess {
         .expect("fake pi rpc fixture must spawn (is node installed?)")
 }
 
-/// Spawn the fake and run the real four-command handshake.
 fn handshaken(extra_flags: &[&str]) -> (JsonlProcess, RpcHandshake) {
     let mut process = spawn_fake_pi(extra_flags);
     let handshake = handshake(&mut process, HANDSHAKE_TIMEOUT).expect("handshake");

@@ -1,21 +1,14 @@
-//! Hardening regression tests for the Claude SDK transport (C4d): model
-//! values are validated against the sidecar's advertised catalog before being
-//! forwarded, and the sidecar no longer loads an arbitrary SDK module from an
-//! environment variable in production.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::claude_sdk_client::ClaudeSdkClient;
 
-/// Generous per-step bound: node startup plus one scripted record burst.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn manifest_dir() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// `(sidecar script, fake sdk module)` paths under the crate.
 fn sidecar_and_fake_sdk() -> (PathBuf, PathBuf) {
     let dir = manifest_dir();
     (
@@ -24,8 +17,6 @@ fn sidecar_and_fake_sdk() -> (PathBuf, PathBuf) {
     )
 }
 
-/// Spawn the real sidecar script (`node <sidecar> --sdk-module <fake>`) wired
-/// to the fake Claude Agent SDK. Fails loudly when spawn fails.
 fn spawn_client() -> ClaudeSdkClient {
     let (sidecar, fake_sdk) = sidecar_and_fake_sdk();
     let args = vec![
@@ -44,7 +35,6 @@ fn spawn_client() -> ClaudeSdkClient {
     .expect("claude sdk sidecar must spawn against the fake fixture (is node installed?)")
 }
 
-/// Current value of the `model` config option.
 fn model_option_value(options: &[super::NeutralConfigOption]) -> String {
     let option = options
         .iter()
@@ -56,7 +46,6 @@ fn model_option_value(options: &[super::NeutralConfigOption]) -> String {
     }
 }
 
-/// The advertised `model` entries of the client's config options.
 fn model_option_entries(options: &[super::NeutralConfigOption]) -> Vec<super::NeutralConfigChoice> {
     let option = options
         .iter()
@@ -90,7 +79,6 @@ fn set_model_rejects_value_the_fake_sdk_did_not_advertise() {
 #[test]
 fn set_model_accepts_a_value_advertised_by_the_fake_sdk() {
     let client = spawn_client();
-    // "haiku" must be advertised by the fake fixture for this test to mean anything.
     let entries: Vec<String> = model_option_entries(&client.config_options())
         .iter()
         .map(|entry| entry.value.clone())
@@ -120,7 +108,6 @@ const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.m
 
 #[test]
 fn sidecar_has_no_environment_sdk_module_route() {
-    // Built with concat! so the marker never appears verbatim in this test file.
     let marker = concat!("AJAX_", "CLAUDE_", "SDK_", "MODULE");
     assert!(
         !SIDECAR_SOURCE.contains(marker),
