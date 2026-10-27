@@ -938,6 +938,18 @@ describe("failed optimistic prompts", () => {
     expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: false });
   });
 
+  it("an error settles only the prompt of the failed turn, leaving earlier unaccepted prompts pending", () => {
+    const first = reduceChatSession(optimistic(), { type: "prompt", text: "Earlier", clientMessageId: "c0" });
+    const second = reduceChatSession(first, { type: "prompt", text: "Ship it too", clientMessageId: "c2" });
+    const failed = reduceChatSession(second, {
+      type: "event",
+      event: { type: "session_error", message: "prompt rejected by host" },
+    });
+    expect(failed.view.conversation[0]).toMatchObject({ text: "Ship it", pending: true });
+    expect(failed.view.conversation[1]).toMatchObject({ text: "Earlier", pending: true });
+    expect(failed.view.conversation[2]).toMatchObject({ text: "Ship it too", pending: false });
+  });
+
   it("a normal turn_end leaves an unaccepted prompt pending", () => {
     const ended = reduceChatSession(optimistic(), {
       type: "event",

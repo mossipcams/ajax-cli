@@ -600,19 +600,6 @@ describe("ChatComposer", () => {
     expect(screen.getByLabelText("Message")).toHaveValue("Please fix the flaky test");
     expect(screen.getByTestId("session-note-error")).toBeInTheDocument();
     expect(transport.sendPrompt).not.toHaveBeenCalled();
-    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
-  });
-
-  it("withdraws a restored failed prompt from the outbox even when the draft is not replaced", () => {
-    mountChat();
-    typeComposer("Please fix the flaky test");
-    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Something newer" } });
-    transport.withdrawQueuedPrompt.mockClear();
-
-    send({ type: "turn_end", stopReason: "error" });
-
-    expect(screen.getByLabelText("Message")).toHaveValue("Something newer");
-    expect(transport.withdrawQueuedPrompt).toHaveBeenCalledWith("cmid-1");
   });
 
   it("does not overwrite a non-empty composer draft when a turn fails", () => {

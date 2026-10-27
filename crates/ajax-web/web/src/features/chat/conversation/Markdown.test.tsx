@@ -213,6 +213,14 @@ describe("Markdown", () => {
     expect(screen.getAllByRole("link")).toHaveLength(2);
   });
 
+  it("keeps an unclosed opening parenthesis inside a bare URL", () => {
+    render(<Markdown source={"Read https://x.test/a(b today"} />);
+    expect(screen.getByRole("link", { name: "https://x.test/a(b" })).toHaveAttribute(
+      "href",
+      "https://x.test/a(b",
+    );
+  });
+
   it("keeps links and code inside emphasis", () => {
     render(<Markdown source={"*see [the docs](https://example.com/docs) and `npm test`*"} />);
     const emphasis = screen.getByText((_, element) => element?.tagName === "EM");

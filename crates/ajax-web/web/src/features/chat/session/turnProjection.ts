@@ -329,7 +329,6 @@ function settleOpenToolCalls(
 
 function scanTurnTail(conversation: ConversationItem[]): {
   userPromptText: string | null;
-  userClientMessageId?: string;
   errorNoteId: string | null;
   hasAgentProse: boolean;
 } {
@@ -337,12 +336,7 @@ function scanTurnTail(conversation: ConversationItem[]): {
   for (let i = conversation.length - 1; i >= 0; i -= 1) {
     const item = conversation[i];
     if (item.kind === "prose" && item.role === "user") {
-      return {
-        userPromptText: item.text,
-        userClientMessageId: item.clientMessageId,
-        errorNoteId,
-        hasAgentProse: false,
-      };
+      return { userPromptText: item.text, errorNoteId, hasAgentProse: false };
     }
     if (item.kind === "note" && item.tone === "error") {
       errorNoteId = item.id;
@@ -362,28 +356,34 @@ function turnAlreadyReported(state: ChatSessionReducerState): boolean {
 
 export function failedTurnPromptToRestore(
   conversation: ConversationItem[],
-): { promptText: string; failureKey: string; clientMessageId?: string } | null {
-  const { userPromptText, userClientMessageId, errorNoteId, hasAgentProse } =
-    scanTurnTail(conversation);
+): { promptText: string; failureKey: string } | null {
+  const { userPromptText, errorNoteId, hasAgentProse } = scanTurnTail(conversation);
   if (hasAgentProse || !errorNoteId || !userPromptText?.trim()) return null;
-  return {
-    promptText: userPromptText,
-    failureKey: errorNoteId,
-    ...(userClientMessageId ? { clientMessageId: userClientMessageId } : {}),
-  };
+  return { promptText: userPromptText, failureKey: errorNoteId };
 }
 
-/** A failed turn settles prompts the host never accepted, so they stop showing Sending…. */
+/**
+ * A failed turn settles the prompt it belongs to, so it stops showing Sending…. Errors carry no
+ * clientMessageId, so the failed turn is the last still-pending user prompt; earlier prompts keep
+ * their outbox entries and their Sending… state.
+ */
 export function clearPendingPrompts(state: ChatSessionReducerState): ChatSessionReducerState {
-  if (!state.view.conversation.some((item) => item.kind === "prose" && item.pending === true)) {
-    return state;
+  const { conversation } = state.view;
+  let failedIndex = -1;
+  for (let index = conversation.length - 1; index >= 0; index -= 1) {
+    const item = conversation[index];
+    if (item.kind === "prose" && item.role === "user" && item.pending === true) {
+      failedIndex = index;
+      break;
+    }
   }
+  if (failedIndex === -1) return state;
   return bumpRevision({
     ...state,
     view: {
       ...state.view,
-      conversation: state.view.conversation.map((item) =>
-        item.kind === "prose" && item.pending === true ? { ...item, pending: false } : item,
+      conversation: conversation.map((item, index) =>
+        index === failedIndex && item.kind === "prose" ? { ...item, pending: false } : item,
       ),
     },
   });

@@ -214,14 +214,12 @@ export function ComposerProvider({
     if (!candidate) return;
     if (handledFailedTurnKeyRef.current === candidate.failureKey) return;
     handledFailedTurnKeyRef.current = candidate.failureKey;
-    // The host rejected this prompt, so keep the outbox from resending it on reconnect.
-    if (candidate.clientMessageId) withdrawQueuedPrompt(candidate.clientMessageId);
     if (draftRef.current.trim()) return;
     draftRef.current = candidate.promptText;
     persistDraft(candidate.promptText);
     setDraft(candidate.promptText);
     setDraftRestoreGeneration((generation) => generation + 1);
-  }, [busy, conversation, conversationRevision, persistDraft, withdrawQueuedPrompt]);
+  }, [busy, conversation, conversationRevision, persistDraft]);
 
   const setDraftWithPersist = useCallback(
     (value: string) => {
