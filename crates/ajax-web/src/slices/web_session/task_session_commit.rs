@@ -104,6 +104,9 @@ impl TaskSessionState {
         } else {
             let _ = self.commit_with_backlog(Vec::new());
         }
+    }
+
+    pub(super) fn warn_if_backlog_dropped(&self) {
         if !self.unpersisted.is_empty() {
             tracing::warn!(
                 handle = %self.qualified_handle,

@@ -488,6 +488,7 @@ pub(crate) fn spawn_task_session(
             state.prompts.child_exit_reconciled = true;
             state.acp.acp_alive = false;
         }
+        state.warn_if_backlog_dropped();
     });
     (tx, join)
 }

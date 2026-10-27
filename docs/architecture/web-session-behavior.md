@@ -286,6 +286,14 @@ republishes when an activity-report fault clears, so the notice goes away.
 Spawn-error dedupe keys on child generation and error kind, so reconnect cannot
 append the same authentication error repeatedly.
 
+A transcript write that fails leaves its rows in an unpersisted backlog. The
+poll tick retries the backlog, including mid-turn unless the active turn's
+terminal will commit it. The first retry is due 2 s after the failure, doubling
+to a 30 s cap, and any successful commit resets the schedule. The actor makes a
+final commit at shutdown, and logs a dropped-backlog warning only if rows are
+still unpersisted after that commit. An identical repeated fault does not
+republish the transcript error snapshot.
+
 - At most one `session/prompt` is in flight on the ACP host at a time.
 - Additional composer submits while a turn is in flight are queued in FIFO order
   (cap 8). The host appends the user `Message` row to the stored transcript when the prompt is
