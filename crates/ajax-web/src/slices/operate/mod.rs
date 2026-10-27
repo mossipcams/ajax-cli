@@ -110,6 +110,9 @@ fn operate_inner<R: Registry>(
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
         )),
+        OperatorAction::Repair if request.branch_adoption.is_some() => {
+            execute_task_command(context, runner, TaskCommandKind::Repair, &request)
+        }
         OperatorAction::Repair => Err(OperateError::UnsupportedCapability(
             "repair is not supported in Web Cockpit; use Drop or CLI repair",
         )),
@@ -368,8 +371,9 @@ fn execute_task_command<R: Registry>(
 }
 
 /// Review and Repair act on Git evidence, so they stop when the task's own
-/// repository could not be observed instead of using what is on record. A
-/// failure in some other repository does not block them.
+/// repository could not be observed, or is no longer configured, instead of
+/// using what is on record. A failure in some other repository does not block
+/// them.
 fn refresh_git_evidence_for_task<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -383,6 +387,21 @@ fn refresh_git_evidence_for_task<R: Registry>(
         .registry
         .get_task(&ajax_core::models::TaskId::new(task_handle))
         .map(|task| task.repo.clone());
+    if let Some(repo) = &repo {
+        if !context
+            .config
+            .repos
+            .iter()
+            .any(|configured| &configured.name == repo)
+        {
+            return Err(OperateError::Command(
+                CommandError::PlanBlocked(vec![format!(
+                    "repository {repo} is not configured; cannot verify the checkout"
+                )]),
+                changed,
+            ));
+        }
+    }
     match unobserved
         .into_iter()
         .find(|(name, _)| Some(name) == repo.as_ref())
@@ -597,7 +616,7 @@ pub fn operate_error_code(error: &OperateError) -> &'static str {
 fn format_command_error(error: &CommandError) -> String {
     match error {
         CommandError::ConfirmationRequired => {
-            "confirmation required — tap again to confirm".to_string()
+            "confirmation required — confirm the action to continue".to_string()
         }
         CommandError::PlanBlocked(reasons) => reasons.join("; "),
         CommandError::TaskNotFound(handle) => format!("task not found: {handle}"),

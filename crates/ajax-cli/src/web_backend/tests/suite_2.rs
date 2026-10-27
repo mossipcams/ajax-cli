@@ -60,9 +60,9 @@ fn web_bridge_persists_confirmed_mismatch_branch_adoption() {
         .unwrap();
     let mut context = saved_context;
     let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
-    let mut runner = AbsentDropRunner;
+    let mut runner = MismatchAdoptionRunner;
 
-    let error = bridge
+    let outcome = bridge
         .execute_operate(
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
@@ -76,18 +76,16 @@ fn web_bridge_persists_confirmed_mismatch_branch_adoption() {
             &mut context,
             &mut runner,
         )
-        .expect_err("repair is not supported in Web Cockpit");
+        .expect("confirmed mismatch repair should adopt");
 
-    assert!(error
-        .message
-        .contains("repair is not supported in Web Cockpit"));
+    assert!(outcome.state_changed);
 
-    let reloaded = crate::context::load_context(&paths).expect("reload after rejected repair");
+    let reloaded = crate::context::load_context(&paths).expect("reload after adoption");
     let task = reloaded
         .registry
         .get_task(&TaskId::new("web/fix-login"))
         .unwrap();
-    assert_eq!(task.branch, "ajax/fix-login");
+    assert_eq!(task.branch, "fix/pane-stuck");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -161,6 +159,32 @@ impl CommandRunner for OkRunner {
             _ => "diff stat",
         };
 
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+        })
+    }
+}
+
+#[derive(Default)]
+struct MismatchAdoptionRunner;
+
+impl CommandRunner for MismatchAdoptionRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        let stdout = match command.args.as_slice() {
+            [_, repo, subcommand, ..] if repo == "/repo/web" && subcommand == "worktree" => {
+                "worktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/fix/pane-stuck\n\n"
+            }
+            [_, repo, subcommand, format]
+                if repo == "/repo/web"
+                    && subcommand == "branch"
+                    && format == "--format=%(refname:short)" =>
+            {
+                "main\najax/fix-login\n"
+            }
+            _ => "",
+        };
         Ok(CommandOutput {
             status_code: 0,
             stdout: stdout.to_string(),

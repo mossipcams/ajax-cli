@@ -1,8 +1,9 @@
 use ajax_core::{
-    commands::{BranchAdoptionPlan, CommandContext},
+    commands::{merge_task_plan, BranchAdoptionPlan, CommandContext, OpenMode},
     models::OperatorAction,
     output::TaskCard,
     registry::Registry,
+    task_operations::repair::plan_repair_operation,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -71,11 +72,38 @@ pub fn browser_actions<R: Registry>(
 }
 
 fn web_action_for_card<R: Registry>(
-    _context: &CommandContext<R>,
-    _card: &TaskCard,
+    context: &CommandContext<R>,
+    card: &TaskCard,
     action: OperatorAction,
 ) -> Option<WebAction> {
-    web_action(action)
+    if action == OperatorAction::Repair {
+        return web_branch_adoption_for_card(context, card);
+    }
+    let mut state = web_action(action)?;
+    if action == OperatorAction::Ship {
+        // Core decides whether merging needs confirmation (e.g. unpushed commits);
+        // the browser must send confirmed:true when it does.
+        state.confirmation_required = merge_task_plan(context, &card.qualified_handle)
+            .is_ok_and(|plan| plan.requires_confirmation);
+    }
+    Some(state)
+}
+
+/// Repair reaches the web only as a confirmed branch adoption, for a worktree
+/// that core observes on another named branch. Every other repair stays CLI-only.
+fn web_branch_adoption_for_card<R: Registry>(
+    context: &CommandContext<R>,
+    card: &TaskCard,
+) -> Option<WebAction> {
+    let plan = plan_repair_operation(context, &card.qualified_handle, OpenMode::NoAttach).ok()?;
+    let branch_adoption = plan.branch_adoption?;
+    Some(WebAction {
+        action: OperatorAction::Repair.as_str().to_string(),
+        label: format!("Adopt {}", branch_adoption.observed_branch),
+        destructive: false,
+        confirmation_required: true,
+        branch_adoption: Some(branch_adoption),
+    })
 }
 
 pub fn supported_web_action(action: OperatorAction) -> bool {
@@ -180,6 +208,113 @@ mod tests {
 
         assert_eq!(fix_ci.label, "Fix CI");
         assert!(supported_browser_action(FIX_CI));
+    }
+
+    #[test]
+    fn renamed_branch_task_offers_repair_as_confirmed_branch_adoption() {
+        let mut task = crate::test_support::fix_login_task();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(ajax_core::models::GitStatus {
+            worktree_exists: true,
+            branch_exists: false,
+            current_branch: Some("fix/web/login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            status: ajax_core::ui_state::TaskStatus::Error,
+            status_explanation: Some(
+                "Worktree on fix/web/login; expected ajax/fix-login".to_string(),
+            ),
+            lifecycle: LifecycleStatus::Active,
+            last_activity_at: std::time::UNIX_EPOCH,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![
+                OperatorAction::Repair,
+                OperatorAction::Resume,
+                OperatorAction::Drop,
+            ],
+            remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::NeedsYou,
+        };
+
+        let states = browser_actions(&context, &card);
+        let repair = states
+            .iter()
+            .find(|state| state.action == "repair")
+            .expect("repair adoption action");
+
+        assert_eq!(repair.label, "Adopt fix/web/login");
+        assert!(!repair.destructive);
+        assert!(repair.confirmation_required);
+        assert_eq!(
+            repair.branch_adoption,
+            Some(ajax_core::commands::BranchAdoptionPlan {
+                expected_branch: "ajax/fix-login".to_string(),
+                observed_branch: "fix/web/login".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn ship_action_requires_confirmation_only_when_task_has_side_flags() {
+        let mut unpushed_task = crate::test_support::fix_login_task();
+        unpushed_task.lifecycle_status = LifecycleStatus::Reviewable;
+        unpushed_task.add_side_flag(SideFlag::Unpushed);
+        let unpushed_context =
+            crate::test_support::context_with_tasks(&["web"], vec![unpushed_task.clone()]);
+        let unpushed_card = reviewable_ship_card(&unpushed_task);
+
+        let unpushed_states = browser_actions(&unpushed_context, &unpushed_card);
+        let ship = unpushed_states
+            .iter()
+            .find(|state| state.action == "ship")
+            .expect("ship action");
+
+        assert!(!ship.destructive);
+        assert!(ship.confirmation_required);
+
+        let mut clean_task = crate::test_support::fix_login_task();
+        clean_task.lifecycle_status = LifecycleStatus::Reviewable;
+        let clean_context =
+            crate::test_support::context_with_tasks(&["web"], vec![clean_task.clone()]);
+        let clean_card = reviewable_ship_card(&clean_task);
+
+        let clean_states = browser_actions(&clean_context, &clean_card);
+        let ship = clean_states
+            .iter()
+            .find(|state| state.action == "ship")
+            .expect("ship action");
+
+        assert!(!ship.confirmation_required);
+    }
+
+    fn reviewable_ship_card(task: &ajax_core::models::Task) -> TaskCard {
+        TaskCard {
+            id: task.id.clone(),
+            qualified_handle: task.qualified_handle(),
+            title: task.title.clone(),
+            status: ajax_core::ui_state::TaskStatus::Idle,
+            status_explanation: None,
+            lifecycle: LifecycleStatus::Reviewable,
+            last_activity_at: std::time::UNIX_EPOCH,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Ship,
+            available_actions: vec![OperatorAction::Ship],
+            remediations: Vec::new(),
+            attention: ajax_core::ui_state::AttentionBand::NeedsYou,
+        }
     }
 
     fn blocked_ci_task() -> ajax_core::models::Task {

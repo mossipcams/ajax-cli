@@ -198,24 +198,35 @@ fn browser_cockpit_and_detail_pass_through_checkout_mismatch() {
     assert_eq!(card["qualified_handle"], "web/fix-login");
     assert_eq!(card["status"], "error");
     assert_eq!(card["status_explanation"], EXPLANATION);
-    assert!(!card["actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|action| action["action"] == "repair"));
-    assert_eq!(card["actions"][0]["action"], "resume");
-    assert_eq!(card["actions"][1]["action"], "drop");
+    assert_eq!(card["actions"][0]["action"], "repair");
+    assert_eq!(card["actions"][0]["label"], "Adopt fix/pane-stuck");
+    assert_eq!(card["actions"][0]["confirmation_required"], true);
+    assert_eq!(
+        card["actions"][0]["branch_adoption"]["expected_branch"],
+        "ajax/fix-login"
+    );
+    assert_eq!(
+        card["actions"][0]["branch_adoption"]["observed_branch"],
+        "fix/pane-stuck"
+    );
+    assert_eq!(card["actions"][1]["action"], "resume");
+    assert_eq!(card["actions"][2]["action"], "drop");
 
     let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
     assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
     assert_eq!(detail.status_explanation.as_deref(), Some(EXPLANATION));
-    assert!(!detail
-        .actions
-        .iter()
-        .any(|action| action.action == "repair"));
-    assert_eq!(detail.actions[0].action, "resume");
-    assert_eq!(detail.actions[1].action, "drop");
+    assert_eq!(detail.actions[0].action, "repair");
+    assert!(detail.actions[0].confirmation_required);
+    assert_eq!(
+        detail.actions[0]
+            .branch_adoption
+            .as_ref()
+            .map(|plan| plan.observed_branch.as_str()),
+        Some("fix/pane-stuck")
+    );
+    assert_eq!(detail.actions[1].action, "resume");
+    assert_eq!(detail.actions[2].action, "drop");
 }
 
 #[test]
