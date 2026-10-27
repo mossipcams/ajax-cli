@@ -1530,11 +1530,21 @@ Runtime coordination contract (implemented):
 
 - One `tokio::sync::Mutex<()>` process-local async control lane (`control_lane`)
   serializes in-process state replacement and persistence: refresh apply,
-  notify delivery, actions, task start, harness swap, and session writes.
+  notification delivery recording, actions, task start, harness swap, and
+  session writes.
 - A separate `tokio::sync::Mutex<()>` `refresh_flight` is the cockpit refresh
   single-flight. Refresh probes (reload-if-stale, tmux/git/gh) run under
   `refresh_flight` without `control_lane`; the probe result is then applied
-  under `control_lane`.
+  under `control_lane`, which is released before deliveries.
+- Agent-notification and web-push delivery run under `refresh_flight` without
+  `control_lane`, on a snapshot of the applied state, and persist nothing. Their
+  delivered status is then recorded under `control_lane`: if the shared revision
+  is unchanged, the snapshot is swapped in and the revision bumped, and the
+  snapshot is persisted; if a brief session write moved it, the snapshot is still
+  persisted through the three-way merge and not swapped, and the next probe
+  reloads the delivered marks before it computes pending. A persist failure is
+  logged as an error; the delivered marks stay in memory, so they are not resent
+  until restart.
 - Lock order is `refresh_flight` then `control_lane`, everywhere. Actions, task
   start, and harness swap take `refresh_flight` before the lane, so they still
   wait for an in-flight refresh (#555 action contract: the refresh result is

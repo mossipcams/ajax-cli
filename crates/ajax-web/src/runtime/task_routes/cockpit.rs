@@ -1,3 +1,4 @@
+use crate::adapters::http::Response;
 use crate::runtime::bridge::RuntimeBridge;
 use crate::runtime::state::{CockpitCacheEntry, WebAppState};
 use crate::{
@@ -13,7 +14,7 @@ use ajax_core::{
         pending_for_task, record_delivery, AgentNotificationDelivery,
         AgentNotificationDeliveryStatus,
     },
-    registry::Registry,
+    registry::{InMemoryRegistry, Registry},
     runtime_refresh::RefreshTier,
 };
 use axum::{
@@ -96,8 +97,9 @@ where
 }
 
 /// Runs one refresh. The caller holds `refresh_flight`. The probe runs on a
-/// clone without `control_lane`; the apply (revision check, persist,
-/// deliveries, swap, cache fill) takes `control_lane` with a blocking lock.
+/// clone without `control_lane`; the apply (revision check, persist, swap, cache
+/// fill) takes `control_lane` with a blocking lock and releases it. Deliveries
+/// then run without the lane and are recorded under it by `deliver_and_record`.
 /// Operations hold `refresh_flight` before the lane, so no operation can hold
 /// the lane while this refresh is in flight; only brief session writes can, and
 /// a probe whose base revision moved because of one is discarded and redone by
@@ -126,36 +128,24 @@ where
     };
     let probe = bridge.refresh_cockpit(&mut context, &mut runner, tier, deliver_notifications);
 
-    let _lane = state.control_lane.blocking_lock();
+    let lane = state.control_lane.blocking_lock();
     if state.shared().revision != base_revision {
+        drop(lane);
         return current_projection_response(state);
     }
-
-    let mut result = match probe {
+    let applied = match probe {
         Ok(true) => bridge.persist_registry_snapshot(&mut context),
         Ok(false) => Ok(()),
         Err(error) => Err(error),
-    };
-    if result.is_ok() && deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge)
-    {
-        if let Err(error) = bridge.persist_registry_snapshot(&mut context) {
-            result = Err(error);
+    }
+    .and_then(|()| cockpit_response(&context));
+    let response = match applied {
+        Ok(response) => response,
+        Err(error) => {
+            drop(lane);
+            return web_error_response(error);
         }
-    }
-    if deliver_notifications
-        && result.is_ok()
-        && crate::slices::push::deliver_attention_pushes(&mut context, &state.push)
-    {
-        let _ = bridge.persist_registry_snapshot(&mut context);
-    }
-    let result = result.and_then(|()| {
-        json_response(
-            200,
-            serde_json::to_value(cockpit::browser_cockpit_view(&context))
-                .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
-        )
-    });
-    let cached_response = result.as_ref().ok().cloned();
+    };
     {
         let mut guard = state.shared();
         if guard.revision == base_revision {
@@ -169,19 +159,101 @@ where
             if owned_task_removed {
                 state.cleanup_unowned_sessions();
             }
-            if let Some(response) = cached_response {
-                guard.cockpit_cache = Some(CockpitCacheEntry {
-                    response,
-                    cached_at: Instant::now(),
-                    revision: guard.revision,
-                });
-            }
+            guard.cockpit_cache = Some(CockpitCacheEntry {
+                response: response.clone(),
+                cached_at: Instant::now(),
+                revision: guard.revision,
+            });
         }
     }
-    match result {
+    drop(lane);
+    deliver_and_record(state, deliver_notifications)
+        .unwrap_or_else(|| response.into_axum_response())
+}
+
+fn cockpit_response(
+    context: &ajax_core::commands::CommandContext<InMemoryRegistry>,
+) -> Result<Response, WebError> {
+    json_response(
+        200,
+        serde_json::to_value(cockpit::browser_cockpit_view(context))
+            .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
+    )
+}
+
+/// Delivers pending agent notifications and, when `deliver_notifications`, web
+/// pushes, on a snapshot of the applied state. The caller holds `refresh_flight`
+/// but not the control lane, and nothing is persisted here. Any change is then
+/// recorded under the lane: swapped in and the revision bumped when the shared
+/// revision is unchanged, otherwise merge-persisted so the next probe reloads
+/// the delivered marks. Returns the response when deliveries changed state.
+fn deliver_and_record<C, B>(
+    state: &WebAppState<C, B>,
+    deliver_notifications: bool,
+) -> Option<AxumResponse>
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let (mut context, mut runner, mut bridge, base_revision) = {
+        let guard = state.shared();
+        let pending = guard
+            .context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .any(|task| pending_for_task(task).is_some());
+        if !pending && !deliver_notifications {
+            return None;
+        }
+        (
+            guard.context.clone(),
+            guard.runner.clone(),
+            guard.bridge.clone(),
+            guard.revision,
+        )
+    };
+    let notified = deliver_agent_notifications(state, &mut context, &mut runner, &mut bridge);
+    let pushed = deliver_notifications
+        && crate::slices::push::deliver_attention_pushes(&mut context, &state.push);
+    if !notified && !pushed {
+        return None;
+    }
+
+    let lane = state.control_lane.blocking_lock();
+    let persisted = bridge.persist_registry_snapshot(&mut context);
+    if let Err(error) = &persisted {
+        tracing::error!(
+            target: "ajax_web",
+            %error,
+            "delivered agent notifications are recorded in memory but not on disk; they may be redelivered after restart"
+        );
+    }
+    let mut guard = state.shared();
+    let swapped = guard.revision == base_revision;
+    if swapped {
+        guard.context = context;
+        guard.runner = runner;
+        guard.bridge = bridge;
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
+    }
+    let response = cockpit_response(&guard.context);
+    if swapped {
+        if let Ok(response) = &response {
+            guard.cockpit_cache = Some(CockpitCacheEntry {
+                response: response.clone(),
+                cached_at: Instant::now(),
+                revision: guard.revision,
+            });
+        }
+    }
+    drop(guard);
+    drop(lane);
+    Some(match response {
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
-    }
+    })
 }
 
 fn deliver_agent_notifications<C, B>(
