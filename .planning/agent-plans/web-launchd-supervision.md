@@ -51,6 +51,21 @@ Approval: user requested immediate implementation (2026-10-27).
   (`web_session` replay/restore/`queued_prompts_continue_after_operator_disconnects`);
   no new test added.
 
+## Review fixes (PR #1477 code review, 2026-10-27)
+
+- [x] Restart profile/port always written from the installed profile/port
+  (no cross-profile leak); restart script forwarded only if it exists.
+- [x] Profile-aware default port (dev 8788, else 8787); host/port validated
+  before any write or launchctl call.
+- [x] WorkingDirectory = install-time cwd; restart script installs from REPO_ROOT.
+- [x] install waits for bootout to finish before strict bootstrap; `start`
+  kickstarts when loaded, else strict bootstrap.
+- [x] Forward LANG/LC_*/SHELL/AJAX_SANDBOX/AJAX_HOME/AJAX_CONFIG/AJAX_STATE/
+  AJAX_WORKTREE_ROOT and explicit global path flags; `id -u` via CommandRunner;
+  shared host/port defaults in execution_dispatch.rs.
+- [x] web_service split into mod.rs + tests.rs (each < 600 lines).
+- [x] Restart script: no log truncation; per-profile restart lock.
+
 ## Validation
 
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: pass.

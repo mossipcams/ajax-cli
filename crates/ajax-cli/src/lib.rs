@@ -129,7 +129,11 @@ pub fn run_with_args(
         );
     }
     if let Some(service) = web_service::service_subcommand(&matches) {
-        return web_service::run_web_service_command(service, &paths.runtime_paths.profile);
+        return web_service::run_web_service_command(
+            service,
+            &paths.runtime_paths.profile,
+            &web_service::explicit_path_args(&matches),
+        );
     }
 
     let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;
@@ -188,7 +192,11 @@ pub fn run_with_args_to_writer(
     let profile = paths.runtime_paths.profile.clone();
 
     if let Some(service) = web_service::service_subcommand(&matches) {
-        let output = web_service::run_web_service_command(service, &profile)?;
+        let output = web_service::run_web_service_command(
+            service,
+            &profile,
+            &web_service::explicit_path_args(&matches),
+        )?;
         return write_command_output(writer, &output);
     }
 

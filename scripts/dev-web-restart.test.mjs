@@ -107,3 +107,33 @@ test("stop_tmux_session is a legacy cleanup that tolerates a missing tmux", () =
   );
   assert.match(script, /tmux has-session -t "\$TMUX_SESSION"/);
 });
+
+test("background install runs from REPO_ROOT so the job WorkingDirectory is the repo", () => {
+  assert.match(
+    script,
+    /\(cd "\$REPO_ROOT" && "\$bin_path" --profile "\$PROFILE" web service install --host "\$HOST" --port "\$PORT"\)/,
+  );
+});
+
+test("service log is appended to, never truncated", () => {
+  assert.doesNotMatch(script, /: >"\$SERVICE_LOG"/);
+  assert.match(script, />>"\$SERVICE_LOG"/);
+});
+
+test("per-profile restart lock is taken with mkdir, stale-checked, and trapped", () => {
+  assert.match(script, /RESTART_LOCK="\$RUN_DIR\/\$\{PROFILE\}-restart\.lock"/);
+  assert.match(script, /mkdir "\$RESTART_LOCK"/);
+  assert.match(script, /kill -0 "\$holder"/);
+  assert.match(
+    script,
+    /restart already in progress for \$\{PROFILE\} \(pid \$holder\)/,
+  );
+  assert.match(script, /trap release_restart_lock EXIT/);
+});
+
+test("foreground exec releases the restart lock before replacing the process", () => {
+  assert.match(
+    script,
+    /release_restart_lock\n    exec "\$bin_path"/,
+  );
+});

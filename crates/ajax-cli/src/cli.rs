@@ -225,16 +225,19 @@ fn web_command() -> Command {
 }
 
 fn web_bind_args() -> [Arg; 2] {
-    [
-        Arg::new("host")
-            .long("host")
-            .value_name("HOST")
-            .default_value(DEFAULT_WEB_HOST),
-        Arg::new("port")
-            .long("port")
-            .value_name("PORT")
-            .default_value(DEFAULT_WEB_PORT),
-    ]
+    [host_arg(), port_arg().default_value(DEFAULT_WEB_PORT)]
+}
+
+fn host_arg() -> Arg {
+    Arg::new("host")
+        .long("host")
+        .value_name("HOST")
+        .default_value(DEFAULT_WEB_HOST)
+}
+
+/// No default here: `web service install` picks a port per profile when none is given.
+fn port_arg() -> Arg {
+    Arg::new("port").long("port").value_name("PORT")
 }
 
 fn web_service_command() -> Command {
@@ -244,7 +247,7 @@ fn web_service_command() -> Command {
         .subcommand(
             Command::new("install")
                 .about("Install and load the launchd job (starts at login, restarts on failure)")
-                .args(web_bind_args()),
+                .args([host_arg(), port_arg()]),
         )
         .subcommand(Command::new("uninstall").about("Unload and remove the launchd job"))
         .subcommand(Command::new("start").about("Load the launchd job and start the server"))

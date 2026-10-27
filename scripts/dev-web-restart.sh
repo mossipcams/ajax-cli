@@ -127,6 +127,37 @@ CARGO_BIN_DIR="$RUN_DIR/cargo-bin"
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin/ajax-cli"
 CARGO_BIN_PREV="$CARGO_BIN_DIR/ajax-cli.prev"
 
+# Per-profile restart lock. launchd KeepAlive respawns the old server while this
+# script builds, so a second Restart click must not run concurrently. The lock is
+# a mkdir dir holding the owner pid; a dead owner pid means the lock is stale.
+RESTART_LOCK="$RUN_DIR/${PROFILE}-restart.lock"
+
+release_restart_lock() {
+  rm -rf "$RESTART_LOCK"
+}
+
+acquire_restart_lock() {
+  local holder
+  mkdir -p "$RUN_DIR"
+  if ! mkdir "$RESTART_LOCK" 2>/dev/null; then
+    holder="$(cat "$RESTART_LOCK/pid" 2>/dev/null || true)"
+    if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+      echo "restart already in progress for ${PROFILE} (pid $holder)" >&2
+      exit 1
+    fi
+    echo "warning: stale restart lock $RESTART_LOCK (pid ${holder:-unknown} not running); taking over" >&2
+    rm -rf "$RESTART_LOCK"
+    if ! mkdir "$RESTART_LOCK" 2>/dev/null; then
+      echo "restart already in progress for ${PROFILE}" >&2
+      exit 1
+    fi
+  fi
+  echo "$$" >"$RESTART_LOCK/pid"
+  trap release_restart_lock EXIT
+}
+
+acquire_restart_lock
+
 ensure_main_worktree() {
   echo "Fetching origin/main from $REPO_ROOT ..."
   git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
@@ -356,15 +387,19 @@ start_web() {
 
   if [[ "$FOREGROUND" -eq 1 ]]; then
     echo "Starting ${cmd_display[*]} (foreground) ..."
+    # exec skips EXIT traps, so release the restart lock explicitly.
+    release_restart_lock
     exec "$bin_path" --profile "$PROFILE" web --host "$HOST" --port "$PORT"
   fi
 
   echo "Starting ${cmd_display[*]} (launchd job $LAUNCHD_LABEL) ..."
   mkdir -p "$(dirname "$SERVICE_LOG")"
-  : >"$SERVICE_LOG"
+  # Append, never truncate: crash output from the previous run is still useful.
+  echo "=== dev-web-restart $(date '+%F %T') starting ${PROFILE} ===" >>"$SERVICE_LOG"
   # install writes the plist (embedding the AJAX_WEB_RESTART_* env exported above),
-  # then boots out the old job and bootstraps the new one.
-  if ! "$bin_path" --profile "$PROFILE" web service install --host "$HOST" --port "$PORT"; then
+  # then boots out the old job and bootstraps the new one. Run from REPO_ROOT so
+  # the job's WorkingDirectory can discover scripts/dev-web-restart.sh.
+  if ! (cd "$REPO_ROOT" && "$bin_path" --profile "$PROFILE" web service install --host "$HOST" --port "$PORT"); then
     echo "launchd install failed for $LAUNCHD_LABEL" >&2
     return 1
   fi

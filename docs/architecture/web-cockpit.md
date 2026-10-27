@@ -641,13 +641,27 @@ install|uninstall|start|stop|status`. The job is `com.ajax.web.<profile>` in
 
 - `RunAtLoad` starts it at login; `KeepAlive` respawns it after any exit,
   including crashes and self-restart. `ThrottleInterval` is 10s.
-- `install` is an idempotent replace-and-start using the invoking binary.
-  `stop` boots the job out, so it stays stopped until `start` or the next login.
-  `uninstall` removes the plist.
-- Logs go to `~/Library/Logs/ajax-web-<profile>.log`.
-- `PATH` is captured at install time, so re-run `install` after changing PATH
-  or toolchains. The plist embeds only `--profile`, not `--home`, `--config`,
-  or `--state` overrides.
+- `install` is an idempotent replace-and-start using the invoking binary. It
+  waits for bootout to finish before bootstrapping. `start` kickstarts a loaded
+  job, or bootstraps it if not loaded. `stop` boots the job out, so it stays
+  stopped until `start` or the next login. `uninstall` removes the plist.
+- Default port is 8788 for `dev` and 8787 otherwise; `--host`/`--port` are
+  validated at install time.
+- `WorkingDirectory` is the directory `install` was run from. Run it from the
+  repo checkout so Restart/Test in Stable can find `scripts/dev-web-restart.sh`.
+- The plist sets `AJAX_WEB_RESTART_PROFILE` and `AJAX_WEB_RESTART_PORT` from the
+  installed profile and port, so restart always targets the installed job.
+  `AJAX_WEB_RESTART_SCRIPT` is set only if the script file exists.
+- Logs go to `~/Library/Logs/ajax-web-<profile>.log`. Restarts append a marker
+  line; they never truncate the log.
+- The environment forwards `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `SHELL`,
+  `AJAX_SANDBOX`, `AJAX_HOME`, `AJAX_CONFIG`, `AJAX_STATE`, and
+  `AJAX_WORKTREE_ROOT` when set, plus explicitly passed global `--home`,
+  `--config`, `--state`, and `--worktree-root` flags. Captured at install time,
+  so re-run `install` after changing PATH or toolchains.
+- `dev-web-restart.sh` holds a per-profile lock (`<run-dir>/<profile>-restart.lock`);
+  a concurrent restart for the same profile is refused while the owner pid is
+  alive. A lock whose pid is dead is treated as stale and taken over.
 - The plist sets `AJAX_WEB_SUPERVISOR=launchd`. With that set and no restart
   script, a self-restart exits and launchd respawns the server rather than
   spawning an unsupervised replacement.

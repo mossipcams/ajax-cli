@@ -73,8 +73,11 @@ ajax-cli [--profile P] web service uninstall
 
 `install` is idempotent: it replaces the job and starts it using the invoking
 binary. `stop` stays stopped until `start` or the next login. Logs are in
-`~/Library/Logs/ajax-web-<profile>.log`. Re-run `install` after changing `PATH`
-or toolchains, because the job captures `PATH` at install time. See
+`~/Library/Logs/ajax-web-<profile>.log`. Dev defaults to port 8788 and stable to
+8787. Run `install` from the repo checkout: the job's working directory is the
+directory `install` ran from, which is how Restart/Test in Stable find
+`scripts/dev-web-restart.sh`. Re-run `install` after changing `PATH` or
+toolchains, because the job captures the environment at install time. See
 [Server supervision](docs/architecture/web-cockpit.md#server-supervision-launchd).
 
 WireGuard or an equivalent private network is the access boundary for Web
