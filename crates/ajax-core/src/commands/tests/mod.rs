@@ -405,7 +405,7 @@ proptest! {
         prop_assert_eq!(
             plan.commands
                 .iter()
-                .any(|command| command.args == vec!["kill-session", "-t", "ajax-web-fix-login"]),
+                .any(|command| command.args == vec!["kill-session", "-t", "=ajax-web-fix-login"]),
             tmux_exists
         );
         prop_assert!(has_expected_worktree_command);
@@ -460,9 +460,9 @@ proptest! {
             &[
                 CommandSpec::new(
                     "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:task"]
+                    ["select-window", "-t", "=ajax-web-fix-login:=task"]
                 ),
-                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
             ]
         );
@@ -510,14 +510,14 @@ proptest! {
                 &[
                     CommandSpec::new(
                         "tmux",
-                        ["kill-window", "-t", "ajax-web-fix-login:task"]
+                        ["kill-window", "-t", "=ajax-web-fix-login:=task"]
                     ),
                     CommandSpec::new(
                         "tmux",
                         [
                             "new-window",
                             "-t",
-                            "ajax-web-fix-login",
+                            "=ajax-web-fix-login:",
                             "-n",
                             "task",
                             "-c",
@@ -534,7 +534,7 @@ proptest! {
                     [
                         "new-window",
                         "-t",
-                        "ajax-web-fix-login",
+                        "=ajax-web-fix-login:",
                         "-n",
                         "task",
                         "-c",

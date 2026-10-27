@@ -1,7 +1,7 @@
 use super::lookup::{find_task, task_repo_path, update_task_lifecycle};
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
-    adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    adapters::{tmux::tmux_session_target, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
     lifecycle::force_mark_removed,
     models::{LifecycleStatus, SafetyClassification, SideFlag, Task, TaskWindowStatus, TmuxStatus},
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
@@ -26,7 +26,10 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
             .args
             .first()
             .is_some_and(|arg| arg == "kill-session")
-        && command.args.iter().any(|arg| arg == &task.tmux_session)
+        && command
+            .args
+            .iter()
+            .any(|arg| arg == &tmux_session_target(&task.tmux_session))
     {
         context
             .registry

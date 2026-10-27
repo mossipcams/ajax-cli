@@ -384,7 +384,7 @@ fn confirmed_cleanup_deletes_existing_unmerged_branch() {
                 "ajax/fix-login",
                 true,
             ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]),
         ]
     );
 }
@@ -415,7 +415,7 @@ fn sweep_cleanup_plans_only_safe_candidates() {
                 "ajax/fix-login",
                 false,
             ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+            CommandSpec::new("tmux", ["kill-session", "-t", "=ajax-web-fix-login"]),
             CommandSpec::new(
                 "sh",
                 [

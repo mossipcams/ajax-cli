@@ -587,6 +587,12 @@ printf 'tmux %s\n' "$*" >> "$AJAX_SMOKE_COMMAND_LOG"
 sessions="$AJAX_SMOKE_SUBSTRATE_DIR/sessions"
 mkdir -p "$sessions"
 
+exact_session() {
+  local target="${1#=}"
+  target="${target%:}"
+  printf '%s' "${target%%:*}"
+}
+
 case "${1:-}" in
   new-session)
     if [[ -n "${AJAX_SMOKE_FAIL_AFTER_WORKTREE:-}" ]]; then
@@ -598,21 +604,20 @@ case "${1:-}" in
     printf '%s\n' "$worktree" > "$sessions/$session"
     ;;
   new-window)
-    session="${3:-}"
+    session="$(exact_session "${3:-}")"
     worktree="${7:-}"
     printf '%s\n' "$worktree" > "$sessions/$session"
     ;;
   kill-window)
-    session_window="${3:-}"
-    session="${session_window%%:*}"
+    session="$(exact_session "${3:-}")"
     rm -f "$sessions/$session"
     ;;
   kill-session)
-    session="${3:-}"
+    session="$(exact_session "${3:-}")"
     rm -f "$sessions/$session"
     ;;
   attach-session)
-    session="${3:-}"
+    session="$(exact_session "${3:-}")"
     if [[ -n "${AJAX_SMOKE_TMUX_ATTACH_EINTR_ONCE:-}" ]]; then
       interrupted_marker="$AJAX_SMOKE_SUBSTRATE_DIR/attach-eintr-once"
       if [[ ! -f "$interrupted_marker" ]]; then
@@ -640,7 +645,7 @@ case "${1:-}" in
     done
     ;;
   list-windows)
-    session="${3:-}"
+    session="$(exact_session "${3:-}")"
     if [[ -f "$sessions/$session" ]]; then
       printf 'task\t%s\n' "$(cat "$sessions/$session")"
     fi

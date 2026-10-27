@@ -336,9 +336,9 @@ stop_tmux_session() {
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
   fi
-  if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+  if tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
     echo "Stopping tmux session $TMUX_SESSION ..."
-    tmux kill-session -t "$TMUX_SESSION"
+    tmux kill-session -t "=$TMUX_SESSION"
     sleep 1
   fi
 }

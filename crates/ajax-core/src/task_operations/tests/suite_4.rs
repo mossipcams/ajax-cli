@@ -161,3 +161,34 @@ fn sweep_cleanup_treats_missing_tmux_session_as_already_removed_and_continues() 
         .get_task(&TaskId::new("web/fix-sidebar"))
         .is_none());
 }
+
+#[test]
+fn sweep_cleanup_kill_session_targets_exact_session_for_merged_task() {
+    let mut context = context_with_two_cleanable_tasks();
+    for handle in ["web/fix-login", "web/fix-sidebar"] {
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(handle))
+            .expect("candidate task");
+        task.lifecycle_status = LifecycleStatus::Merged;
+    }
+    context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("first candidate")
+        .tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+    let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
+
+    execute_sweep_cleanup_operation(&mut context, true, &mut runner, None).unwrap();
+
+    let kill_targets: Vec<&str> = runner
+        .commands
+        .iter()
+        .filter(|command| {
+            command.program == "tmux"
+                && command.args.first().map(String::as_str) == Some("kill-session")
+        })
+        .filter_map(|command| command.args.get(2).map(String::as_str))
+        .collect();
+    assert_eq!(kill_targets, vec!["=ajax-web-fix-login"]);
+}

@@ -210,8 +210,8 @@ fn repair_execute_repairs_task_window_with_injected_runner() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
-            CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
+            CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
     );
@@ -235,7 +235,7 @@ fn repair_execute_switches_client_when_inside_tmux() {
     assert_eq!(
         runner.commands().last(),
         Some(
-            &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+            &CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         )
     );
@@ -363,8 +363,8 @@ fn repair_execute_uses_injected_runner() {
                     "/tmp/worktrees/web-fix-login",
                 ],
             ),
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"],),
-            CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"],),
+            CommandSpec::new("tmux", ["attach-session", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio),
             CommandSpec::new("sh", ["-lc", "cargo test"]).with_cwd("/tmp/worktrees/web-fix-login")
         ]

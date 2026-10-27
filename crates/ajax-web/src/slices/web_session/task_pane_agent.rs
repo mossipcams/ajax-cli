@@ -1,6 +1,6 @@
 use super::process_tree::is_shell;
 use ajax_core::{
-    adapters::{acp_launch_for_agent, CommandRunner, CommandSpec},
+    adapters::{acp_launch_for_agent, tmux_window_target, CommandRunner, CommandSpec},
     models::{AgentClient, Task},
 };
 use std::path::Path;
@@ -36,7 +36,7 @@ fn tmux_pane_current_command(
     session: &str,
     window: &str,
 ) -> Result<String, ()> {
-    let target = format!("{session}:{window}");
+    let target = tmux_window_target(session, window);
     let output = runner
         .run(&CommandSpec::new(
             "tmux",
@@ -114,5 +114,37 @@ mod tests {
             status: 0,
         };
         assert!(tmux_task_pane_runs_live_agent(&mut runner, &task));
+    }
+
+    struct RecordingRunner {
+        args: Vec<String>,
+    }
+
+    impl CommandRunner for RecordingRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.args = command.args.clone();
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: "codex\n".to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn pane_probe_targets_exact_session_and_window_issue_1450() {
+        let task = codex_task();
+        let mut runner = RecordingRunner { args: Vec::new() };
+        assert!(tmux_task_pane_runs_live_agent(&mut runner, &task));
+        assert_eq!(
+            runner.args,
+            vec![
+                "display-message".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                format!("={}:={}", task.tmux_session, task.task_window),
+                "#{pane_current_command}".to_string(),
+            ]
+        );
     }
 }

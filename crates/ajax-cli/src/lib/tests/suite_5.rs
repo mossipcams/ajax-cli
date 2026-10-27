@@ -277,7 +277,7 @@ fn new_command_renders_plan_without_json_panic() {
     }));
     assert!(lines
         .iter()
-        .any(|line| line.starts_with("$ tmux send-keys -t ajax-web-fix-logout:task")));
+        .any(|line| line.starts_with("$ tmux send-keys -t =ajax-web-fix-logout:=task")));
 }
 #[test]
 fn new_command_requires_task_title() {
@@ -338,7 +338,7 @@ fn open_command_renders_command_plan() {
         lines
             .iter()
             .find(|line| line.starts_with("$ tmux select-window")),
-        Some(&"$ tmux select-window -t ajax-web-fix-login:task")
+        Some(&"$ tmux select-window -t =ajax-web-fix-login:=task")
     );
     match current_open_mode() {
         OpenMode::Attach => {
@@ -346,7 +346,7 @@ fn open_command_renders_command_plan() {
                 lines
                     .iter()
                     .find(|line| line.starts_with("$ tmux attach-session")),
-                Some(&"$ tmux attach-session -t ajax-web-fix-login")
+                Some(&"$ tmux attach-session -t =ajax-web-fix-login")
             );
         }
         OpenMode::SwitchClient => {
@@ -354,7 +354,7 @@ fn open_command_renders_command_plan() {
                 lines
                     .iter()
                     .find(|line| line.starts_with("$ tmux switch-client")),
-                Some(&"$ tmux switch-client -t ajax-web-fix-login")
+                Some(&"$ tmux switch-client -t =ajax-web-fix-login")
             );
         }
         OpenMode::NoAttach => unreachable!("CLI tests never run in NoAttach mode"),
@@ -379,8 +379,8 @@ fn open_execute_switches_client_when_inside_tmux() {
     assert_eq!(
         runner.commands(),
         &[
-            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
-            CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+            CommandSpec::new("tmux", ["select-window", "-t", "=ajax-web-fix-login:=task"]),
+            CommandSpec::new("tmux", ["switch-client", "-t", "=ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         ]
     );

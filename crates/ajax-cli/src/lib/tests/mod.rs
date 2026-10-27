@@ -321,7 +321,7 @@ fn tmux_live_commands_with_running_reconcile() -> Vec<CommandSpec> {
         2,
         CommandSpec::new(
             "tmux",
-            ["capture-pane", "-p", "-t", "ajax-web-fix-login:task"],
+            ["capture-pane", "-p", "-t", "=ajax-web-fix-login:=task"],
         )
         .with_timeout(std::time::Duration::from_secs(8)),
     );
@@ -415,7 +415,8 @@ fn expected_ci_probe_command_for_pr(worktree: &str, number: u64) -> CommandSpec 
 }
 
 fn expected_new_task_open_command(session: &str) -> CommandSpec {
-    CommandSpec::new("tmux", ["attach-session", "-t", session]).with_mode(CommandMode::InheritStdio)
+    CommandSpec::new("tmux", ["attach-session", "-t", &format!("={session}")])
+        .with_mode(CommandMode::InheritStdio)
 }
 
 fn run_start_with_attach_mode(
@@ -452,7 +453,7 @@ fn expected_task_launch_command(
         args: vec![
             "send-keys".to_string(),
             "-t".to_string(),
-            format!("{session}:task"),
+            format!("={session}:=task"),
             folded_agent_launch_line(task_id, worktree_path, bootstrap),
             "Enter".to_string(),
         ],
