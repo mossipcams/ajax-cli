@@ -2,14 +2,16 @@
 //!
 //! Background work is a level: once a session's root turn has finished, is any
 //! topmost shell under the session's child pid still alive? The level is read
-//! at the moment it matters. The reporter probes it when a turn finishes, and
-//! the actor ticks read it again while it is held. The reporter holds the level
-//! as one synthetic completion-holding child, so the status reads
-//! `Background work running`.
+//! while the root turn is finished, not only after an observed turn end: Claude
+//! SDK-initiated turns never reach the reporter, so their shells would otherwise
+//! go unseen. The reporter probes it when a turn ends (immediacy), and the actor
+//! ticks read it on a fixed cadence: every `IDLE_POLL_EVERY` while not held,
+//! every `POLL_EVERY` while held. The reporter holds the level as one synthetic
+//! completion-holding child, so the status reads `Background work running`.
 //!
 //! [`BackgroundLevel`] keeps the evidence timing and is pure: it takes injected
 //! instants and read results. Only [`TaskSessionState::poll_background_jobs`]
-//! runs `ps`, on the blocking pool.
+//! reads the process table, on the blocking pool.
 
 use super::process_tree;
 use super::task_session::TaskSessionState;
@@ -20,18 +22,26 @@ use std::time::{Duration, Instant, SystemTime};
 pub(super) const END_DEBOUNCE: Duration = Duration::from_secs(5);
 
 /// The level stays held this long after the last successful scan. A failing
-/// `ps` therefore cannot hold the status forever.
+/// process-table read therefore cannot hold the status forever.
 pub(super) const SCAN_TTL: Duration = Duration::from_secs(30);
 
-// ponytail: `ps` polling has a ~2 s detection lag and one exec per poll while the
-// level is held. Upgrade path: harness-native background signals, such as the
+// ponytail: process-table polling has a ~2 s detection lag and one table read per
+// poll while the level is held. Upgrade path: harness-native background signals, such as the
 // Claude SDK `background_tasks_changed` message, where a harness exposes them.
 pub(super) const POLL_EVERY: Duration = Duration::from_secs(2);
 
-/// A turn-end read may reuse a process table this old, so turn ends share one `ps`.
+/// The tick cadence while the level is not held. A shell started after a turn
+/// ended is seen within this long.
+// ponytail: idle cost ceiling. Every session with a finished turn polls every
+// IDLE_POLL_EVERY, and the table cache is shared by age, so all sessions together
+// cost at most about one process-table read per 5 s host-wide. Upgrade path: harness-native
+// background signals, which would remove the idle poll entirely.
+pub(super) const IDLE_POLL_EVERY: Duration = Duration::from_secs(5);
+
+/// A turn-end read may reuse a process table this old, so turn ends share one read.
 pub(super) const PROBE_MAX_AGE: Duration = Duration::from_millis(250);
 
-/// A tick read may reuse a process table this old.
+/// A held tick read may reuse a process table this old.
 pub(super) const POLL_MAX_AGE: Duration = Duration::from_secs(1);
 
 /// What one tick must do about the level.
@@ -52,8 +62,6 @@ pub(super) struct BackgroundLevel {
     /// The last read that completed, whatever it found.
     last_good_scan: Option<Instant>,
     last_poll: Option<Instant>,
-    /// Polls keep running until this instant after a turn-end read failed.
-    retry_until: Option<Instant>,
 }
 
 impl BackgroundLevel {
@@ -80,23 +88,18 @@ impl BackgroundLevel {
         Step::Poll(pid)
     }
 
-    /// Due only after the turn finished, while the level is held or a turn-end
-    /// read is being retried, and `POLL_EVERY` after the last poll.
+    /// Due only after the turn finished, and one poll spacing after the last poll.
     fn poll_due(&self, turn_finished: bool, held: bool, now: Instant) -> bool {
-        let window_open = held || self.retry_until.is_some_and(|until| now < until);
+        let spacing = if held { POLL_EVERY } else { IDLE_POLL_EVERY };
         turn_finished
-            && window_open
             && self
                 .last_poll
-                .is_none_or(|last| now.saturating_duration_since(last) >= POLL_EVERY)
+                .is_none_or(|last| now.saturating_duration_since(last) >= spacing)
     }
 
-    /// Record the read taken at turn end. A failed read retries on the ticks for `SCAN_TTL`.
+    /// Record the read taken at turn end.
     pub(super) fn record_turn_end(&mut self, read: Option<bool>, now: Instant) {
         self.observe(read, now);
-        if read.is_none() {
-            self.retry_until = Some(now + SCAN_TTL);
-        }
     }
 
     /// Record a tick's read. Returns whether the level stays held.
@@ -122,11 +125,9 @@ impl BackgroundLevel {
             Some(true) => {
                 self.last_seen = Some(now);
                 self.last_good_scan = Some(now);
-                self.retry_until = None;
             }
             Some(false) => {
                 self.last_good_scan = Some(now);
-                self.retry_until = None;
             }
             None => {}
         }
@@ -136,7 +137,7 @@ impl BackgroundLevel {
 /// Whether `root`'s shell subtree holds a background shell, from the shared
 /// process table no older than `max_age`. No root (no client, or no child pid)
 /// has no process tree, so the level is clear. `None` means the table is
-/// unavailable (the sandbox denies `ps`): that is no evidence, not a clear level.
+/// unavailable (the kernel read is denied): that is no evidence, not a clear level.
 pub(super) fn probe(root: Option<u32>, max_age: Duration) -> Option<bool> {
     let Some(root) = root else {
         return Some(false);
@@ -164,7 +165,8 @@ impl TaskSessionState {
                 .activity_reporter
                 .set_background(false, SystemTime::now()),
             Step::Poll(pid) => {
-                let read = tokio::task::spawn_blocking(move || probe(Some(pid), POLL_MAX_AGE))
+                let max_age = if held { POLL_MAX_AGE } else { IDLE_POLL_EVERY };
+                let read = tokio::task::spawn_blocking(move || probe(Some(pid), max_age))
                     .await
                     .ok()
                     .flatten();

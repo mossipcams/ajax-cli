@@ -138,8 +138,10 @@ impl SessionActivityReporter {
             self.set_background_child(false, now);
         }
         if matches!(event, super::SessionServerEvent::TurnEnd { .. }) && self.turn_finished() {
-            let held = probe() == Some(true);
-            self.set_background_child(held, now);
+            // An unavailable read (None) is no evidence, so it never clears the level.
+            if let Some(held) = probe() {
+                self.set_background_child(held, now);
+            }
         }
         self.reduce_activity(now)
     }

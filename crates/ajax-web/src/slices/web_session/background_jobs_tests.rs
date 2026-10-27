@@ -2,12 +2,12 @@
 //! fake closures: nothing here spawns a process or runs `ps`.
 
 use super::background_jobs::{
-    probe, BackgroundLevel, Step, END_DEBOUNCE, POLL_EVERY, POLL_MAX_AGE, SCAN_TTL,
+    probe, BackgroundLevel, Step, END_DEBOUNCE, IDLE_POLL_EVERY, POLL_EVERY, POLL_MAX_AGE, SCAN_TTL,
 };
 use super::session_activity::{SessionActivity, SessionActivityReporter};
 use super::SessionServerEvent;
 use ajax_core::models::{LiveObservation, LiveStatusKind};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant, SystemTime};
 
 fn prompt() -> SessionServerEvent {
@@ -183,7 +183,128 @@ fn a_failed_turn_reports_failed_even_with_a_held_level() {
 }
 
 #[test]
-fn a_failed_turn_read_reports_the_turn_then_the_retry_catches_the_shell() {
+fn a_settled_root_polls_an_unheld_level_and_reports_a_shell_started_after_the_turn() {
+    let start = Instant::now();
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    apply(&mut reporter, &prompt(), &mut || Some(false));
+    let ended = apply(&mut reporter, &turn_end(), &mut || {
+        read_at_turn_end(&mut level, Some(false), start)
+    });
+    assert_eq!(ended, Some(SessionActivity::TurnEnded));
+
+    // An SDK-initiated turn starts a shell after the level ended: the next idle poll sees it.
+    assert_eq!(
+        tick(
+            &mut level,
+            &mut reporter,
+            Some(1),
+            || Some(false),
+            start + Duration::from_millis(1)
+        ),
+        None
+    );
+    assert_eq!(
+        tick(
+            &mut level,
+            &mut reporter,
+            Some(1),
+            || Some(true),
+            // The first idle poll ran at 1 ms, so the next is due one spacing after it.
+            start + Duration::from_millis(1) + IDLE_POLL_EVERY
+        ),
+        Some(SessionActivity::BackgroundRunning)
+    );
+    assert!(reporter.background_held());
+}
+
+#[test]
+fn polls_are_spaced_by_the_idle_cadence_when_unheld_and_the_poll_cadence_when_held() {
+    let start = Instant::now();
+    let step = Duration::from_millis(100);
+
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    apply(&mut reporter, &prompt(), &mut || Some(false));
+    apply(&mut reporter, &turn_end(), &mut || {
+        read_at_turn_end(&mut level, Some(false), start)
+    });
+    let unheld = RefCell::new(Vec::new());
+    for ticks in 1..=120u32 {
+        let at = start + step * ticks;
+        tick(
+            &mut level,
+            &mut reporter,
+            Some(1),
+            || {
+                unheld.borrow_mut().push(at);
+                Some(false)
+            },
+            at,
+        );
+    }
+    let unheld = unheld.into_inner();
+    assert!(
+        unheld.len() >= 2,
+        "an unheld settled root polls: {unheld:?}"
+    );
+    assert!(
+        unheld
+            .windows(2)
+            .all(|pair| pair[1] - pair[0] == IDLE_POLL_EVERY),
+        "unheld polls are IDLE_POLL_EVERY apart: {unheld:?}"
+    );
+
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    turn_ended_with_shell(&mut level, &mut reporter, start);
+    let held = RefCell::new(Vec::new());
+    for ticks in 1..=120u32 {
+        let at = start + step * ticks;
+        tick(
+            &mut level,
+            &mut reporter,
+            Some(1),
+            || {
+                held.borrow_mut().push(at);
+                Some(true)
+            },
+            at,
+        );
+    }
+    let held = held.into_inner();
+    assert!(held.len() >= 2, "a held level polls: {held:?}");
+    assert!(
+        held.windows(2).all(|pair| pair[1] - pair[0] == POLL_EVERY),
+        "held polls are POLL_EVERY apart: {held:?}"
+    );
+}
+
+#[test]
+fn an_unavailable_turn_end_read_keeps_a_held_level_held() {
+    let start = Instant::now();
+    let mut reporter = SessionActivityReporter::default();
+    let mut level = BackgroundLevel::default();
+    turn_ended_with_shell(&mut level, &mut reporter, start);
+
+    let probes = Cell::new(0);
+    let repeated = apply(&mut reporter, &turn_end(), &mut || {
+        probes.set(probes.get() + 1);
+        read_at_turn_end(&mut level, None, start + POLL_EVERY)
+    });
+    assert_eq!(probes.get(), 1);
+    assert_eq!(
+        repeated, None,
+        "no evidence: the held level is not re-reported"
+    );
+    assert!(
+        reporter.background_held(),
+        "None must not clear a held level"
+    );
+}
+
+#[test]
+fn an_unavailable_turn_end_read_keeps_an_unheld_level_unheld() {
     let start = Instant::now();
     let mut reporter = SessionActivityReporter::default();
     let mut level = BackgroundLevel::default();
@@ -193,62 +314,7 @@ fn a_failed_turn_read_reports_the_turn_then_the_retry_catches_the_shell() {
         read_at_turn_end(&mut level, None, start)
     });
     assert_eq!(ended, Some(SessionActivity::TurnEnded));
-
-    assert_eq!(
-        tick(
-            &mut level,
-            &mut reporter,
-            Some(1),
-            || Some(true),
-            start + POLL_EVERY
-        ),
-        Some(SessionActivity::BackgroundRunning),
-        "a poll inside the retry window catches the shell"
-    );
-}
-
-#[test]
-fn retry_polls_stop_after_the_retry_window() {
-    let start = Instant::now();
-    let mut reporter = SessionActivityReporter::default();
-    let mut level = BackgroundLevel::default();
-    apply(&mut reporter, &prompt(), &mut || Some(false));
-    apply(&mut reporter, &turn_end(), &mut || {
-        read_at_turn_end(&mut level, None, start)
-    });
-
-    let polled = Cell::new(Vec::new());
-    for step in 1..=(2 * SCAN_TTL.as_secs()) / POLL_EVERY.as_secs() + 2 {
-        let at = start + POLL_EVERY * u32::try_from(step).unwrap();
-        tick(
-            &mut level,
-            &mut reporter,
-            Some(1),
-            || {
-                let mut seen = polled.take();
-                seen.push(at);
-                polled.set(seen);
-                None
-            },
-            at,
-        );
-    }
-    let polls = polled.take();
-    assert!(!polls.is_empty(), "the retry window must poll");
-    assert!(
-        polls.iter().all(|at| *at < start + SCAN_TTL),
-        "no poll at or after retry_until: {polls:?}"
-    );
-    assert_eq!(
-        tick(
-            &mut level,
-            &mut reporter,
-            Some(1),
-            no_read,
-            start + SCAN_TTL + POLL_EVERY
-        ),
-        None
-    );
+    assert!(!reporter.background_held());
 }
 
 #[test]

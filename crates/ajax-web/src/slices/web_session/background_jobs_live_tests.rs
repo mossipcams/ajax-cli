@@ -22,6 +22,8 @@ type SharedContext = Arc<Mutex<CommandContext<InMemoryRegistry>>>;
 /// Upper bound for each wait. The shell lives 2 s, then the level holds for
 /// `END_DEBOUNCE` (5 s) and the next tick poll (`POLL_EVERY`, 2 s) clears it.
 const DEADLINE: Duration = Duration::from_secs(15);
+/// Upper bound for a shell started after the turn ended: idle detection can take up to `IDLE_POLL_EVERY` plus the idle table max age (about 10 s), so the shell must outlive that.
+const AFTER_TURN_DEADLINE: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(50);
 
 fn provisioned_handle_context() -> (String, SharedContext) {
@@ -66,7 +68,15 @@ fn wait_for(
     reported: &Mutex<Vec<SessionActivity>>,
     found: impl Fn(&[SessionActivity]) -> bool,
 ) -> Vec<SessionActivity> {
-    let deadline = Instant::now() + DEADLINE;
+    wait_for_within(reported, DEADLINE, found)
+}
+
+fn wait_for_within(
+    reported: &Mutex<Vec<SessionActivity>>,
+    within: Duration,
+    found: impl Fn(&[SessionActivity]) -> bool,
+) -> Vec<SessionActivity> {
+    let deadline = Instant::now() + within;
     loop {
         let snapshot = reported.lock().expect("reported lock").clone();
         if found(&snapshot) {
@@ -180,6 +190,50 @@ fn turn_end_without_background_shell_never_reports_background_running() {
             task_status(&context, &handle),
             TaskStatus::Running,
             "plain turn end must clear the running status"
+        );
+    });
+
+    drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn background_shell_started_after_the_turn_ended_reports_background_running() {
+    let (handle, context) = provisioned_handle_context();
+    let dir = scratch_dir("background-live-after-turn");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_reports(&directory, &context);
+
+    with_test_acp_program(&fake_acp_fixture(), || {
+        with_test_acp_extra_args(&["--background-shell-after-turn"], || {
+            directory
+                .acquire(&handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt(&handle, "start background work after the turn".to_string())
+                .expect("submit prompt");
+        });
+
+        // The turn ends first, with no shell yet. Then the shell starts after the
+        // turn ended, and the level read finds it without any further turn end.
+        let seen = wait_for_within(&reported, AFTER_TURN_DEADLINE, |activity| {
+            activity.contains(&SessionActivity::BackgroundRunning)
+        });
+        assert!(
+            seen.contains(&SessionActivity::TurnEnded),
+            "the turn ends before the shell starts: {seen:?}"
+        );
+        assert_eq!(
+            task_status(&context, &handle),
+            TaskStatus::Running,
+            "background work started after the turn must read as the task still running"
+        );
+
+        // The shell exits, END_DEBOUNCE passes, and the next idle poll clears the level.
+        let seen = wait_for_within(&reported, AFTER_TURN_DEADLINE, turn_ended_after_background);
+        assert!(
+            turn_ended_after_background(&seen),
+            "TurnEnded must follow BackgroundRunning: {seen:?}"
         );
     });
 
