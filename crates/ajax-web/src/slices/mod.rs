@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod agent_auth;
 pub mod cockpit;
 pub mod cursor_auth;
 pub mod dev_deploy;

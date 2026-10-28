@@ -137,6 +137,14 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
     "/api/version":    VERSION_A,
     "/api/session/models": SESSION_MODELS,
     "/api/health":     { status: "ok" },
+    "/api/agent-auth": {
+      harnesses: [
+        { harness: "claude", installed: true, signedIn: true, detail: null },
+        { harness: "codex", installed: true, signedIn: true, detail: null },
+        { harness: "cursor", installed: true, signedIn: false, detail: "Sign in to Cursor in Settings" },
+        { harness: "pi", installed: true, signedIn: true, detail: null },
+      ],
+    },
     "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
     "/api/server/restart": {},
     "/api/server/test-in-stable": { ok: true, restarting: true },

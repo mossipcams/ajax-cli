@@ -35,9 +35,24 @@ export async function diagnosticFetch(path: string): Promise<DiagnosticCheck> {
   }
 }
 
+export interface DiagnosticsReport {
+  browser_mode: string;
+  backend_url: string;
+  navigator_onLine: boolean;
+  app_version: string | null;
+  location: string;
+  checks: Record<string, DiagnosticCheck>;
+}
+
+export interface DiagnosticCheckSummary {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
 export async function buildDiagnosticsReport(
   detailHandle?: string | null,
-): Promise<Record<string, unknown>> {
+): Promise<DiagnosticsReport> {
   const checks: Record<string, DiagnosticCheck> = {
     health: await diagnosticFetch("/api/health"),
     version: await diagnosticFetch("/api/version"),
@@ -58,4 +73,14 @@ export async function buildDiagnosticsReport(
     location: window.location.href,
     checks,
   };
+}
+
+export function summarizeDiagnosticChecks(
+  checks: Record<string, DiagnosticCheck>,
+): DiagnosticCheckSummary[] {
+  return Object.entries(checks).map(([name, check]) => ({
+    name,
+    ok: check.ok,
+    detail: check.ok ? "ok" : (check.error ?? `HTTP ${check.status}`),
+  }));
 }

@@ -91,6 +91,10 @@ where
             "/api/cursor/auth/login/cancel",
             post(crate::slices::cursor_auth::axum_cursor_login_cancel),
         )
+        .route(
+            "/api/agent-auth",
+            get(crate::slices::agent_auth::axum_agent_auth_status),
+        )
         .route("/api/push/vapid", get(axum_push_vapid::<C, B>))
         .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
         .route("/api/push/subscribe", delete(axum_push_unsubscribe::<C, B>))
@@ -835,6 +839,7 @@ mod cursor_auth_access_tests {
             ("GET", "/api/cursor/auth/login"),
             ("POST", "/api/cursor/auth/login"),
             ("POST", "/api/cursor/auth/login/cancel"),
+            ("GET", "/api/agent-auth"),
         ];
         for (method, path) in cases {
             assert_eq!(

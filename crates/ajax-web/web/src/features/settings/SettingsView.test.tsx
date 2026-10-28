@@ -1,22 +1,29 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, fireEvent, screen, within } from "@testing-library/react";
 import SettingsView from "./SettingsView";
 import * as api from "@/shared/lib/api";
 import * as diagnostics from "./diagnostics";
 import * as clipboard from "@/shared/lib/clipboard";
-import * as telemetry from "@/shared/lib/telemetry";
 import * as pushTest from "./pushTest";
 import { TEST_IN_STABLE_TIMEOUT_MS } from "@/shared/lib/polling";
 
-vi.mock("@/shared/lib/telemetry", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/lib/telemetry")>(
-    "@/shared/lib/telemetry",
-  );
+const okCheck: diagnostics.DiagnosticCheck = { ok: true, status: 200, error: null, body: null };
+
+function diagnosticsReport(
+  checks: Record<string, diagnostics.DiagnosticCheck> = { health: okCheck },
+): diagnostics.DiagnosticsReport {
   return {
-    ...actual,
-    captureTelemetryDiagnostic: vi.fn(actual.captureTelemetryDiagnostic),
-    isTelemetryInitialized: vi.fn(actual.isTelemetryInitialized),
+    browser_mode: "Safari/browser",
+    backend_url: "http://localhost:3000",
+    navigator_onLine: true,
+    app_version: null,
+    location: "http://localhost:3000/",
+    checks,
   };
+}
+
+beforeEach(() => {
+  vi.spyOn(api, "fetchAgentAuthStatus").mockResolvedValue({ harnesses: [] });
 });
 
 afterEach(() => {
@@ -195,44 +202,24 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders the diagnostics report", async () => {
-    vi.spyOn(api, "fetchVersion").mockResolvedValue({
-      version: "1.0.0",
-      test_in_stable: false,
-    });
-    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({
-      browser_mode: "Safari/browser",
-    });
-    render(<SettingsView />);
-    fireEvent.click(screen.getByRole("button", { name: "Run diagnostics" }));
-    await vi.waitFor(() =>
-      expect(
-        screen.getByText((content) => content.includes("Safari/browser")),
-      ).toHaveClass("settings-status"),
-    );
-  });
-
-  it("runs diagnostics only once under same-turn double click", async () => {
+  it("copies diagnostics only once under same-turn double click", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: false,
     });
     let release!: () => void;
     const pending = new Promise((resolve) => {
-      release = () => resolve({ browser_mode: "Safari/browser" });
+      release = () => resolve(diagnosticsReport());
     });
     const spy = vi.spyOn(diagnostics, "buildDiagnosticsReport").mockReturnValue(pending as never);
+    vi.spyOn(clipboard, "copyText").mockResolvedValue(true);
     render(<SettingsView />);
-    const button = screen.getByRole("button", { name: "Run diagnostics" });
+    const button = screen.getByRole("button", { name: "Copy diagnostics report" });
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(spy).toHaveBeenCalledOnce();
     release();
-    await vi.waitFor(() =>
-      expect(
-        screen.getByText((content) => content.includes("Safari/browser")),
-      ).toBeInTheDocument(),
-    );
+    await vi.waitFor(() => expect(screen.getByTestId("diagnostics-checks")).toBeInTheDocument());
   });
 
   it("copies diagnostics with a clipboard fallback message", async () => {
@@ -240,14 +227,40 @@ describe("SettingsView", () => {
       version: "1.0.0",
       test_in_stable: false,
     });
-    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue({ ok: true });
+    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue(diagnosticsReport());
     vi.spyOn(clipboard, "copyText").mockResolvedValue(false);
     const onResult = vi.fn();
     render(<SettingsView onResult={onResult} />);
-    fireEvent.click(screen.getByRole("button", { name: "Copy Diagnostics" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics report" }));
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Diagnostics ready to copy", null, false),
     );
+  });
+
+  it("renders a per-check summary with ok and failure rows after copying", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue(
+      diagnosticsReport({
+        health: { ok: true, status: 200, error: null, body: null },
+        version: { ok: true, status: 200, error: null, body: null },
+        cockpit: { ok: false, status: 503, error: null, body: null },
+        task: { ok: false, status: null, error: "Failed to fetch", body: null },
+      }),
+    );
+    vi.spyOn(clipboard, "copyText").mockResolvedValue(true);
+    render(<SettingsView />);
+    expect(screen.queryByTestId("diagnostics-checks")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics report" }));
+    const summary = await vi.waitFor(() => screen.getByTestId("diagnostics-checks"));
+    expect(within(summary).getAllByText("ok")).toHaveLength(2);
+    expect(within(summary).getByText("cockpit")).toBeInTheDocument();
+    expect(within(summary).getByText("HTTP 503")).toBeInTheDocument();
+    expect(within(summary).getByText("task")).toBeInTheDocument();
+    expect(within(summary).getByText("Failed to fetch")).toBeInTheDocument();
+    expect(summary).not.toHaveTextContent("browser_mode");
   });
 
   it("renders Diagnostics debug info", async () => {
@@ -281,7 +294,7 @@ describe("SettingsView", () => {
     expect(localStorage.getItem("ajax.web.session.orchestrationChat")).toBe("true");
   });
 
-  it("shows live debug info with origin and app version", async () => {
+  it("shows the app version once in the Diagnostics section", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",
       test_in_stable: false,
@@ -292,29 +305,11 @@ describe("SettingsView", () => {
     document.head.appendChild(meta);
 
     render(<SettingsView />);
-    const debug = screen.getByTestId("dev-settings-debug");
-    expect(debug).toHaveTextContent(window.location.origin);
-    expect(debug).toHaveTextContent("0.42.0-test");
+    const diagnosticsSection = screen.getByTestId("dev-settings");
+    expect(within(diagnosticsSection).getByText("App version 0.42.0-test")).toBeInTheDocument();
+    expect(screen.getAllByText(/App version/)).toHaveLength(1);
 
     meta.remove();
-  });
-
-  it("shows telemetry status and emits diagnostic on button click", async () => {
-    vi.spyOn(api, "fetchVersion").mockResolvedValue({
-      version: "1.0.0",
-      test_in_stable: false,
-    });
-    vi.mocked(telemetry.isTelemetryInitialized).mockReturnValue(true);
-
-    render(<SettingsView />);
-    const telemetrySection = await vi.waitFor(() =>
-      screen.getByTestId("dev-settings-telemetry"),
-    );
-    expect(telemetrySection).toHaveTextContent("Initialized");
-    expect(telemetrySection).toHaveTextContent("yes");
-
-    fireEvent.click(screen.getByTestId("telemetry-diagnostic"));
-    expect(telemetry.captureTelemetryDiagnostic).toHaveBeenCalledOnce();
   });
 
   it("runs the declarative push test flow from the Actions button", async () => {

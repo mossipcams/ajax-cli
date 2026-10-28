@@ -10,23 +10,11 @@ type StatusState =
   | { kind: "error" }
   | { kind: "ready"; status: CursorAuthStatus };
 
-function statusText(state: StatusState): string {
-  if (state.kind === "loading") return "Checking Cursor sign-in…";
-  if (state.kind === "error") return "Could not check Cursor sign-in.";
-  const { status } = state;
-  if (status.present && status.valid) {
-    const email = status.email ?? "";
-    return status.expiresAtMs
-      ? `Signed in as ${email} · key expires ${new Date(status.expiresAtMs).toLocaleDateString()}`
-      : `Signed in as ${email}`;
-  }
-  if (status.present && status.valid === false) {
-    return "Cursor rejected the saved key. Sign in again.";
-  }
-  return "Not signed in.";
+interface Props {
+  onSignedIn?: () => void;
 }
 
-export default function CursorSignIn() {
+export default function CursorSignIn({ onSignedIn }: Props) {
   const [status, setStatus] = useState<StatusState>({ kind: "loading" });
   const [phase, setPhase] = useState<CursorLoginPhase>({ phase: "idle" });
   const [starting, setStarting] = useState(false);
@@ -81,12 +69,13 @@ export default function CursorSignIn() {
         } catch {
           if (mountedRef.current) setStatus({ kind: "error" });
         }
+        if (mountedRef.current) onSignedIn?.();
       } else if (next.phase === "failed") {
         setActive(false);
       }
     }, CURSOR_LOGIN_POLL_MS);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, onSignedIn]);
 
   async function startSignIn() {
     setStarting(true);
@@ -121,11 +110,7 @@ export default function CursorSignIn() {
   const keyPresent = status.kind === "ready" && status.status.present;
 
   return (
-    <div className="settings-section" data-testid="cursor-auth-settings">
-      <h3>Cursor</h3>
-      <p className="settings-status" data-testid="cursor-auth-status">
-        {statusText(status)}
-      </p>
+    <>
       <Button type="button" data-testid="cursor-sign-in" disabled={disabled} onClick={() => void startSignIn()}>
         {keyPresent ? "Sign in again" : "Sign in with Cursor"}
       </Button>
@@ -157,6 +142,6 @@ export default function CursorSignIn() {
           Sign-in failed: {phase.message}
         </p>
       ) : null}
-    </div>
+    </>
   );
 }
