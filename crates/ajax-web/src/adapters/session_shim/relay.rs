@@ -1,6 +1,5 @@
-use super::log::read_lines_from;
+use super::log::ShimLog;
 use std::io::{self, Write};
-use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 const REPLAY_PREFIX: &[u8] = b"REPLAY ";
@@ -41,63 +40,102 @@ pub(crate) fn classify_client_line(line: &[u8]) -> ClientLine {
     }
 }
 
-pub(crate) fn replay_to<W: Write>(log_path: &Path, offset: u64, out: &mut W) -> io::Result<u64> {
-    let mut next = offset;
-    for (end, line) in read_lines_from(log_path, offset)? {
-        out.write_all(&line)?;
-        out.write_all(b"\n")?;
-        next = end;
-    }
-    out.flush()?;
-    Ok(next)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClientToken(u64);
+
+struct AttachedClient {
+    token: ClientToken,
+    writer: Box<dyn Write + Send>,
 }
 
-#[derive(Default)]
-pub(crate) struct ClientSlot {
-    writer: Mutex<Option<Box<dyn Write + Send>>>,
+struct RelayState {
+    log: ShimLog,
+    client: Option<AttachedClient>,
+    next_token: u64,
 }
 
-impl ClientSlot {
-    pub(crate) fn attach(&self, writer: Box<dyn Write + Send>) {
-        *self.lock() = Some(writer);
-    }
-
-    pub(crate) fn detach(&self) {
-        *self.lock() = None;
-    }
-
-    pub(crate) fn deliver(&self, line: &[u8]) -> bool {
-        let mut slot = self.lock();
-        let Some(writer) = slot.as_mut() else {
-            return false;
+impl RelayState {
+    fn deliver(&mut self, record: &[u8]) {
+        let Some(client) = self.client.as_mut() else {
+            return;
         };
+        if client
+            .writer
+            .write_all(record)
+            .and_then(|()| client.writer.flush())
+            .is_err()
+        {
+            self.client = None;
+        }
+    }
+}
+
+pub(crate) struct ShimRelay {
+    state: Mutex<RelayState>,
+}
+
+impl ShimRelay {
+    pub(crate) fn new(log: ShimLog) -> Self {
+        Self {
+            state: Mutex::new(RelayState {
+                log,
+                client: None,
+                next_token: 0,
+            }),
+        }
+    }
+
+    pub(crate) fn append_and_deliver(&self, line: &[u8]) -> io::Result<u64> {
+        let mut state = self.lock();
+        let end = state.log.append_line(line)?;
         let mut record = Vec::with_capacity(line.len() + 1);
         record.extend_from_slice(line);
         record.push(b'\n');
-        let delivered = writer
-            .write_all(&record)
-            .and_then(|()| writer.flush())
-            .is_ok();
-        if !delivered {
-            *slot = None;
-        }
-        delivered
+        state.deliver(&record);
+        Ok(end)
     }
 
-    fn lock(&self) -> MutexGuard<'_, Option<Box<dyn Write + Send>>> {
-        self.writer.lock().unwrap_or_else(PoisonError::into_inner)
+    pub(crate) fn attach(
+        &self,
+        offset: u64,
+        mut writer: Box<dyn Write + Send>,
+    ) -> io::Result<ClientToken> {
+        let mut state = self.lock();
+        for (_, line) in state.log.lines_from(offset)? {
+            writer.write_all(&line)?;
+            writer.write_all(b"\n")?;
+        }
+        writer.flush()?;
+        let token = ClientToken(state.next_token);
+        state.next_token += 1;
+        state.client = Some(AttachedClient { token, writer });
+        Ok(token)
+    }
+
+    pub(crate) fn detach(&self, token: ClientToken) {
+        let mut state = self.lock();
+        if state
+            .client
+            .as_ref()
+            .is_some_and(|client| client.token == token)
+        {
+            state.client = None;
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, RelayState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        classify_client_line, parse_client_hello, replay_to, ClientLine, ClientSlot, RelayError,
-    };
-    use crate::adapters::session_shim::log::ShimLog;
+    use super::{classify_client_line, parse_client_hello, ClientLine, RelayError, ShimRelay};
+    use crate::adapters::session_shim::log::{read_lines_from, ShimLog};
     use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+    use std::thread;
 
     fn scratch_log(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -105,6 +143,10 @@ mod tests {
             .join(name);
         let _ = std::fs::remove_dir_all(&dir);
         dir.join("nested").join("session.shim.log")
+    }
+
+    fn relay_at(path: &Path) -> ShimRelay {
+        ShimRelay::new(ShimLog::open(path).unwrap())
     }
 
     #[derive(Clone, Default)]
@@ -142,54 +184,77 @@ mod tests {
     #[test]
     fn replay_request_streams_from_offset_then_live_lines() {
         let path = scratch_log("replay-then-live");
-        let mut log = ShimLog::open(&path).unwrap();
-        log.append_line(b"one").unwrap();
-        let replay_from = log.append_line(b"two").unwrap();
+        let relay = relay_at(&path);
+        relay.append_and_deliver(b"one").unwrap();
+        let replay_from = relay.append_and_deliver(b"two").unwrap();
         assert_eq!(replay_from, 8);
 
         let offset = parse_client_hello(b"REPLAY 4").unwrap();
         assert_eq!(offset, 4);
-        let mut replayed = Vec::new();
-        let next = replay_to(&path, offset, &mut replayed).unwrap();
-        assert_eq!(replayed, b"two\n");
-        assert_eq!(next, replay_from);
-
         let client = SharedSink::default();
-        let slot = ClientSlot::default();
-        slot.attach(Box::new(client.clone()));
-        let live_end = log.append_line(b"three").unwrap();
+        relay.attach(offset, Box::new(client.clone())).unwrap();
+        let live_end = relay.append_and_deliver(b"three").unwrap();
         assert_eq!(live_end, 14);
-        assert!(slot.deliver(b"three"));
 
-        let mut client_stream = replayed;
-        client_stream.extend_from_slice(&client.bytes());
-        assert_eq!(client_stream, b"two\nthree\n");
+        assert_eq!(client.bytes(), b"two\nthree\n");
         assert_eq!(std::fs::read(&path).unwrap(), b"one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn session_shim_relay_replay_handoff_delivers_each_line_once_under_concurrent_append() {
+        let path = scratch_log("concurrent-handoff");
+        let relay = Arc::new(relay_at(&path));
+        for index in 0..5 {
+            relay
+                .append_and_deliver(format!("pre-{index}").as_bytes())
+                .unwrap();
+        }
+        let attach_at = relay.append_and_deliver(b"pre-end").unwrap();
+
+        let appender = {
+            let relay = Arc::clone(&relay);
+            thread::spawn(move || {
+                for index in 0..500 {
+                    relay
+                        .append_and_deliver(format!("live-{index}").as_bytes())
+                        .unwrap();
+                }
+            })
+        };
+        let client = SharedSink::default();
+        relay.attach(attach_at, Box::new(client.clone())).unwrap();
+        appender.join().unwrap();
+
+        let expected: Vec<u8> = (0..500)
+            .flat_map(|index| format!("live-{index}\n").into_bytes())
+            .collect();
+        assert_eq!(client.bytes(), expected);
     }
 
     #[test]
     fn session_shim_relay_replay_from_end_writes_nothing() {
         let path = scratch_log("replay-from-end");
-        let mut log = ShimLog::open(&path).unwrap();
-        let end = log.append_line(b"only").unwrap();
+        let relay = relay_at(&path);
+        let end = relay.append_and_deliver(b"only").unwrap();
 
-        let mut replayed = Vec::new();
-        assert_eq!(replay_to(&path, end, &mut replayed).unwrap(), end);
-        assert!(replayed.is_empty());
+        let client = SharedSink::default();
+        relay.attach(end, Box::new(client.clone())).unwrap();
+        assert!(client.bytes().is_empty());
     }
 
     #[test]
     fn session_shim_relay_replay_rejects_misaligned_offset_from_hello() {
         let path = scratch_log("replay-misaligned");
-        let mut log = ShimLog::open(&path).unwrap();
-        log.append_line(b"alpha").unwrap();
-        log.append_line(b"beta").unwrap();
+        let relay = relay_at(&path);
+        relay.append_and_deliver(b"alpha").unwrap();
+        relay.append_and_deliver(b"beta").unwrap();
 
         let offset = parse_client_hello(b"REPLAY 3").unwrap();
-        let mut replayed = Vec::new();
-        let error = replay_to(&path, offset, &mut replayed).unwrap_err();
+        let client = SharedSink::default();
+        let error = relay.attach(offset, Box::new(client.clone())).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
-        assert!(replayed.is_empty());
+        relay.append_and_deliver(b"gamma").unwrap();
+        assert!(client.bytes().is_empty());
     }
 
     #[test]
@@ -265,31 +330,57 @@ mod tests {
     }
 
     #[test]
-    fn session_shim_relay_deliver_without_client_reports_undelivered() {
-        let slot = ClientSlot::default();
-        assert!(!slot.deliver(b"orphan"));
+    fn session_shim_relay_append_without_client_only_logs() {
+        let path = scratch_log("append-without-client");
+        let relay = relay_at(&path);
+        assert_eq!(relay.append_and_deliver(b"orphan").unwrap(), 7);
+        assert_eq!(
+            read_lines_from(&path, 0).unwrap(),
+            vec![(7, b"orphan".to_vec())]
+        );
     }
 
     #[test]
     fn session_shim_relay_detach_stops_delivery() {
+        let path = scratch_log("detach-stops");
+        let relay = relay_at(&path);
         let client = SharedSink::default();
-        let slot = ClientSlot::default();
-        slot.attach(Box::new(client.clone()));
-        slot.detach();
-        assert!(!slot.deliver(b"after-detach"));
+        let token = relay.attach(0, Box::new(client.clone())).unwrap();
+        relay.detach(token);
+        relay.append_and_deliver(b"after-detach").unwrap();
         assert!(client.bytes().is_empty());
     }
 
     #[test]
+    fn session_shim_relay_stale_detach_keeps_newer_client() {
+        let path = scratch_log("stale-detach");
+        let relay = relay_at(&path);
+        let stale_client = SharedSink::default();
+        let stale = relay.attach(0, Box::new(stale_client.clone())).unwrap();
+        let current_client = SharedSink::default();
+        let current = relay.attach(0, Box::new(current_client.clone())).unwrap();
+
+        relay.detach(stale);
+        relay.append_and_deliver(b"live").unwrap();
+        assert_eq!(current_client.bytes(), b"live\n");
+        assert!(stale_client.bytes().is_empty());
+
+        relay.detach(current);
+        relay.append_and_deliver(b"after").unwrap();
+        assert_eq!(current_client.bytes(), b"live\n");
+    }
+
+    #[test]
     fn session_shim_relay_client_write_failure_detaches_without_panicking() {
-        let slot = ClientSlot::default();
-        slot.attach(Box::new(BrokenWriter));
-        assert!(!slot.deliver(b"first"));
-        assert!(!slot.deliver(b"second"));
+        let path = scratch_log("write-failure");
+        let relay = relay_at(&path);
+        relay.attach(0, Box::new(BrokenWriter)).unwrap();
+        relay.append_and_deliver(b"first").unwrap();
+        let end = relay.append_and_deliver(b"second").unwrap();
 
         let replacement = SharedSink::default();
-        slot.attach(Box::new(replacement.clone()));
-        assert!(slot.deliver(b"third"));
+        relay.attach(end, Box::new(replacement.clone())).unwrap();
+        relay.append_and_deliver(b"third").unwrap();
         assert_eq!(replacement.bytes(), b"third\n");
     }
 }

@@ -1,10 +1,12 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct ShimLog {
+    path: PathBuf,
     file: File,
     len: u64,
+    failed: bool,
 }
 
 impl ShimLog {
@@ -12,9 +14,22 @@ impl ShimLog {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new().create(true).append(true).open(path)?;
-        let len = file.metadata()?.len();
-        Ok(Self { file, len })
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)?;
+        let file_len = file.metadata()?.len();
+        let len = complete_prefix_len(&mut file)?;
+        if len < file_len {
+            file.set_len(len)?;
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            len,
+            failed: false,
+        })
     }
 
     pub(crate) fn len(&self) -> u64 {
@@ -28,13 +43,41 @@ impl ShimLog {
                 "shim log line must not contain a newline",
             ));
         }
+        if self.failed {
+            return Err(io::Error::other(
+                "shim log has an unrepaired partial record",
+            ));
+        }
         let mut record = Vec::with_capacity(line.len() + 1);
         record.extend_from_slice(line);
         record.push(b'\n');
-        self.file.write_all(&record)?;
+        if let Err(error) = self.file.write_all(&record) {
+            self.failed = self.file.set_len(self.len).is_err();
+            return Err(error);
+        }
         self.len += record.len() as u64;
         Ok(self.len)
     }
+
+    pub(crate) fn lines_from(&self, offset: u64) -> io::Result<Vec<(u64, Vec<u8>)>> {
+        read_lines_from(&self.path, offset)
+    }
+}
+
+fn complete_prefix_len(file: &mut File) -> io::Result<u64> {
+    const CHUNK: u64 = 4096;
+    let mut end = file.metadata()?.len();
+    while end > 0 {
+        let start = end.saturating_sub(CHUNK);
+        let mut chunk = vec![0u8; (end - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut chunk)?;
+        if let Some(index) = chunk.iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + index as u64 + 1);
+        }
+        end = start;
+    }
+    Ok(0)
 }
 
 pub(crate) fn read_lines_from(path: &Path, offset: u64) -> io::Result<Vec<(u64, Vec<u8>)>> {
@@ -141,6 +184,24 @@ mod tests {
         assert_eq!(
             read_lines_from(&path, 0).unwrap(),
             vec![(5, b"done".to_vec())]
+        );
+    }
+
+    #[test]
+    fn session_shim_log_reopen_truncates_partial_tail_before_next_append() {
+        let path = scratch_log("reopen-partial-tail");
+        let mut log = ShimLog::open(&path).unwrap();
+        log.append_line(b"done").unwrap();
+        drop(log);
+        std::fs::write(&path, b"done\npartial").unwrap();
+
+        let mut reopened = ShimLog::open(&path).unwrap();
+        assert_eq!(reopened.len(), 5);
+        assert_eq!(std::fs::read(&path).unwrap(), b"done\n");
+        assert_eq!(reopened.append_line(b"next").unwrap(), 10);
+        assert_eq!(
+            read_lines_from(&path, 0).unwrap(),
+            vec![(5, b"done".to_vec()), (10, b"next".to_vec())]
         );
     }
 
