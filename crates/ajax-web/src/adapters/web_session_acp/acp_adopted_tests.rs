@@ -152,6 +152,24 @@ fn stop_reason_response_emits_request_finished_and_clears_in_flight() {
 }
 
 #[test]
+fn error_response_ends_the_adopted_turn_with_its_message() {
+    let error = json!({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "error": { "code": -32000, "message": "rate limited" }
+    });
+    let (client, _writer) = adopt_from(lines(&[error]), 9);
+    let events = collect_until_exit(&client);
+
+    assert!(matches!(
+        &events[0],
+        AcpClientEvent::RequestFinished { id: 9, method: "session/prompt", result: Err(message) }
+            if message == "rate limited"
+    ));
+    assert!(!client.prompt_in_flight());
+}
+
+#[test]
 fn prompt_stays_in_flight_without_a_turn_end_line() {
     let (client, _writer) = adopt_from(Vec::new(), 9);
     let events = collect_until_exit(&client);
@@ -173,7 +191,7 @@ fn response_with_a_different_request_id_still_ends_the_adopted_turn() {
 }
 
 #[test]
-fn agent_request_emits_error_then_exit_and_stops_reading() {
+fn agent_request_writes_shutdown_interrupts_the_turn_and_stops_reading() {
     let request = json!({
         "jsonrpc": "2.0",
         "id": 3,
@@ -184,13 +202,20 @@ fn agent_request_emits_error_then_exit_and_stops_reading() {
     let (client, writer) = adopt_from(lines(&[request, trailing]), 9);
     let events = collect_until_exit(&client);
 
-    assert_eq!(events.len(), 2);
-    assert!(
-        matches!(&events[0], AcpClientEvent::Error(message) if message.contains("session/request_permission"))
-    );
-    assert!(matches!(events[1], AcpClientEvent::Exited));
+    assert_eq!(events.len(), 3);
+    assert!(matches!(
+        &events[0],
+        AcpClientEvent::Error(message) if message.contains("session/request_permission")
+    ));
+    assert!(matches!(
+        &events[1],
+        AcpClientEvent::RequestFinished { id: 9, method: "session/prompt", result: Ok(result) }
+            if result["stopReason"] == "cancelled"
+    ));
+    assert!(matches!(events[2], AcpClientEvent::Exited));
+    assert_eq!(writer.written(), b"SHUTDOWN\n".to_vec());
+    assert!(!client.prompt_in_flight());
     assert!(client.host_exited());
-    assert!(writer.written().is_empty());
 }
 
 #[test]
