@@ -2,6 +2,7 @@ use crate::adapters::web_session_store::{encode_handle, WEB_SESSION_DIR};
 use std::path::{Path, PathBuf};
 
 mod log;
+mod relay;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ShimPaths {
