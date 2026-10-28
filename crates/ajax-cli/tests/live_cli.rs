@@ -8,7 +8,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 fn ajax_binary() -> PathBuf {
@@ -54,7 +54,8 @@ impl IsolatedAjaxHome {
             .env("AJAX_STATE", &self.state_file)
             .env("AJAX_PROFILE", "stable")
             .env_remove("AJAX_HOME")
-            .env_remove("AJAX_WORKTREE_ROOT");
+            .env_remove("AJAX_WORKTREE_ROOT")
+            .env_remove("TMUX");
         command
     }
 
@@ -318,6 +319,20 @@ case "$*" in
 esac
 "#,
         );
+        self.warm_up_fake_tool("tmux");
+        self.warm_up_fake_tool("git");
+    }
+
+    fn warm_up_fake_tool(&self, name: &str) {
+        let script = self.fake_bin_dir().join(name);
+        Command::new(&script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap_or_else(|error| {
+                panic!("failed to warm up fake tool {}: {error}", script.display())
+            });
     }
 
     fn write_executable(&self, name: &str, contents: &str) {
