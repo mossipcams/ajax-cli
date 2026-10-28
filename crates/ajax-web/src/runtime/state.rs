@@ -36,6 +36,7 @@ pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
 pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
     "Could not save the session model. Try again in a moment.";
 const CONTROL_LANE_BUSY_ERROR: &str = "control lane busy; session activity report deferred";
+const SESSION_ATTACH_ATTEMPTS: usize = 2;
 /// Session activity reports that found the control lane busy, in arrival order.
 pub(crate) type DeferredActivityReports =
     Mutex<VecDeque<(String, crate::slices::web_session::SessionActivity)>>;
@@ -481,6 +482,22 @@ where
         crate::slices::web_session::SessionAttachPlan,
         crate::slices::web_session::SessionRouteError,
     > {
+        for _ in 0..SESSION_ATTACH_ATTEMPTS {
+            if let Some(plan) = self.attach_task_session_from_snapshot(handle, model)? {
+                return Ok(plan);
+            }
+        }
+        Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat)
+    }
+
+    fn attach_task_session_from_snapshot(
+        &self,
+        handle: &str,
+        model: &str,
+    ) -> Result<
+        Option<crate::slices::web_session::SessionAttachPlan>,
+        crate::slices::web_session::SessionRouteError,
+    > {
         let _lane = self.control_lane.blocking_lock();
         let (mut context, mut runner, bridge, base_revision) = {
             let guard = self.shared();
@@ -508,7 +525,7 @@ where
                 .is_some_and(|task| task.skip_interactive_agent());
         let mut guard = self.shared();
         if guard.revision != base_revision {
-            return Err(crate::slices::web_session::SessionRouteError::NotOrchestrationChat);
+            return Ok(None);
         }
         if promoted
             && bridge
@@ -523,7 +540,7 @@ where
         guard.bridge = bridge;
         guard.revision = guard.revision.saturating_add(1);
         guard.cockpit_cache = None;
-        Ok(plan)
+        Ok(Some(plan))
     }
 
     fn commit_durable(
