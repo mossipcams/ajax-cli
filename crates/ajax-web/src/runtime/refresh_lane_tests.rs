@@ -1,11 +1,18 @@
 use super::tests::{
-    app_with, blocking_notification_bridge, blocking_refresh_bridge, context_with_task, get,
-    json_of, post_json, release_gate, scratch_dir, unsaved_notification_bridge, TestBridge,
+    app_with, blocking_notification_bridge, blocking_refresh_bridge, browser_session_cookie,
+    context_with_task, get, json_of, post_json, release_gate, scratch_dir,
+    unsaved_notification_bridge, OkRunner, TestBridge,
 };
 use crate::adapters::web_session_acp::{set_test_acp_command, with_test_handshake_timeout};
+use crate::runtime::ActionFailure;
+use crate::runtime::RuntimeBridge;
+use crate::slices::operate::{OperateOutcome, OperateRequest, StartTaskRequest};
+use crate::WebError;
 use ajax_core::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
-    registry::Registry as _,
+    commands::{CommandContext, CommandError},
+    models::TaskId,
+    registry::{InMemoryRegistry, Registry as _, RegistryEventKind},
 };
 use axum::http::StatusCode;
 use std::{
@@ -493,4 +500,255 @@ fn chat_attach_fails_after_two_consecutive_revision_races() {
         "both races must have fired"
     );
     assert_eq!(state.shared().revision, revision + 2);
+}
+
+fn creating_start_app(
+    tag: &str,
+    context: CommandContext<InMemoryRegistry>,
+    entered: &Arc<Notify>,
+    release: &Arc<(Mutex<bool>, Condvar)>,
+    disk: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+) -> (
+    super::state::WebAppState<OkRunner, CreatingStartBridge>,
+    String,
+    axum::Router,
+) {
+    let bridge = CreatingStartBridge {
+        entered: Arc::clone(entered),
+        release: Arc::clone(release),
+        disk,
+    };
+    let state = super::state::WebAppState::new(context, OkRunner, bridge, scratch_dir(tag));
+    let cookie = browser_session_cookie(&state);
+    let app = super::axum_app(state.clone());
+    (state, cookie, app)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn task_start_external_effects_run_without_control_lane() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut chat = crate::test_support::task_in("web", "chat", "Chat");
+    chat.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![chat]);
+    let (state, cookie, app) = creating_start_app(
+        "task-start-lane",
+        context,
+        &entered,
+        &release,
+        Arc::new(Mutex::new(None)),
+    );
+
+    let start_app = app.clone();
+    let start_cookie = cookie.clone();
+    let start = tokio::spawn(async move {
+        post_json(
+            &start_app,
+            &start_cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-lane-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("task start never entered the bridge");
+
+    let lane_free = state.control_lane.try_lock().is_ok();
+    let persist_state = state.clone();
+    let persist = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::spawn(async move {
+            persist_state.persist_task_session_model("web/chat", "composer-2.5")
+        }),
+    )
+    .await;
+    release_gate(&release);
+    let start = tokio::time::timeout(Duration::from_secs(5), start)
+        .await
+        .expect("task start response timed out")
+        .unwrap();
+
+    assert!(
+        lane_free,
+        "control lane must be free while task start runs external effects"
+    );
+    let persist = persist
+        .expect("session model save must not wait behind task start")
+        .expect("persist worker should not panic");
+    assert_eq!(persist, Ok(()));
+    assert_eq!(start.status(), StatusCode::OK);
+}
+
+#[derive(Clone)]
+struct CreatingStartBridge {
+    entered: Arc<Notify>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+    disk: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+}
+
+impl RuntimeBridge<OkRunner> for CreatingStartBridge {
+    fn refresh_cockpit(
+        &mut self,
+        _context: &mut CommandContext<InMemoryRegistry>,
+        _runner: &mut OkRunner,
+        _tier: ajax_core::runtime_refresh::RefreshTier,
+        _deliver_notifications: bool,
+    ) -> Result<bool, WebError> {
+        Ok(false)
+    }
+
+    fn execute_operate(
+        &mut self,
+        _request: OperateRequest,
+        _context: &mut CommandContext<InMemoryRegistry>,
+        _runner: &mut OkRunner,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn execute_start_task(
+        &mut self,
+        _request: StartTaskRequest,
+        _context: &mut CommandContext<InMemoryRegistry>,
+        _runner: &mut OkRunner,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn execute_start_task_with_checkpoint(
+        &mut self,
+        _request: StartTaskRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        _runner: &mut OkRunner,
+        checkpoint: &mut dyn FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CommandError>,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        let task_id = TaskId::new("web/fix-login");
+        context
+            .registry
+            .create_task(crate::test_support::fix_login_task())
+            .expect("create started task");
+        checkpoint(context).expect("checkpoint after task creation");
+
+        self.entered.notify_one();
+        let (lock, cvar) = &*self.release;
+        let mut released = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !*released {
+            released = cvar
+                .wait(released)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        drop(released);
+
+        context
+            .registry
+            .record_event(
+                task_id,
+                RegistryEventKind::LifecycleChanged,
+                "lifecycle changed to Active",
+            )
+            .expect("record start event");
+        checkpoint(context).expect("checkpoint after provisioning");
+        Ok(OperateOutcome {
+            state_changed: true,
+            output: "started task: Fix login".to_string(),
+        })
+    }
+
+    fn persist_registry_snapshot(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), WebError> {
+        *self
+            .disk
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(context.clone());
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn unrelated_change_during_task_start_is_preserved_and_start_succeeds() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let disk = Arc::new(Mutex::new(None));
+    let mut chat = crate::test_support::task_in("web", "chat", "Chat");
+    chat.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![chat]);
+    let (state, cookie, app) = creating_start_app(
+        "task-start-preserves-concurrent",
+        context,
+        &entered,
+        &release,
+        Arc::clone(&disk),
+    );
+
+    let start_app = app.clone();
+    let start_cookie = cookie.clone();
+    let start = tokio::spawn(async move {
+        post_json(
+            &start_app,
+            &start_cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-concurrent-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("task start never reached its first checkpoint");
+
+    let persist_state = state.clone();
+    let persist = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::spawn(async move {
+            persist_state.persist_task_session_model("web/chat", "composer-2.5")
+        }),
+    )
+    .await;
+    release_gate(&release);
+    let start = tokio::time::timeout(Duration::from_secs(5), start)
+        .await
+        .expect("task start response timed out")
+        .unwrap();
+
+    assert_eq!(start.status(), StatusCode::OK);
+    let persist = persist
+        .expect("unrelated session model save must not wait behind task start")
+        .expect("persist worker should not panic");
+    assert_eq!(persist, Ok(()));
+
+    let guard = state.shared();
+    let chat = guard
+        .context
+        .registry
+        .get_task(&TaskId::new("web/chat"))
+        .expect("chat task in memory");
+    assert_eq!(chat.session_model(), Some("composer-2.5"));
+    assert!(guard
+        .context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_some());
+    drop(guard);
+
+    let saved = disk
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .expect("registry persisted");
+    assert_eq!(
+        saved
+            .registry
+            .get_task(&TaskId::new("web/chat"))
+            .and_then(|task| task.session_model()),
+        Some("composer-2.5"),
+        "the unrelated change must reach disk"
+    );
+    assert!(saved
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .is_some());
 }

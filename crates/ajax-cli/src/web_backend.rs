@@ -1,6 +1,6 @@
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
-    commands::CommandContext,
+    commands::{CommandContext, CommandError},
     models::OperatorAction,
     registry::{InMemoryRegistry, Registry},
     runtime_refresh::RefreshTier,
@@ -312,6 +312,19 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         self.persist_operate(result, context)
     }
 
+    fn adopt_start_task_bridge(&mut self, _executed: Self) {}
+
+    fn execute_start_task_with_checkpoint(
+        &mut self,
+        request: StartTaskRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+        checkpoint: &mut dyn FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CommandError>,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        start_task_with_checkpoint(context, runner, request, checkpoint)
+            .map_err(action_failure_from_operate)
+    }
+
     fn needs_operator_acknowledgment(
         &self,
         context: &CommandContext<InMemoryRegistry>,
@@ -442,18 +455,23 @@ impl CliRuntimeBridge {
                 Ok(outcome)
             }
             Err(error) => {
-                let state_changed = matches!(error, OperateError::Command(_, true));
-                if state_changed {
+                let failure = action_failure_from_operate(error);
+                if failure.state_changed {
                     self.persist_changed_state(context)
                         .map_err(action_failure_from_cli)?;
                 }
-                Err(ActionFailure {
-                    message: format_operate_error(&error),
-                    code: operate_error_code(&error).to_string(),
-                    state_changed,
-                })
+                Err(failure)
             }
         }
+    }
+}
+
+fn action_failure_from_operate(error: OperateError) -> ActionFailure {
+    let state_changed = matches!(error, OperateError::Command(_, true));
+    ActionFailure {
+        message: format_operate_error(&error),
+        code: operate_error_code(&error).to_string(),
+        state_changed,
     }
 }
 
