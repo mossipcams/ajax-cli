@@ -36,7 +36,6 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::{ChildStdin, ChildStdout},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
@@ -130,8 +129,8 @@ fn is_resume_load_capability_update(update: &SessionUpdate) -> bool {
 }
 
 pub(super) struct RunOptions {
-    pub stdin: ChildStdin,
-    pub stdout: ChildStdout,
+    pub stdin: Box<dyn std::io::Write + Send>,
+    pub stdout: Box<dyn std::io::Read + Send>,
     pub commands: UnboundedReceiver<ClientCommand>,
     pub events: Sender<AcpClientEvent>,
     pub ready: Sender<Result<ConnectionReady, AcpSpawnError>>,
@@ -359,8 +358,8 @@ async fn run_async(options: RunOptions) {
 }
 
 fn traced_transport(
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    stdin: Box<dyn std::io::Write + Send>,
+    stdout: Box<dyn std::io::Read + Send>,
     events: Sender<AcpClientEvent>,
 ) -> Lines<
     impl futures::Sink<String, Error = std::io::Error> + Send + 'static,

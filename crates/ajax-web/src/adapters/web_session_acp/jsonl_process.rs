@@ -2,7 +2,7 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ pub enum JsonlRecord {
 }
 
 pub struct JsonlProcess {
-    stdin: Option<ChildStdin>,
+    stdin: Option<Box<dyn Write + Send>>,
     records: mpsc::Receiver<JsonlRecord>,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
     child: Child,
@@ -50,6 +50,20 @@ impl JsonlProcess {
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
 
+        Self::from_parts(
+            child,
+            Box::new(stdin),
+            Box::new(stdout),
+            Some(Box::new(stderr)),
+        )
+    }
+
+    pub(crate) fn from_parts(
+        child: Child,
+        stdin: Box<dyn Write + Send>,
+        stdout: Box<dyn Read + Send>,
+        stderr: Option<Box<dyn Read + Send>>,
+    ) -> io::Result<Self> {
         let (sender, records) = mpsc::channel::<JsonlRecord>();
         std::thread::Builder::new()
             .name("jsonl-stdout".to_owned())
@@ -58,12 +72,14 @@ impl JsonlProcess {
             })?;
 
         let stderr_tail: Arc<Mutex<Vec<u8>>> = Arc::default();
-        let tail_guard = Arc::clone(&stderr_tail);
-        std::thread::Builder::new()
-            .name("jsonl-stderr".to_owned())
-            .spawn(move || {
-                drain_stderr(stderr, &tail_guard);
-            })?;
+        if let Some(stderr) = stderr {
+            let tail_guard = Arc::clone(&stderr_tail);
+            std::thread::Builder::new()
+                .name("jsonl-stderr".to_owned())
+                .spawn(move || {
+                    drain_stderr(stderr, &tail_guard);
+                })?;
+        }
 
         Ok(Self {
             stdin: Some(stdin),
