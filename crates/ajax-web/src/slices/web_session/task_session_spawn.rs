@@ -1,6 +1,7 @@
 use super::process_identity::foreign_live_child;
 use super::session_storage::SessionStorage;
 use super::task_session::{agent_client_name, TaskSessionState};
+use super::task_session_adopt::try_adopt;
 use super::task_session_exit::{
     interrupt_active_prompt, recover_prompt_ledger, retry_pending_exit_interruption,
 };
@@ -57,6 +58,10 @@ pub(super) async fn acquire(
             &state.qualified_handle,
         )?;
         release_live_client(state, resume_id.is_none(), "attach replaced a dead slot")?;
+        if try_adopt(state)? {
+            state.acquire_holder();
+            return Ok(());
+        }
         reject_foreign_live_child(state)?;
         let (new_client, report) =
             spawn_acp(agent, worktree_path, model, resume_id.as_deref()).await?;
@@ -66,6 +71,10 @@ pub(super) async fn acquire(
     }
 
     state.acp.model = model.to_string();
+    if try_adopt(state)? {
+        state.reset_holders_to_one();
+        return Ok(());
+    }
     let stored: StoredSession<SessionServerEvent> = web_session_store::try_load(
         &state.storage.registry_store(),
         &state.storage.state_dir,

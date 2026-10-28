@@ -302,14 +302,16 @@ append the same authentication error repeatedly.
   browser replay but are not consulted for idempotency.
 - After `ajax-web` restart or TaskSession slot recreation, **queued** ledger rows
   reload into the in-memory host FIFO. **Dispatching** rows recovered from disk
-  become **interrupted**: the host emits one typed `error` event and does not
-  automatically retry the prompt. Each recovered prompt is acknowledged with
+  become **interrupted** unless a live session shim adopts them (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)): the
+  host emits one typed `error` event and does not automatically retry the
+  prompt. Each recovered prompt is acknowledged with
   `PromptAccepted` immediately before its typed error, so the browser outbox
   drops it instead of resending it on reconnect. Resending an interrupted
   `clientMessageId` is refused with the same error and acknowledged again with
   `PromptAccepted`, so the acknowledgement does not depend on the recovery rows
   surviving.
-- After a host restart, queued prompts are dispatched headlessly in order, one chat at a time, once the host holds the execution lease; a dispatching prompt is never resent (it is marked interrupted).
+- After a host restart, queued prompts are dispatched headlessly in order, one chat at a time, once the host holds the execution lease; a dispatching prompt is never resent (it is marked interrupted unless a live session shim adopts it).
 - Ledger persist failure rejects the submit before acknowledgement or ACP dispatch.
 - The live `TaskSession` actor owns prompt terminal transitions and FIFO
   advancement. Only the `session/prompt` command result (success,
@@ -484,8 +486,9 @@ append the same authentication error repeatedly.
   harnesses are never evicted regardless of grace.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
-- `ajax-web` restart reloads stored transcripts and cursors from the registry database; live ACP
-  children do not survive process exit.
+- `ajax-web` restart reloads stored transcripts and cursors from the registry database. A
+  harness child survives process exit only inside its session shim (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)).
 
 ## Model switching on the live ACP session
 
@@ -593,7 +596,9 @@ whole transcript inside `session/load` before responding.
   a fresh session or append that note.
 - A prompt that was dispatching when the host died is shown as interrupted
   (`Prompt <id> was interrupted by host restart and was not retried.`) and is
-  never resent automatically; queued prompts survive and dispatch in order. The
+  never resent automatically, unless a live session shim adopts it (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)); queued
+  prompts survive and dispatch in order. The
   recovery sequence is `PromptAccepted` for the prompt, then the typed error
   note, in that order. See `docs/architecture/durable-execution.md`.
 - Transcript events are appended as database rows; the only in-place
@@ -631,6 +636,66 @@ whole transcript inside `session/load` before responding.
   history remains. Unknown task handles are 404. Origin policy: same-origin
   fetches send no `Origin` header and are allowed; a present `Origin` must match
   the `Host` authority or the request is refused with 403.
+
+## Session shim and restart adoption
+
+- Chat harnesses (ACP, Claude SDK, Pi RPC and the Cursor sidecar) run behind a
+  per-session shim, `ajax-cli session-shim`. The web host starts it as a child
+  and the shim calls `setsid`, so the shim leaves the web process group and
+  outlives the web process. The shim spawns the harness, holds its stdio,
+  appends every outbound line with its byte offset to
+  `web-session/<encoded-handle>.shim.log`, and serves one client on
+  `web-session/s-<fnv1a(handle)>.sock` under the state directory. The handle is
+  the task's worktree path.
+- Client lines to the shim are `REPLAY <offset>` (first line only: replay
+  outbound lines from that byte offset, then relay inbound lines), `SHUTDOWN`
+  (stop the harness and the shim), or an inbound line relayed to the harness.
+- Restarts stop only the web process. `dev-web-restart.sh` signals the recorded
+  web pid and boots out the launchd job (`scripts/dev-web-restart.sh`
+  `stop_pid_file`, `stop_launchd_job`); `ajax web service stop`, `uninstall`
+  and `install` boot out the job. The launchd job is installed with
+  `AbandonProcessGroup` (`crates/ajax-cli/src/web_service/mod.rs`), so launchd
+  does not signal the web's process group. The stop paths above never signal a
+  shim, and shims keep running the previous binary until their harness ends.
+  The next web host's startup orphan sweep (`orphan_sweep.rs`, `sweep_adopting`)
+  is the exception: for each previous-boot run whose shim is live and not
+  adoptable, it sends TERM to the shim's process group and KILLs it after a
+  grace period. An idle shim (no dispatching prompt with recorded offsets) is
+  therefore stopped at startup; the next prompt respawns the harness and resumes
+  the stored session. Only a task with an in-flight turn is adopted.
+- On acquire, and in headless startup, a task is adoptable when its prompt
+  ledger has a **dispatching** prompt with a recorded shim offset and transcript
+  cursor, its stored ACP session id matches the harness, and its shim socket
+  accepts a connection. Adoption then:
+  1. attaches to the shim with `REPLAY <shim offset>`, so the in-flight turn is
+     replayed read-only from the shim log, and builds the adopted client; an
+     attach failure here leaves the committed transcript untouched;
+  2. rolls the transcript back to the dispatch cursor, dropping events after it;
+  3. installs the adopted client on the slot with the stored session id, without
+     `session/new`, `session/resume` or `session/load`;
+  4. releases it when the replayed turn finishes: the client writes `SHUTDOWN`
+     and drops its handle without waiting, so the shim exits on its own
+     schedule. The next spawn in that worktree waits until the old shim has
+     exited (its socket stops accepting connections) before it starts a new
+     one. The next prompt, whether already queued or newly submitted to the
+     attached session, resumes the stored session through the normal acquire
+     path with the stored session id, without starting a new session.
+- Adopted clients cannot send prompts, answer permission or elicitation
+  requests, or apply model pins; those are refused as adopted-turn-busy until
+  release. A harness request during replay (a line with an id and a method)
+  ends the adopted turn as interrupted with the typed error
+  `reconnected agent requested input (<method>); the adopted turn cannot answer it`.
+- If the shim answers but adoption fails, the host sends `SHUTDOWN`, then
+  interrupts the prompt as in the restart recovery above.
+- Adopted clients do not persist `prompt_capabilities` or `close_advertised`.
+  Adoption leaves the slot's prompt capabilities unset, so the default
+  descriptor applies until a normal spawn, and adoption never sends
+  `session/close`.
+- Startup recovery skips adoptable tasks. Every other task is handled as before:
+  its dispatching prompt is interrupted and its orphan child is swept. The
+  orphan sweep signals the recorded child process group (`kill -TERM -- -<pid>`)
+  for a previous-boot run whose shim is live but not adoptable, which ends that
+  shim and its harness.
 
 ## Reconnect model and ACP capabilities
 

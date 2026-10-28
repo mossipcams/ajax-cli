@@ -5,6 +5,7 @@ use ajax_core::{
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader},
+    os::unix::net::UnixStream,
     path::Path,
     process::Child,
     sync::{
@@ -18,6 +19,7 @@ use std::{
 
 use super::acp_launch::spawn_acp_process;
 use super::apply_model::{operator_pin_satisfied, ApplyModelOutcome};
+use super::jsonl_process::{request_shim_shutdown, wait_for_exit, SHIM_EXIT_GRACE};
 use super::sdk_connection::{self, ClientCommand, ConnectionReady, RunOptions};
 use agent_client_protocol::schema::v1::{ContentBlock, SessionConfigOption, SessionNotification};
 
@@ -354,6 +356,7 @@ pub struct AcpStdioClient {
     close_advertised: bool,
     session_new_result: Value,
     child: Child,
+    shim_control: Option<UnixStream>,
     torn_down: bool,
     _connection: thread::JoinHandle<()>,
 }
@@ -421,7 +424,7 @@ impl AcpStdioClient {
         apply_pin: Option<&str>,
         resume_session_id: Option<&str>,
     ) -> Result<(Self, SpawnReport), AcpSpawnError> {
-        let mut child =
+        let (mut child, shim_control) =
             spawn_acp_process(agent, worktree_path, spawn_model).map_err(AcpSpawnError::Message)?;
         let stdin = child
             .stdin
@@ -452,8 +455,8 @@ impl AcpStdioClient {
         let connection_stderr_tail = Arc::clone(&stderr_tail);
         let connection = thread::spawn(move || {
             sdk_connection::run(RunOptions {
-                stdin,
-                stdout,
+                stdin: Box::new(stdin),
+                stdout: Box::new(stdout),
                 commands: command_rx,
                 events: event_tx,
                 ready: ready_tx,
@@ -516,6 +519,7 @@ impl AcpStdioClient {
             close_advertised,
             session_new_result,
             child,
+            shim_control,
             torn_down: false,
             _connection: connection,
         };
@@ -570,6 +574,10 @@ impl AcpStdioClient {
             }
         }
         let _ = self.commands.send(ClientCommand::Shutdown);
+        if let Some(control) = self.shim_control.as_mut() {
+            let _ = request_shim_shutdown(control);
+            wait_for_exit(&mut self.child, SHIM_EXIT_GRACE);
+        }
         super::process_group::kill_tree(&mut self.child);
         let _ = self.child.wait();
         close_error

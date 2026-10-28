@@ -48,13 +48,33 @@ pub struct RpcSession {
 
 impl RpcSession {
     pub fn new(process: JsonlProcess, handshake: RpcHandshake, mapper: RecordMapper) -> Self {
+        Self::with_queue(
+            process,
+            handshake.session_id,
+            VecDeque::from(handshake.pending),
+            mapper,
+            false,
+        )
+    }
+
+    pub(crate) fn adopt(mapper: RecordMapper, process: JsonlProcess, session_id: String) -> Self {
+        Self::with_queue(process, session_id, VecDeque::new(), mapper, true)
+    }
+
+    fn with_queue(
+        process: JsonlProcess,
+        session_id: String,
+        queued: VecDeque<Value>,
+        mapper: RecordMapper,
+        run_active: bool,
+    ) -> Self {
         Self {
             mapper,
-            session_id: handshake.session_id,
-            queued: VecDeque::from(handshake.pending),
+            session_id,
+            queued,
             process,
             prompt_id: None,
-            run_active: false,
+            run_active,
             ended_aborted: false,
             pending_error: None,
             exited: false,
@@ -277,9 +297,12 @@ impl RpcSession {
         if value.get("type").and_then(Value::as_str) != Some("response") {
             return None;
         }
-        let prompt_id = self.prompt_id.as_deref()?;
-        if value.get("id").and_then(Value::as_str)? != prompt_id {
-            return None;
+        let id = value.get("id").and_then(Value::as_str)?;
+        match self.prompt_id.as_deref() {
+            Some(prompt_id) if id != prompt_id => return None,
+            Some(_) => {}
+            None if self.run_active => {}
+            None => return None,
         }
 
         match value.get("success").and_then(Value::as_bool) {

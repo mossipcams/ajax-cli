@@ -60,6 +60,7 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
         .subcommand(agent_runtime_command())
+        .subcommand(session_shim_command())
         .subcommand(agent_event_command())
         .subcommand(agent_hooks_command())
         .subcommand(web_command())
@@ -197,6 +198,33 @@ fn agent_runtime_command() -> Command {
                 .value_name("ARGS")
                 .num_args(0..)
                 .trailing_var_arg(true)
+                .allow_hyphen_values(true),
+        )
+}
+
+fn session_shim_command() -> Command {
+    Command::new("session-shim")
+        .hide(true)
+        .arg(
+            Arg::new("handle")
+                .long("handle")
+                .value_name("HANDLE")
+                .required(true),
+        )
+        .arg(
+            Arg::new("state-dir")
+                .long("state-dir")
+                .value_name("PATH")
+                .value_parser(clap::value_parser!(std::path::PathBuf))
+                .required(true),
+        )
+        .arg(
+            Arg::new("program")
+                .value_name("PROGRAM")
+                .value_parser(clap::value_parser!(OsString))
+                .num_args(1..)
+                .last(true)
+                .required(true)
                 .allow_hyphen_values(true),
         )
 }

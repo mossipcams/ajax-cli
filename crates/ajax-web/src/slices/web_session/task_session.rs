@@ -17,10 +17,13 @@ use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
+use super::task_session_adopt::{
+    release_finished_adopted_client, resume_queued_after_release, submit_prompt_after_release,
+};
 use super::task_session_exit::{
     self, cancel, is_acp_exit_error, reconcile_unexpected_child_exit,
-    retry_pending_exit_interruption, settle_running_activity_on_end, submit_prompt,
-    try_dispatch_next_if_idle, try_finalize_active_prompt,
+    retry_pending_exit_interruption, settle_running_activity_on_end, try_dispatch_next_if_idle,
+    try_finalize_active_prompt,
 };
 
 const COMMAND_CAPACITY: usize = 32;
@@ -129,7 +132,7 @@ pub(crate) struct EvictionSnapshot {
     pub holders: usize,
 }
 
-pub(super) struct HolderCount(usize);
+pub(super) struct HolderCount(pub(super) usize);
 
 impl HolderCount {
     fn acquire(&mut self) {
@@ -349,6 +352,7 @@ impl TaskSessionState {
                 self.acp.acp_alive = false;
             }
         }
+        release_finished_adopted_client(self);
         try_dispatch_next_if_idle(self);
     }
 
@@ -364,6 +368,7 @@ pub(crate) fn spawn_task_session(
     report_activity: Option<super::ReportSessionActivity>,
     deferred_activity_pending: Option<super::task_session_directory::DeferredActivityPending>,
     ownership: std::sync::Arc<ExecutionOwnership>,
+    live_activity: super::task_session_directory::LiveActivitySlot,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
     tokio::task::JoinHandle<()>,
@@ -419,6 +424,7 @@ pub(crate) fn spawn_task_session(
                 transcript_durability_fault: None,
                 pending_transcript_error_snapshot: false,
                 transcript_corruption: None,
+                live_activity: Some(live_activity),
             },
             background: BackgroundLevel::default(),
             generation: 0,
@@ -466,6 +472,7 @@ pub(crate) fn spawn_task_session(
                     if state.acp.client.is_some() {
                         state.pump();
                     }
+                    resume_queued_after_release(&mut state).await;
                     state.poll_background_jobs().await;
                 }
             }
@@ -501,6 +508,9 @@ pub(crate) fn spawn_task_session(
         if !close_on_exit {
             settle_running_activity_on_end(&mut state);
         }
+        if let Some(live) = &state.evidence.live_activity {
+            live.retire(&state.qualified_handle);
+        }
     });
     (tx, join)
 }
@@ -528,7 +538,8 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             content_blocks,
             reply,
         } => {
-            let result = submit_prompt(state, client_message_id, text, content_blocks);
+            let result =
+                submit_prompt_after_release(state, client_message_id, text, content_blocks).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::Cancel { keep_queue, reply } => {

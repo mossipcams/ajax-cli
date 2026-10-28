@@ -1,5 +1,6 @@
 pub mod drop_task;
 pub mod kernel;
+pub mod merge_pr;
 pub mod operator_dispatch;
 pub mod repair;
 pub mod resume;

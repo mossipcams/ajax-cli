@@ -27,6 +27,8 @@ fn entry(
         transcript_text: transcript_text.to_string(),
         prompt_text: prompt_text.to_string(),
         content_blocks,
+        shim_offset: None,
+        transcript_cursor: None,
     }
 }
 

@@ -1,3 +1,4 @@
+use super::acp_adopted::session_update_event;
 use super::apply_model::{
     apply_config_option, apply_model_pin, sync_live_model_config, ApplyModelOutcome,
 };
@@ -5,7 +6,7 @@ use super::client::{
     AcpClientEvent, AcpSpawnError, RestoreFailure, RestoreMethod, HANDSHAKE_TIMEOUT,
 };
 use super::config_options::{
-    mode_option, read_model_applied, replace_config_options, select_value_advertised,
+    mode_option, replace_config_options, select_value_advertised,
     sync_session_result_config_options,
 };
 use super::sdk_elicitation::{
@@ -22,8 +23,8 @@ use agent_client_protocol::{
             PermissionOption, PermissionOptionKind, PromptRequest, RequestPermissionOutcome,
             RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
             SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
-            SessionConfigOptionsCapabilities, SessionInfoUpdate, SessionNotification,
-            SessionUpdate, SetSessionConfigOptionRequest,
+            SessionConfigOptionsCapabilities, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest,
         },
         ProtocolVersion,
     },
@@ -36,7 +37,6 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::{ChildStdin, ChildStdout},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
@@ -130,8 +130,8 @@ fn is_resume_load_capability_update(update: &SessionUpdate) -> bool {
 }
 
 pub(super) struct RunOptions {
-    pub stdin: ChildStdin,
-    pub stdout: ChildStdout,
+    pub stdin: Box<dyn std::io::Write + Send>,
+    pub stdout: Box<dyn std::io::Read + Send>,
     pub commands: UnboundedReceiver<ClientCommand>,
     pub events: Sender<AcpClientEvent>,
     pub ready: Sender<Result<ConnectionReady, AcpSpawnError>>,
@@ -222,9 +222,7 @@ async fn run_async(options: RunOptions) {
                         {
                             return Ok(());
                         }
-                        if let SessionUpdate::ConfigOptionUpdate(update) = notification.update {
-                            let applied = read_model_applied(Some(&update.config_options))
-                                .unwrap_or_default();
+                        if let SessionUpdate::ConfigOptionUpdate(update) = &notification.update {
                             if let Some(live) =
                                 runtime_for_notifications.live.lock().unwrap().as_mut()
                             {
@@ -237,26 +235,10 @@ async fn run_async(options: RunOptions) {
                                     &update.config_options,
                                 );
                             }
-                            AcpClientEvent::ConfigOptionsUpdated {
-                                applied_model: applied,
-                                config_options: update.config_options,
-                            }
-                        } else if let SessionUpdate::AvailableCommandsUpdate(update) =
-                            notification.update
-                        {
-                            AcpClientEvent::AvailableCommandsUpdated {
-                                available_commands: update.available_commands,
-                            }
-                        } else if let SessionUpdate::SessionInfoUpdate(update) = notification.update
-                        {
-                            match session_title_from_update(&update) {
-                                Some(title) => AcpClientEvent::SessionInfoUpdated {
-                                    title: title.clone(),
-                                },
-                                None => return Ok(()),
-                            }
-                        } else {
-                            AcpClientEvent::SessionUpdate(Box::new(notification))
+                        }
+                        match session_update_event(notification) {
+                            Some(event) => event,
+                            None => return Ok(()),
                         }
                     }
                     Err(_) => {
@@ -359,8 +341,8 @@ async fn run_async(options: RunOptions) {
 }
 
 fn traced_transport(
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    stdin: Box<dyn std::io::Write + Send>,
+    stdout: Box<dyn std::io::Read + Send>,
     events: Sender<AcpClientEvent>,
 ) -> Lines<
     impl futures::Sink<String, Error = std::io::Error> + Send + 'static,
@@ -920,19 +902,4 @@ fn cancel_permissions(permissions: &PendingPermissions) -> Vec<String> {
 
 fn timeout_error(method: &str) -> String {
     format!("{method} timed out after {}s", HANDSHAKE_TIMEOUT.as_secs())
-}
-
-fn session_title_from_update(update: &SessionInfoUpdate) -> Option<Option<String>> {
-    match update.title.as_opt_ref() {
-        None => None,
-        Some(None) => Some(None),
-        Some(Some(title)) => {
-            let trimmed = title.trim();
-            if trimmed.is_empty() {
-                Some(None)
-            } else {
-                Some(Some(trimmed.to_string()))
-            }
-        }
-    }
 }

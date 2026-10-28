@@ -1,8 +1,9 @@
-use super::tests::{app_with, TestBridge};
-use crate::slices::web_session::SessionActivity;
+use super::tests::{app_with, get, json_of, TestBridge};
+use crate::slices::web_session::{SessionActivity, SessionServerEvent};
 use ajax_core::{
     models::{LiveStatusKind, TaskId},
     registry::Registry as _,
+    ui_state::TaskStatus,
 };
 use std::{
     sync::{Arc, Condvar, Mutex},
@@ -302,4 +303,120 @@ async fn activity_report_recovers_when_disk_diverged_from_memory() {
         .get_task(&TaskId::new("web/fix-login"))
         .and_then(|task| task.live_status.as_ref().map(|status| status.kind));
     assert_eq!(live, Some(LiveStatusKind::CommandRunning));
+}
+
+async fn cockpit_card_status(
+    app: &axum::Router,
+    cookie: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let body = json_of(get(app, cookie, "/api/cockpit").await).await;
+    (
+        body["cards"][0]["status"].clone(),
+        body["cards"][0]["status_explanation"].clone(),
+    )
+}
+
+async fn detail_status(
+    app: &axum::Router,
+    cookie: &str,
+) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
+    let body = json_of(get(app, cookie, "/api/tasks/web/fix-login").await).await;
+    (
+        body["status"].clone(),
+        body["status_explanation"].clone(),
+        body["live_status_kind"].clone(),
+    )
+}
+
+async fn record_turn_start(state: &super::WebAppState<super::tests::OkRunner, TestBridge>) {
+    state
+        .task_session_directory
+        .record(
+            "web/fix-login",
+            SessionServerEvent::PromptAccepted {
+                client_message_id: "prompt-1".to_string(),
+            },
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_session_status_is_served_while_the_turn_start_report_is_deferred() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "deferred-activity-e");
+    let running = serde_json::to_value(TaskStatus::Running).unwrap();
+    let before = cockpit_card_status(&app, &cookie).await;
+    assert_ne!(before.0, running, "the task starts out not running");
+
+    let lane = state.control_lane.lock().await;
+    let flight = state.refresh_flight.lock().await;
+    record_turn_start(&state).await;
+
+    assert_eq!(
+        live_kind(&state, "web/fix-login"),
+        None,
+        "the persisted registry still shows the pre-turn status"
+    );
+    let during = cockpit_card_status(&app, &cookie).await;
+    assert_eq!(during.0, running);
+    let detail = detail_status(&app, &cookie).await;
+    assert_eq!(detail.0, running);
+    assert_eq!(detail.2, serde_json::json!("AgentRunning"));
+
+    drop(flight);
+    drop(lane);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while live_kind(&state, "web/fix-login") != Some(LiveStatusKind::AgentRunning)
+        || !state.task_session_directory.live_activities().is_empty()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "drainer never applied the deferred turn start; live status is {:?}",
+            live_kind(&state, "web/fix-login")
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(cockpit_card_status(&app, &cookie).await, during);
+    assert_eq!(detail_status(&app, &cookie).await, detail);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_session_overlay_is_dropped_when_the_session_actor_ends() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "deferred-activity-f");
+    let running = serde_json::to_value(TaskStatus::Running).unwrap();
+    let before = cockpit_card_status(&app, &cookie).await;
+
+    let lane = state.control_lane.lock().await;
+    let flight = state.refresh_flight.lock().await;
+    record_turn_start(&state).await;
+    assert_eq!(
+        state.task_session_directory.live_activities(),
+        vec![("web/fix-login".to_string(), SessionActivity::TurnStarted)]
+    );
+    assert_eq!(cockpit_card_status(&app, &cookie).await.0, running);
+
+    state
+        .task_session_directory
+        .drop_session("web/fix-login")
+        .await;
+
+    assert!(state.task_session_directory.live_activities().is_empty());
+    assert_eq!(cockpit_card_status(&app, &cookie).await, before);
+    assert_ne!(detail_status(&app, &cookie).await.0, running);
+
+    drop(flight);
+    drop(lane);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while live_kind(&state, "web/fix-login") != Some(LiveStatusKind::AgentRunning) {
+        assert!(
+            Instant::now() < deadline,
+            "the deferred turn start must still reach the registry"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

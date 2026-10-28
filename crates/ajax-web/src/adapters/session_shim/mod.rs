@@ -1,21 +1,46 @@
 use crate::adapters::web_session_store::{encode_handle, WEB_SESSION_DIR};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+#[cfg_attr(not(test), allow(dead_code))]
 mod log;
+mod process;
+#[cfg(test)]
+mod process_tests;
+#[cfg_attr(not(test), allow(dead_code))]
 mod relay;
+pub(crate) mod spawn;
+
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use log::answered_request_ids;
+pub use process::{run_session_shim, ShimArgs};
+pub use spawn::{enable, shim_spawn, without_shim, ShimSpawn};
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct ShimPaths {
-    pub(crate) log: PathBuf,
-    pub(crate) socket: PathBuf,
+pub struct ShimPaths {
+    pub log: PathBuf,
+    pub socket: PathBuf,
+    pub stderr: PathBuf,
 }
 
-pub(crate) fn shim_paths(state_dir: &Path, handle: &str) -> ShimPaths {
+pub fn shim_paths(state_dir: &Path, handle: &str) -> ShimPaths {
     let dir = state_dir.join(WEB_SESSION_DIR);
+    let encoded = encode_handle(handle);
     ShimPaths {
-        log: dir.join(format!("{}.shim.log", encode_handle(handle))),
+        log: dir.join(format!("{encoded}.shim.log")),
         socket: dir.join(format!("s-{:016x}.sock", fnv1a_64(handle.as_bytes()))),
+        stderr: dir.join(format!("{encoded}.shim.stderr")),
     }
+}
+
+pub(crate) fn answered_requests(state_dir: &Path, handle: &str) -> HashSet<String> {
+    let inbound = log::inbound_log_path(&shim_paths(state_dir, handle).log);
+    answered_request_ids(&inbound)
+        .unwrap_or_default()
+        .iter()
+        .map(Value::to_string)
+        .collect()
 }
 
 fn fnv1a_64(bytes: &[u8]) -> u64 {

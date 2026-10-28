@@ -213,6 +213,19 @@ fn children_allow_completion_for(
     Ok(children_allow_completion(&states))
 }
 
+fn delete_events_after(
+    transaction: &rusqlite::Transaction<'_>,
+    run_id: &str,
+    keep_through: i64,
+) -> Result<usize, RegistrySnapshotError> {
+    transaction
+        .execute(
+            "DELETE FROM execution_events WHERE run_id = ?1 AND seq > ?2",
+            params![run_id, keep_through],
+        )
+        .map_err(database_error)
+}
+
 impl SqliteRegistryStore {
     pub fn create_run(&self, run: &NewRun) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
@@ -324,6 +337,29 @@ impl SqliteRegistryStore {
             )?;
         }
 
+        for update in &commit.prompt_content_updates {
+            let task_exec_id: Option<String> = transaction
+                .query_row(
+                    "SELECT task_exec_id FROM prompt_submissions \
+                     WHERE run_id = ?1 AND idempotency_key = ?2",
+                    params![commit.run_id, update.idempotency_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let task_exec_id = task_exec_id
+                .ok_or_else(|| ExecutionCommitError::UnknownTask(update.idempotency_key.clone()))?;
+            if task_state(&transaction, &commit.run_id, &task_exec_id)? != ExecutionState::Pending {
+                return Err(ExecutionCommitError::PromptNotQueued {
+                    idempotency_key: update.idempotency_key.clone(),
+                });
+            }
+            transaction.execute(
+                "UPDATE prompt_submissions SET content_json = ?2 \
+                 WHERE run_id = ?1 AND idempotency_key = ?3",
+                params![commit.run_id, update.content_json, update.idempotency_key],
+            )?;
+        }
+
         for task_transition in &commit.transitions {
             let from = task_state(&transaction, &commit.run_id, &task_transition.task_exec_id)?;
             transition(from, task_transition.to).map_err(|_| {
@@ -362,29 +398,6 @@ impl SqliteRegistryStore {
                 params![task_exec_id],
             )?;
         }
-        for update in &commit.prompt_content_updates {
-            let task_exec_id: Option<String> = transaction
-                .query_row(
-                    "SELECT task_exec_id FROM prompt_submissions \
-                     WHERE run_id = ?1 AND idempotency_key = ?2",
-                    params![commit.run_id, update.idempotency_key],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let task_exec_id = task_exec_id
-                .ok_or_else(|| ExecutionCommitError::UnknownTask(update.idempotency_key.clone()))?;
-            if task_state(&transaction, &commit.run_id, &task_exec_id)? != ExecutionState::Pending {
-                return Err(ExecutionCommitError::PromptNotQueued {
-                    idempotency_key: update.idempotency_key.clone(),
-                });
-            }
-            transaction.execute(
-                "UPDATE prompt_submissions SET content_json = ?2 \
-                 WHERE run_id = ?1 AND idempotency_key = ?3",
-                params![commit.run_id, update.content_json, update.idempotency_key],
-            )?;
-        }
-
         for key in &commit.prompt_content_clears {
             let updated = transaction.execute(
                 "UPDATE prompt_submissions SET content_json = '{}' \
@@ -540,6 +553,71 @@ impl SqliteRegistryStore {
         .collect()
     }
 
+    pub fn truncate_events_after(
+        &self,
+        run_id: &str,
+        seq: u64,
+    ) -> Result<u64, RegistrySnapshotError> {
+        let mut connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let Ok(keep_through) = i64::try_from(seq) else {
+            return Ok(0);
+        };
+        let Some(next_seq) = keep_through.checked_add(1) else {
+            return Ok(0);
+        };
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let deleted = delete_events_after(&transaction, run_id, keep_through)?;
+        transaction
+            .execute(
+                "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1 AND next_event_seq > ?2",
+                params![run_id, next_seq],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(deleted as u64)
+    }
+
+    pub fn truncate_and_append_events_after(
+        &self,
+        run_id: &str,
+        seq: u64,
+        payloads: &[String],
+    ) -> Result<(), RegistrySnapshotError> {
+        let mut connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let keep_through = i64::try_from(seq)
+            .map_err(|_| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        delete_events_after(&transaction, run_id, keep_through)?;
+        let mut next_seq = keep_through
+            .checked_add(1)
+            .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        for payload in payloads {
+            transaction
+                .execute(
+                    "INSERT INTO execution_events (run_id, seq, payload_json) VALUES (?1, ?2, ?3)",
+                    params![run_id, next_seq, payload],
+                )
+                .map_err(database_error)?;
+            next_seq = next_seq
+                .checked_add(1)
+                .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        }
+        transaction
+            .execute(
+                "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1",
+                params![run_id, next_seq],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
+    }
+
     pub fn execution_task_state(
         &self,
         task_exec_id: &str,
@@ -568,5 +646,210 @@ impl SqliteRegistryStore {
             params![run_id, idempotency_key],
             |row| row.get(0),
         )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_store(label: &str) -> SqliteRegistryStore {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/execution-store-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{label}-{}.sqlite", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let store = SqliteRegistryStore::new(path);
+        store
+            .create_run(&NewRun {
+                run_id: "run-1".into(),
+                task_id: "registry-task".into(),
+                harness: "codex".into(),
+                model: "model".into(),
+                created_unix_ms: 1234,
+            })
+            .unwrap();
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                new_tasks: vec![NewExecutionTask {
+                    kind: "prompt".into(),
+                    parent_id: None,
+                    task_exec_id: "t1".into(),
+                }],
+                prompts: vec![NewPrompt {
+                    idempotency_key: "k1".into(),
+                    content_json: "queued".into(),
+                    task_exec_id: "t1".into(),
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        store
+    }
+
+    fn content_update(content: &str) -> PromptContentUpdate {
+        PromptContentUpdate {
+            idempotency_key: "k1".into(),
+            content_json: content.into(),
+        }
+    }
+
+    #[test]
+    fn pending_prompt_content_update_commits_with_its_dispatch_transition() {
+        let store = scratch_store("content-with-dispatch");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                prompt_content_updates: vec![content_update("dispatched")],
+                transitions: vec![TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Running,
+                    outcome_json: None,
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let prompts = store.prompts_for_run("run-1").unwrap();
+        assert_eq!(prompts[0].state, ExecutionState::Running);
+        assert_eq!(prompts[0].content_json, "dispatched");
+    }
+
+    #[test]
+    fn running_prompt_content_update_in_a_later_commit_is_rejected() {
+        let store = scratch_store("running-content-rejected");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                transitions: vec![TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Running,
+                    outcome_json: None,
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let result = store.commit_execution(&ExecutionCommit {
+            run_id: "run-1".into(),
+            prompt_content_updates: vec![content_update("too-late")],
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            result,
+            Err(ExecutionCommitError::PromptNotQueued { .. })
+        ));
+        let prompts = store.prompts_for_run("run-1").unwrap();
+        assert_eq!(prompts[0].content_json, "queued");
+    }
+
+    #[test]
+    fn truncate_after_seq_keeps_prefix_and_appends_continue_contiguously() {
+        let store = scratch_store("truncate-after-seq");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let deleted = store.truncate_events_after("run-1", 2).unwrap();
+
+        assert_eq!(deleted, 3);
+        let seqs: Vec<u64> = store
+            .execution_events_since("run-1", 0)
+            .unwrap()
+            .into_iter()
+            .map(|(seq, _)| seq)
+            .collect();
+        assert_eq!(seqs, vec![1, 2]);
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-truncate".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![3]);
+    }
+
+    fn event_payloads(store: &SqliteRegistryStore) -> Vec<(u64, String)> {
+        store.execution_events_since("run-1", 0).unwrap()
+    }
+
+    #[test]
+    fn truncate_and_append_replaces_tail_and_renumbers_contiguously() {
+        let store = scratch_store("truncate-and-append");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .truncate_and_append_events_after("run-1", 2, &["kept-a".into(), "kept-b".into()])
+            .unwrap();
+
+        let events = event_payloads(&store);
+        assert_eq!(
+            events,
+            vec![
+                (1, "event-1".to_owned()),
+                (2, "event-2".to_owned()),
+                (3, "kept-a".to_owned()),
+                (4, "kept-b".to_owned()),
+            ]
+        );
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-replace".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![5]);
+    }
+
+    #[test]
+    fn truncate_and_append_failure_leaves_events_untouched() {
+        let store = scratch_store("truncate-and-append-atomic");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .open()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_forced_append BEFORE INSERT ON execution_events \
+                 WHEN NEW.payload_json = 'boom' \
+                 BEGIN SELECT RAISE(ABORT, 'forced append failure'); END;",
+            )
+            .unwrap();
+        let before = event_payloads(&store);
+
+        let result =
+            store.truncate_and_append_events_after("run-1", 2, &["kept-a".into(), "boom".into()]);
+
+        assert!(result.is_err());
+        assert_eq!(event_payloads(&store), before);
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-failure".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![6]);
     }
 }

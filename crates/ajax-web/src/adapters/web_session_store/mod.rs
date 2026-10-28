@@ -296,6 +296,49 @@ pub fn try_append_events_with_rewrites<T: Serialize + DeserializeOwned>(
     Ok(())
 }
 
+pub fn try_events_after<T: DeserializeOwned>(
+    store: &SqliteRegistryStore,
+    handle: &str,
+    keep_through_seq: u64,
+) -> io::Result<Vec<T>> {
+    let Some(run) = store
+        .latest_run_for_task(handle)
+        .map_err(io::Error::other)?
+    else {
+        return Ok(Vec::new());
+    };
+    let rows = store
+        .execution_events_since(&run.run_id, keep_through_seq)
+        .map_err(io::Error::other)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(_, payload)| serde_json::from_str(&payload).ok())
+        .collect())
+}
+
+pub fn try_replace_events_after<T: Serialize>(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    harness: &str,
+    keep_through_seq: u64,
+    replacement: &[T],
+) -> io::Result<()> {
+    let payloads = replacement
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)?;
+    let run_id = ensure_run(store, state_dir, handle, harness)?;
+    store
+        .truncate_and_append_events_after(&run_id, keep_through_seq, &payloads)
+        .map_err(io::Error::other)?;
+    if let Err(error) = store.prune_execution_events(&run_id, MAX_LOG_EVENTS as u64) {
+        tracing::warn!(%error, handle, "failed to prune web session transcript");
+    }
+    Ok(())
+}
+
 pub fn corruption_warning(corrupt_lines: usize) -> Option<String> {
     (corrupt_lines > 0).then(|| {
         format!(

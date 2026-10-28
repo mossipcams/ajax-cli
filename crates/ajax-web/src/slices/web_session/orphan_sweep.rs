@@ -1,7 +1,9 @@
 use super::os_process;
 use super::process_identity::{judge, start_token, Verdict};
+use super::shim_adoption::adoptable;
 use super::startup_recovery::RecoveryResult;
 use ajax_core::registry::{ExecutionCommit, RunUpdate, SqliteRegistryStore};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -10,9 +12,11 @@ use std::time::{Duration, Instant};
 static SWEPT_ONCE: AtomicBool = AtomicBool::new(false);
 static SWEEP_LOCK: Mutex<()> = Mutex::new(());
 
+const SWEEP_GRACE: Duration = Duration::from_secs(5);
+
 pub(crate) fn sweep_once(
     store: &SqliteRegistryStore,
-    state_dir: &std::path::Path,
+    state_dir: &Path,
     boot_id: &str,
 ) -> RecoveryResult {
     let _guard = SWEEP_LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -22,7 +26,7 @@ pub(crate) fn sweep_once(
             complete: true,
         };
     }
-    let sweep = sweep(store, boot_id);
+    let sweep = sweep_adopting(store, state_dir, boot_id, SWEEP_GRACE);
     let mut recovery =
         super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id);
     recovery.complete &= sweep.complete;
@@ -37,14 +41,36 @@ pub(crate) struct SweepResult {
     pub(crate) complete: bool,
 }
 
-pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> SweepResult {
-    sweep_with_grace(store, current_boot_id, Duration::from_secs(5))
+pub(super) fn sweep_adopting(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    current_boot_id: &str,
+    grace: Duration,
+) -> SweepResult {
+    sweep_sparing(store, current_boot_id, grace, &|task_handle| {
+        adoptable(store, state_dir, task_handle).is_some()
+    })
 }
 
+#[cfg(test)]
+pub(crate) fn sweep(store: &SqliteRegistryStore, current_boot_id: &str) -> SweepResult {
+    sweep_with_grace(store, current_boot_id, SWEEP_GRACE)
+}
+
+#[cfg(test)]
 pub(super) fn sweep_with_grace(
     store: &SqliteRegistryStore,
     current_boot_id: &str,
     grace: Duration,
+) -> SweepResult {
+    sweep_sparing(store, current_boot_id, grace, &|_| false)
+}
+
+fn sweep_sparing(
+    store: &SqliteRegistryStore,
+    current_boot_id: &str,
+    grace: Duration,
+    is_adoptable: &dyn Fn(&str) -> bool,
 ) -> SweepResult {
     let mut result = SweepResult {
         handled: 0,
@@ -79,6 +105,10 @@ pub(super) fn sweep_with_grace(
             start_token(pid).as_deref(),
         ) {
             Verdict::Same => {
+                if is_adoptable(&run.task_id) {
+                    result.handled += 1;
+                    continue;
+                }
                 if !signal_group_or_pid(pid, "-TERM") {
                     result.complete = false;
                     continue;

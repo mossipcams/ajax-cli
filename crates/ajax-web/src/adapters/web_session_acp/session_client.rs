@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -5,10 +7,12 @@ use agent_client_protocol::schema::v1::ContentBlock;
 #[cfg(test)]
 use agent_client_protocol::schema::v1::{ResourceLink, TextContent};
 
+use super::acp_adopted::AcpAdoptedClient;
 use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
 use super::available_command_descriptors::AvailableCommandDescriptor;
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::claude_sdk_spawn::{apply_pin_to_claude, spawn_claude_sdk};
+use super::jsonl_process::JsonlProcess;
 
 use super::client::{
     AcpSpawnError, AcpStdioClient, RestoreFailure, RestoreMethod, SpawnReport, HANDSHAKE_TIMEOUT,
@@ -28,8 +32,11 @@ pub type SessionSpawnReport = SpawnReport<NeutralConfigOption>;
 
 pub type SessionConfigOutcome = ApplyModelOutcome<NeutralConfigOption>;
 
+pub const ADOPTED_PROMPT_REQUEST_ID: u64 = 0;
+
 pub enum SessionClient {
     Acp(AcpStdioClient),
+    AcpAdopted(AcpAdoptedClient),
     Pi(PiSession),
     Claude(ClaudeSession),
     Cursor(CursorSession),
@@ -39,18 +46,21 @@ pub struct PiSession {
     client: PiRpcClient,
     session_id: String,
     session_new_result: serde_json::Value,
+    adopted: bool,
 }
 
 pub struct ClaudeSession {
     client: ClaudeSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
+    adopted: bool,
 }
 
 pub struct CursorSession {
     client: CursorSdkClient,
     session_id: String,
     session_new_result: serde_json::Value,
+    adopted: bool,
 }
 
 pub trait AcpEventSource {
@@ -93,7 +103,7 @@ impl AcpEventSource for SessionClient {
 
     fn take_available_commands(&self) -> Vec<AvailableCommandDescriptor> {
         match self.transport() {
-            Transport::Acp(_) => Vec::new(),
+            Transport::Acp(_) | Transport::Adopted(_) => Vec::new(),
             Transport::Native(core) => native_command_descriptors(&core.take_available_commands()),
         }
     }
@@ -101,11 +111,13 @@ impl AcpEventSource for SessionClient {
 
 enum Transport<'a> {
     Acp(&'a AcpStdioClient),
+    Adopted(&'a AcpAdoptedClient),
     Native(&'a RpcClientCore),
 }
 
 enum TransportMut<'a> {
     Acp(&'a mut AcpStdioClient),
+    Adopted(&'a mut AcpAdoptedClient),
     Native(&'a RpcClientCore),
 }
 
@@ -113,6 +125,7 @@ impl SessionClient {
     fn transport(&self) -> Transport<'_> {
         match self {
             SessionClient::Acp(client) => Transport::Acp(client),
+            SessionClient::AcpAdopted(client) => Transport::Adopted(client),
             SessionClient::Pi(session) => Transport::Native(session.client.core()),
             SessionClient::Claude(session) => Transport::Native(session.client.core()),
             SessionClient::Cursor(session) => Transport::Native(session.client.core()),
@@ -122,6 +135,7 @@ impl SessionClient {
     fn transport_mut(&mut self) -> TransportMut<'_> {
         match self {
             SessionClient::Acp(client) => TransportMut::Acp(client),
+            SessionClient::AcpAdopted(client) => TransportMut::Adopted(client),
             SessionClient::Pi(session) => TransportMut::Native(session.client.core()),
             SessionClient::Claude(session) => TransportMut::Native(session.client.core()),
             SessionClient::Cursor(session) => TransportMut::Native(session.client.core()),
@@ -133,33 +147,103 @@ impl SessionClient {
     }
 
     pub fn from_pi(client: PiRpcClient) -> Self {
+        Self::pi(client, false)
+    }
+
+    pub fn from_claude(client: ClaudeSdkClient) -> Self {
+        Self::claude(client, false)
+    }
+
+    pub fn from_cursor(client: CursorSdkClient) -> Self {
+        Self::cursor(client, false)
+    }
+
+    fn pi(client: PiRpcClient, adopted: bool) -> Self {
         let session_id = client.session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Pi(PiSession {
             client,
             session_id,
             session_new_result,
+            adopted,
         })
     }
 
-    pub fn from_claude(client: ClaudeSdkClient) -> Self {
+    fn claude(client: ClaudeSdkClient, adopted: bool) -> Self {
         let session_id = client.session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Claude(ClaudeSession {
             client,
             session_id,
             session_new_result,
+            adopted,
         })
     }
 
-    pub fn from_cursor(client: CursorSdkClient) -> Self {
+    fn cursor(client: CursorSdkClient, adopted: bool) -> Self {
         let session_id = client.session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Cursor(CursorSession {
             client,
             session_id,
             session_new_result,
+            adopted,
         })
+    }
+
+    pub fn adopt(
+        agent: AgentClient,
+        stream: UnixStream,
+        shim_pid: u32,
+        session_id: String,
+        answered: HashSet<String>,
+    ) -> Result<SessionClient, String> {
+        let reader = stream
+            .try_clone()
+            .map_err(|error| format!("clone session shim stream: {error}"))?;
+        match transport_for(agent) {
+            ajax_core::adapters::HarnessTransport::Acp => {
+                Ok(SessionClient::AcpAdopted(AcpAdoptedClient::adopt(
+                    Box::new(reader),
+                    Box::new(stream),
+                    shim_pid,
+                    session_id,
+                    ADOPTED_PROMPT_REQUEST_ID,
+                    answered,
+                )))
+            }
+            ajax_core::adapters::HarnessTransport::ClaudeSdk => {
+                let process = attach_shim(reader, stream, shim_pid)?;
+                Ok(SessionClient::claude(
+                    ClaudeSdkClient::adopt(process, session_id),
+                    true,
+                ))
+            }
+            ajax_core::adapters::HarnessTransport::CursorSdk => {
+                let process = attach_shim(reader, stream, shim_pid)?;
+                Ok(SessionClient::cursor(
+                    CursorSdkClient::adopt(process, session_id),
+                    true,
+                ))
+            }
+            ajax_core::adapters::HarnessTransport::PiRpc => {
+                let process = attach_shim(reader, stream, shim_pid)?;
+                Ok(SessionClient::pi(
+                    PiRpcClient::adopt(process, session_id),
+                    true,
+                ))
+            }
+        }
+    }
+
+    pub fn is_adopted(&self) -> bool {
+        match self {
+            SessionClient::Acp(_) => false,
+            SessionClient::AcpAdopted(_) => true,
+            SessionClient::Pi(session) => session.adopted,
+            SessionClient::Claude(session) => session.adopted,
+            SessionClient::Cursor(session) => session.adopted,
+        }
     }
 
     pub fn spawn_with_operator_pin(
@@ -238,6 +322,7 @@ impl SessionClient {
     pub fn session_id(&self) -> &str {
         match self {
             SessionClient::Acp(client) => client.session_id(),
+            SessionClient::AcpAdopted(client) => client.session_id(),
             SessionClient::Pi(session) => &session.session_id,
             SessionClient::Claude(session) => &session.session_id,
             SessionClient::Cursor(session) => &session.session_id,
@@ -247,6 +332,7 @@ impl SessionClient {
     pub fn shutdown(&mut self) -> Option<String> {
         match self.transport_mut() {
             TransportMut::Acp(client) => return client.shutdown(),
+            TransportMut::Adopted(client) => client.shutdown(),
             TransportMut::Native(core) => {
                 core.shutdown();
             }
@@ -257,13 +343,14 @@ impl SessionClient {
     pub fn detach(&mut self) -> Option<String> {
         match self.transport_mut() {
             TransportMut::Acp(client) => client.detach(),
-            TransportMut::Native(_) => self.shutdown(),
+            TransportMut::Adopted(_) | TransportMut::Native(_) => self.shutdown(),
         }
     }
 
     pub fn host_exited(&mut self) -> bool {
         match self.transport_mut() {
             TransportMut::Acp(client) => client.host_exited(),
+            TransportMut::Adopted(client) => client.host_exited(),
             TransportMut::Native(core) => core.host_exited(),
         }
     }
@@ -272,6 +359,7 @@ impl SessionClient {
     pub(crate) fn kill_host_for_test(&mut self) {
         match self.transport_mut() {
             TransportMut::Acp(client) => client.kill_host_for_test(),
+            TransportMut::Adopted(client) => client.shutdown(),
             TransportMut::Native(core) => {
                 core.shutdown();
             }
@@ -281,6 +369,7 @@ impl SessionClient {
     pub fn child_pid(&self) -> Option<u32> {
         match self.transport() {
             Transport::Acp(client) => Some(client.child_id()),
+            Transport::Adopted(client) => Some(client.child_pid()),
             Transport::Native(core) => core.child_pid(),
         }
     }
@@ -293,6 +382,7 @@ impl SessionClient {
     pub fn poll_event(&self) -> Option<AgentEvent> {
         match self.transport() {
             Transport::Acp(client) => client.poll_event().map(AgentEvent::Acp),
+            Transport::Adopted(client) => client.poll_event().map(AgentEvent::Acp),
             Transport::Native(core) => core.poll_event(),
         }
     }
@@ -300,6 +390,7 @@ impl SessionClient {
     pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
         match self.transport() {
             Transport::Acp(client) => client.wait_event(timeout).map(AgentEvent::Acp),
+            Transport::Adopted(client) => client.wait_event(timeout).map(AgentEvent::Acp),
             Transport::Native(core) => core.wait_event(timeout),
         }
     }
@@ -307,6 +398,7 @@ impl SessionClient {
     pub fn begin_prompt(&mut self, blocks: &[ContentBlock]) -> Result<u64, String> {
         match self {
             SessionClient::Acp(client) => client.begin_prompt(blocks),
+            SessionClient::AcpAdopted(_) => Err(ADOPTED_TURN_BUSY.to_string()),
             SessionClient::Pi(session) => {
                 let (text, images) = prompt_parts(blocks);
                 session.client.begin_prompt_with_images(&text, &images)
@@ -325,6 +417,7 @@ impl SessionClient {
     pub(crate) fn cancel(&mut self) -> Result<CancelOutcome, String> {
         match self.transport_mut() {
             TransportMut::Acp(client) => return client.cancel(),
+            TransportMut::Adopted(client) => client.shutdown(),
             TransportMut::Native(core) => {
                 if core.prompt_in_flight() || core.host_exited() {
                     core.cancel()?;
@@ -340,6 +433,7 @@ impl SessionClient {
     pub(crate) fn prompt_in_flight(&self) -> bool {
         match self.transport() {
             Transport::Acp(client) => client.prompt_in_flight(),
+            Transport::Adopted(client) => client.prompt_in_flight(),
             Transport::Native(core) => core.prompt_in_flight(),
         }
     }
@@ -351,6 +445,7 @@ impl SessionClient {
     ) -> Result<(), String> {
         match self {
             SessionClient::Acp(client) => client.respond_client_request(id, result),
+            SessionClient::AcpAdopted(_) => Err(ADOPTED_TURN_BUSY.to_string()),
             SessionClient::Pi(_) => {
                 Err("Pi RPC mode has no permission or elicitation requests".to_string())
             }
@@ -374,6 +469,7 @@ impl SessionClient {
                 let action = super::sdk_elicitation::action_from_wire(action, content)?;
                 client.respond_elicitation(request_id, action)
             }
+            SessionClient::AcpAdopted(_) => Err(ADOPTED_TURN_BUSY.to_string()),
             SessionClient::Pi(session) => {
                 let fields = if action == "accept" {
                     let mut fields = serde_json::Map::new();
@@ -426,6 +522,7 @@ impl SessionClient {
     pub fn session_new_result(&self) -> &serde_json::Value {
         match self {
             SessionClient::Acp(client) => client.session_new_result(),
+            SessionClient::AcpAdopted(client) => client.session_new_result(),
             SessionClient::Pi(session) => &session.session_new_result,
             SessionClient::Claude(session) => &session.session_new_result,
             SessionClient::Cursor(session) => &session.session_new_result,
@@ -437,6 +534,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client
                 .apply_model_pin(desired_model)
                 .map(ApplyModelOutcome::into_neutral),
+            SessionClient::AcpAdopted(_) => Err(ADOPTED_TURN_BUSY.to_string()),
             SessionClient::Claude(session) => {
                 let error = apply_pin_to_claude(&session.client, desired_model);
                 Ok(SessionConfigOutcome {
@@ -474,6 +572,7 @@ impl SessionClient {
             SessionClient::Acp(client) => client
                 .apply_config_option(config_id, super::wire_value_to_session_value(value))
                 .map(ApplyModelOutcome::into_neutral),
+            SessionClient::AcpAdopted(_) => Err(ADOPTED_TURN_BUSY.to_string()),
             SessionClient::Claude(session) => {
                 let error = match (config_id, value) {
                     ("model", SessionConfigValue::Select(value)) => {
@@ -527,6 +626,68 @@ impl SessionClient {
                 })
             }
         }
+    }
+}
+
+const ADOPTED_TURN_BUSY: &str =
+    "reconnected agent is finishing a turn; wait for it to end before sending input";
+
+fn attach_shim(reader: UnixStream, writer: UnixStream, pid: u32) -> Result<JsonlProcess, String> {
+    JsonlProcess::attach(Box::new(reader), Box::new(writer), pid)
+        .map_err(|error| format!("attach to session shim: {error}"))
+}
+
+#[cfg(test)]
+pub(crate) fn assert_adopted_turn_finishes(
+    agent: AgentClient,
+    finish_record: &str,
+    run_finished_probe: &str,
+) {
+    use super::agent_event::NativeEvent;
+    use std::io::{Read, Write};
+    use std::time::Instant;
+
+    let (shim_end, mut peer) = UnixStream::pair().expect("socket pair");
+    let session = SessionClient::adopt(
+        agent,
+        shim_end,
+        4242,
+        "adopted-session".to_string(),
+        HashSet::new(),
+    )
+    .expect("adopt live shim");
+    assert!(session.is_adopted());
+
+    peer.write_all(format!("{finish_record}\n").as_bytes())
+        .expect("write finish record to the adopted shim");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let finished = loop {
+        assert!(Instant::now() < deadline, "adopted turn did not finish");
+        if let Some(
+            event @ AgentEvent::Native(NativeEvent::TurnFinished {
+                request_id: ADOPTED_PROMPT_REQUEST_ID,
+                ..
+            }),
+        ) = session.wait_event(Duration::from_millis(50))
+        {
+            break event;
+        }
+    };
+    assert!(
+        matches!(
+            finished,
+            AgentEvent::Native(NativeEvent::TurnFinished { result: Ok(_), .. })
+        ),
+        "finished: {finished:?}"
+    );
+
+    peer.set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set read timeout");
+    let mut received = Vec::new();
+    let _ = peer.read_to_end(&mut received);
+    for line in String::from_utf8_lossy(&received).lines() {
+        let record: serde_json::Value = serde_json::from_str(line).expect("json record");
+        assert_eq!(record["type"], run_finished_probe, "adopt wrote {line}");
     }
 }
 

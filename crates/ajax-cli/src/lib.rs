@@ -12,6 +12,7 @@ mod context;
 mod dispatch;
 mod execution_dispatch;
 mod render;
+mod session_shim;
 mod snapshot_dispatch;
 mod supervise;
 mod tmux_task_session;
@@ -113,6 +114,10 @@ pub fn run_with_args(
         return agent_runtime::run_agent_runtime_command(subcommand);
     }
 
+    if let Some(("session-shim", subcommand)) = matches.subcommand() {
+        std::process::exit(session_shim::run_session_shim_command(subcommand)?);
+    }
+
     if let Some(("__agent-event", subcommand)) = matches.subcommand() {
         return agent_event::run_agent_event_command(subcommand);
     }
@@ -174,6 +179,10 @@ pub fn run_with_args_to_writer(
     if let Some(("__agent-runtime", subcommand)) = matches.subcommand() {
         let output = agent_runtime::run_agent_runtime_command(subcommand)?;
         return write_command_output(writer, &output);
+    }
+
+    if let Some(("session-shim", subcommand)) = matches.subcommand() {
+        std::process::exit(session_shim::run_session_shim_command(subcommand)?);
     }
 
     if let Some(("__agent-event", subcommand)) = matches.subcommand() {

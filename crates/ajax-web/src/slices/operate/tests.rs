@@ -6,6 +6,7 @@ use ajax_core::{
     },
     commands::{CommandContext, CommandError},
     config::{Config, ManagedRepo},
+    diff_review::{remember_pull_requests, stored_pull_requests, PullRequestRef, PullRequestState},
     models::{
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, TaskId, TmuxStatus,
     },
@@ -131,6 +132,66 @@ fn operate_slice_ship_with_unpushed_commits_runs_once_confirmed() {
 
     assert!(outcome.state_changed);
     assert!(!runner.commands().is_empty());
+}
+
+fn open_pull_request(number: u64) -> PullRequestRef {
+    PullRequestRef {
+        number,
+        title: "feat(web): merge".to_string(),
+        url: format!("https://github.com/mossipcams/ajax-cli/pull/{number}"),
+        state: PullRequestState::Open,
+        head_ref: "ajax/fix-login".to_string(),
+        head_sha: None,
+    }
+}
+
+fn merge_pr_request(confirmed: bool) -> OperateRequest {
+    OperateRequest {
+        task_handle: "web/fix-login".to_string(),
+        action: remediation::MERGE_PR.to_string(),
+        confirmed,
+    }
+}
+
+#[test]
+fn operate_slice_merge_pr_runs_squash_merge_once_and_records_merged() {
+    let mut task = crate::test_support::fix_login_task();
+    remember_pull_requests(&mut task, &[open_pull_request(7)]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut runner = RecordingCommandRunner::default();
+
+    operate(&mut context, &mut runner, merge_pr_request(true)).unwrap();
+
+    assert_eq!(runner.commands().len(), 1);
+    assert_eq!(runner.commands()[0].program, "gh");
+    assert_eq!(
+        runner.commands()[0].args,
+        ["pr", "merge", "7", "--squash"].map(String::from)
+    );
+    let task = context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .unwrap();
+    assert_eq!(
+        stored_pull_requests(task),
+        vec![PullRequestRef {
+            state: PullRequestState::Merged,
+            ..open_pull_request(7)
+        }]
+    );
+}
+
+#[test]
+fn operate_slice_merge_pr_without_confirmation_runs_nothing() {
+    let mut task = crate::test_support::fix_login_task();
+    remember_pull_requests(&mut task, &[open_pull_request(7)]);
+    let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut runner = RecordingCommandRunner::default();
+
+    let error = operate(&mut context, &mut runner, merge_pr_request(false)).unwrap_err();
+
+    assert_eq!(operate_error_code(&error), "confirmation_required");
+    assert!(runner.commands().is_empty());
 }
 
 #[test]

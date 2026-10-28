@@ -1,3 +1,4 @@
+mod acp_adopted;
 mod acp_launch;
 mod agent_event;
 mod apply_model;
@@ -42,6 +43,8 @@ pub use config_options::{
 };
 pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapabilityDescriptor};
 
+#[cfg(test)]
+mod acp_adopted_tests;
 #[cfg(test)]
 mod agent_event_tests;
 #[cfg(test)]
@@ -156,6 +159,7 @@ pub use client::{
 pub use cursor_login::{CursorCredentialStatus, CursorLogin, CursorLoginPhase};
 pub use cursor_sdk_client::CursorCatalogModel;
 pub(crate) use sdk_connection::CancelOutcome;
+pub(crate) use session_client::ADOPTED_PROMPT_REQUEST_ID;
 pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
 
 #[cfg(test)]

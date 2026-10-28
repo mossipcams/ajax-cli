@@ -1,5 +1,8 @@
 use super::protocol::{PendingPermission, SessionChrome, SessionSnapshot};
-use super::replay::{attach_inline_tail, build_attach, plan_replay, read_before, TAIL_EVENT_LIMIT};
+use super::replay::{
+    attach_inline_tail, build_attach, pending_permission, plan_replay, read_before,
+    TAIL_EVENT_LIMIT,
+};
 use super::transcript::TranscriptLog;
 use crate::adapters::web_session_store::MAX_LOG_EVENTS;
 use crate::slices::web_session::output_content::OutputContentBlockWire;
@@ -832,4 +835,31 @@ fn read_before_compacts_streamed_versions_and_keeps_from() {
         }
         other => panic!("expected Message payload, got {other:?}"),
     }
+}
+
+fn permission_request(request_id: &str) -> SessionServerEvent {
+    SessionServerEvent::PermissionRequest {
+        request_id: request_id.to_string(),
+        title: Some("Run?".to_string()),
+        detail: None,
+    }
+}
+
+#[test]
+fn pending_permission_ignores_request_resolved_earlier_in_the_log() {
+    let mut log = TranscriptLog::default();
+    log.append(vec![
+        SessionServerEvent::PermissionResolved {
+            request_id: "perm-1".to_string(),
+            approved: true,
+        },
+        permission_request("perm-1"),
+    ]);
+    assert!(pending_permission(&log).is_none());
+
+    log.append(vec![permission_request("perm-2")]);
+    assert_eq!(
+        pending_permission(&log).map(|pending| pending.request_id),
+        Some("perm-2".to_string())
+    );
 }

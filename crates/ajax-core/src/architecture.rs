@@ -2,12 +2,13 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const OPERATION_SLICES: [&str; 7] = [
+    const OPERATION_SLICES: [&str; 8] = [
         "start",
         "resume",
         "review",
         "repair",
         "ship",
+        "merge_pr",
         "drop_task",
         "sweep_cleanup",
     ];
@@ -39,6 +40,7 @@ mod tests {
             "review",
             "repair",
             "ship",
+            "merge_pr",
             "drop_task",
             "sweep_cleanup",
         ] {

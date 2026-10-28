@@ -28,9 +28,11 @@ mod session_cleanup;
 mod session_error;
 mod session_evidence;
 mod session_storage;
+mod shim_adoption;
 mod startup_recovery;
 mod task_pane_agent;
 mod task_session;
+mod task_session_adopt;
 mod task_session_answers;
 mod task_session_child;
 mod task_session_commit;
@@ -38,6 +40,7 @@ mod task_session_directory;
 mod task_session_exit;
 mod task_session_outbound;
 mod task_session_replacement;
+mod task_session_restart;
 mod task_session_spawn;
 mod transcript;
 mod ws_bridge;
@@ -57,8 +60,10 @@ pub(crate) use session_activity::{
 pub(crate) use session_cleanup::owned_session_handles;
 pub(crate) use session_error::SessionError;
 pub use session_storage::SessionStorage;
+pub(crate) use task_session_adopt::adoptable_handles;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
+pub(crate) use task_session_restart::{restart_session, RestartError};
 pub(crate) use ws_bridge::bridge_task_session_socket;
 
 use ajax_core::{adapters::acp_launch_for_agent, models::AgentClient};
@@ -426,6 +431,8 @@ mod tests;
 mod fake_acp_tests;
 
 #[cfg(test)]
+mod task_session_adopt_tests;
+#[cfg(test)]
 mod task_session_restore_tests;
 
 #[cfg(test)]
@@ -451,6 +458,9 @@ mod task_session_phase2_tests;
 
 #[cfg(test)]
 mod task_session_idle_eviction_tests;
+
+#[cfg(test)]
+mod task_session_restart_tests;
 
 #[cfg(test)]
 mod transcript_tests;
