@@ -161,20 +161,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
-        push::spawn_push_flusher(Arc::clone(&state.push));
-        spawn_push_tick(&state);
-        spawn_push_tick(&state);
-
-        let directory = Arc::clone(&state.task_session_directory);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                directory.heartbeat_execution_ownership();
-            }
-        });
-
+        spawn_background_loops(&state);
         headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
@@ -191,6 +178,25 @@ where
             .await
             .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
     })
+}
+
+fn spawn_background_loops<C, B>(state: &WebAppState<C, B>)
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    push::spawn_push_flusher(Arc::clone(&state.push));
+    spawn_push_tick(state);
+
+    let directory = Arc::clone(&state.task_session_directory);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            directory.heartbeat_execution_ownership();
+        }
+    });
 }
 
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)

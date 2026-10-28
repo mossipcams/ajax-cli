@@ -1,6 +1,6 @@
 use super::tests::{
     app_with, blocking_notification_bridge, blocking_refresh_bridge, context_with_task, get,
-    release_gate, unsaved_notification_bridge,
+    release_gate, unsaved_notification_bridge, TestBridge,
 };
 use ajax_core::registry::Registry as _;
 use axum::http::StatusCode;
@@ -57,6 +57,22 @@ async fn cockpit_probe_runs_without_holding_control_lane() {
 
     assert!(lane_free, "control lane must be free while the probe runs");
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn background_loops_start_push_tick_once() {
+    let (state, _cookie, _app) =
+        app_with(context_with_task(), TestBridge::default(), "push-tick-once");
+    let metrics = tokio::runtime::Handle::current().metrics();
+    let alive_before = metrics.num_alive_tasks();
+
+    super::spawn_background_loops(&state);
+
+    let started = metrics.num_alive_tasks() - alive_before;
+    assert_eq!(
+        started, 3,
+        "expected push flusher, one push tick, and heartbeat loops; a second push tick loop would add a fourth"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
