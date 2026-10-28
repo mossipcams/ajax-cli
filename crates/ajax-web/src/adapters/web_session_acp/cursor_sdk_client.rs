@@ -16,6 +16,7 @@ use super::rpc_handshake::{
     RpcModel,
 };
 use super::rpc_session::RpcSession;
+use super::session_client::ADOPTED_PROMPT_REQUEST_ID;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_sidecar.mjs");
 
@@ -122,6 +123,22 @@ pub struct CursorSdkClient {
 }
 
 impl CursorSdkClient {
+    pub(crate) fn adopt(process: JsonlProcess, session_id: String) -> Self {
+        let session = RpcSession::adopt(map_cursor_message, process, session_id);
+        let core = RpcClientCore::adopt(session, ADOPTED_PROMPT_REQUEST_ID, None);
+        CursorSdkClient {
+            core,
+            state: Box::new(Mutex::new(CursorState {
+                models: Vec::new(),
+                selection: ModelSelection {
+                    model: "default".to_string(),
+                    options: Vec::new(),
+                },
+                mode: "agent".to_string(),
+            })),
+        }
+    }
+
     pub fn spawn(
         program: &Path,
         program_args: &[String],
@@ -413,5 +430,24 @@ impl CursorSdkClient {
 
     pub fn host_exited(&self) -> bool {
         self.core.host_exited()
+    }
+}
+
+#[cfg(test)]
+mod adopt_tests {
+    use std::path::Path;
+
+    use ajax_core::models::AgentClient;
+    use serde_json::json;
+
+    use super::super::cursor_sdk_spawn::with_test_cursor_sdk_module;
+    use super::super::session_client::assert_adopted_turn_finishes;
+
+    #[test]
+    fn adopted_cursor_turn_finishes_without_a_prompt_or_handshake() {
+        let finish = json!({"type": "result", "status": "finished"});
+        with_test_cursor_sdk_module(Path::new("cursor_sdk_sidecar.mjs"), || {
+            assert_adopted_turn_finishes(AgentClient::Cursor, &finish.to_string(), "");
+        });
     }
 }

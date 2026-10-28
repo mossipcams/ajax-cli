@@ -16,6 +16,7 @@ use super::rpc_handshake::{
     RpcModel,
 };
 use super::rpc_session::RpcSession;
+use super::session_client::ADOPTED_PROMPT_REQUEST_ID;
 
 const SIDECAR_SOURCE: &str = include_str!("../../../sidecar/claude_sdk_sidecar.mjs");
 
@@ -129,6 +130,20 @@ impl ClaudeSdkClient {
             core,
             state: Box::new(Mutex::new(state)),
         })
+    }
+
+    pub(crate) fn adopt(process: JsonlProcess, session_id: String) -> Self {
+        let session = RpcSession::adopt(map_sdk_message, process, session_id);
+        let core =
+            RpcClientCore::adopt(session, ADOPTED_PROMPT_REQUEST_ID, Some(claude_usage_hook));
+        ClaudeSdkClient {
+            core,
+            state: Box::new(Mutex::new(ClaudeState {
+                models: Vec::new(),
+                current_model: "default".to_string(),
+                current_effort: "medium".to_string(),
+            })),
+        }
     }
 
     pub(super) fn core(&self) -> &RpcClientCore {
@@ -279,5 +294,28 @@ impl ClaudeSdkClient {
 
     pub fn host_exited(&self) -> bool {
         self.core.host_exited()
+    }
+}
+
+#[cfg(test)]
+mod adopt_tests {
+    use std::path::Path;
+
+    use ajax_core::models::AgentClient;
+    use serde_json::json;
+
+    use super::super::claude_sdk_spawn::with_test_claude_sdk_module;
+    use super::super::session_client::assert_adopted_turn_finishes;
+
+    #[test]
+    fn adopted_claude_turn_finishes_without_a_prompt_or_handshake() {
+        let finish = json!({"type": "result", "subtype": "success", "is_error": false});
+        with_test_claude_sdk_module(Path::new("claude_sdk_sidecar.mjs"), || {
+            assert_adopted_turn_finishes(
+                AgentClient::Claude,
+                &finish.to_string(),
+                "get_context_usage",
+            );
+        });
     }
 }
