@@ -2,7 +2,7 @@ use super::protocol::{
     PendingElicitation, PendingPermission, SessionChrome, SessionEventEnvelope, SessionSnapshot,
 };
 use super::transcript::TranscriptLog;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::SessionServerEvent;
 
@@ -196,31 +196,26 @@ fn compact_superseded_messages(events: Vec<SessionEventEnvelope>) -> Vec<Session
 }
 
 pub(crate) fn pending_permission(log: &TranscriptLog) -> Option<PendingPermission> {
-    let mut open: Option<PendingPermission> = None;
-    for event in &log.events {
-        match event {
-            SessionServerEvent::PermissionRequest {
-                request_id,
-                title,
-                detail,
-            } => {
-                open = Some(PendingPermission {
-                    request_id: request_id.clone(),
-                    title: title.clone(),
-                    detail: detail.clone(),
-                });
-            }
-            SessionServerEvent::PermissionResolved { request_id, .. }
-                if open
-                    .as_ref()
-                    .is_some_and(|pending| pending.request_id == *request_id) =>
-            {
-                open = None;
-            }
-            _ => {}
-        }
-    }
-    open
+    let resolved: HashSet<&str> = log
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            SessionServerEvent::PermissionResolved { request_id, .. } => Some(request_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    log.events.iter().rev().find_map(|event| match event {
+        SessionServerEvent::PermissionRequest {
+            request_id,
+            title,
+            detail,
+        } if !resolved.contains(request_id.as_str()) => Some(PendingPermission {
+            request_id: request_id.clone(),
+            title: title.clone(),
+            detail: detail.clone(),
+        }),
+        _ => None,
+    })
 }
 
 pub(crate) fn pending_elicitation(log: &TranscriptLog) -> Option<PendingElicitation> {

@@ -490,6 +490,72 @@ fn permission_decision_after_cursor_survives_adoption_rollback() {
 }
 
 #[test]
+fn kept_permission_resolution_leaves_no_pending_permission_after_adoption() {
+    let scratch = scratch("adopt-perm-pending");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_session(&scratch, &shim_child);
+    web_session_store::try_append_events(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        &[
+            SessionServerEvent::PermissionRequest {
+                request_id: "perm-1".to_owned(),
+                title: Some("Run?".to_owned()),
+                detail: None,
+            },
+            SessionServerEvent::PermissionResolved {
+                request_id: "perm-1".to_owned(),
+                approved: true,
+            },
+        ],
+    )
+    .expect("commit permission request and decision after cursor");
+    scratch.persist_dispatching();
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    acquire_codex(&directory, &scratch);
+    pump_until_turn_end(&directory, &scratch.handle);
+
+    assert_eq!(
+        scratch.transcript_count(|event| matches!(
+            event,
+            SessionServerEvent::PermissionResolved { request_id, .. } if request_id == "perm-1"
+        )),
+        1,
+        "rollback must keep the user's permission decision"
+    );
+    assert_eq!(
+        scratch.transcript_count(|event| matches!(
+            event,
+            SessionServerEvent::PermissionRequest { .. }
+        )),
+        0,
+        "the request after the cursor must not survive the rollback"
+    );
+    let attach = directory
+        .runtime_handle()
+        .block_on(
+            directory
+                .inner()
+                .attach_snapshot(&scratch.handle, "auto".to_string(), None),
+        );
+    assert!(
+        attach.snapshot.pending_permission.is_none(),
+        "a resolved request must not be reported as pending"
+    );
+
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
 fn adoption_failure_after_attach_leaves_transcript_untouched() {
     let scratch = scratch("adopt-after-attach");
     let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();

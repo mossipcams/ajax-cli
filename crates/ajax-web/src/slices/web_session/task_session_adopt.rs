@@ -139,18 +139,15 @@ fn roll_back_transcript(
     cursor: u64,
     kept: &[SessionServerEvent],
 ) -> Result<(), SessionError> {
-    let store = state.storage.registry_store();
-    web_session_store::try_truncate_events_after(&store, &state.qualified_handle, cursor).map_err(
-        |error| SessionError::persist(format!("transcript could not be rolled back: {error}")),
-    )?;
-    web_session_store::try_append_events(
-        &store,
+    web_session_store::try_replace_events_after(
+        &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         agent_client_name(state.agent),
+        cursor,
         kept,
     )
-    .map_err(|error| SessionError::persist(format!("user events could not be restored: {error}")))
+    .map_err(|error| SessionError::persist(format!("transcript could not be rolled back: {error}")))
 }
 
 fn outlives_rollback(event: &SessionServerEvent) -> bool {
