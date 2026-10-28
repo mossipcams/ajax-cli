@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import LiveHead from "./LiveHead";
 import { buildHeadView, headState, headTone, isTaskLevelAttention } from "./headView";
 import { initialHeadViewForTests } from "./headView.testHelpers";
@@ -204,6 +204,22 @@ describe("LiveHead context usage", () => {
   it("warns when context pressure is at or above 90%", () => {
     mountHead({ state: "idle", usage: { used: 92, size: 100 } });
     expect(screen.getByTestId("session-usage")).toHaveClass("is-tight");
+  });
+});
+
+describe("LiveHead stop control", () => {
+  it("cancels with an explicit keepQueue true, not the click event", () => {
+    const onStop = vi.fn();
+    render(
+      <LiveHead
+        view={initialHeadViewForTests({ state: "working", tone: "running", hasActivity: true })}
+        permission={null}
+        onStop={onStop}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("session-cancel"));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onStop).toHaveBeenCalledWith(true);
   });
 });
 
