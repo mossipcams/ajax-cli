@@ -655,15 +655,22 @@ whole transcript inside `session/load` before responding.
   `stop_pid_file`, `stop_launchd_job`); `ajax web service stop`, `uninstall`
   and `install` boot out the job. The launchd job is installed with
   `AbandonProcessGroup` (`crates/ajax-cli/src/web_service/mod.rs`), so launchd
-  does not signal the web's process group. No restart path signals a shim, and
-  shims keep running the previous binary until their harness ends.
+  does not signal the web's process group. The stop paths above never signal a
+  shim, and shims keep running the previous binary until their harness ends.
+  The next web host's startup orphan sweep (`orphan_sweep.rs`, `sweep_adopting`)
+  is the exception: for each previous-boot run whose shim is live and not
+  adoptable, it sends TERM to the shim's process group and KILLs it after a
+  grace period. An idle shim (no dispatching prompt with recorded offsets) is
+  therefore stopped at startup; the next prompt respawns the harness and resumes
+  the stored session. Only a task with an in-flight turn is adopted.
 - On acquire, and in headless startup, a task is adoptable when its prompt
   ledger has a **dispatching** prompt with a recorded shim offset and transcript
   cursor, its stored ACP session id matches the harness, and its shim socket
   accepts a connection. Adoption then:
-  1. rolls the transcript back to the dispatch cursor, dropping events after it;
-  2. attaches to the shim with `REPLAY <shim offset>`, so the in-flight turn is
-     replayed read-only from the shim log into the transcript;
+  1. attaches to the shim with `REPLAY <shim offset>`, so the in-flight turn is
+     replayed read-only from the shim log, and builds the adopted client; an
+     attach failure here leaves the committed transcript untouched;
+  2. rolls the transcript back to the dispatch cursor, dropping events after it;
   3. installs the adopted client on the slot with the stored session id, without
      `session/new`, `session/resume` or `session/load`;
   4. releases it when the replayed turn finishes: the client sends `SHUTDOWN`,
