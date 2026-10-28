@@ -12,6 +12,7 @@ use ajax_core::{
             execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
             DropTaskCompletion,
         },
+        merge_pr::{execute_merge_pr_operation, plan_merge_pr_operation},
         operator_dispatch::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
@@ -96,6 +97,9 @@ fn operate_inner<R: Registry>(
     runner: &mut impl CommandRunner,
     request: OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
+    if request.action == remediation::MERGE_PR {
+        return execute_merge_pr(context, runner, &request.task_handle, request.confirmed);
+    }
     if remediation::is_remediation_action(&request.action) {
         return run_remediation(context, runner, &request.task_handle, &request.action);
     }
@@ -479,6 +483,28 @@ fn refresh_git_evidence_for_task<R: Registry>(
         Some((_, error)) => Err(OperateError::Command(error, changed)),
         None => Ok(()),
     }
+}
+
+fn execute_merge_pr<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+    confirmed: bool,
+) -> Result<OperateOutcome, OperateError> {
+    let plan = plan_merge_pr_operation(context, task_handle)
+        .map_err(|error| OperateError::Command(error, false))?;
+    if !confirmed {
+        return Err(OperateError::Command(
+            CommandError::ConfirmationRequired,
+            false,
+        ));
+    }
+    execute_merge_pr_operation(context, task_handle, &plan, runner)
+        .map_err(|error| OperateError::Command(error, false))?;
+    Ok(OperateOutcome {
+        state_changed: true,
+        output: format!("merged PR #{} for {task_handle}", plan.pull_request.number),
+    })
 }
 
 fn execute_drop<R: Registry>(
