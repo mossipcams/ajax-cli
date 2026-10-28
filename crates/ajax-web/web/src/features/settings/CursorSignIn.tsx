@@ -1,21 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "@/shared/lib/api";
-import type { CursorAuthStatus, CursorLoginPhase } from "@/shared/lib/api";
+import type { CursorLoginPhase } from "@/shared/lib/api";
 import { Button } from "@/shared/ui/button";
 
 const CURSOR_LOGIN_POLL_MS = 2000;
 
-type StatusState =
-  | { kind: "loading" }
-  | { kind: "error" }
-  | { kind: "ready"; status: CursorAuthStatus };
-
 interface Props {
+  signedIn?: boolean;
   onSignedIn?: () => void;
 }
 
-export default function CursorSignIn({ onSignedIn }: Props) {
-  const [status, setStatus] = useState<StatusState>({ kind: "loading" });
+export default function CursorSignIn({ signedIn, onSignedIn }: Props) {
   const [phase, setPhase] = useState<CursorLoginPhase>({ phase: "idle" });
   const [starting, setStarting] = useState(false);
   const [active, setActive] = useState(false);
@@ -24,14 +19,6 @@ export default function CursorSignIn({ onSignedIn }: Props) {
   useEffect(() => {
     mountedRef.current = true;
     let cancelled = false;
-
-    api.fetchCursorAuthStatus()
-      .then((value) => {
-        if (mountedRef.current && !cancelled) setStatus({ kind: "ready", status: value });
-      })
-      .catch(() => {
-        if (mountedRef.current && !cancelled) setStatus({ kind: "error" });
-      });
 
     api.fetchCursorLoginPhase()
       .then((value) => {
@@ -62,14 +49,7 @@ export default function CursorSignIn({ onSignedIn }: Props) {
       setPhase(next);
       if (next.phase === "succeeded") {
         setActive(false);
-        setStatus({ kind: "loading" });
-        try {
-          const refreshed = await api.fetchCursorAuthStatus();
-          if (mountedRef.current) setStatus({ kind: "ready", status: refreshed });
-        } catch {
-          if (mountedRef.current) setStatus({ kind: "error" });
-        }
-        if (mountedRef.current) onSignedIn?.();
+        onSignedIn?.();
       } else if (next.phase === "failed") {
         setActive(false);
       }
@@ -107,12 +87,11 @@ export default function CursorSignIn({ onSignedIn }: Props) {
   }
 
   const disabled = starting || active;
-  const keyPresent = status.kind === "ready" && status.status.present;
 
   return (
     <>
       <Button type="button" data-testid="cursor-sign-in" disabled={disabled} onClick={() => void startSignIn()}>
-        {keyPresent ? "Sign in again" : "Sign in with Cursor"}
+        {signedIn === true ? "Sign in again" : "Sign in with Cursor"}
       </Button>
       {phase.phase === "waiting" ? (
         phase.url.startsWith("https://") ? (

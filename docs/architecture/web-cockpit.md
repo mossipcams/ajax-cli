@@ -258,7 +258,8 @@ on the refetch that follows it.
 - Claude: `claude auth status --json`; `signedIn` is its `loggedIn` field.
 - Codex: `codex login status`; `signedIn` is the exit status.
 - Pi: `pi auth check --provider <provider> --json --no-refresh`, where the provider is
-  the prefix of the default Pi model; `signedIn` is `status == "ready"`.
+  the prefix of the default Pi model; `signedIn` is `status == "ready"`, and a ready
+  probe's `detail` names the provider it checked (`Checked default provider <provider>`).
 - Cursor: the existing `CursorLogin` status; `signedIn` requires a present, valid key,
   and a key Cursor rejects reports `Cursor rejected the saved key`.
 

@@ -5,10 +5,6 @@ import CursorSignIn from "./CursorSignIn";
 
 const AUTH_URL = "https://cursor.com/sign-in?session=abc123";
 
-function notSignedInStatus() {
-  return { present: false, valid: null, email: null, expiresAtMs: null, error: null };
-}
-
 describe("CursorSignIn", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -19,23 +15,23 @@ describe("CursorSignIn", () => {
     vi.restoreAllMocks();
   });
 
-  it("labels the button Sign in again when a key is present", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue({
-      present: true,
-      valid: false,
-      email: null,
-      expiresAtMs: null,
-      error: "rejected",
-    });
+  it("labels the button Sign in again when signedIn is true", async () => {
     vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
 
-    render(<CursorSignIn />);
+    render(<CursorSignIn signedIn />);
 
     expect(await screen.findByRole("button", { name: "Sign in again" })).toBeInTheDocument();
   });
 
-  it("labels the button Sign in with Cursor when no key is present", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
+  it("labels the button Sign in with Cursor when signedIn is false", async () => {
+    vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
+
+    render(<CursorSignIn signedIn={false} />);
+
+    expect(await screen.findByRole("button", { name: "Sign in with Cursor" })).toBeInTheDocument();
+  });
+
+  it("labels the button Sign in with Cursor when signedIn is unknown", async () => {
     vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
 
     render(<CursorSignIn />);
@@ -44,7 +40,6 @@ describe("CursorSignIn", () => {
   });
 
   it("polls to the waiting phase and shows the sign-in link with the button disabled", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     const phaseSpy = vi
       .spyOn(api, "fetchCursorLoginPhase")
       .mockResolvedValueOnce({ phase: "idle" })
@@ -68,16 +63,8 @@ describe("CursorSignIn", () => {
     expect(screen.getByTestId("cursor-sign-in")).toBeDisabled();
   });
 
-  it("stops polling and re-fetches status after a successful sign-in", async () => {
-    const statusSpy = vi.spyOn(api, "fetchCursorAuthStatus")
-      .mockResolvedValueOnce(notSignedInStatus())
-      .mockResolvedValue({
-        present: true,
-        valid: true,
-        email: "op@example.com",
-        expiresAtMs: null,
-        error: null,
-      });
+  it("stops polling after a successful sign-in without re-fetching status", async () => {
+    const statusSpy = vi.spyOn(api, "fetchCursorAuthStatus");
     const phaseSpy = vi
       .spyOn(api, "fetchCursorLoginPhase")
       .mockResolvedValueOnce({ phase: "idle" })
@@ -99,7 +86,7 @@ describe("CursorSignIn", () => {
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(statusSpy).toHaveBeenCalledTimes(2);
+    expect(statusSpy).not.toHaveBeenCalled();
     const callsAfterSuccess = phaseSpy.mock.calls.length;
     expect(callsAfterSuccess).toBe(4);
 
@@ -108,7 +95,6 @@ describe("CursorSignIn", () => {
   });
 
   it("notifies the parent after a successful sign-in", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     vi.spyOn(api, "fetchCursorLoginPhase")
       .mockResolvedValueOnce({ phase: "idle" })
       .mockResolvedValueOnce({ phase: "waiting", url: AUTH_URL })
@@ -128,7 +114,6 @@ describe("CursorSignIn", () => {
   });
 
   it("cancels the sign-in and shows the failed message", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "waiting", url: AUTH_URL });
     const startSpy = vi.spyOn(api, "startCursorLogin").mockResolvedValue({
       phase: "waiting",
@@ -151,7 +136,6 @@ describe("CursorSignIn", () => {
   });
 
   it("clears polling on unmount", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     const phaseSpy = vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({
       phase: "waiting",
       url: AUTH_URL,
@@ -175,7 +159,6 @@ describe("CursorSignIn", () => {
   });
 
   it("re-enables the button and shows a failure when starting sign-in fails", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     const phaseSpy = vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
     vi.spyOn(api, "startCursorLogin").mockRejectedValue(new Error("network down"));
 
@@ -191,7 +174,6 @@ describe("CursorSignIn", () => {
   });
 
   it("keeps the button enabled and does not poll when start returns failed", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     const phaseSpy = vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
     vi.spyOn(api, "startCursorLogin").mockResolvedValue({ phase: "failed", message: "node missing" });
 
@@ -206,7 +188,6 @@ describe("CursorSignIn", () => {
     expect(phaseSpy).toHaveBeenCalledTimes(callsAfterStart);
   });
   it("refuses to render a non-https sign-in link", async () => {
-    vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInStatus());
     vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
     vi.spyOn(api, "startCursorLogin").mockResolvedValue({ phase: "waiting", url: "javascript:alert(1)" });
 

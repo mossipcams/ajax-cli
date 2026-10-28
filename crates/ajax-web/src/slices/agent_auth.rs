@@ -17,6 +17,7 @@ use std::{
 const WORKER_FAILED: &str = "agent auth worker failed";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const PROBE_READ_GRACE: Duration = Duration::from_millis(500);
 const UNDETERMINED: &str = "Could not determine sign-in status";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,7 +50,7 @@ impl Harness {
             Self::Claude => "Run `claude auth login` on the host",
             Self::Codex => "Run `codex login` on the host",
             Self::Cursor => "Sign in to Cursor in Settings",
-            Self::Pi => "Run `pi auth login` on the host",
+            Self::Pi => "Run `pi` on the host and sign in with /login",
         }
     }
 }
@@ -162,7 +163,7 @@ fn cli_status(
     signed_in: fn(&ProbeOutput) -> Option<bool>,
 ) -> HarnessAuthStatus {
     let installed = command.is_some();
-    let output = command.and_then(run_probe);
+    let output = command.and_then(|command| run_probe(command, PROBE_TIMEOUT));
     let signed_in = output.as_ref().and_then(signed_in);
     HarnessAuthStatus {
         harness: harness.name(),
@@ -192,13 +193,18 @@ fn detail(harness: Harness, installed: bool, signed_in: Option<bool>) -> Option<
         return Some(format!("{} is not installed on the host", harness.name()));
     }
     match signed_in {
+        Some(true) if harness == Harness::Pi => Some(format!(
+            "Checked default provider {}",
+            pi_default_provider()
+        )),
         Some(true) => None,
         Some(false) => Some(harness.sign_in_hint().to_string()),
         None => Some(UNDETERMINED.to_string()),
     }
 }
 
-fn run_probe(mut command: Command) -> Option<ProbeOutput> {
+fn run_probe(mut command: Command, timeout: Duration) -> Option<ProbeOutput> {
+    let deadline = Instant::now() + timeout;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -206,12 +212,16 @@ fn run_probe(mut command: Command) -> Option<ProbeOutput> {
         .spawn()
         .ok()?;
     let mut stdout = child.stdout.take()?;
-    let reader = thread::spawn(move || {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
         let mut text = String::new();
-        stdout.read_to_string(&mut text).map(|_| text)
+        let _ = sender.send(stdout.read_to_string(&mut text).map(|_| text));
     });
-    let status = wait_with_timeout(&mut child, PROBE_TIMEOUT)?;
-    let stdout = reader.join().ok()?.ok()?;
+    let status = wait_with_timeout(&mut child, timeout)?;
+    let read_timeout = deadline
+        .saturating_duration_since(Instant::now())
+        .max(PROBE_READ_GRACE);
+    let stdout = receiver.recv_timeout(read_timeout).ok()?.ok()?;
     Some(ProbeOutput {
         success: status.success(),
         stdout,
@@ -374,9 +384,29 @@ mod tests {
         );
         assert_eq!(
             detail(Harness::Pi, true, Some(false)).as_deref(),
-            Some("Run `pi auth login` on the host")
+            Some("Run `pi` on the host and sign in with /login")
         );
         assert_eq!(detail(Harness::Claude, true, Some(true)), None);
+    }
+
+    #[test]
+    fn pi_signed_in_detail_names_the_checked_provider() {
+        assert_eq!(
+            detail(Harness::Pi, true, Some(true)),
+            Some(format!(
+                "Checked default provider {}",
+                pi_default_provider()
+            ))
+        );
+    }
+
+    #[test]
+    fn probe_does_not_wait_for_a_grandchild_holding_stdout_open() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 3 & echo hi"]);
+        let started = Instant::now();
+        let _ = run_probe(command, Duration::from_secs(1));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

@@ -263,6 +263,23 @@ describe("SettingsView", () => {
     expect(summary).not.toHaveTextContent("browser_mode");
   });
 
+  it("keeps the full report JSON in a collapsed details element after copying", async () => {
+    vi.spyOn(api, "fetchVersion").mockResolvedValue({
+      version: "1.0.0",
+      test_in_stable: false,
+    });
+    vi.spyOn(diagnostics, "buildDiagnosticsReport").mockResolvedValue(diagnosticsReport());
+    vi.spyOn(clipboard, "copyText").mockResolvedValue(false);
+    render(<SettingsView />);
+    expect(screen.queryByTestId("diagnostics-report")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics report" }));
+    const details = await vi.waitFor(() => screen.getByTestId("diagnostics-report"));
+    expect(details.tagName).toBe("DETAILS");
+    expect(details).not.toHaveAttribute("open");
+    expect(within(details).getByText("Show report")).toBeInTheDocument();
+    expect(details).toHaveTextContent('"checks"');
+  });
+
   it("renders Diagnostics debug info", async () => {
     vi.spyOn(api, "fetchVersion").mockResolvedValue({
       version: "1.0.0",

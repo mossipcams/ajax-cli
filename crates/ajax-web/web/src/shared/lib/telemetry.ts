@@ -49,10 +49,6 @@ let initialized = false;
 
 export type { TelemetryProps };
 
-export function isTelemetryInitialized(): boolean {
-  return initialized;
-}
-
 export function resetTelemetryForTests(): void {
   initialized = false;
   navigationStartedAt = null;
@@ -65,16 +61,6 @@ export { isStandaloneDisplay, readAppVersion };
 
 export function telemetryDistinctId(): string {
   return `ajax:${window.location.hostname}`;
-}
-
-export function getTelemetryStatus(): {
-  initialized: boolean;
-  standalone: boolean;
-} {
-  return {
-    initialized,
-    standalone: isStandaloneDisplay(),
-  };
 }
 
 export function initTelemetry(): void {
@@ -340,14 +326,4 @@ export type PwaResumeTelemetryProps = {
 
 export function capturePwaResume(props: PwaResumeTelemetryProps): void {
   track("ajax_pwa_resume", props);
-}
-
-export function captureTelemetryDiagnostic(): void {
-  const status = getTelemetryStatus();
-  const appVersion = readAppVersion();
-  track("ajax_telemetry_diagnostic", {
-    initialized: status.initialized,
-    standalone: status.standalone,
-    ...(appVersion ? { app_version: appVersion } : {}),
-  });
 }

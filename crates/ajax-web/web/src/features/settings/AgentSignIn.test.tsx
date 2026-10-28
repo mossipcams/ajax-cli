@@ -3,16 +3,11 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import * as api from "@/shared/lib/api";
 import AgentSignIn from "./AgentSignIn";
 
-function notSignedInCursor() {
-  return { present: false, valid: null, email: null, expiresAtMs: null, error: null };
-}
-
 function mockAgents(harnesses: api.AgentAuthStatus[]) {
   return vi.spyOn(api, "fetchAgentAuthStatus").mockResolvedValue({ harnesses });
 }
 
 function mockCursor() {
-  vi.spyOn(api, "fetchCursorAuthStatus").mockResolvedValue(notSignedInCursor());
   vi.spyOn(api, "fetchCursorLoginPhase").mockResolvedValue({ phase: "idle" });
 }
 
@@ -117,6 +112,15 @@ describe("AgentSignIn", () => {
     expect(screen.getByText("Checking sign-in…")).toBeInTheDocument();
   });
 
+  it("keeps the Cursor sign-in button in the loading state", () => {
+    mockCursor();
+    vi.spyOn(api, "fetchAgentAuthStatus").mockReturnValue(new Promise(() => {}));
+
+    render(<AgentSignIn />);
+
+    expect(screen.getByRole("button", { name: "Sign in with Cursor" })).toBeInTheDocument();
+  });
+
   it("shows an error when the status check fails", async () => {
     mockCursor();
     vi.spyOn(api, "fetchAgentAuthStatus").mockRejectedValue(new Error("boom"));
@@ -124,6 +128,16 @@ describe("AgentSignIn", () => {
     render(<AgentSignIn />);
 
     expect(await screen.findByText("Could not check sign-in.")).toBeInTheDocument();
+  });
+
+  it("keeps the Cursor sign-in button in the error state", async () => {
+    mockCursor();
+    vi.spyOn(api, "fetchAgentAuthStatus").mockRejectedValue(new Error("boom"));
+
+    render(<AgentSignIn />);
+
+    await screen.findByText("Could not check sign-in.");
+    expect(screen.getByRole("button", { name: "Sign in with Cursor" })).toBeInTheDocument();
   });
 
   it("renders the Cursor sign-in controls once, outside the status list", async () => {

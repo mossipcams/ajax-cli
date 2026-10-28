@@ -44,6 +44,7 @@ export default function SettingsView({
   const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
   const [testingInStable, setTestingInStable] = useState(false);
   const [diagnosticChecks, setDiagnosticChecks] = useState<DiagnosticCheckSummary[] | null>(null);
+  const [diagnosticReportJson, setDiagnosticReportJson] = useState<string | null>(null);
   const [pushTestStatus, setPushTestStatus] = useState<string | null>(null);
   const [pushSubscriptionStatus, setPushSubscriptionStatus] =
     useState<PushSubscriptionStatus>("disabled");
@@ -138,8 +139,10 @@ export default function SettingsView({
     diagnosticsLatchRef.current = true;
     try {
       const report = await buildDiagnosticsReport(detailHandle);
+      const reportJson = JSON.stringify(report, null, 2);
       setDiagnosticChecks(summarizeDiagnosticChecks(report.checks));
-      const copied = await copyText(JSON.stringify(report, null, 2));
+      setDiagnosticReportJson(reportJson);
+      const copied = await copyText(reportJson);
       onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
     } finally {
       diagnosticsLatchRef.current = false;
@@ -298,6 +301,12 @@ export default function SettingsView({
               </div>
             ))}
           </dl>
+        ) : null}
+        {diagnosticReportJson ? (
+          <details data-testid="diagnostics-report">
+            <summary>Show report</summary>
+            <pre className="settings-status">{diagnosticReportJson}</pre>
+          </details>
         ) : null}
       </div>
     </section>
