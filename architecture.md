@@ -157,6 +157,13 @@ differ, chat is the default path and terminal-agent is the special case.
 - The live chat session is the authoritative substrate for chat turn state, with
   the same standing as Git and tmux. Registry rows for chat tasks are cached
   evidence for cold reads, not a second source of turn truth.
+- Chat harnesses run behind a per-session shim (`ajax-cli session-shim`,
+  detached with `setsid`, keyed by worktree). The shim owns the harness's stdio,
+  an outbound byte log, and one Unix socket that replays from an offset. A web
+  restart stops only the web process, so the shim and its in-flight turn survive;
+  the next web host adopts a live shim whose prompt is still dispatching and
+  interrupts it otherwise. See
+  [web-session-behavior.md](docs/architecture/web-session-behavior.md#session-shim-and-restart-adoption).
 
 Subsystem docs are rewritten as the phases that make this true land.
 
