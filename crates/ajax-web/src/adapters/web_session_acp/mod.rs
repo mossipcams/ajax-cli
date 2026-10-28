@@ -159,6 +159,7 @@ pub use client::{
 pub use cursor_login::{CursorCredentialStatus, CursorLogin, CursorLoginPhase};
 pub use cursor_sdk_client::CursorCatalogModel;
 pub(crate) use sdk_connection::CancelOutcome;
+pub(crate) use session_client::ADOPTED_PROMPT_REQUEST_ID;
 pub use session_client::{AcpEventSource, SessionClient, SessionConfigOutcome, SessionSpawnReport};
 
 #[cfg(test)]
