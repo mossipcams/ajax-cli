@@ -164,6 +164,22 @@ differ, chat is the default path and terminal-agent is the special case.
   the next web host adopts a live shim whose prompt is still dispatching and
   interrupts it otherwise. See
   [web-session-behavior.md](docs/architecture/web-session-behavior.md#session-shim-and-restart-adoption).
+- Chat status is partly live (Phase 3). The live `TaskSession` publishes the
+  activity it computed. Cockpit and task-detail reads overlay it on a clone of
+  the registry context via `apply_authoritative_observation_at`; the overlay is
+  never persisted and stays until the session's registry report is applied, so
+  it covers a pending or failed report. Push still reads the registry. The
+  registry snapshot write for chat activity, the deferred activity queue, and
+  the 1 s client convergence remain until Matt signs off on the test contracts
+  that pin them.
+- Chat verbs are remediation IDs, not `OperatorAction`s (Phase 4). Create PR is
+  a chat prompt through the chat queue and is offered when the task has no open
+  PR. Merge PR runs `gh pr merge <n> --squash` after confirmation and records the
+  PR as merged; the lifecycle follows on the next CI-monitor reconcile. Restart
+  agent detaches, acquires, and releases, resuming the stored session; a missing
+  worktree is an error, not re-provisioned. Fix CI and Resolve conflicts are
+  offered only when flagged, and Drop is unchanged. Stop is the chat head
+  control. The frozen TUI drawer shows only Fix CI and Resolve conflicts.
 
 Subsystem docs are rewritten as the phases that make this true land.
 

@@ -157,6 +157,15 @@ explanation is shown as the detail line under it only when the stream is idle (f
 activity` state applies only to a busy stream, so a server-running head with an idle stream
 never shows it.
 
+Cockpit and task-detail reads overlay the live chat status. While a chat task's
+`TaskSession` has published activity whose registry report is still pending or
+failed, the read applies that activity to a clone of the registry context with
+`apply_authoritative_observation_at`; the overlay is never persisted and clears
+when the report is applied. Push still reads the registry. The registry
+snapshot write for chat activity, the deferred activity queue, and the 1 s
+convergence above remain until Matt signs off on the test contracts that pin
+them.
+
 When that mode is enabled, agent conversation runs over ACP stdio via the
 `ajax-web` ACP adapter, not PTY paste. Model catalog parsing lives in the
 `session_models` slice. Authenticated `GET /api/tasks/{handle}/session` WebSocket
@@ -1408,6 +1417,16 @@ operations, and returns the refreshed Cockpit projection. Unsupported
 capabilities return typed adapter capability outcomes rather than duplicated
 lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
 when the operator needs full interactive attach.
+
+Chat tasks offer chat verbs as remediation IDs, not `OperatorAction`s. Create PR
+sends a chat prompt through the chat queue and is offered when the task has no
+open PR. Merge PR requires confirmation, runs `gh pr merge <n> --squash` through
+the core GitHub adapter, and records the PR as merged; the lifecycle follows on
+the next CI-monitor reconcile. Restart agent detaches the session, acquires it
+again, and releases it, resuming the stored session; a missing worktree is an
+error and is not re-provisioned. Fix CI and Resolve conflicts are offered only
+when flagged. Stop is the chat head control (`LiveHead`), not a remediation. The
+frozen TUI drawer shows only Fix CI and Resolve conflicts.
 
 Opening a task in the browser is the resume gesture: entering a task workspace
 route dispatches the `resume` operation (acknowledging attention through core,
