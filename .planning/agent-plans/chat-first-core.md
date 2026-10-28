@@ -85,26 +85,28 @@ Each phase ships independently under the 1500-line PR gate via model-router.
 
 Defects need a GitHub issue + regression test (`docs/defect-process.md`).
 
-- [ ] Remove the duplicate `spawn_push_tick` (`runtime/mod.rs:166`).
-- [ ] Fix CI / Resolve conflicts on chat tasks go through the `TaskSession`
+- [x] Remove the duplicate `spawn_push_tick` (`runtime/mod.rs:166`).
+- [x] Fix CI / Resolve conflicts on chat tasks go through the `TaskSession`
       FIFO (the automatic-CI path), not tmux send-keys.
-- [ ] Ship is not offered when the task has an open PR.
+- [x] Ship is not offered when the task has an open PR.
 - [ ] Push on "Response ready" when Ajax web is not open. Browser reports
       `visibilitychange`; server "open" = a visible page within the last poll
       interval (replaces the 90 s TTL).
-- [ ] Task start / harness switch run external effects outside `control_lane`;
+- [x] Task start / harness switch run external effects outside `control_lane`;
       take the lane only for the registry apply.
-- [ ] Chat attach retries once on revision mismatch instead of returning
+- [x] Chat attach retries once on revision mismatch instead of returning
       `NotOrchestrationChat`.
 - [ ] Chat-run deletion moves out of `save_registry` into Drop only.
 
 ### Phase 1: contract
 
-- [ ] `PRODUCT.md`: Chat is the work surface; Terminal is a tab.
-- [ ] `architecture.md` + `AGENTS.md`: a "Chat-first" section stating the
+- [x] `PRODUCT.md`: Chat is the work surface; Terminal is a tab.
+- [x] `architecture.md` + `AGENTS.md`: a "Chat-first" section stating the
       design principle, the frozen status of terminal-agent/TUI/tmux verbs, and
       that the live chat session is the authoritative substrate for turn state
       (same standing as Git and tmux). Detailed doc rewrites land with Phases 2–4.
+- [x] `Task::kind()` accessor landed (`8cee4c3c`, `feat(core)`); call sites
+      convert when touched.
 - [ ] Add `Task::kind() -> TaskKind { Chat, TerminalAgent }` as a typed accessor
       over the existing metadata; no migration. New code uses it; existing call
       sites convert when touched.
@@ -194,7 +196,11 @@ applied by Matt (nono blocks `launchctl bootstrap`).
 
 ## Deviations
 
-None yet.
+- Phase 0.4: presence signal landed (#1491); push on Response ready is pending Matt's sign-off because `crates/ajax-core/src/attention/tests.rs::response_ready_waiting_does_not_notify` asserts the opposite.
+- Phase 0.5: harness switch keeps its control-lane hold (`swap_task_agent` is registry-only); task start checkpoints apply only the new task delta under the lane.
+- Phase 0.6: second consecutive revision race still returns `NotOrchestrationChat` (no dedicated error variant).
+- Phase 0.3: direct `ajax ship` CLI on a task with an open PR still merges locally; only the offered actions changed.
+- Phase 0.7: pending Matt's sign-off because `crates/ajax-core/src/registry/sqlite/tests/execution_drop.rs` simulates CLI drop via snapshot omission.
 
 ## Validation results
 
