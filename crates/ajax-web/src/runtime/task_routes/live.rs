@@ -3,8 +3,12 @@ use crate::runtime::bridge::{
     MobileActionRequest, RuntimeBridge,
 };
 use crate::runtime::state::{operator_input_sink, GateRejection, WebAppState};
-use crate::slices::operate::{format_operate_error, operate_error_code};
-use crate::slices::web_session::{deliver_remediation, PersistSessionModel, TaskSessionDirectory};
+use crate::slices::operate::{
+    format_operate_error, operate_error_code, OperateError, OperateOutcome,
+};
+use crate::slices::web_session::{
+    deliver_remediation, restart_session, PersistSessionModel, RestartError, TaskSessionDirectory,
+};
 use crate::{
     adapters::{
         http::{
@@ -16,8 +20,8 @@ use crate::{
     WebError,
 };
 use ajax_core::{
-    adapters::CommandRunner,
-    commands::CommandContext,
+    adapters::{CommandRunError, CommandRunner},
+    commands::{CommandContext, CommandError},
     registry::{InMemoryRegistry, Registry as _},
     remediation,
 };
@@ -576,12 +580,36 @@ fn is_chat_remediation(
     task_handle: &str,
     action: &str,
 ) -> bool {
-    remediation::is_remediation_action(action)
+    (remediation::is_remediation_action(action) || action == remediation::RESTART_AGENT)
         && context
             .registry
             .list_tasks()
             .into_iter()
             .any(|task| task.qualified_handle() == task_handle && task.skip_interactive_agent())
+}
+
+async fn restart_chat_agent(
+    directory: &Arc<TaskSessionDirectory>,
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+) -> Result<OperateOutcome, OperateError> {
+    match restart_session(directory, context, task_handle).await {
+        Ok(()) => Ok(OperateOutcome {
+            state_changed: false,
+            output: format!("{}: chat agent restarted", remediation::RESTART_AGENT),
+        }),
+        Err(RestartError::TaskNotFound) => Err(OperateError::Command(
+            CommandError::TaskNotFound(task_handle.to_string()),
+            false,
+        )),
+        Err(RestartError::WorktreeMissing) => {
+            Err(OperateError::UnsupportedCapability("worktree missing"))
+        }
+        Err(RestartError::Spawn(message)) => Err(OperateError::Command(
+            CommandError::CommandRun(CommandRunError::SpawnFailed(message)),
+            false,
+        )),
+    }
 }
 
 /// Copies the registry for a chat remediation under a brief shared-state lock, so
@@ -601,14 +629,18 @@ async fn chat_remediation_response(
     task_handle: &str,
     remediation_id: &str,
 ) -> Result<crate::adapters::http::Response, WebError> {
-    let outcome = deliver_remediation(
-        directory,
-        context,
-        task_handle,
-        remediation_id,
-        |skill_name| resolve_skill_path(skill_name).map(|path| path.display().to_string()),
-    )
-    .await;
+    let outcome = if remediation_id == remediation::RESTART_AGENT {
+        restart_chat_agent(directory, context, task_handle).await
+    } else {
+        deliver_remediation(
+            directory,
+            context,
+            task_handle,
+            remediation_id,
+            |skill_name| resolve_skill_path(skill_name).map(|path| path.display().to_string()),
+        )
+        .await
+    };
     match outcome {
         Ok(outcome) => operation_success_response(outcome, context),
         Err(error) => operation_error_response(

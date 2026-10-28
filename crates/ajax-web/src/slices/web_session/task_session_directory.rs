@@ -477,7 +477,6 @@ impl TaskSessionDirectory {
         }
     }
 
-    #[cfg(test)]
     pub async fn detach_session(&self, handle: &str) {
         let removed = {
             let mut sessions = self.sessions.lock().unwrap();

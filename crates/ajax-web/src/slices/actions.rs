@@ -92,6 +92,7 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
 pub fn supported_browser_action(action: &str) -> bool {
     if ajax_core::remediation::is_remediation_action(action)
         || action == ajax_core::remediation::MERGE_PR
+        || action == ajax_core::remediation::RESTART_AGENT
     {
         return true;
     }
