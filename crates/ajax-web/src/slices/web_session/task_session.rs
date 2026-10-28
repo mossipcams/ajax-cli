@@ -17,6 +17,7 @@ use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
+use super::task_session_adopt::release_finished_adopted_client;
 use super::task_session_exit::{
     self, cancel, is_acp_exit_error, reconcile_unexpected_child_exit,
     retry_pending_exit_interruption, settle_running_activity_on_end, submit_prompt,
@@ -336,6 +337,7 @@ impl TaskSessionState {
                 self.acp.acp_alive = false;
             }
         }
+        release_finished_adopted_client(self);
         try_dispatch_next_if_idle(self);
     }
 
