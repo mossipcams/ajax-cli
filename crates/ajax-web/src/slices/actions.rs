@@ -107,7 +107,7 @@ mod tests {
         },
         output::TaskCard,
         registry::InMemoryRegistry,
-        remediation::FIX_CI,
+        remediation::{CREATE_PR, FIX_CI},
     };
 
     #[test]
@@ -181,6 +181,17 @@ mod tests {
 
         assert_eq!(fix_ci.label, "Fix CI");
         assert!(supported_browser_action(FIX_CI));
+    }
+
+    #[test]
+    fn create_pr_remediation_is_a_supported_browser_action() {
+        let mut task = crate::test_support::fix_login_task();
+        task.set_skip_interactive_agent(true);
+        let remediations = ajax_core::remediation::remediations_for_task(&task);
+        assert!(remediations.iter().any(|option| option.id == CREATE_PR));
+
+        assert!(supported_browser_action(CREATE_PR));
+        assert!(!supported_browser_action("sync"));
     }
 
     #[test]
