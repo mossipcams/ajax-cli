@@ -9,6 +9,7 @@ use crate::{
 pub const FIX_CI: &str = "fix-ci";
 pub const RESOLVE_MERGE_CONFLICTS: &str = "resolve-merge-conflicts";
 pub const CREATE_PR: &str = "create-pr";
+pub const MERGE_PR: &str = "merge-pr";
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RemediationOption {
@@ -48,6 +49,13 @@ pub fn remediations_for_task(task: &Task) -> Vec<RemediationOption> {
             skill_name: String::new(),
         });
     }
+    if offers_merge_pr(task) {
+        options.push(RemediationOption {
+            id: MERGE_PR.to_string(),
+            label: "Merge PR".to_string(),
+            skill_name: String::new(),
+        });
+    }
     options
 }
 
@@ -56,8 +64,15 @@ pub fn is_remediation_action(action: &str) -> bool {
 }
 
 fn offers_create_pr(task: &Task) -> bool {
+    is_open_chat_task(task) && !has_open_pull_request(task)
+}
+
+fn offers_merge_pr(task: &Task) -> bool {
+    is_open_chat_task(task) && has_open_pull_request(task)
+}
+
+fn is_open_chat_task(task: &Task) -> bool {
     task.kind() == TaskKind::Chat
-        && !has_open_pull_request(task)
         && !matches!(
             task.lifecycle_status,
             LifecycleStatus::Merged | LifecycleStatus::Removed
@@ -224,7 +239,7 @@ fn format_remediation_output(output: &CommandOutput, remediation_id: &str) -> St
 mod tests {
     use super::{
         chat_remediation_brief, execute_remediation, format_brief, remediations_for_task,
-        CREATE_PR, FIX_CI, RESOLVE_MERGE_CONFLICTS,
+        CREATE_PR, FIX_CI, MERGE_PR, RESOLVE_MERGE_CONFLICTS,
     };
     use crate::{
         adapters::RecordingCommandRunner,
@@ -323,6 +338,42 @@ mod tests {
         assert!(remediations_for_task(&task)
             .iter()
             .all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn chat_task_with_open_pr_offers_merge_pr_regardless_of_ci() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        task.add_side_flag(SideFlag::TestsFailed);
+        remember_pull_requests(
+            &mut task,
+            &[PullRequestRef {
+                number: 7,
+                title: "feat(web): chat".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Open,
+                head_ref: "ajax/chat".to_string(),
+                head_sha: None,
+            }],
+        );
+
+        let options = remediations_for_task(&task);
+
+        assert!(options.iter().any(|option| option.id == MERGE_PR
+            && option.label == "Merge PR"
+            && option.skill_name.is_empty()));
+        assert!(options.iter().all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn chat_task_without_open_pr_does_not_offer_merge_pr() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != MERGE_PR));
     }
 
     #[test]
