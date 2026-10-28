@@ -10,9 +10,9 @@ use ajax_core::registry::SqliteRegistryStore;
 use serde_json::{json, Value};
 
 use super::process_identity::start_token;
-use super::task_session_adopt::REFUSED_ATTACH_FOR_TEST;
+use super::task_session_adopt::{adoptable_handles, REFUSED_ATTACH_FOR_TEST};
 use super::test_support::{fake_acp_fixture, BlockingSessionDirectory};
-use super::SessionServerEvent;
+use super::{run_headless_dispatch, HeadlessTarget, SessionServerEvent};
 use crate::adapters::session_shim::shim_paths;
 use crate::adapters::session_shim::spawn::{probe_live, spawn_test_shim};
 use crate::adapters::web_session_acp::with_test_acp_program;
@@ -574,5 +574,136 @@ fn adoption_attach_failure_keeps_transcript() {
 
     drop(directory);
     drop(shim);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+fn phase_of(scratch: &Scratch, id: &str) -> Option<PromptPhase> {
+    prompt_ledger::try_load(&scratch.store, &scratch.dir, &scratch.handle)
+        .expect("load ledger")
+        .entry(id)
+        .map(|entry| entry.phase)
+}
+
+#[test]
+fn adoptable_handles_lists_only_live_dispatching_handles() {
+    let scratch = scratch("adoptable-handles");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let mut queued_only = PromptLedger::default();
+    queued_only.upsert_queued(
+        "p1".to_owned(),
+        "transcript p1".to_owned(),
+        "prompt p1".to_owned(),
+        Vec::new(),
+    );
+    prompt_ledger::try_persist(&scratch.store, &scratch.dir, &scratch.handle, &queued_only)
+        .expect("persist queued ledger");
+    assert!(
+        adoptable_handles(&scratch.store, &scratch.dir).is_empty(),
+        "a queued prompt has no dispatch offsets to adopt from"
+    );
+
+    scratch.persist_dispatching();
+    assert_eq!(
+        adoptable_handles(&scratch.store, &scratch.dir),
+        vec![scratch.handle.clone()]
+    );
+
+    drop(shim);
+    assert!(
+        adoptable_handles(&scratch.store, &scratch.dir).is_empty(),
+        "a shim that stopped listening is not adoptable"
+    );
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn startup_dispatch_finishes_adopted_turn_without_a_browser() {
+    let scratch = scratch("adopt-startup");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    let handles = adoptable_handles(&scratch.store, &scratch.dir);
+    let targets = handles
+        .iter()
+        .map(|handle| HeadlessTarget {
+            handle: handle.clone(),
+            worktree_path: scratch.worktree.clone(),
+            model: "auto".to_owned(),
+            agent: AgentClient::Codex,
+        })
+        .collect();
+    let results = with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .runtime_handle()
+            .block_on(run_headless_dispatch(directory.inner(), targets, WAIT))
+    });
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].1.is_ok(), "startup dispatch failed: {results:?}");
+    assert_eq!(scratch.phase_of_p1(), PromptPhase::Completed);
+    assert_eq!(agent_text_count(&directory, &scratch.handle, "hello"), 1);
+    assert_eq!(
+        session_new_count(&scratch.worktree),
+        0,
+        "startup adoption must not spawn"
+    );
+
+    directory.drop_session(&scratch.handle);
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn adopted_turn_with_queued_prompt_dispatches_after_release() {
+    let scratch = scratch("adopt-queued");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("acquire adopts the live shim");
+        directory
+            .submit_prompt_with_id(&scratch.handle, "p2".to_owned(), "queued prompt".to_owned())
+            .expect("queue a prompt behind the adopted turn");
+        let spawned_before = session_new_count(&scratch.worktree);
+        let deadline = Instant::now() + WAIT;
+        while phase_of(&scratch, "p2") != Some(PromptPhase::Completed) {
+            directory.pump(&scratch.handle);
+            assert!(
+                Instant::now() < deadline,
+                "queued prompt was never dispatched after the adopted turn ended"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            session_new_count(&scratch.worktree),
+            spawned_before,
+            "the queued prompt must resume the stored session, not start a new one"
+        );
+        assert!(directory.child_id(&scratch.handle).is_some());
+    });
+    assert_eq!(scratch.phase_of_p1(), PromptPhase::Completed);
+
+    directory.drop_session(&scratch.handle);
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
     let _ = std::fs::remove_dir_all(&scratch.dir);
 }
