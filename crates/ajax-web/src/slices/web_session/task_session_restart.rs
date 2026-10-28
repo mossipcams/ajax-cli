@@ -35,5 +35,7 @@ pub(crate) async fn restart_session(
             task.selected_agent,
         )
         .await
-        .map_err(RestartError::Spawn)
+        .map_err(RestartError::Spawn)?;
+    directory.release(handle).await;
+    Ok(())
 }
