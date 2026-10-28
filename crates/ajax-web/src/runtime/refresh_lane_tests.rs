@@ -3,7 +3,10 @@ use super::tests::{
     json_of, post_json, release_gate, scratch_dir, unsaved_notification_bridge, TestBridge,
 };
 use crate::adapters::web_session_acp::set_test_acp_command;
-use ajax_core::registry::Registry as _;
+use ajax_core::{
+    adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+    registry::Registry as _,
+};
 use axum::http::StatusCode;
 use std::{
     sync::atomic::Ordering,
@@ -320,4 +323,99 @@ async fn chat_remediation_delivery_runs_without_control_lane() {
     assert_eq!(body["ok"], true);
     assert_eq!(body["request_id"], "chat-remediation-lane-a");
     assert_eq!(body["output"], "fix-ci: skill brief sent to chat task");
+}
+
+type RaceSharedState =
+    Arc<std::sync::OnceLock<Arc<Mutex<super::state::WebSharedState<RacingRunner, TestBridge>>>>>;
+
+#[derive(Clone)]
+struct RacingRunner {
+    races: Arc<std::sync::atomic::AtomicUsize>,
+    shared: RaceSharedState,
+}
+
+impl CommandRunner for RacingRunner {
+    fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        let raced = self
+            .races
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok();
+        if raced {
+            if let Some(shared) = self.shared.get() {
+                let mut guard = shared.lock().unwrap_or_else(|poison| poison.into_inner());
+                guard.revision = guard.revision.saturating_add(1);
+            }
+        }
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+}
+
+/// Builds an attach-ready Codex task whose pane probe bumps the registry revision
+/// once per call while `races` is positive, emulating an unrelated registry change
+/// that lands between attach's snapshot and its commit.
+fn attach_race_state(
+    tag: &str,
+    races: usize,
+) -> (
+    super::state::WebAppState<RacingRunner, TestBridge>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let mut task = crate::test_support::fix_login_task();
+    task.worktree_path = scratch_dir(&format!("{tag}-worktree"));
+    std::fs::create_dir_all(&task.worktree_path).expect("worktree");
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let races = Arc::new(std::sync::atomic::AtomicUsize::new(races));
+    let slot: RaceSharedState = Arc::new(std::sync::OnceLock::new());
+    let runner = RacingRunner {
+        races: Arc::clone(&races),
+        shared: Arc::clone(&slot),
+    };
+    let state =
+        super::state::WebAppState::new(context, runner, TestBridge::default(), scratch_dir(tag));
+    assert!(slot.set(Arc::clone(&state.shared)).is_ok());
+    (state, races)
+}
+
+#[test]
+fn chat_attach_retries_once_after_a_revision_race() {
+    let (state, races) = attach_race_state("attach-one-race", 1);
+    let revision = state.shared().revision;
+
+    state
+        .prepare_task_session_attach("web/fix-login", "auto")
+        .expect("one revision race must be retried transparently");
+
+    assert_eq!(races.load(Ordering::SeqCst), 0, "the race must have fired");
+    assert_eq!(
+        state.shared().revision,
+        revision + 2,
+        "the injected change and the retried attach must each bump the revision once"
+    );
+}
+
+#[test]
+fn chat_attach_fails_after_two_consecutive_revision_races() {
+    let (state, races) = attach_race_state("attach-two-races", 2);
+    let revision = state.shared().revision;
+
+    let error = state
+        .prepare_task_session_attach("web/fix-login", "auto")
+        .expect_err("two consecutive revision races must fail the attach");
+
+    assert_eq!(
+        error,
+        crate::slices::web_session::SessionRouteError::NotOrchestrationChat
+    );
+    assert_eq!(
+        races.load(Ordering::SeqCst),
+        0,
+        "both races must have fired"
+    );
+    assert_eq!(state.shared().revision, revision + 2);
 }
