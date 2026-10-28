@@ -421,6 +421,7 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 .submit_prompt_with_id(handle, "active-1".into(), "first".into())
                 .expect("active");
 
+            let fail_terminal = ForcePersistFailGuard::enable();
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
                 .expect("chmod state dir read-only");
             directory.record(
@@ -464,7 +465,6 @@ fn transcript_append_failure_backlog_recovers_in_order() {
                 "turn must not complete while the backlog is unpersisted"
             );
 
-            let fail_terminal = ForcePersistFailGuard::enable();
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
                 .expect("chmod state dir writable");
             let (pending, _) = directory.read_from(handle, 0);
