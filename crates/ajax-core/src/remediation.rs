@@ -91,7 +91,12 @@ fn offers_merge_pr(task: &Task) -> bool {
 }
 
 fn offers_restart_agent(task: &Task) -> bool {
-    task.kind() == TaskKind::Chat && !matches!(task.lifecycle_status, LifecycleStatus::Removed)
+    task.kind() == TaskKind::Chat
+        && !matches!(task.lifecycle_status, LifecycleStatus::Removed)
+        && task
+            .live_status
+            .as_ref()
+            .is_some_and(|live| live.kind == LiveStatusKind::Blocked)
 }
 
 fn is_open_chat_task(task: &Task) -> bool {
@@ -338,7 +343,7 @@ mod tests {
         let options = remediations_for_task(&task);
 
         let ids: Vec<&str> = options.iter().map(|option| option.id.as_str()).collect();
-        assert_eq!(ids, vec![CREATE_PR, RESTART_AGENT]);
+        assert_eq!(ids, vec![CREATE_PR]);
         assert_eq!(options[0].label, "Create PR");
     }
 
@@ -390,16 +395,30 @@ mod tests {
     }
 
     #[test]
-    fn restart_agent_is_offered_for_chat_tasks_that_are_not_removed() {
-        let mut chat = task("chat");
-        chat.set_skip_interactive_agent(true);
-        assert!(remediations_for_task(&chat)
+    fn restart_agent_is_offered_only_for_faulted_chat_tasks() {
+        let mut healthy = task("chat");
+        healthy.set_skip_interactive_agent(true);
+        assert!(remediations_for_task(&healthy)
+            .iter()
+            .all(|option| option.id != RESTART_AGENT));
+
+        let mut faulted = task("faulted");
+        faulted.set_skip_interactive_agent(true);
+        faulted.live_status = Some(LiveObservation::new(
+            LiveStatusKind::Blocked,
+            "Agent stopped",
+        ));
+        assert!(remediations_for_task(&faulted)
             .iter()
             .any(|option| option.id == RESTART_AGENT && option.label == "Restart agent"));
 
         let mut removed = task("removed");
         removed.set_skip_interactive_agent(true);
         removed.lifecycle_status = LifecycleStatus::Removed;
+        removed.live_status = Some(LiveObservation::new(
+            LiveStatusKind::Blocked,
+            "Agent stopped",
+        ));
         assert!(remediations_for_task(&removed)
             .iter()
             .all(|option| option.id != RESTART_AGENT));
