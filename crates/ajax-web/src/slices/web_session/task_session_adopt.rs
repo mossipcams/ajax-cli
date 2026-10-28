@@ -50,6 +50,11 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         .to_str()
         .ok_or_else(|| SessionError::protocol("worktree path is not valid UTF-8"))?;
 
+    let stream = attach_stream(&state.storage.state_dir, handle, adoptable.shim_offset)?;
+    let answered = session_shim::answered_requests(&state.storage.state_dir, handle);
+    let client = SessionClient::adopt(state.agent, stream, shim_pid, session_id, answered)
+        .map_err(SessionError::protocol)?;
+
     let cursor = adoptable.transcript_cursor;
     let after_cursor = web_session_store::try_events_after::<SessionServerEvent>(
         &store,
@@ -82,10 +87,6 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         .collect();
     restore_queued_prompts(state, queued)?;
 
-    let stream = attach_stream(&state.storage.state_dir, handle, adoptable.shim_offset)?;
-    let answered = session_shim::answered_requests(&state.storage.state_dir, handle);
-    let client = SessionClient::adopt(state.agent, stream, shim_pid, session_id, answered)
-        .map_err(SessionError::protocol)?;
     state.acp.client = Some(client);
     if let Err(error) = state.record_child_identity() {
         state.acp.client = None;
@@ -160,17 +161,50 @@ fn outlives_rollback(event: &SessionServerEvent) -> bool {
     }
 }
 
+#[cfg(test)]
+pub(crate) static REFUSED_ATTACH_FOR_TEST: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
 fn attach_stream(
     state_dir: &Path,
     handle: &str,
     shim_offset: u64,
 ) -> Result<UnixStream, SessionError> {
+    #[cfg(test)]
+    if REFUSED_ATTACH_FOR_TEST
+        .lock()
+        .expect("refusal list lock")
+        .iter()
+        .any(|refused| refused == handle)
+    {
+        return Err(SessionError::protocol(
+            "session shim is unreachable: refused by test",
+        ));
+    }
     let mut stream = UnixStream::connect(shim_paths(state_dir, handle).socket)
         .map_err(|error| SessionError::protocol(format!("session shim is unreachable: {error}")))?;
     stream
         .write_all(format!("REPLAY {shim_offset}\n").as_bytes())
         .map_err(|error| SessionError::protocol(format!("session shim replay failed: {error}")))?;
     Ok(stream)
+}
+
+pub(super) fn release_finished_adopted_client(state: &mut TaskSessionState) {
+    if state.prompts.active_prompt.is_some() {
+        return;
+    }
+    let finished = state
+        .acp
+        .client
+        .as_ref()
+        .is_some_and(|client| client.is_adopted() && !client.prompt_in_flight());
+    if !finished {
+        return;
+    }
+    if let Some(mut client) = state.acp.client.take() {
+        let _ = client.shutdown();
+    }
+    state.acp.acp_alive = false;
 }
 
 fn send_shutdown(state_dir: &Path, worktree: &Path) {

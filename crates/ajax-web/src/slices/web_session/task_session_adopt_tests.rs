@@ -10,6 +10,7 @@ use ajax_core::registry::SqliteRegistryStore;
 use serde_json::{json, Value};
 
 use super::process_identity::start_token;
+use super::task_session_adopt::REFUSED_ATTACH_FOR_TEST;
 use super::test_support::{fake_acp_fixture, BlockingSessionDirectory};
 use super::SessionServerEvent;
 use crate::adapters::session_shim::shim_paths;
@@ -606,4 +607,230 @@ fn is_user_text(event: &SessionServerEvent, expected: &str) -> bool {
         event,
         SessionServerEvent::Message { role, text, .. } if role == "user" && text == expected
     )
+}
+
+fn permission_request_line() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/request_permission",
+        "params": { "sessionId": "sess-1" }
+    })
+}
+
+fn seed_live_turn(scratch: &Scratch, shim_child: &SleepChild) {
+    web_session_store::try_append_events(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        &[agent_message("seed", "seed-agent")],
+    )
+    .expect("seed transcript");
+    web_session_store::try_append_events(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        &[agent_message("hello", "chunk-after-cursor")],
+    )
+    .expect("commit event after cursor");
+    web_session_store::try_save_meta(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        Some("fake-sess-1"),
+        "auto",
+    )
+    .expect("save session");
+    std::fs::write(
+        scratch.worktree.join(".fake-acp-sessions"),
+        r#"["fake-sess-1"]"#,
+    )
+    .expect("fixture knows the stored session");
+    record_child_identity(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        start_token(shim_child.pid()).map(|token| (shim_child.pid(), token)),
+        "foreign-boot",
+    )
+    .expect("record shim identity");
+    scratch.persist_dispatching();
+}
+
+fn event_text_count(directory: &BlockingSessionDirectory, handle: &str, needle: &str) -> usize {
+    let (events, _) = directory.read_from(handle, 0);
+    events
+        .iter()
+        .filter(|event| format!("{event:?}").contains(needle))
+        .count()
+}
+
+fn pump_until_interrupted(directory: &BlockingSessionDirectory, scratch: &Scratch) {
+    let deadline = Instant::now() + WAIT;
+    while scratch.phase_of_p1() != PromptPhase::Interrupted {
+        directory.pump(&scratch.handle);
+        assert!(
+            Instant::now() < deadline,
+            "adopted prompt was never interrupted"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn refuse_attach(worktree: &str) {
+    REFUSED_ATTACH_FOR_TEST
+        .lock()
+        .expect("refusal list lock")
+        .push(worktree.to_owned());
+}
+
+fn accept_attach(worktree: &str) {
+    REFUSED_ATTACH_FOR_TEST
+        .lock()
+        .expect("refusal list lock")
+        .retain(|refused| refused != worktree);
+}
+
+#[test]
+fn adopted_turn_end_shuts_shim_then_next_acquire_resumes() {
+    let scratch = scratch("adopt-release");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("acquire adopts the live shim");
+    });
+    pump_until_turn_end(&directory, &scratch.handle);
+
+    assert_eq!(
+        directory.child_id(&scratch.handle),
+        None,
+        "the adopted slot must be empty once its turn ends"
+    );
+    let deadline = Instant::now() + WAIT;
+    while probe_live(&scratch.dir, Path::new(&worktree)) {
+        assert!(Instant::now() < deadline, "shim never received SHUTDOWN");
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(shim_child);
+    for needle in ["interrupted", "ACP process exited", "Model context reset"] {
+        assert_eq!(
+            event_text_count(&directory, &scratch.handle, needle),
+            0,
+            "release must not write a `{needle}` note"
+        );
+    }
+
+    let spawned_before = session_new_count(&scratch.worktree);
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("next acquire resumes the stored session");
+    });
+    assert_eq!(
+        session_new_count(&scratch.worktree),
+        spawned_before,
+        "the next prompt must resume, not start a new session"
+    );
+    assert!(directory.child_id(&scratch.handle).is_some());
+
+    drop(directory);
+    drop(shim);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn adopted_eof_mid_turn_interrupts() {
+    let scratch = scratch("adopt-eof");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    shim.seed_outbound(&[chunk_line(), permission_request_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("acquire adopts the live shim");
+    });
+    pump_until_interrupted(&directory, &scratch);
+
+    assert_eq!(
+        event_text_count(
+            &directory,
+            &scratch.handle,
+            "was interrupted because the ACP process exited"
+        ),
+        1
+    );
+
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn adoption_attach_failure_keeps_transcript() {
+    let scratch = scratch("adopt-attach-refused");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    drop(shim_child);
+    refuse_attach(&worktree);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("acquire falls back to the normal resume path");
+    });
+    accept_attach(&worktree);
+
+    assert_eq!(scratch.phase_of_p1(), PromptPhase::Interrupted);
+    assert_eq!(
+        event_text_count(&directory, &scratch.handle, INTERRUPTED_NOTE),
+        1
+    );
+    assert_eq!(
+        event_text_count(&directory, &scratch.handle, "hello"),
+        1,
+        "events committed after the cursor must survive a failed attach"
+    );
+
+    drop(directory);
+    drop(shim);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
 }
