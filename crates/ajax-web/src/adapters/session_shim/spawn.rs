@@ -139,6 +139,29 @@ pub fn log_offset(cwd: &Path) -> Option<u64> {
         .map(|metadata| metadata.len())
 }
 
+pub fn probe_live(state_dir: &Path, cwd: &Path) -> bool {
+    let Some(handle) = cwd.to_str() else {
+        return false;
+    };
+    UnixStream::connect(shim_paths(state_dir, handle).socket).is_ok()
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_test_shim(
+    state_dir: &Path,
+    handle: &str,
+) -> thread::JoinHandle<io::Result<i32>> {
+    let args = super::ShimArgs {
+        handle: handle.to_owned(),
+        state_dir: state_dir.to_path_buf(),
+        argv: ["sh", "-c", "cat"]
+            .into_iter()
+            .map(std::ffi::OsString::from)
+            .collect(),
+    };
+    thread::spawn(move || super::process::serve(args, super::process::Teardown::Child))
+}
+
 pub(super) fn connect_to_child(child: &mut Child, socket: &Path) -> io::Result<UnixStream> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {

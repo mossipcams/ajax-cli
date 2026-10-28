@@ -4,6 +4,7 @@ use ajax_core::adapters::acp_launch_for_agent;
 use ajax_core::models::{LiveStatusKind, Task};
 use ajax_core::registry::{Registry, SqliteRegistryStore};
 
+use super::shim_adoption::adoptable;
 use super::SessionServerEvent;
 use crate::adapters::web_session_store::prompt_ledger as ledger_module;
 
@@ -60,6 +61,10 @@ pub(crate) fn recover_interrupted_prompts(
             }
         }
 
+        if adoptable(store, state_dir, &handle).is_some() {
+            continue;
+        }
+
         let mut ledger = match ledger_module::try_load(store, state_dir, &handle) {
             Ok(ledger) => ledger,
             Err(error) => {
@@ -96,12 +101,13 @@ pub(crate) fn recover_interrupted_prompts(
             }
         }
     }
-    settle_running_chats(store, current_boot_id, &mut result);
+    settle_running_chats(store, state_dir, current_boot_id, &mut result);
     result
 }
 
 fn settle_running_chats(
     store: &SqliteRegistryStore,
+    state_dir: &Path,
     current_boot_id: &str,
     result: &mut RecoveryResult,
 ) {
@@ -134,6 +140,9 @@ fn settle_running_chats(
                 result.complete = false;
                 continue;
             }
+        }
+        if adoptable(store, state_dir, &handle).is_some() {
+            continue;
         }
         result.recovered_handles.push(handle);
     }
