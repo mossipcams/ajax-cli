@@ -1,3 +1,4 @@
+use crate::adapters::session_shim::without_shim;
 use ajax_core::{
     adapters::{parse_cursor_model_intent, CURSOR_DEFAULT_MODEL},
     models::AgentClient,
@@ -125,9 +126,9 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
     if client == AgentClient::Cursor {
-        if let Some(sdk_models) =
+        if let Some(sdk_models) = without_shim(|| {
             crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&std::env::temp_dir())
-        {
+        }) {
             return SessionModelsResponse {
                 models: cursor_options_from_sdk(sdk_models),
                 default: CURSOR_DEFAULT_MODEL.to_string(),
@@ -167,8 +168,9 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
         };
     }
 
-    let catalog =
-        crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir());
+    let catalog = without_shim(|| {
+        crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir())
+    });
     let models = catalog
         .models
         .into_iter()

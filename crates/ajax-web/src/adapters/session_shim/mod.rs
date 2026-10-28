@@ -11,7 +11,7 @@ mod relay;
 mod spawn;
 
 pub use process::{run_session_shim, ShimArgs};
-pub use spawn::{enable, shim_spawn, ShimSpawn};
+pub use spawn::{enable, shim_spawn, without_shim, ShimSpawn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ShimPaths {
