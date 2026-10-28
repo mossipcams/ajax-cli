@@ -609,15 +609,6 @@ fn is_user_text(event: &SessionServerEvent, expected: &str) -> bool {
     )
 }
 
-fn permission_request_line() -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": 7,
-        "method": "session/request_permission",
-        "params": { "sessionId": "sess-1" }
-    })
-}
-
 fn seed_live_turn(scratch: &Scratch, shim_child: &SleepChild) {
     web_session_store::try_append_events(
         &scratch.store,
@@ -669,13 +660,18 @@ fn event_text_count(directory: &BlockingSessionDirectory, handle: &str, needle: 
         .count()
 }
 
-fn pump_until_interrupted(directory: &BlockingSessionDirectory, scratch: &Scratch) {
+fn pump_until_phase(
+    directory: &BlockingSessionDirectory,
+    scratch: &Scratch,
+    id: &str,
+    phase: PromptPhase,
+) {
     let deadline = Instant::now() + WAIT;
-    while scratch.phase_of_p1() != PromptPhase::Interrupted {
+    while phase_of(scratch, id) != Some(phase) {
         directory.pump(&scratch.handle);
         assert!(
             Instant::now() < deadline,
-            "adopted prompt was never interrupted"
+            "prompt {id} never reached {phase:?}"
         );
         thread::sleep(Duration::from_millis(10));
     }
@@ -766,7 +762,7 @@ fn adopted_eof_mid_turn_interrupts() {
     let shim = LiveShim::start(&scratch.dir, &worktree);
     let shim_child = SleepChild::spawn();
     seed_live_turn(&scratch, &shim_child);
-    shim.seed_outbound(&[chunk_line(), permission_request_line()]);
+    shim.seed_outbound(&[chunk_line()]);
 
     let directory = BlockingSessionDirectory::new(scratch.dir.clone());
     with_test_acp_program(&fake_acp_fixture(), || {
@@ -779,7 +775,8 @@ fn adopted_eof_mid_turn_interrupts() {
             )
             .expect("acquire adopts the live shim");
     });
-    pump_until_interrupted(&directory, &scratch);
+    drop(shim);
+    pump_until_phase(&directory, &scratch, "p1", PromptPhase::Interrupted);
 
     assert_eq!(
         event_text_count(
@@ -791,7 +788,6 @@ fn adopted_eof_mid_turn_interrupts() {
     );
 
     drop(directory);
-    drop(shim);
     drop(shim_child);
     let _ = std::fs::remove_dir_all(&scratch.dir);
 }
@@ -941,15 +937,7 @@ fn adopted_turn_with_queued_prompt_dispatches_after_release() {
             .submit_prompt_with_id(&scratch.handle, "p2".to_owned(), "queued prompt".to_owned())
             .expect("queue a prompt behind the adopted turn");
         let spawned_before = session_new_count(&scratch.worktree);
-        let deadline = Instant::now() + WAIT;
-        while phase_of(&scratch, "p2") != Some(PromptPhase::Completed) {
-            directory.pump(&scratch.handle);
-            assert!(
-                Instant::now() < deadline,
-                "queued prompt was never dispatched after the adopted turn ended"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+        pump_until_phase(&directory, &scratch, "p2", PromptPhase::Completed);
         assert_eq!(
             session_new_count(&scratch.worktree),
             spawned_before,
@@ -960,6 +948,41 @@ fn adopted_turn_with_queued_prompt_dispatches_after_release() {
     assert_eq!(scratch.phase_of_p1(), PromptPhase::Completed);
 
     directory.drop_session(&scratch.handle);
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn adopted_turn_end_then_submit_resumes_attached_session() {
+    let scratch = scratch("adopt-attached-submit");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_turn(&scratch, &shim_child);
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect("acquire adopts the live shim");
+        pump_until_turn_end(&directory, &scratch.handle);
+        let spawned_before = session_new_count(&scratch.worktree);
+        directory
+            .submit_prompt_with_id(&scratch.handle, "p2".to_owned(), "next prompt".to_owned())
+            .expect("an attached holder submits after its adopted turn ended");
+        pump_until_phase(&directory, &scratch, "p2", PromptPhase::Completed);
+        assert_eq!(session_new_count(&scratch.worktree), spawned_before);
+        assert!(directory.child_id(&scratch.handle).is_some());
+    });
+
     drop(directory);
     drop(shim);
     drop(shim_child);

@@ -17,11 +17,13 @@ use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
-use super::task_session_adopt::{release_finished_adopted_client, resume_queued_after_release};
+use super::task_session_adopt::{
+    release_finished_adopted_client, resume_queued_after_release, submit_prompt_after_release,
+};
 use super::task_session_exit::{
     self, cancel, is_acp_exit_error, reconcile_unexpected_child_exit,
-    retry_pending_exit_interruption, settle_running_activity_on_end, submit_prompt,
-    try_dispatch_next_if_idle, try_finalize_active_prompt,
+    retry_pending_exit_interruption, settle_running_activity_on_end, try_dispatch_next_if_idle,
+    try_finalize_active_prompt,
 };
 
 const COMMAND_CAPACITY: usize = 32;
@@ -531,7 +533,8 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             content_blocks,
             reply,
         } => {
-            let result = submit_prompt(state, client_message_id, text, content_blocks);
+            let result =
+                submit_prompt_after_release(state, client_message_id, text, content_blocks).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::Cancel { keep_queue, reply } => {

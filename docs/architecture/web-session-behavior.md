@@ -673,8 +673,13 @@ whole transcript inside `session/load` before responding.
   2. rolls the transcript back to the dispatch cursor, dropping events after it;
   3. installs the adopted client on the slot with the stored session id, without
      `session/new`, `session/resume` or `session/load`;
-  4. releases it when the replayed turn finishes: the client sends `SHUTDOWN`,
-     and queued prompts resume through the normal acquire path.
+  4. releases it when the replayed turn finishes: the client writes `SHUTDOWN`
+     and drops its handle without waiting, so the shim exits on its own
+     schedule. The next spawn in that worktree waits until the old shim has
+     exited (its socket stops accepting connections) before it starts a new
+     one. The next prompt, whether already queued or newly submitted to the
+     attached session, resumes the stored session through the normal acquire
+     path with the stored session id, without starting a new session.
 - Adopted clients cannot send prompts, answer permission or elicitation
   requests, or apply model pins; those are refused as adopted-turn-busy until
   release. A harness request during replay (a line with an id and a method)

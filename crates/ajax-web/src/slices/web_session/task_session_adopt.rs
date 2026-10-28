@@ -9,11 +9,12 @@ use crate::adapters::web_session_store::{self, StoredSession};
 use ajax_core::registry::{Registry, SqliteRegistryStore};
 
 use super::normalize::StreamNormalizer;
+use super::prompt_content::PromptContentBlockWire;
 use super::prompt_queue::ActivePrompt;
 use super::shim_adoption::{adoptable, Adoptable};
 use super::startup_recovery::interrupted_by_restart_events;
 use super::task_session::{agent_client_name, TaskSessionState};
-use super::task_session_exit::restore_queued_prompts;
+use super::task_session_exit::{restore_queued_prompts, submit_prompt, try_dispatch_next_if_idle};
 use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{SessionError, SessionServerEvent};
@@ -222,26 +223,46 @@ pub(super) fn release_finished_adopted_client(state: &mut TaskSessionState) {
 }
 
 pub(super) async fn resume_queued_after_release(state: &mut TaskSessionState) {
-    if state.acp.client.is_some() || state.acp.acp_alive || state.prompts.queued.is_empty() {
+    if state.prompts.queued.is_empty() {
         return;
     }
-    let Some(worktree) = state.worktree_path.clone() else {
-        return;
-    };
-    let holders = state.holders.0;
-    if holders == 0 {
-        return;
-    }
-    let model = state.acp.model.clone();
-    let agent = state.agent;
-    let resumed = task_session_spawn::acquire(state, &worktree, &model, agent).await;
-    state.holders.0 = holders;
-    if let Err(error) = resumed {
+    if let Err(error) = resume_released_client(state).await {
         state.prompts.queued.clear();
         let _ = state.append_to_log(vec![SessionServerEvent::Error {
             message: error.to_string(),
         }]);
     }
+}
+
+pub(super) async fn submit_prompt_after_release(
+    state: &mut TaskSessionState,
+    client_message_id: String,
+    text: String,
+    content_blocks: Vec<PromptContentBlockWire>,
+) -> Result<(), SessionError> {
+    if state.acp.client.is_none() {
+        resume_released_client(state).await?;
+        try_dispatch_next_if_idle(state);
+    }
+    submit_prompt(state, client_message_id, text, content_blocks)
+}
+
+async fn resume_released_client(state: &mut TaskSessionState) -> Result<(), SessionError> {
+    if state.acp.client.is_some() || state.acp.acp_alive {
+        return Ok(());
+    }
+    let Some(worktree) = state.worktree_path.clone() else {
+        return Ok(());
+    };
+    let holders = state.holders.0;
+    if holders == 0 {
+        return Ok(());
+    }
+    let model = state.acp.model.clone();
+    let agent = state.agent;
+    let resumed = task_session_spawn::acquire(state, &worktree, &model, agent).await;
+    state.holders.0 = holders;
+    resumed
 }
 
 fn send_shutdown(state_dir: &Path, worktree: &Path) {
