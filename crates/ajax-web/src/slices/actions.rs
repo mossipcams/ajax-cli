@@ -41,7 +41,7 @@ pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOpti
         action: option.id.clone(),
         label: option.label.clone(),
         destructive: false,
-        confirmation_required: false,
+        confirmation_required: option.id == ajax_core::remediation::MERGE_PR,
     }
 }
 
@@ -90,7 +90,9 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
 }
 
 pub fn supported_browser_action(action: &str) -> bool {
-    if ajax_core::remediation::is_remediation_action(action) {
+    if ajax_core::remediation::is_remediation_action(action)
+        || action == ajax_core::remediation::MERGE_PR
+    {
         return true;
     }
     OperatorAction::from_label(action).is_some_and(supported_web_action)
@@ -102,12 +104,13 @@ mod tests {
     use ajax_core::{
         commands::CommandContext,
         config::Config,
+        diff_review::{remember_pull_requests, PullRequestRef, PullRequestState},
         models::{
             LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag, TaskId,
         },
         output::TaskCard,
         registry::InMemoryRegistry,
-        remediation::{CREATE_PR, FIX_CI},
+        remediation::{CREATE_PR, FIX_CI, MERGE_PR},
     };
 
     #[test]
@@ -192,6 +195,39 @@ mod tests {
 
         assert!(supported_browser_action(CREATE_PR));
         assert!(!supported_browser_action("sync"));
+    }
+
+    #[test]
+    fn merge_pr_remediation_is_a_supported_browser_action_that_requires_confirmation() {
+        let mut task = crate::test_support::fix_login_task();
+        task.set_skip_interactive_agent(true);
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        remember_pull_requests(
+            &mut task,
+            &[PullRequestRef {
+                number: 7,
+                title: "feat(web): chat".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Open,
+                head_ref: "ajax/fix-login".to_string(),
+                head_sha: None,
+            }],
+        );
+        let context = crate::test_support::context_with_tasks(&["web"], vec![task.clone()]);
+        let card = TaskCard {
+            remediations: ajax_core::remediation::remediations_for_task(&task),
+            ..reviewable_ship_card(&task)
+        };
+
+        let states = browser_actions(&context, &card);
+        let merge = states
+            .iter()
+            .find(|state| state.action == MERGE_PR)
+            .expect("merge-pr action");
+
+        assert_eq!(merge.label, "Merge PR");
+        assert!(merge.confirmation_required);
+        assert!(supported_browser_action(MERGE_PR));
     }
 
     #[test]
