@@ -38,6 +38,21 @@ impl RpcClientCore {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn adopt(
+        session: RpcSession,
+        active_request_id: u64,
+        on_run_finished: Option<RunFinishedHook>,
+    ) -> Self {
+        let core = Self::new(session, on_run_finished);
+        {
+            let mut g = core.inner.lock().expect("rpc_client mutex poisoned");
+            g.active_request_id = Some(active_request_id);
+            g.next_request_id = active_request_id + 1;
+        }
+        core
+    }
+
     pub fn session_id(&self) -> String {
         let g = self.inner.lock().expect("rpc_client mutex poisoned");
         g.session
@@ -253,4 +268,117 @@ fn forward_held_error(g: &mut CoreInner, event: AgentEvent) -> Option<AgentEvent
     }
     g.event_queue.push_back(event);
     g.event_queue.pop_front()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use serde_json::json;
+
+    use super::super::agent_event::{AgentEvent, NativeEvent};
+    use super::super::claude_sdk_map::map_sdk_message;
+    use super::super::jsonl_process::JsonlProcess;
+    use super::super::rpc_session::RpcSession;
+    use super::RpcClientCore;
+
+    #[derive(Clone, Default)]
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl CapturedWriter {
+        fn bytes(&self) -> Vec<u8> {
+            self.0.lock().expect("capture lock").clone()
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("capture lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn adopted_claude_client(
+        request_id: u64,
+    ) -> (std::io::PipeWriter, CapturedWriter, RpcClientCore) {
+        let (reader, peer_stdout) = std::io::pipe().expect("pipe");
+        let writer = CapturedWriter::default();
+        let process =
+            JsonlProcess::attach(Box::new(reader), Box::new(writer.clone()), 4242).expect("attach");
+        let session = RpcSession::adopt(map_sdk_message, process, "claude-session-1".to_owned());
+        let core = RpcClientCore::adopt(session, request_id, None);
+        (peer_stdout, writer, core)
+    }
+
+    fn events_until_turn_finished(core: &RpcClientCore) -> Vec<AgentEvent> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut events = Vec::new();
+        while Instant::now() < deadline {
+            let Some(event) = core.wait_event(Duration::from_millis(50)) else {
+                continue;
+            };
+            let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
+            events.push(event);
+            if finished {
+                return events;
+            }
+        }
+        panic!("turn did not finish; events: {events:?}");
+    }
+
+    #[test]
+    fn adopted_claude_client_finishes_the_turn_with_the_given_request_id() {
+        let (mut peer, writer, core) = adopted_claude_client(7);
+        assert!(core.prompt_in_flight(), "adopted run must be mid-turn");
+
+        let assistant = json!({
+            "type": "assistant",
+            "message": {"model": "<synthetic>", "role": "assistant",
+                "content": [{"type": "text", "text": "hi"}]}
+        });
+        let result = json!({"type": "result", "subtype": "success", "is_error": false});
+        peer.write_all(format!("{assistant}\n{result}\n").as_bytes())
+            .expect("write records to the adopted shim");
+
+        let events = events_until_turn_finished(&core);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::Native(NativeEvent::AgentText(text)) if text == "hi"
+            )),
+            "events: {events:?}"
+        );
+        assert!(
+            matches!(
+                events.last(),
+                Some(AgentEvent::Native(NativeEvent::TurnFinished {
+                    request_id: 7,
+                    result: Ok(reason),
+                })) if reason == "end_turn"
+            ),
+            "events: {events:?}"
+        );
+        assert!(!core.prompt_in_flight());
+        assert!(
+            writer.bytes().is_empty(),
+            "adopt must never write a prompt or handshake record"
+        );
+    }
+
+    #[test]
+    fn dropping_an_attached_client_sends_shutdown_and_leaves_the_peer_open() {
+        let (mut peer, writer, core) = adopted_claude_client(3);
+        assert_eq!(core.child_pid(), Some(4242));
+        drop(core);
+
+        assert_eq!(writer.bytes(), b"SHUTDOWN\n");
+        peer.write_all(b"{}\n")
+            .expect("the shim side must stay open after an attached drop");
+    }
 }
