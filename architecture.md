@@ -145,6 +145,21 @@ Slices must not import sibling slices, except `sweep_cleanup` composing
   production code by ownership.
 - Do not land new features into an already over-max file.
 
+## Chat-first
+
+Ajax Chat is the product. A task is one agent conversation in its own worktree,
+ending in a PR. Terminal is a tab (lazy tmux). Status is the chat's turn state,
+and notifications are chat events. Where chat and terminal-agent behavior
+differ, chat is the default path and terminal-agent is the special case.
+
+- Terminal-agent tasks, the native TUI, and tmux verbs are **frozen**: supported
+  and tested, fixes only for breakage, no new features. No removal is planned.
+- The live chat session is the authoritative substrate for chat turn state, with
+  the same standing as Git and tmux. Registry rows for chat tasks are cached
+  evidence for cold reads, not a second source of turn truth.
+
+Subsystem docs are rewritten as the phases that make this true land.
+
 ## Hard Invariants
 
 - Core owns task truth. UI presents task truth. CLI dispatches commands.
@@ -302,4 +317,5 @@ Full gate before opening a PR: see
 | Web Cockpit slices, runtime, terminal, speech | [`docs/architecture/web-cockpit.md`](docs/architecture/web-cockpit.md) |
 | Durable chat execution: kernel tables, checkpoints, recovery, ownership | [`docs/architecture/durable-execution.md`](docs/architecture/durable-execution.md) |
 | Native Cockpit views | [`docs/architecture/cockpit.md`](docs/architecture/cockpit.md) |
+| Chat-first direction (chat default; terminal-agent frozen) | [Chat-first](#chat-first) |
 | Speech operator setup (not architecture ownership) | [`docs/speech-input.md`](docs/speech-input.md) |
