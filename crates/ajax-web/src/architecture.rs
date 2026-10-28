@@ -118,7 +118,8 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 12] = [
+    const SLICES: [&str; 13] = [
+        "agent_auth",
         "cockpit",
         "cursor_auth",
         "dev_deploy",

@@ -30,6 +30,17 @@ export interface CursorAuthStatus {
   error: string | null;
 }
 
+export interface AgentAuthStatus {
+  harness: "claude" | "codex" | "cursor" | "pi";
+  installed: boolean;
+  signedIn: boolean | null;
+  detail: string | null;
+}
+
+export interface AgentAuthReport {
+  harnesses: AgentAuthStatus[];
+}
+
 export type CursorLoginPhase =
   | { phase: "idle" }
   | { phase: "waiting"; url: string }
@@ -526,6 +537,11 @@ export { TEST_IN_STABLE_TIMEOUT_MS };
 export async function fetchCursorAuthStatus(): Promise<CursorAuthStatus> {
   const value = await getJson("/api/cursor/auth");
   return value as CursorAuthStatus;
+}
+
+export async function fetchAgentAuthStatus(): Promise<AgentAuthReport> {
+  const value = await getJson("/api/agent-auth");
+  return value as AgentAuthReport;
 }
 
 export async function fetchCursorLoginPhase(): Promise<CursorLoginPhase> {

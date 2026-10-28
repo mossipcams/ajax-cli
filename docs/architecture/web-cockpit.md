@@ -245,6 +245,30 @@ The routes are `GET /api/cursor/auth`, `GET|POST /api/cursor/auth/login`, and
 `POST /api/cursor/auth/login/cancel`; each requires a browser session. Chat
 authentication failures point back at Settings > Cursor.
 
+#### Agent sign-in status
+
+`GET /api/agent-auth` reports whether each harness is installed on the host and
+signed in, in the fixed order `claude`, `codex`, `cursor`, `pi`. It requires a browser
+session and is read-only: it never logs in, logs out, or passes credentials to a CLI.
+Each probe runs on the host with a fixed argv (no shell) against the binary resolved
+by `resolve_program`, with stdin closed and a 10s timeout, and the four probes run
+concurrently. Every request probes fresh, so a sign-in completed in Settings is visible
+on the refetch that follows it.
+
+- Claude: `claude auth status --json`; `signedIn` is its `loggedIn` field.
+- Codex: `codex login status`; `signedIn` is the exit status.
+- Pi: `pi auth check --provider <provider> --json --no-refresh`, where the provider is
+  the prefix of the default Pi model; `signedIn` is `status == "ready"`, and a ready
+  probe's `detail` names the provider it checked (`Checked default provider <provider>`).
+- Cursor: the existing `CursorLogin` status; `signedIn` requires a present, valid key,
+  and a key Cursor rejects reports `Cursor rejected the saved key`.
+
+`signedIn` is `null` when the probe could not decide (timeout, unparseable output, or a
+probe error); `installed` is `false` when the binary does not resolve. `detail` is a
+short operator-facing hint such as ``Run `claude auth login` on the host``. No account
+identifiers (email, organization, account id), tokens, or raw CLI output leave the host:
+the endpoint returns only the `harness`, `installed`, `signedIn`, and `detail` fields.
+
 Codex is reached through its Agent Client
 Protocol adapter, a separate install:
 `@agentclientprotocol/codex-acp`. `ajax doctor` reports it as `acp:codex` and

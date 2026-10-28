@@ -121,13 +121,15 @@ test("settings Test in Stable confirms then pulls main and reloads", async ({ pa
     .toBe("1");
 });
 
-test("settings Run diagnostics renders a diagnostics report", async ({ page }) => {
+test("settings Copy diagnostics report renders a per-check summary", async ({ page }) => {
+  await installClipboardSpy(page);
   await mockFetch(page);
   await page.goto("/app.html#/settings");
   await expect(settings(page)).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole("button", { name: "Run diagnostics" }).click();
-  await expect(page.locator(".settings-view pre.settings-status")).toBeVisible({ timeout: 10_000 });
+  await page.locator(".settings-view").getByRole("button", { name: "Copy diagnostics report" }).click();
+  await expect(page.getByTestId("diagnostics-checks")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("diagnostics-checks")).toContainText("health");
 });
 
 test("settings Copy Diagnostics surfaces a result and Dismiss clears it", async ({ page }) => {

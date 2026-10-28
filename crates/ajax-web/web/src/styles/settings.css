@@ -49,19 +49,6 @@
   color: var(--ink-muted);
 }
 
-.settings-subheading {
-  margin: 16px 0 8px;
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-soft);
-}
-
-.settings-subheading:first-of-type {
-  margin-top: 0;
-}
-
 .settings-debug {
   margin: 0 0 14px;
   font-size: var(--text-label);

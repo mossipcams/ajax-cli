@@ -9,13 +9,10 @@ import {
   capturePwaResume,
   captureRouteVisible,
   captureSwipe,
-  captureTelemetryDiagnostic,
   endTapToFeedback,
   endTapToOperationComplete,
-  getTelemetryStatus,
   initTelemetry,
   isNavigationPending,
-  isTelemetryInitialized,
   markNavigationStart,
   readAppVersion,
   resetTelemetryForTests,
@@ -75,7 +72,6 @@ describe("initTelemetry", () => {
     vi.stubEnv("VITE_POSTHOG_KEY", "off");
     initTelemetry();
     expect(mockedPosthog.init).not.toHaveBeenCalled();
-    expect(isTelemetryInitialized()).toBe(false);
   });
 
   it("falls back to the default project write key when env is unset", () => {
@@ -88,7 +84,6 @@ describe("initTelemetry", () => {
         disable_session_recording: true,
       }),
     );
-    expect(isTelemetryInitialized()).toBe(true);
   });
 
   it("initializes PostHog Cloud with env key, web vitals, and replay off", () => {
@@ -111,7 +106,6 @@ describe("initTelemetry", () => {
       disable_session_recording: true,
       capture_exceptions: false,
     });
-    expect(isTelemetryInitialized()).toBe(true);
   });
 
   it("uses VITE_POSTHOG_HOST when provided", () => {
@@ -161,7 +155,6 @@ describe("initTelemetry", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(() => initTelemetry()).not.toThrow();
     expect(warn).toHaveBeenCalled();
-    expect(isTelemetryInitialized()).toBe(false);
     warn.mockRestore();
   });
 });
@@ -418,28 +411,6 @@ describe("route and PWA helpers", () => {
         resume_debounce_ms: 750,
         online: true,
         cockpit_ok: true,
-      }),
-    );
-  });
-
-  it("emits telemetry diagnostic with status and context fields", () => {
-    initTelemetry();
-    captureTelemetryDiagnostic();
-    expect(getTelemetryStatus()).toEqual({
-      initialized: true,
-      standalone: expect.any(Boolean),
-    });
-    expect(mockedPosthog.capture).toHaveBeenCalledWith(
-      "ajax_telemetry_diagnostic",
-      expect.objectContaining({
-        initialized: true,
-        standalone: expect.any(Boolean),
-        online: expect.any(Boolean),
-        visibility: expect.any(String),
-        route: expect.any(String),
-        route_kind: expect.any(String),
-        sequence: expect.any(Number),
-        host: expect.any(String),
       }),
     );
   });

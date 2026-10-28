@@ -5,21 +5,20 @@ import {
   waitForServerRestart,
 } from "@/shared/lib/api";
 import { useFetchVersion, useVersionQuery } from "@/shared/hooks/useVersionQuery";
-import { buildDiagnosticsReport } from "./diagnostics";
+import {
+  buildDiagnosticsReport,
+  summarizeDiagnosticChecks,
+  type DiagnosticCheckSummary,
+} from "./diagnostics";
 import { copyText } from "@/shared/lib/clipboard";
 import { CONFIRM_TIMEOUT_MS } from "@/shared/lib/polling";
-import {
-  captureTelemetryDiagnostic,
-  isStandaloneDisplay,
-  isTelemetryInitialized,
-  readAppVersion,
-} from "@/shared/lib/telemetry";
+import { readAppVersion } from "@/shared/lib/telemetry";
 import {
   readOrchestrationChatEnabled,
   writeOrchestrationChatEnabled,
 } from "./orchestrationChatPreference";
 import { Button } from "@/shared/ui/button";
-import CursorSignIn from "./CursorSignIn";
+import AgentSignIn from "./AgentSignIn";
 import {
   runPushNotificationTest,
   enablePushNotifications,
@@ -44,7 +43,8 @@ export default function SettingsView({
   const [confirmingTestInStable, setConfirmingTestInStable] = useState(false);
   const [testInStableStatus, setTestInStableStatus] = useState<string | null>(null);
   const [testingInStable, setTestingInStable] = useState(false);
-  const [diagnosticsOutput, setDiagnosticsOutput] = useState<string | null>(null);
+  const [diagnosticChecks, setDiagnosticChecks] = useState<DiagnosticCheckSummary[] | null>(null);
+  const [diagnosticReportJson, setDiagnosticReportJson] = useState<string | null>(null);
   const [pushTestStatus, setPushTestStatus] = useState<string | null>(null);
   const [pushSubscriptionStatus, setPushSubscriptionStatus] =
     useState<PushSubscriptionStatus>("disabled");
@@ -134,26 +134,15 @@ export default function SettingsView({
     onResult?.("Server did not come back in time", null, true);
   }
 
-  async function runDiagnostics() {
-    if (diagnosticsLatchRef.current) return;
-    diagnosticsLatchRef.current = true;
-    try {
-      setDiagnosticsOutput("Running diagnostics...");
-      const report = await buildDiagnosticsReport(detailHandle);
-      setDiagnosticsOutput(JSON.stringify(report, null, 2));
-    } finally {
-      diagnosticsLatchRef.current = false;
-    }
-  }
-
   async function copyDiagnostics() {
     if (diagnosticsLatchRef.current) return;
     diagnosticsLatchRef.current = true;
     try {
       const report = await buildDiagnosticsReport(detailHandle);
-      const text = JSON.stringify(report, null, 2);
-      setDiagnosticsOutput(text);
-      const copied = await copyText(text);
+      const reportJson = JSON.stringify(report, null, 2);
+      setDiagnosticChecks(summarizeDiagnosticChecks(report.checks));
+      setDiagnosticReportJson(reportJson);
+      const copied = await copyText(reportJson);
       onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
     } finally {
       diagnosticsLatchRef.current = false;
@@ -198,14 +187,6 @@ export default function SettingsView({
     readAppVersion() ??
     document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ??
     "—";
-  const telemetryInitialized = isTelemetryInitialized();
-  const telemetryStandalone = isStandaloneDisplay();
-  const origin = window.location.origin;
-  const online = navigator.onLine;
-  const truncatedUa =
-    navigator.userAgent.length > 80
-      ? `${navigator.userAgent.slice(0, 80)}…`
-      : navigator.userAgent;
 
   return (
     <section className="settings-view" aria-labelledby="settings-heading">
@@ -215,6 +196,8 @@ export default function SettingsView({
         </Button>
         <h2 id="settings-heading">Settings</h2>
       </div>
+
+      <AgentSignIn />
 
       <div className="settings-section" data-testid="ajax-web-session-settings">
         <h3>Ajax web session</h3>
@@ -242,56 +225,8 @@ export default function SettingsView({
         </p>
       </div>
 
-      <CursorSignIn />
-
-      <div className="settings-section" data-testid="dev-settings">
-        <h3>Diagnostics</h3>
-
-        <h4 className="settings-subheading">Telemetry</h4>
-        <dl className="settings-debug" data-testid="dev-settings-telemetry">
-          <div>
-            <dt>Initialized</dt>
-            <dd>{telemetryInitialized ? "yes" : "no"}</dd>
-          </div>
-          <div>
-            <dt>Standalone</dt>
-            <dd>{telemetryStandalone ? "yes" : "no"}</dd>
-          </div>
-          <div>
-            <dt>App version</dt>
-            <dd>{appVersion}</dd>
-          </div>
-        </dl>
-        <Button
-          type="button"
-          variant="secondary"
-          data-testid="telemetry-diagnostic"
-          onClick={() => captureTelemetryDiagnostic()}
-        >
-          Emit telemetry diagnostic
-        </Button>
-
-        <h4 className="settings-subheading">Debug info</h4>
-        <dl className="settings-debug" data-testid="dev-settings-debug">
-          <div>
-            <dt>App version</dt>
-            <dd>{appVersion}</dd>
-          </div>
-          <div>
-            <dt>Origin</dt>
-            <dd>{origin}</dd>
-          </div>
-          <div>
-            <dt>Online</dt>
-            <dd>{online ? "yes" : "no"}</dd>
-          </div>
-          <div>
-            <dt>User agent</dt>
-            <dd>{truncatedUa}</dd>
-          </div>
-        </dl>
-
-        <h4 className="settings-subheading">Push notifications</h4>
+      <div className="settings-section" data-testid="notifications-settings">
+        <h3>Notifications</h3>
         <dl className="settings-debug" data-testid="dev-settings-push">
           <div>
             <dt>Status</dt>
@@ -304,14 +239,6 @@ export default function SettingsView({
             </dd>
           </div>
         </dl>
-
-        <h4 className="settings-subheading">Actions</h4>
-        <Button type="button" variant="secondary" onClick={runDiagnostics}>
-          Run diagnostics
-        </Button>
-        <Button type="button" variant="secondary" onClick={copyDiagnostics}>
-          Copy Diagnostics
-        </Button>
         <Button
           type="button"
           variant="secondary"
@@ -337,25 +264,50 @@ export default function SettingsView({
           Test push notification
         </Button>
         {pushTestStatus ? <p className="settings-status">{pushTestStatus}</p> : null}
-        {testInStableAvailable ? (
-          <>
-            <p className="settings-note">
-              {testInStableRestartsThisInstance
-                ? "Pulls origin/main, rebuilds, and restarts this stable Cockpit."
-                : "Pulls origin/main, rebuilds, and restarts stable Cockpit on port 8787."}
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={testingInStable}
-              onClick={testInStable}
-            >
-              {confirmingTestInStable ? "Tap to confirm" : "Test in Stable"}
-            </Button>
-          </>
+      </div>
+
+      {testInStableAvailable ? (
+        <div className="settings-section" data-testid="stable-cockpit-settings">
+          <h3>Stable Cockpit</h3>
+          <p className="settings-note">
+            {testInStableRestartsThisInstance
+              ? "Pulls origin/main, rebuilds, and restarts this stable Cockpit."
+              : "Pulls origin/main, rebuilds, and restarts stable Cockpit on port 8787."}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={testingInStable}
+            onClick={testInStable}
+          >
+            {confirmingTestInStable ? "Tap to confirm" : "Test in Stable"}
+          </Button>
+          {testInStableStatus ? <p className="settings-status">{testInStableStatus}</p> : null}
+        </div>
+      ) : null}
+
+      <div className="settings-section" data-testid="dev-settings">
+        <h3>Diagnostics</h3>
+        <p className="settings-note">App version {appVersion}</p>
+        <Button type="button" variant="secondary" onClick={copyDiagnostics}>
+          Copy diagnostics report
+        </Button>
+        {diagnosticChecks ? (
+          <dl className="settings-debug" data-testid="diagnostics-checks">
+            {diagnosticChecks.map((check) => (
+              <div key={check.name}>
+                <dt>{check.name}</dt>
+                <dd>{check.detail}</dd>
+              </div>
+            ))}
+          </dl>
         ) : null}
-        {testInStableStatus ? <p className="settings-status">{testInStableStatus}</p> : null}
-        {diagnosticsOutput ? <pre className="settings-status">{diagnosticsOutput}</pre> : null}
+        {diagnosticReportJson ? (
+          <details data-testid="diagnostics-report">
+            <summary>Show report</summary>
+            <pre className="settings-status">{diagnosticReportJson}</pre>
+          </details>
+        ) : null}
       </div>
     </section>
   );
