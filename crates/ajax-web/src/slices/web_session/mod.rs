@@ -45,7 +45,7 @@ mod ws_bridge;
 pub use prepare_session::prepare_task_session;
 
 pub use acp_map::{map_acp_client_request, map_acp_session_notification, map_acp_session_update};
-pub(crate) use ci_agent_delivery::deliver as deliver_agent_notification;
+pub(crate) use ci_agent_delivery::{deliver as deliver_agent_notification, deliver_remediation};
 pub(crate) use execution_ownership::HEARTBEAT_EVERY;
 pub use protocol::{
     parse_client_cursor, parse_tail_snapshot_flag, SessionEventEnvelope, SessionSnapshot,

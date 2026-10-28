@@ -1,17 +1,26 @@
 use crate::runtime::bridge::{
-    handle_action_request, operation_error_response, operation_success_response,
+    handle_action_request, operation_error_response, operation_success_response, ActionFailure,
     MobileActionRequest, RuntimeBridge,
 };
 use crate::runtime::state::{operator_input_sink, GateRejection, WebAppState};
-use crate::slices::web_session::PersistSessionModel;
+use crate::slices::operate::{format_operate_error, operate_error_code};
+use crate::slices::web_session::{deliver_remediation, PersistSessionModel, TaskSessionDirectory};
 use crate::{
-    adapters::http::{
-        json_value_response, operation_response_with_request_id, response_from_web_error,
-        text_axum_response,
+    adapters::{
+        http::{
+            json_value_response, operation_response_with_request_id, response_from_web_error,
+            text_axum_response,
+        },
+        skills::resolve_skill_path,
     },
     WebError,
 };
-use ajax_core::{adapters::CommandRunner, registry::Registry as _};
+use ajax_core::{
+    adapters::CommandRunner,
+    commands::CommandContext,
+    registry::{InMemoryRegistry, Registry as _},
+    remediation,
+};
 use axum::{
     body::Bytes,
     extract::{
@@ -585,6 +594,57 @@ pub(crate) fn gate_rejection_response(
     }
 }
 
+fn is_chat_remediation(
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    action: &str,
+) -> bool {
+    remediation::is_remediation_action(action)
+        && context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .any(|task| task.qualified_handle() == task_handle && task.skip_interactive_agent())
+}
+
+/// Copies the registry for a chat remediation under a brief shared-state lock, so
+/// delivery runs without the control lane or `refresh_flight`.
+fn chat_remediation_snapshot<C, B>(
+    state: &WebAppState<C, B>,
+    request: &MobileActionRequest,
+) -> Option<CommandContext<InMemoryRegistry>> {
+    let guard = state.shared();
+    is_chat_remediation(&guard.context, &request.task_handle, &request.action)
+        .then(|| guard.context.clone())
+}
+
+async fn chat_remediation_response(
+    directory: &Arc<TaskSessionDirectory>,
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    remediation_id: &str,
+) -> Result<crate::adapters::http::Response, WebError> {
+    let outcome = deliver_remediation(
+        directory,
+        context,
+        task_handle,
+        remediation_id,
+        |skill_name| resolve_skill_path(skill_name).map(|path| path.display().to_string()),
+    )
+    .await;
+    match outcome {
+        Ok(outcome) => operation_success_response(outcome, context),
+        Err(error) => operation_error_response(
+            ActionFailure {
+                message: format_operate_error(&error),
+                code: operate_error_code(&error).to_string(),
+                state_changed: false,
+            },
+            context,
+        ),
+    }
+}
+
 pub(crate) async fn axum_action<C, B>(
     State(state): State<WebAppState<C, B>>,
     body: Bytes,
@@ -633,37 +693,54 @@ where
     let cleanup_after_drop = action == "drop";
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
-    let response = tokio::task::spawn_blocking(move || {
-        let _flight = state.refresh_flight.blocking_lock();
-        let _lane = state.control_lane.blocking_lock();
-        let response = state.run_optimistic(
-            request_id.as_deref(),
-            "cockpit state changed while operation was running",
-            |context, runner, bridge| match handle_action_request(request, context, runner, bridge)
-            {
-                Ok((response, durable)) => (
-                    operation_response_with_request_id(response, request_id.as_deref()),
-                    durable,
-                ),
-                Err(error) => (response_from_web_error(error, request_id.as_deref()), false),
-            },
-        );
+    let response = if let Some(context) = chat_remediation_snapshot(&state, &request) {
+        let response = match chat_remediation_response(
+            &directory,
+            &context,
+            &request.task_handle,
+            &request.action,
+        )
+        .await
+        {
+            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+            Err(error) => response_from_web_error(error, request_id.as_deref()),
+        };
         state.finish_operation(request_id.as_deref(), &task_key, &response);
         response
-    })
-    .await
-    .unwrap_or_else(|error| {
-        let response = response_from_web_error(
-            WebError::CommandFailed(format!("operation worker failed: {error}")),
-            error_request_id.as_deref(),
-        );
-        state_for_finish.finish_operation(
-            error_request_id.as_deref(),
-            &task_key_for_finish,
-            &response,
-        );
-        response
-    });
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let _flight = state.refresh_flight.blocking_lock();
+            let _lane = state.control_lane.blocking_lock();
+            let response = state.run_optimistic(
+                request_id.as_deref(),
+                "cockpit state changed while operation was running",
+                |context, runner, bridge| match handle_action_request(
+                    request, context, runner, bridge,
+                ) {
+                    Ok((response, durable)) => (
+                        operation_response_with_request_id(response, request_id.as_deref()),
+                        durable,
+                    ),
+                    Err(error) => (response_from_web_error(error, request_id.as_deref()), false),
+                },
+            );
+            state.finish_operation(request_id.as_deref(), &task_key, &response);
+            response
+        })
+        .await
+        .unwrap_or_else(|error| {
+            let response = response_from_web_error(
+                WebError::CommandFailed(format!("operation worker failed: {error}")),
+                error_request_id.as_deref(),
+            );
+            state_for_finish.finish_operation(
+                error_request_id.as_deref(),
+                &task_key_for_finish,
+                &response,
+            );
+            response
+        })
+    };
 
     if response.status_code >= 400 {
         tracing::warn!(

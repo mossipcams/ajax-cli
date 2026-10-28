@@ -39,7 +39,7 @@ mod operation_outcomes;
 mod state;
 mod task_routes;
 use task_routes::{
-    axum_action, axum_cockpit, axum_start_task, axum_task_get, axum_task_post,
+    axum_action, axum_cockpit, axum_presence, axum_start_task, axum_task_get, axum_task_post,
     refresh_cockpit_and_cache,
 };
 
@@ -106,6 +106,7 @@ where
             get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>),
         )
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
+        .route("/api/presence", post(axum_presence::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
             "/api/tasks/{*handle}",
@@ -161,20 +162,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
-        push::spawn_push_flusher(Arc::clone(&state.push));
-        spawn_push_tick(&state);
-        spawn_push_tick(&state);
-
-        let directory = Arc::clone(&state.task_session_directory);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                directory.heartbeat_execution_ownership();
-            }
-        });
-
+        spawn_background_loops(&state);
         headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
@@ -191,6 +179,25 @@ where
             .await
             .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
     })
+}
+
+fn spawn_background_loops<C, B>(state: &WebAppState<C, B>)
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    push::spawn_push_flusher(Arc::clone(&state.push));
+    spawn_push_tick(state);
+
+    let directory = Arc::clone(&state.task_session_directory);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            directory.heartbeat_execution_ownership();
+        }
+    });
 }
 
 fn spawn_push_tick<C, B>(state: &WebAppState<C, B>)
@@ -839,6 +846,8 @@ mod cursor_auth_access_tests {
 }
 #[cfg(test)]
 mod activity_report_tests;
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod refresh_lane_tests;
 #[cfg(test)]

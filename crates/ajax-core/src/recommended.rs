@@ -3,7 +3,7 @@ use crate::{
         AgentRuntimeStatus, Annotation, Evidence, LifecycleStatus, LiveStatusKind, OperatorAction,
         RuntimeHealth, SideFlag, Task,
     },
-    operation::{task_operation_eligibility, TaskOperation},
+    operation::{has_open_pull_request, task_operation_eligibility, TaskOperation},
     policy::merge_safety,
     runtime_refresh::ci_monitor::{self, CiAttemptStatus},
     ui_state::derive_operator_status,
@@ -139,9 +139,11 @@ fn fallback_operator_action(task: &Task) -> OperatorAction {
         return OperatorAction::Repair;
     }
     match task.lifecycle_status {
-        LifecycleStatus::Mergeable => OperatorAction::Ship,
+        LifecycleStatus::Mergeable if !has_open_pull_request(task) => OperatorAction::Ship,
         LifecycleStatus::Reviewable
-            if merge_safety(task).classification == crate::models::SafetyClassification::Safe =>
+            if !has_open_pull_request(task)
+                && merge_safety(task).classification
+                    == crate::models::SafetyClassification::Safe =>
         {
             OperatorAction::Ship
         }
@@ -227,6 +229,7 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         .as_ref()
         .is_some_and(|status| status.kind == LiveStatusKind::CiFailed)
         || ci_monitor::load_state(task).status == CiAttemptStatus::Failed;
+    let ship_blocked = ci_failed || has_open_pull_request(task);
     actions.extend(
         [
             (TaskOperation::Open, OperatorAction::Resume),
@@ -236,7 +239,7 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         ]
         .into_iter()
         .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
-        .filter(|(_, action)| !(ci_failed && *action == OperatorAction::Ship))
+        .filter(|(_, action)| !(ship_blocked && *action == OperatorAction::Ship))
         .map(|(_, action)| action),
     );
     actions.dedup();
@@ -748,5 +751,61 @@ mod tests {
             plan.action,
             plan.available_actions
         );
+    }
+
+    #[test]
+    fn open_pull_request_hides_ship_for_reviewable_and_mergeable_tasks() {
+        use crate::{
+            diff_review::{remember_pull_requests, PullRequestRef, PullRequestState},
+            lifecycle::mark_mergeable,
+        };
+
+        let open_pr = PullRequestRef {
+            number: 42,
+            title: "Fix login".to_string(),
+            url: "https://github.com/mossipcams/ajax-cli/pull/42".to_string(),
+            state: PullRequestState::Open,
+            head_ref: "ajax/reviewable".to_string(),
+            head_sha: None,
+        };
+        let mut reviewable = clean_reviewable_task("reviewable");
+        remember_pull_requests(&mut reviewable, std::slice::from_ref(&open_pr));
+        let mut mergeable = clean_reviewable_task("mergeable");
+        mark_mergeable(&mut mergeable).unwrap();
+        remember_pull_requests(&mut mergeable, std::slice::from_ref(&open_pr));
+
+        for task in [&reviewable, &mergeable] {
+            let plan = operator_action(task);
+
+            assert!(
+                !plan.available_actions.contains(&OperatorAction::Ship),
+                "open pull request should hide ship: {:?}",
+                plan.available_actions
+            );
+            assert_ne!(plan.action, OperatorAction::Ship);
+            assert_ne!(plan.reason, "ship");
+        }
+    }
+
+    #[test]
+    fn closed_pull_request_keeps_ship_available() {
+        use crate::diff_review::{remember_pull_requests, PullRequestRef, PullRequestState};
+
+        let mut t = clean_reviewable_task("reviewable");
+        remember_pull_requests(
+            &mut t,
+            &[PullRequestRef {
+                number: 7,
+                title: "Old attempt".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Closed,
+                head_ref: "ajax/reviewable".to_string(),
+                head_sha: None,
+            }],
+        );
+
+        let plan = operator_action(&t);
+
+        assert!(plan.available_actions.contains(&OperatorAction::Ship));
     }
 }
