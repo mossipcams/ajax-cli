@@ -1,7 +1,8 @@
 use super::tests::{
     app_with, blocking_notification_bridge, blocking_refresh_bridge, context_with_task, get,
-    release_gate, unsaved_notification_bridge, TestBridge,
+    json_of, post_json, release_gate, scratch_dir, unsaved_notification_bridge, TestBridge,
 };
+use crate::adapters::web_session_acp::set_test_acp_command;
 use ajax_core::registry::Registry as _;
 use axum::http::StatusCode;
 use std::{
@@ -277,4 +278,46 @@ async fn unsaved_notification_delivery_is_not_redelivered_on_next_refresh() {
         None,
         "delivered notification must stay delivered in shared state after a failed persist"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn chat_remediation_delivery_runs_without_control_lane() {
+    let skill_root = scratch_dir("chat-remediation-skills");
+    let skill_dir = skill_root.join("gh-fix-ci");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# skill").unwrap();
+    std::env::set_var("AJAX_SKILL_ROOT", &skill_root);
+    let worktree = scratch_dir("chat-remediation-worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, cookie, app) = app_with(context, TestBridge::default(), "chat-remediation-lane");
+    let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/fake_acp.js")
+        .to_string_lossy()
+        .into_owned();
+    set_test_acp_command(Some((std::path::Path::new("node"), &[script.as_str()])));
+
+    let lane = state.control_lane.lock().await;
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        post_json(
+            &app,
+            &cookie,
+            "/api/actions",
+            r#"{"request_id":"chat-remediation-lane-a","task_handle":"web/fix-login","action":"fix-ci"}"#,
+        ),
+    )
+    .await;
+    drop(lane);
+    set_test_acp_command(None);
+
+    let response = response.expect("chat remediation waited on the held control lane");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_of(response).await;
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["request_id"], "chat-remediation-lane-a");
+    assert_eq!(body["output"], "fix-ci: skill brief sent to chat task");
 }

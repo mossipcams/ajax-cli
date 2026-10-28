@@ -607,20 +607,32 @@ fn is_chat_remediation(
             .any(|task| task.qualified_handle() == task_handle && task.skip_interactive_agent())
 }
 
-fn chat_remediation_response(
+/// Copies the registry for a chat remediation under a brief shared-state lock, so
+/// delivery runs without the control lane or `refresh_flight`.
+fn chat_remediation_snapshot<C, B>(
+    state: &WebAppState<C, B>,
+    request: &MobileActionRequest,
+) -> Option<CommandContext<InMemoryRegistry>> {
+    let guard = state.shared();
+    is_chat_remediation(&guard.context, &request.task_handle, &request.action)
+        .then(|| guard.context.clone())
+}
+
+async fn chat_remediation_response(
     directory: &Arc<TaskSessionDirectory>,
     context: &CommandContext<InMemoryRegistry>,
     task_handle: &str,
     remediation_id: &str,
-) -> Result<(crate::adapters::http::Response, bool), WebError> {
-    let outcome = tokio::runtime::Handle::current().block_on(deliver_remediation(
+) -> Result<crate::adapters::http::Response, WebError> {
+    let outcome = deliver_remediation(
         directory,
         context,
         task_handle,
         remediation_id,
         |skill_name| resolve_skill_path(skill_name).map(|path| path.display().to_string()),
-    ));
-    let response = match outcome {
+    )
+    .await;
+    match outcome {
         Ok(outcome) => operation_success_response(outcome, context),
         Err(error) => operation_error_response(
             ActionFailure {
@@ -630,8 +642,7 @@ fn chat_remediation_response(
             },
             context,
         ),
-    };
-    response.map(|response| (response, false))
+    }
 }
 
 pub(crate) async fn axum_action<C, B>(
@@ -681,51 +692,55 @@ where
     let task_key_for_finish = task_key.clone();
     let cleanup_after_drop = action == "drop";
     let directory = Arc::clone(&state.task_session_directory);
-    let chat_directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
-    let response = tokio::task::spawn_blocking(move || {
-        let _flight = state.refresh_flight.blocking_lock();
-        let _lane = state.control_lane.blocking_lock();
-        let response = state.run_optimistic(
-            request_id.as_deref(),
-            "cockpit state changed while operation was running",
-            |context, runner, bridge| {
-                let result = if is_chat_remediation(context, &request.task_handle, &request.action)
-                {
-                    chat_remediation_response(
-                        &chat_directory,
-                        context,
-                        &request.task_handle,
-                        &request.action,
-                    )
-                } else {
-                    handle_action_request(request, context, runner, bridge)
-                };
-                match result {
+    let response = if let Some(context) = chat_remediation_snapshot(&state, &request) {
+        let response = match chat_remediation_response(
+            &directory,
+            &context,
+            &request.task_handle,
+            &request.action,
+        )
+        .await
+        {
+            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+            Err(error) => response_from_web_error(error, request_id.as_deref()),
+        };
+        state.finish_operation(request_id.as_deref(), &task_key, &response);
+        response
+    } else {
+        tokio::task::spawn_blocking(move || {
+            let _flight = state.refresh_flight.blocking_lock();
+            let _lane = state.control_lane.blocking_lock();
+            let response = state.run_optimistic(
+                request_id.as_deref(),
+                "cockpit state changed while operation was running",
+                |context, runner, bridge| match handle_action_request(
+                    request, context, runner, bridge,
+                ) {
                     Ok((response, durable)) => (
                         operation_response_with_request_id(response, request_id.as_deref()),
                         durable,
                     ),
                     Err(error) => (response_from_web_error(error, request_id.as_deref()), false),
-                }
-            },
-        );
-        state.finish_operation(request_id.as_deref(), &task_key, &response);
-        response
-    })
-    .await
-    .unwrap_or_else(|error| {
-        let response = response_from_web_error(
-            WebError::CommandFailed(format!("operation worker failed: {error}")),
-            error_request_id.as_deref(),
-        );
-        state_for_finish.finish_operation(
-            error_request_id.as_deref(),
-            &task_key_for_finish,
-            &response,
-        );
-        response
-    });
+                },
+            );
+            state.finish_operation(request_id.as_deref(), &task_key, &response);
+            response
+        })
+        .await
+        .unwrap_or_else(|error| {
+            let response = response_from_web_error(
+                WebError::CommandFailed(format!("operation worker failed: {error}")),
+                error_request_id.as_deref(),
+            );
+            state_for_finish.finish_operation(
+                error_request_id.as_deref(),
+                &task_key_for_finish,
+                &response,
+            );
+            response
+        })
+    };
 
     if response.status_code >= 400 {
         tracing::warn!(
