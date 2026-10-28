@@ -1,5 +1,6 @@
 use super::shim_paths;
 use crate::adapters::web_session_acp::process_group::kill_tree;
+use std::fs;
 use std::io::{self, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -80,6 +81,14 @@ pub fn shim_spawn(command: &Command) -> io::Result<Option<ShimSpawn>> {
     Ok(Some(ShimSpawn { child, stream }))
 }
 
+pub fn log_offset(cwd: &Path) -> Option<u64> {
+    let config = CONFIG.get()?;
+    let handle = cwd.to_str()?;
+    fs::metadata(shim_paths(&config.state_dir, handle).log)
+        .ok()
+        .map(|metadata| metadata.len())
+}
+
 fn connect(child: &mut Child, socket: &Path) -> io::Result<UnixStream> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
@@ -97,5 +106,16 @@ fn connect(child: &mut Child, socket: &Path) -> io::Result<UnixStream> {
             }
             Err(_) => thread::sleep(CONNECT_RETRY),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_offset;
+    use std::path::Path;
+
+    #[test]
+    fn log_offset_is_none_when_shim_is_not_enabled() {
+        assert_eq!(log_offset(Path::new("/repo/worktree")), None);
     }
 }

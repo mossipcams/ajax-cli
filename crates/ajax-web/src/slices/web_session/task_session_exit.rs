@@ -5,6 +5,7 @@ use super::task_session::TaskSessionState;
 use super::{
     apply_cancel_to_queue, QueuedPrompt, SessionError, SessionServerEvent, MAX_QUEUED_PROMPTS,
 };
+use crate::adapters::session_shim;
 use crate::adapters::web_session_store::prompt_ledger::{PromptLedger, PromptPhase};
 
 pub(super) const ACP_PROCESS_EXITED: &str = "ACP process exited";
@@ -448,6 +449,8 @@ pub(super) fn submit_prompt(
         return Ok(());
     }
     if !client_message_id.is_empty() {
+        let shim_offset = dispatch_shim_offset(state);
+        let user_event_cursor = state.log.absolute_next_cursor() + state.unpersisted.len() + 1;
         state.commit_ledger_with_events(
             |ledger| {
                 ledger.upsert_queued(
@@ -457,6 +460,11 @@ pub(super) fn submit_prompt(
                     wire_blocks_to_json(&content_blocks),
                 );
                 ledger.mark_dispatching(&client_message_id);
+                ledger.record_dispatch_marks(
+                    &client_message_id,
+                    shim_offset,
+                    user_event_cursor as u64,
+                );
             },
             vec![user_event],
         )?;
@@ -490,6 +498,13 @@ pub(super) fn submit_prompt(
     Ok(())
 }
 
+fn dispatch_shim_offset(state: &TaskSessionState) -> Option<u64> {
+    state
+        .worktree_path
+        .as_deref()
+        .and_then(session_shim::spawn::log_offset)
+}
+
 pub(super) fn dispatch_queued_prompt(
     state: &mut TaskSessionState,
     next: &super::QueuedPrompt,
@@ -501,8 +516,11 @@ pub(super) fn dispatch_queued_prompt(
         return Err(SessionError::persist(reason.clone()));
     }
     if !next.client_message_id.is_empty() {
+        let shim_offset = dispatch_shim_offset(state);
+        let cursor = state.log.absolute_next_cursor() as u64;
         persist_ledger_update(state, |ledger| {
             ledger.mark_dispatching(&next.client_message_id);
+            ledger.record_dispatch_marks(&next.client_message_id, shim_offset, cursor);
         })?;
     }
     state.stream_normalizer.close_reply_lanes();
