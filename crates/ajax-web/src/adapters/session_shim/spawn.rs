@@ -2,6 +2,7 @@ use super::process::SHUTDOWN_GRACE;
 use super::shim_paths;
 use crate::adapters::web_session_acp::process_group::kill_tree;
 use std::cell::Cell;
+use std::fs;
 use std::io::{self, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
@@ -130,6 +131,14 @@ pub(super) fn retire_live_shim(socket: &Path) -> io::Result<()> {
     Ok(())
 }
 
+pub fn log_offset(cwd: &Path) -> Option<u64> {
+    let config = CONFIG.get()?;
+    let handle = cwd.to_str()?;
+    fs::metadata(shim_paths(&config.state_dir, handle).log)
+        .ok()
+        .map(|metadata| metadata.len())
+}
+
 pub(super) fn connect_to_child(child: &mut Child, socket: &Path) -> io::Result<UnixStream> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
@@ -211,8 +220,8 @@ fn peer_pid(_stream: &UnixStream) -> io::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{shim_spawn_with, without_shim, SpawnConfig};
-    use std::path::PathBuf;
+    use super::{log_offset, shim_spawn_with, without_shim, SpawnConfig};
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::thread;
 
@@ -238,5 +247,10 @@ mod tests {
         let concurrent = concurrent.expect("probe thread");
         assert!(concurrent.is_err(), "other threads must still use the shim");
         assert!(spawn_probe().is_err(), "bypass must end with the scope");
+    }
+
+    #[test]
+    fn log_offset_is_none_when_shim_is_not_enabled() {
+        assert_eq!(log_offset(Path::new("/repo/worktree")), None);
     }
 }

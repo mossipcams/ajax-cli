@@ -8,7 +8,7 @@ mod process;
 mod process_tests;
 #[cfg_attr(not(test), allow(dead_code))]
 mod relay;
-mod spawn;
+pub(crate) mod spawn;
 
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use log::answered_request_ids;
