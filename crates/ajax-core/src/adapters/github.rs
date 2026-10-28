@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 const GH_PR_CHECKS_TIMEOUT: Duration = Duration::from_secs(30);
+const GH_PR_MERGE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GithubChecksAdapter {
@@ -123,6 +124,15 @@ impl GithubChecksAdapter {
         CommandSpec::new(&self.program, ["pr", "diff", &number.to_string()])
             .with_cwd(worktree_path)
             .with_timeout(GH_PR_CHECKS_TIMEOUT)
+    }
+
+    pub fn pr_merge(&self, worktree_path: &str, number: u64) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["pr", "merge", &number.to_string(), "--squash"],
+        )
+        .with_cwd(worktree_path)
+        .with_timeout(GH_PR_MERGE_TIMEOUT)
     }
 
     pub fn local_diff(&self, worktree_path: &str, base_branch: &str) -> CommandSpec {
@@ -318,7 +328,7 @@ fn is_pending_state(state: &str) -> bool {
 mod tests {
     use super::{
         CiChecksObservation, CommandOutput, CommandRunError, CommandSpec, GithubChecksAdapter,
-        GH_PR_CHECKS_TIMEOUT,
+        GH_PR_CHECKS_TIMEOUT, GH_PR_MERGE_TIMEOUT,
     };
     use std::path::Path;
 
@@ -647,6 +657,20 @@ mod tests {
             CommandSpec::new("gh", ["pr", "diff", "42"])
                 .with_cwd("/worktrees/ajax-fix-login")
                 .with_timeout(GH_PR_CHECKS_TIMEOUT)
+        );
+    }
+
+    #[test]
+    fn pr_merge_plans_squash_merge_in_worktree() {
+        let adapter = GithubChecksAdapter::new("gh");
+
+        let spec = adapter.pr_merge("/worktrees/ajax-fix-login", 42);
+
+        assert_eq!(
+            spec,
+            CommandSpec::new("gh", ["pr", "merge", "42", "--squash"])
+                .with_cwd("/worktrees/ajax-fix-login")
+                .with_timeout(GH_PR_MERGE_TIMEOUT)
         );
     }
 
