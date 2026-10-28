@@ -104,6 +104,7 @@ fn restart_leaves_no_holder_so_respawned_session_is_idle_evictable() {
             directory
                 .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
                 .expect("first");
+            directory.release(handle);
 
             directory
                 .runtime_handle()
@@ -117,6 +118,43 @@ fn restart_leaves_no_holder_so_respawned_session_is_idle_evictable() {
                 snapshot.evictable,
                 "a restarted, released session must be evictable when idle"
             );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_with_attached_holder_keeps_it_and_prompts_still_succeed() {
+    let dir = scratch_dir("restart-attached");
+    let handle = "web/restart-attached";
+    let script = fake_acp_fixture();
+    let context = chat_context("restart-attached", &dir);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+
+            directory
+                .runtime_handle()
+                .block_on(restart_session(directory.inner(), &context, handle))
+                .expect("restart");
+
+            let snapshot = directory.eviction_snapshot(handle).expect("snapshot");
+            assert_eq!(snapshot.holders, 1);
+            assert!(
+                !snapshot.evictable,
+                "a restarted session with an attached browser must not be evictable"
+            );
+            directory
+                .submit_prompt_with_id(handle, "after-1".to_string(), "after".to_string())
+                .expect("prompt after restart must succeed for the attached connection");
         });
     });
 
