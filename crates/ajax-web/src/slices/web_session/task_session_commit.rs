@@ -32,6 +32,7 @@ impl TaskSessionState {
 
         self.prompts.prompt_ledger = next;
         self.unpersisted.clear();
+        self.evidence.clear_transcript_durability_fault();
         self.report_committed_events(&filtered);
         self.log.mark_superseded(&cursors);
         self.log.append(filtered);
