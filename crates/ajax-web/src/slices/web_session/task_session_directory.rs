@@ -836,6 +836,15 @@ impl TaskSessionDirectory {
     pub(crate) fn has_live_entry(&self, handle: &str) -> bool {
         self.sessions.lock().unwrap().contains_key(handle)
     }
+
+    pub(crate) async fn attached_holders(&self, handle: &str) -> usize {
+        let Ok(tx) = self.command_tx(handle) else {
+            return 0;
+        };
+        eviction_snapshot(&tx)
+            .await
+            .map_or(0, |snapshot| snapshot.holders)
+    }
 }
 
 async fn eviction_snapshot(tx: &TaskSessionSender) -> Result<EvictionSnapshot, String> {

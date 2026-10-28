@@ -1,6 +1,7 @@
 use crate::{
     adapters::{CommandOutput, CommandRunner, TmuxAdapter},
     commands::CommandContext,
+    diff_review::{stored_pull_requests, PullRequestState},
     models::{LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskKind},
     operation::has_open_pull_request,
     registry::Registry,
@@ -72,7 +73,17 @@ pub fn is_remediation_action(action: &str) -> bool {
 }
 
 fn offers_create_pr(task: &Task) -> bool {
-    is_open_chat_task(task) && !has_open_pull_request(task)
+    is_open_chat_task(task)
+        && !matches!(
+            task.lifecycle_status,
+            LifecycleStatus::Removing
+                | LifecycleStatus::TeardownIncomplete
+                | LifecycleStatus::Error
+                | LifecycleStatus::Orphaned
+        )
+        && stored_pull_requests(task)
+            .iter()
+            .all(|pr| pr.state == PullRequestState::Closed)
 }
 
 fn offers_merge_pr(task: &Task) -> bool {
@@ -421,6 +432,69 @@ mod tests {
     fn merged_or_removed_chat_task_does_not_offer_create_pr() {
         for lifecycle in [LifecycleStatus::Merged, LifecycleStatus::Removed] {
             let mut task = task("done");
+            task.set_skip_interactive_agent(true);
+            task.lifecycle_status = lifecycle;
+
+            assert!(remediations_for_task(&task)
+                .iter()
+                .all(|option| option.id != CREATE_PR));
+        }
+    }
+
+    #[test]
+    fn chat_task_whose_pr_just_merged_does_not_offer_create_pr_before_refresh() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        task.lifecycle_status = LifecycleStatus::Active;
+        remember_pull_requests(
+            &mut task,
+            &[PullRequestRef {
+                number: 7,
+                title: "feat(web): chat".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Merged,
+                head_ref: "ajax/chat".to_string(),
+                head_sha: None,
+            }],
+        );
+
+        let options = remediations_for_task(&task);
+
+        assert!(options.iter().all(|option| option.id != CREATE_PR));
+        assert!(options.iter().all(|option| option.id != MERGE_PR));
+    }
+
+    #[test]
+    fn chat_task_whose_pr_was_closed_without_merge_offers_create_pr_again() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        remember_pull_requests(
+            &mut task,
+            &[PullRequestRef {
+                number: 7,
+                title: "feat(web): chat".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Closed,
+                head_ref: "ajax/chat".to_string(),
+                head_sha: None,
+            }],
+        );
+
+        let options = remediations_for_task(&task);
+
+        assert!(options.iter().any(|option| option.id == CREATE_PR));
+        assert!(options.iter().all(|option| option.id != MERGE_PR));
+    }
+
+    #[test]
+    fn chat_task_in_teardown_or_error_lifecycle_does_not_offer_create_pr() {
+        for lifecycle in [
+            LifecycleStatus::Removing,
+            LifecycleStatus::TeardownIncomplete,
+            LifecycleStatus::Error,
+            LifecycleStatus::Orphaned,
+        ] {
+            let mut task = task("stuck");
             task.set_skip_interactive_agent(true);
             task.lifecycle_status = lifecycle;
 
