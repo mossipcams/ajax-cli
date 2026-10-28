@@ -90,6 +90,43 @@ pub struct RemediationOutcome {
     pub output: String,
 }
 
+pub fn chat_remediation_brief<R: Registry>(
+    context: &CommandContext<R>,
+    task_handle: &str,
+    remediation_id: &str,
+    skill_path: impl FnOnce(&str) -> Option<String>,
+) -> Result<(Task, String), RemediationError> {
+    let skill_name = skill_name(remediation_id)
+        .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?;
+    let task = find_task(context, task_handle)?;
+    let skill_path = skill_path(skill_name).ok_or(RemediationError::UnsupportedCapability(
+        "required agent skill is not installed on the companion host",
+    ))?;
+    let brief = format_brief(remediation_id, task, &skill_path)
+        .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?;
+    Ok((task.clone(), brief))
+}
+
+fn find_task<'a, R: Registry>(
+    context: &'a CommandContext<R>,
+    task_handle: &str,
+) -> Result<&'a Task, RemediationError> {
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+        .ok_or_else(|| RemediationError::TaskNotFound(task_handle.to_string()))
+}
+
+fn skill_name(remediation_id: &str) -> Option<&'static str> {
+    match remediation_id {
+        FIX_CI => Some("gh-fix-ci"),
+        RESOLVE_MERGE_CONFLICTS => Some("resolve-merge-conflicts"),
+        _ => None,
+    }
+}
+
 pub fn execute_remediation<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -103,12 +140,7 @@ pub fn execute_remediation<R: Registry>(
         ));
     }
 
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == task_handle)
-        .ok_or_else(|| RemediationError::TaskNotFound(task_handle.to_string()))?;
+    let task = find_task(context, task_handle)?;
 
     let brief = format_brief(remediation_id, task, skill_path)
         .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?;
@@ -156,7 +188,8 @@ fn format_remediation_output(output: &CommandOutput, remediation_id: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_remediation, format_brief, remediations_for_task, FIX_CI, RESOLVE_MERGE_CONFLICTS,
+        chat_remediation_brief, execute_remediation, format_brief, remediations_for_task, FIX_CI,
+        RESOLVE_MERGE_CONFLICTS,
     };
     use crate::{
         adapters::RecordingCommandRunner,
@@ -282,5 +315,37 @@ mod tests {
             super::RemediationError::UnsupportedCapability(_)
         ));
         assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn chat_remediation_brief_needs_no_tmux_session() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        let context = context_with_task(task);
+
+        let (task, brief) = chat_remediation_brief(&context, "web/chat", FIX_CI, |name| {
+            assert_eq!(name, "gh-fix-ci");
+            Some("/skills/gh-fix-ci/SKILL.md".to_string())
+        })
+        .unwrap();
+
+        assert_eq!(task.qualified_handle(), "web/chat");
+        assert_eq!(
+            brief,
+            format_brief(FIX_CI, &task, "/skills/gh-fix-ci/SKILL.md").unwrap()
+        );
+    }
+
+    #[test]
+    fn chat_remediation_brief_requires_installed_skill() {
+        let context = context_with_task(task("chat"));
+
+        let error = chat_remediation_brief(&context, "web/chat", RESOLVE_MERGE_CONFLICTS, |_| None)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::RemediationError::UnsupportedCapability(_)
+        ));
     }
 }
