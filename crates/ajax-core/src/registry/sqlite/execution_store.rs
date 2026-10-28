@@ -540,6 +540,38 @@ impl SqliteRegistryStore {
         .collect()
     }
 
+    pub fn truncate_events_after(
+        &self,
+        run_id: &str,
+        seq: u64,
+    ) -> Result<u64, RegistrySnapshotError> {
+        let mut connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let Ok(keep_through) = i64::try_from(seq) else {
+            return Ok(0);
+        };
+        let Some(next_seq) = keep_through.checked_add(1) else {
+            return Ok(0);
+        };
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let deleted = transaction
+            .execute(
+                "DELETE FROM execution_events WHERE run_id = ?1 AND seq > ?2",
+                params![run_id, keep_through],
+            )
+            .map_err(database_error)?;
+        transaction
+            .execute(
+                "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1 AND next_event_seq > ?2",
+                params![run_id, next_seq],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(deleted as u64)
+    }
+
     pub fn execution_task_state(
         &self,
         task_exec_id: &str,
@@ -667,5 +699,36 @@ mod tests {
         ));
         let prompts = store.prompts_for_run("run-1").unwrap();
         assert_eq!(prompts[0].content_json, "queued");
+    }
+
+    #[test]
+    fn truncate_after_seq_keeps_prefix_and_appends_continue_contiguously() {
+        let store = scratch_store("truncate-after-seq");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let deleted = store.truncate_events_after("run-1", 2).unwrap();
+
+        assert_eq!(deleted, 3);
+        let seqs: Vec<u64> = store
+            .execution_events_since("run-1", 0)
+            .unwrap()
+            .into_iter()
+            .map(|(seq, _)| seq)
+            .collect();
+        assert_eq!(seqs, vec![1, 2]);
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-truncate".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![3]);
     }
 }
