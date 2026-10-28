@@ -11,7 +11,7 @@ use crate::WebError;
 use ajax_core::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
     commands::{CommandContext, CommandError},
-    models::TaskId,
+    models::{LifecycleStatus, TaskId},
     registry::{InMemoryRegistry, Registry as _, RegistryEventKind},
 };
 use axum::http::StatusCode;
@@ -508,6 +508,7 @@ fn creating_start_app(
     entered: &Arc<Notify>,
     release: &Arc<(Mutex<bool>, Condvar)>,
     disk: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+    start_failure: bool,
 ) -> (
     super::state::WebAppState<OkRunner, CreatingStartBridge>,
     String,
@@ -517,6 +518,7 @@ fn creating_start_app(
         entered: Arc::clone(entered),
         release: Arc::clone(release),
         disk,
+        start_failure,
     };
     let state = super::state::WebAppState::new(context, OkRunner, bridge, scratch_dir(tag));
     let cookie = browser_session_cookie(&state);
@@ -537,6 +539,7 @@ async fn task_start_external_effects_run_without_control_lane() {
         &entered,
         &release,
         Arc::new(Mutex::new(None)),
+        false,
     );
 
     let start_app = app.clone();
@@ -585,6 +588,7 @@ struct CreatingStartBridge {
     entered: Arc<Notify>,
     release: Arc<(Mutex<bool>, Condvar)>,
     disk: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+    start_failure: bool,
 }
 
 impl RuntimeBridge<OkRunner> for CreatingStartBridge {
@@ -642,6 +646,18 @@ impl RuntimeBridge<OkRunner> for CreatingStartBridge {
         }
         drop(released);
 
+        if self.start_failure {
+            return Err(ActionFailure {
+                message: "agent launch failed".to_string(),
+                code: "start_failed".to_string(),
+                state_changed: true,
+            });
+        }
+        context
+            .registry
+            .get_task_mut(&task_id)
+            .expect("started task")
+            .lifecycle_status = LifecycleStatus::Active;
         context
             .registry
             .record_event(
@@ -683,6 +699,7 @@ async fn unrelated_change_during_task_start_is_preserved_and_start_succeeds() {
         &entered,
         &release,
         Arc::clone(&disk),
+        false,
     );
 
     let start_app = app.clone();
@@ -751,4 +768,111 @@ async fn unrelated_change_during_task_start_is_preserved_and_start_succeeds() {
         .registry
         .get_task(&TaskId::new("web/fix-login"))
         .is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn refresh_rewrite_of_provisioning_row_does_not_fail_task_start() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut chat = crate::test_support::task_in("web", "chat", "Chat");
+    chat.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![chat]);
+    let (state, cookie, app) = creating_start_app(
+        "task-start-refresh-rewrite",
+        context,
+        &entered,
+        &release,
+        Arc::new(Mutex::new(None)),
+        false,
+    );
+
+    let start_app = app.clone();
+    let start_cookie = cookie.clone();
+    let start = tokio::spawn(async move {
+        post_json(
+            &start_app,
+            &start_cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-refresh-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("task start never reached its first checkpoint");
+
+    {
+        let mut guard = state.shared();
+        guard
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("provisioning row")
+            .apply_tmux_status(None);
+    }
+    release_gate(&release);
+    let start = tokio::time::timeout(Duration::from_secs(5), start)
+        .await
+        .expect("task start response timed out")
+        .unwrap();
+
+    assert_eq!(start.status(), StatusCode::OK);
+    let guard = state.shared();
+    let task = guard
+        .context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .expect("started task in memory");
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn task_start_failure_is_reported_when_final_commit_also_fails() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut chat = crate::test_support::task_in("web", "chat", "Chat");
+    chat.set_skip_interactive_agent(true);
+    let context = crate::test_support::context_with_tasks(&["web"], vec![chat]);
+    let (state, cookie, app) = creating_start_app(
+        "task-start-failure-and-commit",
+        context,
+        &entered,
+        &release,
+        Arc::new(Mutex::new(None)),
+        true,
+    );
+
+    let start_app = app.clone();
+    let start_cookie = cookie.clone();
+    let start = tokio::spawn(async move {
+        post_json(
+            &start_app,
+            &start_cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-failure-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("task start never reached its first checkpoint");
+
+    {
+        let mut guard = state.shared();
+        guard
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("provisioning row")
+            .lifecycle_status = LifecycleStatus::Removed;
+    }
+    release_gate(&release);
+    let start = tokio::time::timeout(Duration::from_secs(5), start)
+        .await
+        .expect("task start response timed out")
+        .unwrap();
+
+    let body = json_of(start).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "agent launch failed");
 }

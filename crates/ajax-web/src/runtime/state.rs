@@ -239,10 +239,10 @@ where
         );
         let committed = self.commit_start_delta(&mut delta, &context, Some(bridge));
         let guard = self.shared();
-        let response = match (committed, result) {
-            (Ok(()), Ok(outcome)) => operation_success_response(outcome, &guard.context),
-            (Ok(()), Err(failure)) => operation_error_response(failure, &guard.context),
-            (Err(error), _) => {
+        let response = match (result, committed) {
+            (Ok(outcome), Ok(())) => operation_success_response(outcome, &guard.context),
+            (Err(failure), _) => operation_error_response(failure, &guard.context),
+            (Ok(_), Err(error)) => {
                 let error = OperateError::Command(error, false);
                 operation_error_response(
                     ActionFailure {
