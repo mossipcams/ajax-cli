@@ -296,6 +296,22 @@ pub fn try_append_events_with_rewrites<T: Serialize + DeserializeOwned>(
     Ok(())
 }
 
+pub fn try_truncate_events_after(
+    store: &SqliteRegistryStore,
+    handle: &str,
+    keep_through_seq: u64,
+) -> io::Result<u64> {
+    let Some(run) = store
+        .latest_run_for_task(handle)
+        .map_err(io::Error::other)?
+    else {
+        return Ok(0);
+    };
+    store
+        .truncate_events_after(&run.run_id, keep_through_seq)
+        .map_err(io::Error::other)
+}
+
 pub fn corruption_warning(corrupt_lines: usize) -> Option<String> {
     (corrupt_lines > 0).then(|| {
         format!(
