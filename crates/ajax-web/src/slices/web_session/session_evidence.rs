@@ -40,6 +40,12 @@ impl SessionEvidence {
         self.pending_transcript_error_snapshot = true;
     }
 
+    pub(super) fn clear_transcript_durability_fault(&mut self) {
+        if self.transcript_durability_fault.take().is_some() {
+            self.pending_transcript_error_snapshot = true;
+        }
+    }
+
     pub(super) fn transcript_error(&self) -> Option<String> {
         self.transcript_durability_fault
             .clone()

@@ -67,6 +67,57 @@ fn issue_1219_transcript_append_failure_is_not_reported_as_success() {
     let _ = fs::remove_dir_all(dir);
 }
 
+fn snapshot_registry_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    ["", "-journal", "-wal", "-shm"]
+        .into_iter()
+        .filter_map(|suffix| {
+            let name = format!("ajax.db{suffix}");
+            fs::read(dir.join(&name)).ok().map(|bytes| (name, bytes))
+        })
+        .collect()
+}
+
+fn restore_registry_files(dir: &Path, files: Vec<(String, Vec<u8>)>) {
+    fs::remove_dir(dir.join("ajax.db")).expect("restore registry database path");
+    for (name, bytes) in files {
+        fs::write(dir.join(name), bytes).expect("restore registry file");
+    }
+}
+
+#[test]
+fn issue_1503_transcript_fault_clears_after_storage_recovers() {
+    let dir = scratch_dir("fault-recover-1503");
+    let handle = "web/fault-recover-1503";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let saved = snapshot_registry_files(&dir);
+        make_transcript_unreadable(&dir, handle);
+        directory.record(handle, note("held until storage recovers"));
+        assert!(
+            attach_transcript_error(&directory, handle).is_some(),
+            "append failure must surface as transcriptError"
+        );
+
+        restore_registry_files(&dir, saved);
+        directory.pump(handle);
+
+        assert_eq!(
+            attach_transcript_error(&directory, handle),
+            None,
+            "a recovered backlog must clear transcriptError"
+        );
+        directory
+            .submit_prompt(handle, "hello".to_string())
+            .expect("prompts must unblock once the backlog is saved");
+    });
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn issue_1220_unsaved_resume_id_fails_the_attach() {
     let dir = scratch_dir("resume-id-fail-1220");

@@ -247,7 +247,10 @@ impl TaskSessionState {
         if events.is_empty() {
             return Ok(());
         }
+        self.persist_log_batch(events)
+    }
 
+    fn persist_log_batch(&mut self, events: Vec<SessionServerEvent>) -> Result<(), SessionError> {
         let events = self.filter_events_for_log(events);
         let mut filtered = std::mem::take(&mut self.unpersisted);
         filtered.extend(events);
@@ -270,10 +273,13 @@ impl TaskSessionState {
         ) {
             self.unpersisted = filtered;
             let reason = format!("transcript could not be saved: {error}");
-            self.evidence
-                .note_transcript_durability_fault(reason.clone());
+            if self.evidence.transcript_durability_fault.as_ref() != Some(&reason) {
+                self.evidence
+                    .note_transcript_durability_fault(reason.clone());
+            }
             return Err(SessionError::persist(reason));
         }
+        self.evidence.clear_transcript_durability_fault();
         self.report_committed_events(&filtered);
         self.log.mark_superseded(&cursors);
         self.log.append(filtered);
@@ -293,10 +299,17 @@ impl TaskSessionState {
         self.prompts.busy(client_busy)
     }
 
+    fn retry_unpersisted_backlog(&mut self) {
+        if self.prompts.active_prompt.is_none() && !self.unpersisted.is_empty() {
+            let _ = self.persist_log_batch(Vec::new());
+        }
+    }
+
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
         self.evidence
             .retry_pending_activity_report(&self.qualified_handle);
+        self.retry_unpersisted_backlog();
         let prompt_cancel = self
             .prompts
             .active_prompt
