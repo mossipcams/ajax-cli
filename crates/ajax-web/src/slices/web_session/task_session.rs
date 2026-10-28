@@ -17,7 +17,7 @@ use ajax_core::models::AgentClient;
 use std::{path::PathBuf, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 
-use super::task_session_adopt::release_finished_adopted_client;
+use super::task_session_adopt::{release_finished_adopted_client, resume_queued_after_release};
 use super::task_session_exit::{
     self, cancel, is_acp_exit_error, reconcile_unexpected_child_exit,
     retry_pending_exit_interruption, settle_running_activity_on_end, submit_prompt,
@@ -130,7 +130,7 @@ pub(crate) struct EvictionSnapshot {
     pub holders: usize,
 }
 
-pub(super) struct HolderCount(usize);
+pub(super) struct HolderCount(pub(super) usize);
 
 impl HolderCount {
     fn acquire(&mut self) {
@@ -468,6 +468,7 @@ pub(crate) fn spawn_task_session(
                     if state.acp.client.is_some() {
                         state.pump();
                     }
+                    resume_queued_after_release(&mut state).await;
                     state.poll_background_jobs().await;
                 }
             }
