@@ -353,6 +353,7 @@ pub(crate) fn spawn_task_session(
     report_activity: Option<super::ReportSessionActivity>,
     deferred_activity_pending: Option<super::task_session_directory::DeferredActivityPending>,
     ownership: std::sync::Arc<ExecutionOwnership>,
+    live_activity: super::task_session_directory::LiveActivitySlot,
 ) -> (
     mpsc::Sender<TaskSessionCommand>,
     tokio::task::JoinHandle<()>,
@@ -408,6 +409,7 @@ pub(crate) fn spawn_task_session(
                 transcript_durability_fault: None,
                 pending_transcript_error_snapshot: false,
                 transcript_corruption: None,
+                live_activity: Some(live_activity),
             },
             background: BackgroundLevel::default(),
             generation: 0,
@@ -490,6 +492,9 @@ pub(crate) fn spawn_task_session(
         }
         if !close_on_exit {
             settle_running_activity_on_end(&mut state);
+        }
+        if let Some(live) = &state.evidence.live_activity {
+            live.retire(&state.qualified_handle);
         }
     });
     (tx, join)

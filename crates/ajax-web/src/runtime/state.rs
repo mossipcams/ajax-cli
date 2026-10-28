@@ -371,7 +371,10 @@ where
         B: Send + 'static,
     {
         self.apply_task_session_activity(handle, activity, false)
-            .or_else(|_| self.apply_task_session_activity(handle, activity, true))
+            .or_else(|_| self.apply_task_session_activity(handle, activity, true))?;
+        self.task_session_directory
+            .applied_live_activity(handle, activity);
+        Ok(())
     }
 
     fn apply_task_session_activity(
@@ -826,6 +829,13 @@ impl<C, B> WebAppState<C, B> {
             return None;
         }
         if cache.cached_at.elapsed() > COCKPIT_REFRESH_CACHE_TTL {
+            return None;
+        }
+        if self
+            .task_session_directory
+            .live_overlay(&guard.context)
+            .is_some()
+        {
             return None;
         }
         Some(cache.response.clone())
