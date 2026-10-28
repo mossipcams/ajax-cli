@@ -1,3 +1,4 @@
+mod acp_launch;
 mod agent_event;
 mod apply_model;
 mod available_command_descriptors;
