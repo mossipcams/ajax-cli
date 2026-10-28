@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -61,6 +62,33 @@ impl ShimLog {
 
     pub(crate) fn lines_from(&self, offset: u64) -> io::Result<Vec<(u64, Vec<u8>)>> {
         read_lines_from(&self.path, offset)
+    }
+}
+
+pub(crate) fn inbound_log_path(log: &Path) -> PathBuf {
+    log.with_extension("in.log")
+}
+
+pub(crate) fn json_rpc_response_id(line: &[u8]) -> Option<Value> {
+    let message = serde_json::from_slice::<Value>(line).ok()?;
+    let object = message.as_object()?;
+    let is_response = !object.contains_key("method")
+        && (object.contains_key("result") || object.contains_key("error"));
+    if is_response {
+        object.get("id").cloned()
+    } else {
+        None
+    }
+}
+
+pub(crate) fn answered_request_ids(inbound: &Path) -> io::Result<Vec<Value>> {
+    match read_lines_from(inbound, 0) {
+        Ok(lines) => Ok(lines
+            .iter()
+            .filter_map(|(_, line)| json_rpc_response_id(line))
+            .collect()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
     }
 }
 
@@ -202,6 +230,31 @@ mod tests {
         assert_eq!(
             read_lines_from(&path, 0).unwrap(),
             vec![(5, b"done".to_vec()), (10, b"next".to_vec())]
+        );
+    }
+
+    #[test]
+    fn session_shim_answered_request_ids_reads_recorded_responses() {
+        let path = scratch_log("answered-ids");
+        let inbound = super::inbound_log_path(&path);
+        assert!(super::answered_request_ids(&inbound).unwrap().is_empty());
+
+        let mut log = ShimLog::open(&inbound).unwrap();
+        log.append_line(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#)
+            .unwrap();
+        log.append_line(br#"{"jsonrpc":"2.0","id":"x","error":{}}"#)
+            .unwrap();
+        assert_eq!(
+            super::answered_request_ids(&inbound).unwrap(),
+            vec![serde_json::json!(3), serde_json::json!("x")]
+        );
+        assert_eq!(
+            super::json_rpc_response_id(br#"{"jsonrpc":"2.0","method":"m","id":1,"result":{}}"#),
+            None
+        );
+        assert_eq!(
+            super::json_rpc_response_id(br#"{"jsonrpc":"2.0","id":1,"params":{}}"#),
+            None
         );
     }
 

@@ -1,3 +1,4 @@
+use super::log::inbound_log_path;
 use super::process::{serve, ShimArgs, Teardown};
 use super::shim_paths;
 use super::spawn::{connect_to_child, retire_live_shim, start_shim};
@@ -130,6 +131,32 @@ fn replay_from_mid_log_offset_returns_only_suffix() {
     suffix.send("SHUTDOWN");
     assert_eq!(suffix.recv(), "");
     assert_eq!(await_serve(&serve).unwrap(), 0);
+}
+
+#[test]
+fn inbound_log_records_only_json_rpc_responses() {
+    let state_dir = scratch_state_dir("inbound-responses");
+    let socket = socket_for(&state_dir, "h");
+    let serve = start_serve(&state_dir, "h", &["sh", "-c", "while read l; do :; done"]);
+
+    let mut client = Client::open(&socket, "REPLAY 0");
+    client.send(r#"{"jsonrpc":"2.0","id":3,"method":"session/request_permission","params":{}}"#);
+    client.send(r#"{"jsonrpc":"2.0","method":"session/cancel","params":{}}"#);
+    client.send(r#"{"jsonrpc":"2.0","id":3,"result":{"outcome":"selected"}}"#);
+    client.send(r#"{"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"no"}}"#);
+    client.send("SHUTDOWN");
+    assert_eq!(await_serve(&serve).unwrap(), 0);
+
+    let inbound = inbound_log_path(&shim_paths(&state_dir, "h").log);
+    assert_eq!(
+        fs::read_to_string(inbound).unwrap(),
+        concat!(
+            r#"{"jsonrpc":"2.0","id":3,"result":{"outcome":"selected"}}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"no"}}"#,
+            "\n",
+        )
+    );
 }
 
 #[test]

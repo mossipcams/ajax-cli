@@ -10,6 +10,8 @@ mod process_tests;
 mod relay;
 mod spawn;
 
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use log::answered_request_ids;
 pub use process::{run_session_shim, ShimArgs};
 pub use spawn::{enable, shim_spawn, without_shim, ShimSpawn};
 
