@@ -8,7 +8,7 @@ export const VERSION_POLL_TERMINAL_MS = 120_000;
 export const VERSION_POLL_HIDDEN_MS = 300_000;
 
 export const CONFIRM_TIMEOUT_MS = 8000;
-export const DROP_UNDO_MS = 5000;
+export const DROP_UNDO_MS = 2000;
 export const RESULT_AUTO_DISMISS_MS = 12000;
 export const RESULT_SUCCESS_DISMISS_MS = 4000;
 export const RESTART_POLL_MS = 500;

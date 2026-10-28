@@ -13,11 +13,13 @@ function touch(type: string, clientX: number, clientY: number): Event {
 function Harness({
   onOffset,
   onOpenChange,
+  onDragChange,
   initialOffset = 0,
   ignoreSelector,
 }: {
   onOffset?: (offset: number) => void;
   onOpenChange?: (open: boolean) => void;
+  onDragChange?: (dragging: boolean) => void;
   initialOffset?: number;
   ignoreSelector?: string;
 }) {
@@ -25,6 +27,7 @@ function Harness({
   useSwipeReveal(ref, {
     onOffset,
     onOpenChange,
+    onDragChange,
     getInitialOffset: () => initialOffset,
     ignoreSelector,
   });
@@ -81,6 +84,19 @@ describe("useSwipeReveal", () => {
 
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
     expect(onOffset).toHaveBeenLastCalledWith(0);
+  });
+
+  it("reports dragging from touchstart until touchend so the row transform is not transitioned mid-drag", () => {
+    const onDragChange = vi.fn();
+    render(<Harness onDragChange={onDragChange} />);
+    const row = screen.getByTestId("swipe-reveal-row");
+
+    row.dispatchEvent(touch("touchstart", 200, 100));
+    row.dispatchEvent(touch("touchmove", 150, 100));
+    row.dispatchEvent(touch("touchmove", 100, 100));
+    expect(onDragChange.mock.calls).toEqual([[true]]);
+    row.dispatchEvent(new Event("touchend", { bubbles: true }));
+    expect(onDragChange.mock.calls).toEqual([[true], [false]]);
   });
 
   it("ignores touchstart inside the reveal layer so action taps do not start a swipe", () => {

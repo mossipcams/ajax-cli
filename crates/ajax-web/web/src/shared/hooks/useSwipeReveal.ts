@@ -7,6 +7,7 @@ export interface SwipeOptions {
   onOpenChange?: (open: boolean) => void;
   getInitialOffset?: () => number;
   ignoreSelector?: string;
+  onDragChange?: (dragging: boolean) => void;
 }
 
 function readTouch(event: Event): { x: number; y: number } | null {
@@ -34,6 +35,7 @@ export function useSwipeReveal(
     const holdTouch = () => {
       if (!touchHeld) {
         touchHeld = true;
+        optsRef.current.onDragChange?.(true);
         gestureBusyGate.begin();
       }
     };
@@ -41,6 +43,7 @@ export function useSwipeReveal(
     const releaseTouch = () => {
       if (touchHeld) {
         touchHeld = false;
+        optsRef.current.onDragChange?.(false);
         gestureBusyGate.end();
       }
     };
