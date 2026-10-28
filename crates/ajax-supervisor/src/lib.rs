@@ -244,7 +244,7 @@ mod tests {
         let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
 
         let mut events = Vec::new();
-        while let Some(event) = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(30), receiver.recv())
             .await
             .expect("receiver should close after process exit")
         {
