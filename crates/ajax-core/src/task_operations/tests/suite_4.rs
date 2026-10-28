@@ -192,3 +192,79 @@ fn sweep_cleanup_kill_session_targets_exact_session_for_merged_task() {
         .collect();
     assert_eq!(kill_targets, vec!["=ajax-web-fix-login"]);
 }
+
+struct TmuxListSessionsRunner {
+    list_sessions_outputs: VecDeque<CommandOutput>,
+    commands: Vec<CommandSpec>,
+}
+
+impl CommandRunner for TmuxListSessionsRunner {
+    fn run(
+        &mut self,
+        command: &CommandSpec,
+    ) -> Result<CommandOutput, crate::adapters::CommandRunError> {
+        self.commands.push(command.clone());
+        if command.args.first().map(String::as_str) == Some("list-sessions") {
+            return Ok(self
+                .list_sessions_outputs
+                .pop_front()
+                .unwrap_or_else(|| output(0, "", "")));
+        }
+        Ok(output(0, "", ""))
+    }
+}
+
+#[test]
+fn drop_treats_no_tmux_server_after_kill_session_as_session_absent_1507() {
+    let mut context = context_with_cleanable_task();
+    let task_id = TaskId::new("web/fix-login");
+    let mut runner = TmuxListSessionsRunner {
+        list_sessions_outputs: VecDeque::from([
+            output(0, "ajax-web-fix-login\n", ""),
+            output(1, "", "no server running on /tmp/tmux-501/default"),
+        ]),
+        commands: Vec::new(),
+    };
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let (_outputs, completion) =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+    assert_eq!(completion, DropTaskCompletion::Removed);
+    assert!(context.registry.get_task(&task_id).is_none());
+}
+
+#[test]
+fn drop_keeps_unexpected_tmux_listing_failure_incomplete_1507() {
+    let mut context = context_with_cleanable_task();
+    let task_id = TaskId::new("web/fix-login");
+    let mut runner = TmuxListSessionsRunner {
+        list_sessions_outputs: VecDeque::from([
+            output(0, "ajax-web-fix-login\n", ""),
+            output(1, "", "permission denied"),
+        ]),
+        commands: Vec::new(),
+    };
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let (_outputs, completion) =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+    assert!(matches!(
+        completion,
+        DropTaskCompletion::TeardownIncomplete {
+            failed_step: DropOp::EnsureTmuxSessionAbsent,
+            ..
+        }
+    ));
+    assert_eq!(
+        context
+            .registry
+            .get_task(&task_id)
+            .expect("task should remain after unexpected tmux failure")
+            .lifecycle_status,
+        LifecycleStatus::TeardownIncomplete
+    );
+}

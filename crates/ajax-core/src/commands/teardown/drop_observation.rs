@@ -1,6 +1,6 @@
 use super::{CommandContext, CommandError};
 use crate::{
-    adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    adapters::{CommandOutput, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
     analysis::git_evidence::worktree_path_matches,
     models::{
         sync_open_attempts, AgentRuntimeStatus, LifecycleStatus, SideFlag, StepReceipt,
@@ -270,7 +270,7 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
     let tmux = TmuxAdapter::new("tmux");
     let tmux_output = match shared_sessions_output {
         Some(output) => ObservationOutput::Output(output.to_string()),
-        None => run_observation_command(runner, &tmux.list_sessions())?,
+        None => run_tmux_sessions_command(runner, &tmux.list_sessions())?,
     };
     if repo_cache.worktrees_output.is_none() {
         repo_cache.worktrees_output =
@@ -397,16 +397,35 @@ fn run_observation_command(
     command: &CommandSpec,
 ) -> Result<ObservationOutput, CommandError> {
     let output = runner.run(command).map_err(CommandError::CommandRun)?;
+    Ok(classify_observation_output(output))
+}
+
+fn run_tmux_sessions_command(
+    runner: &mut impl CommandRunner,
+    command: &CommandSpec,
+) -> Result<ObservationOutput, CommandError> {
+    let output = runner.run(command).map_err(CommandError::CommandRun)?;
+    let combined = format!("{}{}", output.stdout, output.stderr);
+    let no_server = combined.contains("no server running")
+        || combined.contains("error connecting to")
+        || combined.contains("No such file or directory");
+    if output.status_code != 0 && no_server {
+        return Ok(ObservationOutput::Output(String::new()));
+    }
+    Ok(classify_observation_output(output))
+}
+
+fn classify_observation_output(output: CommandOutput) -> ObservationOutput {
     if output.status_code == 0 {
-        Ok(ObservationOutput::Output(output.stdout))
+        ObservationOutput::Output(output.stdout)
     } else if output
         .stderr
         .to_ascii_lowercase()
         .contains("unexpected git command")
     {
-        Ok(ObservationOutput::Unsupported)
+        ObservationOutput::Unsupported
     } else {
-        Ok(ObservationOutput::Unknown)
+        ObservationOutput::Unknown
     }
 }
 
