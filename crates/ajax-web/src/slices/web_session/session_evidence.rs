@@ -1,4 +1,5 @@
 use super::session_activity::{activity_report_transcript_error, try_report_session_activity};
+use super::task_session_directory::LiveActivitySlot;
 use super::{
     ReportSessionActivity, SessionActivity, SessionActivityReporter, SessionError,
     SessionServerEvent,
@@ -14,6 +15,7 @@ pub(super) struct SessionEvidence {
     pub transcript_durability_fault: Option<String>,
     pub pending_transcript_error_snapshot: bool,
     pub transcript_corruption: Option<String>,
+    pub live_activity: Option<LiveActivitySlot>,
 }
 
 impl SessionEvidence {
@@ -112,6 +114,9 @@ impl SessionEvidence {
     }
 
     pub(super) fn report(&mut self, qualified_handle: &str, activity: SessionActivity) {
+        if let Some(live) = &self.live_activity {
+            live.publish(qualified_handle, activity);
+        }
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {
                 self.activity_reporter.commit(activity);
@@ -145,6 +150,7 @@ mod tests {
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
+            live_activity: None,
         };
         let error = SessionError::persist("task activity report failed");
         evidence.note_activity_report_failure(&error);
@@ -168,6 +174,7 @@ mod tests {
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
+            live_activity: None,
         };
         evidence.flush_pending_activity_report("web/fix-login");
         assert!(evidence.activity_report_fault.is_none());
@@ -207,6 +214,7 @@ mod tests {
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
+            live_activity: None,
         };
 
         evidence.report_activity_for_event(
@@ -248,6 +256,7 @@ mod tests {
             transcript_durability_fault: None,
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
+            live_activity: None,
         }
     }
 
