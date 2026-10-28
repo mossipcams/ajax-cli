@@ -27,7 +27,8 @@ pub struct JsonlProcess {
     stdin: Option<Box<dyn Write + Send>>,
     records: mpsc::Receiver<JsonlRecord>,
     stderr_tail: Arc<Mutex<Vec<u8>>>,
-    child: Child,
+    child: Option<Child>,
+    pid: u32,
     next_id: u64,
 }
 
@@ -68,6 +69,25 @@ impl JsonlProcess {
         stdout: Box<dyn Read + Send>,
         stderr: Option<Box<dyn Read + Send>>,
     ) -> io::Result<Self> {
+        let pid = child.id();
+        Self::start(Some(child), pid, stdin, stdout, stderr)
+    }
+
+    pub(crate) fn attach(
+        reader: Box<dyn Read + Send>,
+        writer: Box<dyn Write + Send>,
+        shim_pid: u32,
+    ) -> io::Result<Self> {
+        Self::start(None, shim_pid, writer, reader, None)
+    }
+
+    fn start(
+        child: Option<Child>,
+        pid: u32,
+        stdin: Box<dyn Write + Send>,
+        stdout: Box<dyn Read + Send>,
+        stderr: Option<Box<dyn Read + Send>>,
+    ) -> io::Result<Self> {
         let (sender, records) = mpsc::channel::<JsonlRecord>();
         std::thread::Builder::new()
             .name("jsonl-stdout".to_owned())
@@ -90,16 +110,17 @@ impl JsonlProcess {
             records,
             stderr_tail,
             child,
+            pid,
             next_id: 0,
         })
     }
 
     pub fn child_id(&self) -> u32 {
-        self.child.id()
+        self.pid
     }
 
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        self.pid
     }
 
     pub fn recv(&self) -> Result<JsonlRecord, mpsc::RecvError> {
@@ -176,12 +197,18 @@ impl JsonlProcess {
 
 impl Drop for JsonlProcess {
     fn drop(&mut self) {
-        let pid = self.child.id();
+        let Some(child) = self.child.as_mut() else {
+            if let Some(stdin) = self.stdin.as_mut() {
+                let _ = stdin.write_all(b"SHUTDOWN\n").and_then(|()| stdin.flush());
+            }
+            return;
+        };
+        let pid = self.pid;
         self.stdin.take();
 
         let deadline = Instant::now() + DROP_GRACE;
         loop {
-            match self.child.try_wait() {
+            match child.try_wait() {
                 Ok(Some(_)) => {
                     super::process_group::kill_group(pid);
                     return;
@@ -196,8 +223,8 @@ impl Drop for JsonlProcess {
         }
 
         super::process_group::kill_group(pid);
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
