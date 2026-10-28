@@ -452,8 +452,8 @@ impl AcpStdioClient {
         let connection_stderr_tail = Arc::clone(&stderr_tail);
         let connection = thread::spawn(move || {
             sdk_connection::run(RunOptions {
-                stdin,
-                stdout,
+                stdin: Box::new(stdin),
+                stdout: Box::new(stdout),
                 commands: command_rx,
                 events: event_tx,
                 ready: ready_tx,
