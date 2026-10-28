@@ -91,8 +91,10 @@ consumed-on-use flags. Every bug was a missed or stale edge.
    the reporter calls a probe for the level *before* reducing. The turn end
    is reported once and correctly, with no sampling and no cached level.
 2. The level exists only after a finished turn. A new turn clears it, and an
-   Idle (never-run) root, a Running root or a Failed root never carries
-   it. A Failed root still reports `TurnFailed`.
+   Idle (never-run) or Running root never carries it. A Failed root carries it
+   like a finished root and reports `TurnFailed` only once the level clears.
+   (changed 2026-10-28: a failed turn no longer hides live delegated work, so
+   the Restart agent button is not offered while a delegate is still running)
 3. There is one synthetic completion-holding child (`background`), present or
    absent, with no per-job ids, so `lstart` is gone.
 4. The level is evidence with a TTL. While it is true, poll every 2 s. It ends

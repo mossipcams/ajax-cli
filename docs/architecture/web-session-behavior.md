@@ -1014,8 +1014,10 @@ only the chat live head knew a turn was in flight.
   background work they start. The reporter still reads the level at each observed
   turn end (`turn_end`, the terminal event), before it reduces the event, so a
   user-prompt turn end reports `Background work running` at once and never `Done`
-  first. A `Failed` turn never reads the level and reports `Agent stopped`; an idle,
-  never-run or running root never carries it. No process tree (no client, or no
+  first. A `Failed` turn reads the level like a finished turn: while background
+  work is alive it reports `Background work running`, and it reports `Agent
+  stopped` once the level clears (or at once when no background work is alive).
+  An idle, never-run or running root never carries it. No process tree (no client, or no
   child pid) reads as clear. An unavailable process-table read is no evidence: it
   never clears a held level and never sets an unheld one. While held, the level is one
   synthetic completion-holding child run (`background`) and reads as `AgentRunning`

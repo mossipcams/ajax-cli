@@ -103,8 +103,10 @@ pub(crate) fn try_report_session_activity(
 pub(crate) fn first_attach_activity(
     persisted_running: bool,
     deferred_pending: bool,
+    shim_adoptable: bool,
 ) -> Option<SessionActivity> {
-    (persisted_running && !deferred_pending).then_some(SessionActivity::TurnFailed)
+    (persisted_running && !deferred_pending && !shim_adoptable)
+        .then_some(SessionActivity::TurnFailed)
 }
 
 pub(crate) fn activity_report_transcript_error(error: &SessionError) -> String {
@@ -139,7 +141,9 @@ impl SessionActivityReporter {
         if self.turn_running() {
             self.set_background_child(false, now);
         }
-        if matches!(event, super::SessionServerEvent::TurnEnd { .. }) && self.turn_finished() {
+        if (matches!(event, super::SessionServerEvent::TurnEnd { .. }) || in_flight)
+            && self.turn_finished()
+        {
             if let Some(held) = probe() {
                 self.set_background_child(held, now);
             }
@@ -154,7 +158,7 @@ impl SessionActivityReporter {
     pub(crate) fn turn_finished(&self) -> bool {
         matches!(
             self.state.turn(),
-            RootTurnState::Settled | RootTurnState::Cancelled
+            RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed
         )
     }
 
@@ -220,8 +224,7 @@ impl SessionActivityReporter {
             ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated
         );
         let activity = match (held, self.state.turn()) {
-            (true, RootTurnState::Failed) => SessionActivity::TurnFailed,
-            (true, RootTurnState::Settled | RootTurnState::Cancelled) => {
+            (true, RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed) => {
                 SessionActivity::BackgroundRunning
             }
             _ => match projection.live.kind {
@@ -455,6 +458,79 @@ mod tests {
                 content: Vec::new(),
             }),
             None
+        );
+    }
+
+    fn observe_with_probe(
+        reporter: &mut SessionActivityReporter,
+        event: &SessionServerEvent,
+        probe: &mut dyn FnMut() -> Option<bool>,
+    ) -> Option<SessionActivity> {
+        let activity = reporter.activity_for_event_with_probe(event, probe)?;
+        reporter.commit(activity);
+        Some(activity)
+    }
+
+    fn failed_turn_end() -> SessionServerEvent {
+        SessionServerEvent::TurnEnd {
+            stop_reason: Some("Error".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_failed_turn_with_live_background_work_keeps_running() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+
+        let event = failed_turn_end();
+        assert_eq!(
+            observe_with_probe(&mut reporter, &event, &mut || Some(true)),
+            Some(SessionActivity::BackgroundRunning)
+        );
+
+        assert_eq!(
+            reporter.set_background(false, SystemTime::now()),
+            Some(SessionActivity::TurnFailed)
+        );
+    }
+
+    #[test]
+    fn an_error_mid_turn_with_live_background_work_keeps_running() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+
+        let event = SessionServerEvent::Error {
+            message: "ACP process exited".to_string(),
+        };
+        assert_eq!(
+            observe_with_probe(&mut reporter, &event, &mut || Some(true)),
+            Some(SessionActivity::BackgroundRunning)
+        );
+
+        assert_eq!(
+            reporter.set_background(false, SystemTime::now()),
+            Some(SessionActivity::TurnFailed)
+        );
+    }
+
+    #[test]
+    fn a_failed_turn_without_background_work_fails() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+
+        let event = failed_turn_end();
+        assert_eq!(
+            observe_with_probe(&mut reporter, &event, &mut || Some(false)),
+            Some(SessionActivity::TurnFailed)
         );
     }
 
@@ -706,5 +782,16 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn a_still_running_status_reports_failed_only_when_the_shim_is_not_adoptable() {
+        assert_eq!(
+            first_attach_activity(true, false, false),
+            Some(SessionActivity::TurnFailed)
+        );
+        assert_eq!(first_attach_activity(true, false, true), None);
+        assert_eq!(first_attach_activity(true, true, false), None);
+        assert_eq!(first_attach_activity(false, false, false), None);
     }
 }

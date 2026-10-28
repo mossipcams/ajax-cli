@@ -443,9 +443,18 @@ pub(crate) fn spawn_task_session(
         let deferred_pending = deferred_activity_pending
             .as_ref()
             .is_some_and(|pending| pending(&state.qualified_handle));
-        if let Some(attach) =
-            super::session_activity::first_attach_activity(persisted_running, deferred_pending)
-        {
+        let shim_adoptable = persisted_running
+            && super::shim_adoption::adoptable(
+                &state.storage.registry_store(),
+                &state.storage.state_dir,
+                &state.qualified_handle,
+            )
+            .is_some();
+        if let Some(attach) = super::session_activity::first_attach_activity(
+            persisted_running,
+            deferred_pending,
+            shim_adoptable,
+        ) {
             state.evidence.report(&state.qualified_handle, attach);
         }
         let mut poll = tokio::time::interval(std::time::Duration::from_millis(50));
