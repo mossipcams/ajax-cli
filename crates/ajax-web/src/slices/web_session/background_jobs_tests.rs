@@ -124,7 +124,7 @@ fn turn_end_with_a_live_shell_reports_background_as_the_first_activity() {
 }
 
 #[test]
-fn a_cancelled_turn_reads_the_level_and_a_failed_turn_never_does() {
+fn a_cancelled_or_failed_turn_reads_the_level() {
     let mut reporter = SessionActivityReporter::default();
     apply(&mut reporter, &prompt(), &mut || Some(false));
     let probes = Cell::new(0);
@@ -137,8 +137,13 @@ fn a_cancelled_turn_reads_the_level_and_a_failed_turn_never_does() {
 
     let mut reporter = SessionActivityReporter::default();
     apply(&mut reporter, &prompt(), &mut || Some(false));
-    let failed = apply(&mut reporter, &turn_end_with("error"), &mut no_read);
+    let failed_probes = Cell::new(0);
+    let failed = apply(&mut reporter, &turn_end_with("error"), &mut || {
+        failed_probes.set(failed_probes.get() + 1);
+        Some(false)
+    });
     assert_eq!(failed, Some(SessionActivity::TurnFailed));
+    assert_eq!(failed_probes.get(), 1, "a failed turn is a finished turn");
 }
 
 #[test]
@@ -162,14 +167,19 @@ fn prompt_and_turn_end_applied_back_to_back_read_the_level_once() {
 }
 
 #[test]
-fn a_failed_turn_reports_failed_even_with_a_held_level() {
+fn a_failed_turn_keeps_a_held_level_running() {
     let mut reporter = SessionActivityReporter::default();
     let mut level = BackgroundLevel::default();
     let at = Instant::now();
     turn_ended_with_shell(&mut level, &mut reporter, at);
 
     assert_eq!(
-        apply(&mut reporter, &turn_end_with("error"), &mut no_read),
+        apply(&mut reporter, &turn_end_with("error"), &mut || Some(true)),
+        None,
+        "the live background work keeps reporting running"
+    );
+    assert_eq!(
+        reporter.set_background(false, SystemTime::now()),
         Some(SessionActivity::TurnFailed)
     );
 }
