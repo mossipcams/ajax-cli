@@ -788,17 +788,10 @@ printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result
             std::process::id()
         ));
         let _ = fs::remove_file(&pid_file);
-        fs::write(
+        crate::write_fake_agent(
             &script,
-            format!(
-                "#!/bin/sh\ntrap '' TERM\necho $$ > {}\nsleep 30\n",
-                pid_file.display()
-            ),
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+            &format!("trap '' TERM\necho $$ > {}\nsleep 30\n", pid_file.display()),
+        );
 
         let mut config = MonitorConfig::codex_exec("ignored");
         config.agent_bin = script.display().to_string();
