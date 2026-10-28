@@ -60,6 +60,7 @@ impl TerminalChild for Box<dyn Child + Send + Sync> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn cleanup_spawned_child<C: TerminalChild>(mut child: C) {
     let _ = child.kill_child();
     let _ = child.wait_child();
@@ -70,10 +71,13 @@ pub(crate) async fn cleanup_spawned_child_async<C: TerminalChild + Send + 'stati
 }
 
 pub(crate) async fn cleanup_spawned_child_async_with_timeout<C: TerminalChild + Send + 'static>(
-    child: C,
+    mut child: C,
     wait_timeout: Duration,
 ) {
-    let wait_task = tokio::task::spawn_blocking(move || cleanup_spawned_child(child));
+    let _ = child.kill_child();
+    let wait_task = tokio::task::spawn_blocking(move || {
+        let _ = child.wait_child();
+    });
     match tokio::time::timeout(wait_timeout, wait_task).await {
         Ok(Ok(())) => {}
         Ok(Err(join_error)) => {

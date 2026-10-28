@@ -55,17 +55,6 @@ impl TerminalChild for MockChild {
     }
 }
 
-async fn wait_until_killed(killed: &Arc<Mutex<bool>>) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !*killed.lock().unwrap() {
-        assert!(
-            Instant::now() < deadline,
-            "child kill never ran on the cleanup blocking task"
-        );
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-}
-
 #[test]
 fn adapter_contract_tmux_attach_uses_registered_session_and_task_window() {
     let plan = attach_plan("web/fix-login");
@@ -797,7 +786,6 @@ async fn terminal_cleanup_runs_wait_on_blocking_task() {
         progress.load(Ordering::Relaxed),
         "tokio worker should stay responsive while child wait runs on a blocking thread"
     );
-    wait_until_killed(&killed).await;
     assert!(*killed.lock().unwrap());
 
     release_tx.send(()).expect("release blocked child wait");
@@ -814,12 +802,11 @@ async fn terminal_cleanup_does_not_wait_forever_after_kill() {
     cleanup_spawned_child_async_with_timeout(child, timeout).await;
     let elapsed = started.elapsed();
 
+    assert!(*killed.lock().unwrap());
     assert!(
         elapsed < Duration::from_millis(250),
         "cleanup should time out instead of waiting forever, took {elapsed:?}"
     );
-    wait_until_killed(&killed).await;
-    assert!(*killed.lock().unwrap());
 }
 
 #[tokio::test(flavor = "current_thread")]
