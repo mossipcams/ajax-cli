@@ -181,6 +181,10 @@ pub(crate) fn serve_mobile_web_with_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let storage = companion_session_storage(paths)?;
+    ajax_web::adapters::session_shim::enable(
+        std::env::current_exe().map_err(|error| CliError::CommandFailed(error.to_string()))?,
+        storage.state_dir.clone(),
+    );
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
     let _ = crate::agent_event_notify::start_agent_event_notify_listener(
         context.runtime_paths.cache_dir.join("agent-events"),
