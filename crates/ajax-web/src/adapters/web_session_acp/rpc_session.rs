@@ -297,9 +297,12 @@ impl RpcSession {
         if value.get("type").and_then(Value::as_str) != Some("response") {
             return None;
         }
-        let prompt_id = self.prompt_id.as_deref()?;
-        if value.get("id").and_then(Value::as_str)? != prompt_id {
-            return None;
+        let id = value.get("id").and_then(Value::as_str)?;
+        match self.prompt_id.as_deref() {
+            Some(prompt_id) if id != prompt_id => return None,
+            Some(_) => {}
+            None if self.run_active => {}
+            None => return None,
         }
 
         match value.get("success").and_then(Value::as_bool) {

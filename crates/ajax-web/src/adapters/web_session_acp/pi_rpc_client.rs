@@ -367,4 +367,28 @@ mod adopt_tests {
             assert_adopted_turn_finishes(AgentClient::Pi, &finish.to_string(), "get_session_stats");
         });
     }
+
+    #[test]
+    fn adopted_pi_compact_and_handled_responses_end_the_turn() {
+        let compact = json!({"type": "response", "id": "7", "command": "compact", "success": true});
+        let handled = json!({
+            "type": "response",
+            "id": "8",
+            "command": "prompt",
+            "success": true,
+            "data": {"disposition": "handled"}
+        });
+        with_test_pi_program(Path::new("pi"), &[], || {
+            assert_adopted_turn_finishes(
+                AgentClient::Pi,
+                &compact.to_string(),
+                "get_session_stats",
+            );
+            assert_adopted_turn_finishes(
+                AgentClient::Pi,
+                &handled.to_string(),
+                "get_session_stats",
+            );
+        });
+    }
 }

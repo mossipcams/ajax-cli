@@ -1,12 +1,12 @@
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{SessionInfoUpdate, SessionNotification, SessionUpdate};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::client::AcpClientEvent;
 use super::config_options::read_model_applied;
@@ -47,9 +47,11 @@ fn session_title_from_update(update: &SessionInfoUpdate) -> Option<Option<String
     }
 }
 
+type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
 pub struct AcpAdoptedClient {
     events: Receiver<AcpClientEvent>,
-    writer: Box<dyn Write + Send>,
+    writer: SharedWriter,
     shim_pid: u32,
     session_id: String,
     session_new_result: Value,
@@ -59,6 +61,7 @@ pub struct AcpAdoptedClient {
 
 struct ReplayState {
     events: Sender<AcpClientEvent>,
+    writer: SharedWriter,
     prompt_request_id: u64,
     turn_done: Arc<AtomicBool>,
     exited: Arc<AtomicBool>,
@@ -69,18 +72,36 @@ impl ReplayState {
         let _ = self.events.send(event);
     }
 
-    fn finish_turn(&self, result: Value) {
+    fn finish_turn(&self, result: Result<Value, String>) {
         self.turn_done.store(true, Ordering::Release);
         self.send(AcpClientEvent::RequestFinished {
             id: self.prompt_request_id,
             method: PROMPT_METHOD,
-            result: Ok(result),
+            result,
         });
     }
 
     fn exit(&self) {
         self.exited.store(true, Ordering::Release);
         self.send(AcpClientEvent::Exited);
+    }
+
+    fn abort_on_agent_request(&self, method: &str) {
+        write_shutdown(&self.writer);
+        self.send(AcpClientEvent::Error(format!(
+            "reconnected agent requested input ({method}); the adopted turn cannot answer it"
+        )));
+        if !self.turn_done.load(Ordering::Acquire) {
+            self.finish_turn(Ok(json!({ "stopReason": "cancelled" })));
+        }
+        self.exit();
+    }
+}
+
+fn write_shutdown(writer: &SharedWriter) {
+    if let Ok(mut writer) = writer.lock() {
+        let _ = writer.write_all(SHUTDOWN_LINE);
+        let _ = writer.flush();
     }
 }
 
@@ -95,8 +116,10 @@ impl AcpAdoptedClient {
         let (events_tx, events) = mpsc::channel();
         let turn_done = Arc::new(AtomicBool::new(false));
         let exited = Arc::new(AtomicBool::new(false));
+        let writer: SharedWriter = Arc::new(Mutex::new(writer));
         let state = ReplayState {
             events: events_tx,
+            writer: Arc::clone(&writer),
             prompt_request_id,
             turn_done: Arc::clone(&turn_done),
             exited: Arc::clone(&exited),
@@ -143,8 +166,7 @@ impl AcpAdoptedClient {
     }
 
     pub fn shutdown(&mut self) {
-        let _ = self.writer.write_all(SHUTDOWN_LINE);
-        let _ = self.writer.flush();
+        write_shutdown(&self.writer);
         self.exited.store(true, Ordering::Release);
     }
 }
@@ -191,19 +213,26 @@ fn replay_line(line: &[u8], state: &ReplayState) -> bool {
             true
         }
         (Some(method), Some(_)) => {
-            state.send(AcpClientEvent::Error(format!(
-                "reconnected agent requested input ({method}); the adopted turn cannot answer it"
-            )));
-            state.exit();
+            state.abort_on_agent_request(method);
             false
         }
-        (None, Some(_)) => match message.get("result") {
-            Some(result) if result.get("stopReason").is_some() => {
-                state.finish_turn(result.clone());
-                true
+        (None, Some(_)) => {
+            if let Some(result) = message.get("result") {
+                if result.get("stopReason").is_some() {
+                    state.finish_turn(Ok(result.clone()));
+                }
+            } else if let Some(error) = message.get("error") {
+                state.finish_turn(Err(rpc_error_text(error)));
             }
-            _ => true,
-        },
+            true
+        }
         _ => true,
     }
+}
+
+fn rpc_error_text(error: &Value) -> String {
+    error
+        .get("message")
+        .and_then(Value::as_str)
+        .map_or_else(|| error.to_string(), str::to_owned)
 }
