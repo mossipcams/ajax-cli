@@ -96,4 +96,72 @@ describe("armDropUndo", () => {
       expect.objectContaining({ task_handle: "web/first" }),
     );
   });
+
+  it("commits immediately when the page becomes hidden during the undo window", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const callbacks = { onResult: vi.fn(), onDismiss: vi.fn() };
+    const handles = freshHandles();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+
+    armDropUndo(dropAction, "web/x", null, callbacks, handles, executeOperation);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(executeOperation).toHaveBeenCalledOnce();
+    expect(executeOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ task_handle: "web/x", action: "drop", confirmed: true }),
+    );
+
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    expect(executeOperation).toHaveBeenCalledOnce();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("commits immediately on pagehide during the undo window", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const callbacks = { onResult: vi.fn(), onDismiss: vi.fn() };
+    const handles = freshHandles();
+
+    armDropUndo(dropAction, "web/x", null, callbacks, handles, executeOperation);
+    window.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(executeOperation).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    expect(executeOperation).toHaveBeenCalledOnce();
+  });
+
+  it("does not commit a second time when the timer fires after a hide commit", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const callbacks = { onResult: vi.fn(), onDismiss: vi.fn() };
+    const handles = freshHandles();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+
+    armDropUndo(dropAction, "web/x", null, callbacks, handles, executeOperation);
+    document.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS * 2);
+
+    expect(executeOperation).toHaveBeenCalledOnce();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  it("ignores hide events after Undo settles the drop", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const results: Array<{ onUndo?: () => void }> = [];
+    const callbacks = {
+      onResult: vi.fn((_message, _output, _isError, options) => {
+        results.push(options ?? {});
+      }),
+      onDismiss: vi.fn(),
+    };
+    const handles = freshHandles();
+
+    armDropUndo(dropAction, "web/x", null, callbacks, handles, executeOperation);
+    results[0]?.onUndo?.();
+    window.dispatchEvent(new Event("pagehide"));
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+
+    expect(executeOperation).not.toHaveBeenCalled();
+  });
 });

@@ -87,12 +87,14 @@ const TaskRow = memo(function TaskRow({
   const time = card.last_activity_unix_secs;
   const inlineActions = visibleActions.filter((action) => !action.destructive);
   const revealAction = visibleActions.find((action) => action.action === "drop");
+  const [dragging, setDragging] = useState(false);
 
   useSwipeReveal(wrapRef, revealAction
     ? {
         getInitialOffset: () => offset,
         onOffset: (next) => onOffset(card.qualified_handle, next),
         onOpenChange: (open) => onRevealSettled(card.qualified_handle, open),
+        onDragChange: setDragging,
         ignoreSelector: ".task-row-reveal",
       }
     : {});
@@ -174,7 +176,10 @@ const TaskRow = memo(function TaskRow({
         className={className}
         data-ph-no-autocapture=""
         data-handle={card.qualified_handle}
-        style={{ transform: `translateX(-${offset}px)` }}
+        style={{
+          transform: `translateX(-${offset}px)`,
+          transition: dragging ? "background 120ms var(--ease)" : undefined,
+        }}
         onClick={(event) => {
           if (isInlineActionTarget(event)) return;
           handleTap();

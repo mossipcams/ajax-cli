@@ -100,11 +100,16 @@ export function armDropUndo(
     resolved = true;
     if (timer) clearTimeout(timer);
     if (handles.dropTimerRef.current === timer) handles.dropTimerRef.current = null;
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("pagehide", commit);
   };
   const commit = () => {
     if (resolved) return;
     settle();
     void runTaskAction(action, handle, true, interactionId, callbacks, executeOperation);
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") commit();
   };
   const undo = () => {
     if (resolved) return;
@@ -117,6 +122,8 @@ export function armDropUndo(
       });
     }
   };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("pagehide", commit);
   timer = setTimeout(commit, DROP_UNDO_MS);
   handles.dropTimerRef.current = timer;
   callbacks.onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });

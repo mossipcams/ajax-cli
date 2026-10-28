@@ -516,4 +516,19 @@ describe("TaskList", () => {
     );
     expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
+
+  it("drops the row transform transition only while a touch drag is held", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = within(wrap).getByRole("button", { name: /A/ });
+
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 300, clientY: 40 }] });
+    expect(row.style.transition).toBe("background 120ms var(--ease)");
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 300, clientY: 40 }] });
+    expect(row.style.transition).toBe("");
+
+    const rowRule = stylesSource.match(/\.task-row\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rowRule).toMatch(/transform 220ms/);
+  });
 });
