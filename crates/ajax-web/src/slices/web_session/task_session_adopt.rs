@@ -2,7 +2,7 @@ use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-use crate::adapters::session_shim::shim_paths;
+use crate::adapters::session_shim::{self, shim_paths};
 use crate::adapters::web_session_acp::{SessionClient, ADOPTED_PROMPT_REQUEST_ID};
 use crate::adapters::web_session_store::prompt_ledger::{self as ledger_module, PromptPhase};
 use crate::adapters::web_session_store::{self, StoredSession};
@@ -45,20 +45,32 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         .filter(|_| stored.harness == harness)
         .ok_or_else(|| SessionError::persist("live session shim has no stored session id"))?;
     let shim_pid = shim_pid(state)?;
+    let handle = adoptable
+        .worktree
+        .to_str()
+        .ok_or_else(|| SessionError::protocol("worktree path is not valid UTF-8"))?;
 
-    web_session_store::try_truncate_events_after(
+    let cursor = adoptable.transcript_cursor;
+    let after_cursor = web_session_store::try_events_after::<SessionServerEvent>(
         &store,
         &state.qualified_handle,
-        adoptable.transcript_cursor,
+        cursor,
     )
-    .map_err(|error| {
-        SessionError::persist(format!("transcript could not be rolled back: {error}"))
-    })?;
-    let stored = load_stored(state)?;
-    state.evidence.transcript_corruption =
-        web_session_store::corruption_warning(stored.corrupt_lines);
-    state.log = TranscriptLog::from_events(stored.events, stored.dropped);
-    state.stream_normalizer = StreamNormalizer::seeded_from(&state.log.events);
+    .map_err(|error| SessionError::persist(format!("transcript could not be read: {error}")))?;
+    let through_cursor = stored
+        .events
+        .len()
+        .checked_sub(after_cursor.len())
+        .ok_or_else(|| SessionError::persist("transcript changed while adopting"))?;
+    let StoredSession {
+        mut events,
+        dropped,
+        corrupt_lines,
+        ..
+    } = stored;
+    events.truncate(through_cursor);
+    let kept: Vec<SessionServerEvent> =
+        after_cursor.into_iter().filter(outlives_rollback).collect();
 
     let ledger = ledger_module::try_load(&store, &state.storage.state_dir, &state.qualified_handle)
         .map_err(|error| SessionError::persist(error.to_string()))?;
@@ -70,18 +82,23 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         .collect();
     restore_queued_prompts(state, queued)?;
 
-    let stream = attach_stream(
-        &state.storage.state_dir,
-        &adoptable.worktree,
-        adoptable.shim_offset,
-    )?;
-    let client = SessionClient::adopt(state.agent, stream, shim_pid, session_id)
+    let stream = attach_stream(&state.storage.state_dir, handle, adoptable.shim_offset)?;
+    let answered = session_shim::answered_requests(&state.storage.state_dir, handle);
+    let client = SessionClient::adopt(state.agent, stream, shim_pid, session_id, answered)
         .map_err(SessionError::protocol)?;
     state.acp.client = Some(client);
     if let Err(error) = state.record_child_identity() {
         state.acp.client = None;
         return Err(error);
     }
+    if let Err(error) = roll_back_transcript(state, cursor, &kept) {
+        state.acp.client = None;
+        return Err(error);
+    }
+    events.extend(kept);
+    state.log = TranscriptLog::from_events(events, dropped);
+    state.evidence.transcript_corruption = web_session_store::corruption_warning(corrupt_lines);
+    state.stream_normalizer = StreamNormalizer::seeded_from(&state.log.events);
 
     state.prompts.prompt_ledger = ledger;
     state.prompts.ledger_unusable = None;
@@ -117,14 +134,40 @@ fn shim_pid(state: &TaskSessionState) -> Result<u32, SessionError> {
         .ok_or_else(|| SessionError::persist("live session shim has no recorded pid"))
 }
 
+fn roll_back_transcript(
+    state: &TaskSessionState,
+    cursor: u64,
+    kept: &[SessionServerEvent],
+) -> Result<(), SessionError> {
+    let store = state.storage.registry_store();
+    web_session_store::try_truncate_events_after(&store, &state.qualified_handle, cursor).map_err(
+        |error| SessionError::persist(format!("transcript could not be rolled back: {error}")),
+    )?;
+    web_session_store::try_append_events(
+        &store,
+        &state.storage.state_dir,
+        &state.qualified_handle,
+        agent_client_name(state.agent),
+        kept,
+    )
+    .map_err(|error| SessionError::persist(format!("user events could not be restored: {error}")))
+}
+
+fn outlives_rollback(event: &SessionServerEvent) -> bool {
+    match event {
+        SessionServerEvent::Message { role, .. } => role == "user",
+        SessionServerEvent::PromptAccepted { .. }
+        | SessionServerEvent::PermissionResolved { .. }
+        | SessionServerEvent::ElicitationResolved { .. } => true,
+        _ => false,
+    }
+}
+
 fn attach_stream(
     state_dir: &Path,
-    worktree: &Path,
+    handle: &str,
     shim_offset: u64,
 ) -> Result<UnixStream, SessionError> {
-    let handle = worktree
-        .to_str()
-        .ok_or_else(|| SessionError::protocol("worktree path is not valid UTF-8"))?;
     let mut stream = UnixStream::connect(shim_paths(state_dir, handle).socket)
         .map_err(|error| SessionError::protocol(format!("session shim is unreachable: {error}")))?;
     stream

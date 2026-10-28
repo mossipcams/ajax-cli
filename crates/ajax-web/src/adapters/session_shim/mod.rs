@@ -1,4 +1,6 @@
 use crate::adapters::web_session_store::{encode_handle, WEB_SESSION_DIR};
+use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -30,6 +32,15 @@ pub fn shim_paths(state_dir: &Path, handle: &str) -> ShimPaths {
         socket: dir.join(format!("s-{:016x}.sock", fnv1a_64(handle.as_bytes()))),
         stderr: dir.join(format!("{encoded}.shim.stderr")),
     }
+}
+
+pub(crate) fn answered_requests(state_dir: &Path, handle: &str) -> HashSet<String> {
+    let inbound = log::inbound_log_path(&shim_paths(state_dir, handle).log);
+    answered_request_ids(&inbound)
+        .unwrap_or_default()
+        .iter()
+        .map(Value::to_string)
+        .collect()
 }
 
 fn fnv1a_64(bytes: &[u8]) -> u64 {

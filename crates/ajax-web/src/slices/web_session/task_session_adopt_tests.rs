@@ -111,6 +111,10 @@ fn scratch(label: &str) -> Scratch {
 
 impl Scratch {
     fn persist_dispatching(&self) {
+        self.persist_ledger(false);
+    }
+
+    fn persist_ledger(&self, with_queued_p2: bool) {
         let mut ledger = PromptLedger::default();
         ledger.upsert_queued(
             "p1".to_owned(),
@@ -120,8 +124,34 @@ impl Scratch {
         );
         assert!(ledger.mark_dispatching("p1"));
         ledger.record_dispatch_marks("p1", Some(0), 1);
+        if with_queued_p2 {
+            ledger.upsert_queued(
+                "p2".to_owned(),
+                "queued p2".to_owned(),
+                "prompt p2".to_owned(),
+                Vec::new(),
+            );
+        }
         prompt_ledger::try_persist(&self.store, &self.dir, &self.handle, &ledger)
             .expect("persist ledger");
+    }
+
+    fn transcript(&self) -> Vec<SessionServerEvent> {
+        web_session_store::try_load::<SessionServerEvent>(
+            &self.store,
+            &self.dir,
+            &self.handle,
+            "codex",
+        )
+        .expect("load transcript")
+        .events
+    }
+
+    fn transcript_count(&self, matches: impl Fn(&SessionServerEvent) -> bool) -> usize {
+        self.transcript()
+            .iter()
+            .filter(|event| matches(event))
+            .count()
     }
 
     fn phase_of_p1(&self) -> PromptPhase {
@@ -235,19 +265,23 @@ fn stop_line() -> Value {
     json!({ "jsonrpc": "2.0", "id": 0, "result": { "stopReason": "end_turn" } })
 }
 
-#[test]
-fn live_shim_is_adopted_not_interrupted() {
-    let scratch = scratch("adopt-ok");
-    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
-    let shim = LiveShim::start(&scratch.dir, &worktree);
-    let shim_child = SleepChild::spawn();
-    let seed = agent_message("seed", "seed-agent");
+fn user_message(text: &str, item_id: &str) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "user".to_string(),
+        text: text.to_string(),
+        content_blocks: Vec::new(),
+        item_id: item_id.to_string(),
+        message_id: None,
+    }
+}
+
+fn seed_live_session(scratch: &Scratch, shim_child: &SleepChild) {
     web_session_store::try_append_events(
         &scratch.store,
         &scratch.dir,
         &scratch.handle,
         "codex",
-        &[seed],
+        &[agent_message("seed", "seed-agent")],
     )
     .expect("seed transcript");
     web_session_store::try_append_events(
@@ -276,11 +310,9 @@ fn live_shim_is_adopted_not_interrupted() {
         "foreign-boot",
     )
     .expect("record shim identity");
-    scratch.persist_dispatching();
-    shim.seed_outbound(&[chunk_line(), stop_line()]);
-    let log_before = shim.log_len();
+}
 
-    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+fn acquire_codex(directory: &BlockingSessionDirectory, scratch: &Scratch) {
     with_test_acp_program(&fake_acp_fixture(), || {
         directory
             .acquire(
@@ -291,6 +323,21 @@ fn live_shim_is_adopted_not_interrupted() {
             )
             .expect("acquire adopts the live shim");
     });
+}
+
+#[test]
+fn live_shim_is_adopted_not_interrupted() {
+    let scratch = scratch("adopt-ok");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_session(&scratch, &shim_child);
+    scratch.persist_dispatching();
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+    let log_before = shim.log_len();
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    acquire_codex(&directory, &scratch);
     pump_until_turn_end(&directory, &scratch.handle);
 
     assert_eq!(
@@ -348,4 +395,149 @@ fn adoption_failure_interrupts_like_today() {
     drop(directory);
     drop(shim);
     let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn queued_prompt_user_message_survives_adoption_rollback() {
+    let scratch = scratch("adopt-queued");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_session(&scratch, &shim_child);
+    web_session_store::try_append_events(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        &[
+            user_message("queued p2", "u:p2"),
+            SessionServerEvent::PromptAccepted {
+                client_message_id: "p2".to_owned(),
+            },
+        ],
+    )
+    .expect("commit queued prompt after cursor");
+    scratch.persist_ledger(true);
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    acquire_codex(&directory, &scratch);
+    assert_eq!(
+        scratch.transcript_count(|event| is_user_text(event, "queued p2")),
+        1,
+        "rollback must keep the queued prompt's user message"
+    );
+    pump_until_turn_end(&directory, &scratch.handle);
+
+    assert_eq!(
+        scratch.transcript_count(|event| is_user_text(event, "queued p2")),
+        1,
+        "dispatching the queued prompt must not duplicate its user message"
+    );
+    assert_eq!(
+        scratch.transcript_count(|event| matches!(
+            event,
+            SessionServerEvent::PromptAccepted { client_message_id } if client_message_id == "p2"
+        )),
+        1
+    );
+
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn permission_decision_after_cursor_survives_adoption_rollback() {
+    let scratch = scratch("adopt-permission");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_session(&scratch, &shim_child);
+    web_session_store::try_append_events(
+        &scratch.store,
+        &scratch.dir,
+        &scratch.handle,
+        "codex",
+        &[SessionServerEvent::PermissionResolved {
+            request_id: "perm-1".to_owned(),
+            approved: true,
+        }],
+    )
+    .expect("commit permission decision after cursor");
+    scratch.persist_dispatching();
+    shim.seed_outbound(&[chunk_line(), stop_line()]);
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    acquire_codex(&directory, &scratch);
+    pump_until_turn_end(&directory, &scratch.handle);
+
+    assert_eq!(
+        scratch.transcript_count(|event| matches!(
+            event,
+            SessionServerEvent::PermissionResolved { request_id, approved: true }
+                if request_id == "perm-1"
+        )),
+        1,
+        "rollback must keep the user's permission decision"
+    );
+
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+#[test]
+fn adoption_failure_after_attach_leaves_transcript_untouched() {
+    let scratch = scratch("adopt-after-attach");
+    let worktree = scratch.worktree.to_str().expect("utf-8 path").to_owned();
+    let shim = LiveShim::start(&scratch.dir, &worktree);
+    let shim_child = SleepChild::spawn();
+    seed_live_session(&scratch, &shim_child);
+    scratch.persist_dispatching();
+    let before = scratch.transcript();
+
+    let directory = BlockingSessionDirectory::new(scratch.dir.clone());
+    web_session_store::set_force_child_identity_write_fail(true);
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &scratch.handle,
+                &scratch.worktree,
+                "auto",
+                AgentClient::Codex,
+            )
+            .expect_err("cold spawn also cannot record its child identity");
+    });
+    web_session_store::set_force_child_identity_write_fail(false);
+
+    assert_eq!(scratch.phase_of_p1(), PromptPhase::Interrupted);
+    let after = scratch.transcript();
+    assert!(
+        before.iter().all(|event| after.contains(event)),
+        "a failed adoption must not roll back the transcript; before={before:?} after={after:?}"
+    );
+    assert_eq!(
+        scratch.transcript_count(|event| json_text(event).contains("\"hello\"")),
+        1,
+        "the event after the cursor must survive"
+    );
+
+    drop(directory);
+    drop(shim);
+    drop(shim_child);
+    let _ = std::fs::remove_dir_all(&scratch.dir);
+}
+
+fn json_text(event: &SessionServerEvent) -> String {
+    serde_json::to_string(event).unwrap_or_default()
+}
+
+fn is_user_text(event: &SessionServerEvent, expected: &str) -> bool {
+    matches!(
+        event,
+        SessionServerEvent::Message { role, text, .. } if role == "user" && text == expected
+    )
 }
