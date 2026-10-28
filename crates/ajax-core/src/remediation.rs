@@ -10,6 +10,7 @@ pub const FIX_CI: &str = "fix-ci";
 pub const RESOLVE_MERGE_CONFLICTS: &str = "resolve-merge-conflicts";
 pub const CREATE_PR: &str = "create-pr";
 pub const MERGE_PR: &str = "merge-pr";
+pub const RESTART_AGENT: &str = "restart-agent";
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RemediationOption {
@@ -56,6 +57,13 @@ pub fn remediations_for_task(task: &Task) -> Vec<RemediationOption> {
             skill_name: String::new(),
         });
     }
+    if offers_restart_agent(task) {
+        options.push(RemediationOption {
+            id: RESTART_AGENT.to_string(),
+            label: "Restart agent".to_string(),
+            skill_name: String::new(),
+        });
+    }
     options
 }
 
@@ -69,6 +77,10 @@ fn offers_create_pr(task: &Task) -> bool {
 
 fn offers_merge_pr(task: &Task) -> bool {
     is_open_chat_task(task) && has_open_pull_request(task)
+}
+
+fn offers_restart_agent(task: &Task) -> bool {
+    task.kind() == TaskKind::Chat && !matches!(task.lifecycle_status, LifecycleStatus::Removed)
 }
 
 fn is_open_chat_task(task: &Task) -> bool {
@@ -239,7 +251,7 @@ fn format_remediation_output(output: &CommandOutput, remediation_id: &str) -> St
 mod tests {
     use super::{
         chat_remediation_brief, execute_remediation, format_brief, remediations_for_task,
-        CREATE_PR, FIX_CI, MERGE_PR, RESOLVE_MERGE_CONFLICTS,
+        CREATE_PR, FIX_CI, MERGE_PR, RESOLVE_MERGE_CONFLICTS, RESTART_AGENT,
     };
     use crate::{
         adapters::RecordingCommandRunner,
@@ -314,8 +326,8 @@ mod tests {
 
         let options = remediations_for_task(&task);
 
-        assert_eq!(options.len(), 1);
-        assert_eq!(options[0].id, CREATE_PR);
+        let ids: Vec<&str> = options.iter().map(|option| option.id.as_str()).collect();
+        assert_eq!(ids, vec![CREATE_PR, RESTART_AGENT]);
         assert_eq!(options[0].label, "Create PR");
     }
 
@@ -364,6 +376,26 @@ mod tests {
             && option.label == "Merge PR"
             && option.skill_name.is_empty()));
         assert!(options.iter().all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn restart_agent_is_offered_for_chat_tasks_that_are_not_removed() {
+        let mut chat = task("chat");
+        chat.set_skip_interactive_agent(true);
+        assert!(remediations_for_task(&chat)
+            .iter()
+            .any(|option| option.id == RESTART_AGENT && option.label == "Restart agent"));
+
+        let mut removed = task("removed");
+        removed.set_skip_interactive_agent(true);
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        assert!(remediations_for_task(&removed)
+            .iter()
+            .all(|option| option.id != RESTART_AGENT));
+
+        assert!(remediations_for_task(&task("terminal"))
+            .iter()
+            .all(|option| option.id != RESTART_AGENT));
     }
 
     #[test]
