@@ -19,6 +19,25 @@ pub use runtime::{
 };
 pub use status::SupervisorStatusMachine;
 
+#[cfg(test)]
+pub(crate) fn write_fake_agent(script: &std::path::Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(
+        script,
+        format!("#!/bin/sh\nif [ \"$1\" = warm ]; then exit 0; fi\n{body}"),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(script, permissions).unwrap();
+    let status = std::process::Command::new(script)
+        .arg("warm")
+        .status()
+        .unwrap();
+    assert!(status.success(), "fake agent warm-up exited with {status}");
+}
+
 #[derive(Debug)]
 pub enum SupervisorError {
     Io(String),
@@ -231,10 +250,7 @@ mod tests {
             std::env::temp_dir().join(format!("ajax-monitor-watch-close-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let script = root.join("fake-codex");
-        fs::write(&script, "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\n").unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions).unwrap();
+        super::write_fake_agent(&script, "printf '{\"type\":\"started\"}\\n'\n");
 
         let mut config = MonitorConfig::codex_exec("ignored");
         config.agent_bin = script.display().to_string();
