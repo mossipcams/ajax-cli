@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
@@ -351,6 +351,81 @@ describe("App drop shell confirm", () => {
     expect(
       operations.filter((op) => (op as { action?: string }).action === "drop"),
     ).toHaveLength(0);
+  });
+
+  it("Dismiss on the Dropping banner posts exactly one drop, with or without a route change", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: Array<{ action?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    const banner = await screen.findByTestId("result-panel");
+    expect(banner).toHaveTextContent(/Dropping/);
+
+    setHash("#/");
+    expect(await screen.findByTestId("outlet-dashboard")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("result-panel")).getByText("Dismiss"));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS * 3);
+    });
+
+    await waitFor(() => {
+      expect(operations.filter((op) => op.action === "drop")).toHaveLength(1);
+    });
+    expect(screen.queryByTestId("result-panel")).not.toBeInTheDocument();
+  });
+
+  it("commits the pending Drop once when the page is hidden during the undo window", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const operations: Array<{ action?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body ?? "{}")));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS * 3);
+    });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+
+    await waitFor(() => {
+      expect(operations.filter((op) => op.action === "drop")).toHaveLength(1);
+    });
   });
 });
 
