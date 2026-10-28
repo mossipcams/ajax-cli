@@ -34,7 +34,13 @@ interface Props {
   onCancelPendingConfirm?: () => void;
 }
 
-const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
+const REMEDIATION = new Set([
+  "fix-ci",
+  "resolve-merge-conflicts",
+  "create-pr",
+  "merge-pr",
+  "restart-agent",
+]);
 
 const actionRowStyle: CSSProperties = {
   display: "flex",

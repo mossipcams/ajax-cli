@@ -6,7 +6,7 @@ interface Props {
   view: ChatHeadView;
   permission?: ReactNode;
   actions?: ReactNode;
-  onStop: () => void;
+  onStop: (keepQueue: boolean) => void;
 }
 
 export default function LiveHead({ view, permission, actions, onStop }: Props) {
@@ -43,7 +43,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
                 type="button"
                 className="session-head-stop"
                 data-testid="session-cancel"
-                onClick={onStop}
+                onClick={() => onStop(true)}
               >
                 Stop
               </button>

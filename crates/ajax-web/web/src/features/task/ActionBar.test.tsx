@@ -373,6 +373,41 @@ describe("ActionBar", () => {
     );
   });
 
+  it("styles chat verbs as remediation buttons", () => {
+    const verbs: WebAction[] = ["create-pr", "merge-pr", "restart-agent"].map((action) => ({
+      action,
+      label: action,
+      destructive: false,
+      confirmation_required: action === "merge-pr",
+    }));
+    render(<ActionBar actions={verbs} handle="web/x" />);
+    for (const verb of verbs) {
+      expect(screen.getByText(verb.label).className).toContain("remediation-action");
+    }
+  });
+
+  it("asks for confirmation before merge-pr and does not post until committed", () => {
+    const spy = vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onResult = vi.fn();
+    const mergePr: WebAction = {
+      action: "merge-pr",
+      label: "Merge PR",
+      destructive: false,
+      confirmation_required: true,
+    };
+    render(<ActionBar actions={[mergePr]} handle="web/x" onResult={onResult} />);
+    fireEvent.click(screen.getByText("Merge PR"));
+    expect(spy).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenLastCalledWith(
+      "Confirm Merge PR for web/x?",
+      null,
+      false,
+      expect.objectContaining({
+        pendingConfirm: expect.objectContaining({ action: mergePr, handle: "web/x" }),
+      }),
+    );
+  });
+
   it("does not surface a completion toast on successful Review, even with output", async () => {
     vi.spyOn(api, "postOperation").mockResolvedValue({
       ok: true,
