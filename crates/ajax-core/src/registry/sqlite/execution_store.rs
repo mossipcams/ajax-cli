@@ -213,6 +213,19 @@ fn children_allow_completion_for(
     Ok(children_allow_completion(&states))
 }
 
+fn delete_events_after(
+    transaction: &rusqlite::Transaction<'_>,
+    run_id: &str,
+    keep_through: i64,
+) -> Result<usize, RegistrySnapshotError> {
+    transaction
+        .execute(
+            "DELETE FROM execution_events WHERE run_id = ?1 AND seq > ?2",
+            params![run_id, keep_through],
+        )
+        .map_err(database_error)
+}
+
 impl SqliteRegistryStore {
     pub fn create_run(&self, run: &NewRun) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
@@ -556,12 +569,7 @@ impl SqliteRegistryStore {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;
-        let deleted = transaction
-            .execute(
-                "DELETE FROM execution_events WHERE run_id = ?1 AND seq > ?2",
-                params![run_id, keep_through],
-            )
-            .map_err(database_error)?;
+        let deleted = delete_events_after(&transaction, run_id, keep_through)?;
         transaction
             .execute(
                 "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1 AND next_event_seq > ?2",
@@ -570,6 +578,44 @@ impl SqliteRegistryStore {
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
         Ok(deleted as u64)
+    }
+
+    pub fn truncate_and_append_events_after(
+        &self,
+        run_id: &str,
+        seq: u64,
+        payloads: &[String],
+    ) -> Result<(), RegistrySnapshotError> {
+        let mut connection = self.open()?;
+        migrations::migrate(&connection)?;
+        let keep_through = i64::try_from(seq)
+            .map_err(|_| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        delete_events_after(&transaction, run_id, keep_through)?;
+        let mut next_seq = keep_through
+            .checked_add(1)
+            .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        for payload in payloads {
+            transaction
+                .execute(
+                    "INSERT INTO execution_events (run_id, seq, payload_json) VALUES (?1, ?2, ?3)",
+                    params![run_id, next_seq, payload],
+                )
+                .map_err(database_error)?;
+            next_seq = next_seq
+                .checked_add(1)
+                .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
+        }
+        transaction
+            .execute(
+                "UPDATE agent_runs SET next_event_seq = ?2 WHERE run_id = ?1",
+                params![run_id, next_seq],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(())
     }
 
     pub fn execution_task_state(
@@ -730,5 +776,80 @@ mod tests {
             })
             .unwrap();
         assert_eq!(receipt.event_seqs, vec![3]);
+    }
+
+    fn event_payloads(store: &SqliteRegistryStore) -> Vec<(u64, String)> {
+        store.execution_events_since("run-1", 0).unwrap()
+    }
+
+    #[test]
+    fn truncate_and_append_replaces_tail_and_renumbers_contiguously() {
+        let store = scratch_store("truncate-and-append");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        store
+            .truncate_and_append_events_after("run-1", 2, &["kept-a".into(), "kept-b".into()])
+            .unwrap();
+
+        let events = event_payloads(&store);
+        assert_eq!(
+            events,
+            vec![
+                (1, "event-1".to_owned()),
+                (2, "event-2".to_owned()),
+                (3, "kept-a".to_owned()),
+                (4, "kept-b".to_owned()),
+            ]
+        );
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-replace".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![5]);
+    }
+
+    #[test]
+    fn truncate_and_append_failure_leaves_events_untouched() {
+        let store = scratch_store("truncate-and-append-atomic");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: (1..=5).map(|n| format!("event-{n}")).collect(),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .open()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_forced_append BEFORE INSERT ON execution_events \
+                 WHEN NEW.payload_json = 'boom' \
+                 BEGIN SELECT RAISE(ABORT, 'forced append failure'); END;",
+            )
+            .unwrap();
+        let before = event_payloads(&store);
+
+        let result =
+            store.truncate_and_append_events_after("run-1", 2, &["kept-a".into(), "boom".into()]);
+
+        assert!(result.is_err());
+        assert_eq!(event_payloads(&store), before);
+        let receipt = store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                events: vec!["after-failure".into()],
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(receipt.event_seqs, vec![6]);
     }
 }
