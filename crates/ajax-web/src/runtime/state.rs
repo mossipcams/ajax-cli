@@ -1,9 +1,16 @@
 use crate::adapters::http::{
     json_response, operation_response_with_request_id, response_from_web_error, Response,
 };
-use crate::runtime::bridge::{response_with_fresh_cockpit, RuntimeBridge};
+use crate::runtime::bridge::{
+    operation_error_response, operation_success_response, response_with_fresh_cockpit,
+    ActionFailure, RuntimeBridge,
+};
 use crate::runtime::operation_outcomes::{
     now_unix_secs, PendingOutcomeWrite, MAX_OUTCOME_AGE_SECS,
+};
+use crate::slices::operate::{
+    apply_start_task_delta, format_operate_error, operate_error_code, OperateError, StartTaskDelta,
+    StartTaskRequest,
 };
 use crate::{
     adapters::{
@@ -19,7 +26,10 @@ use crate::{
     WebError,
 };
 use ajax_core::{
-    adapters::CommandRunner, commands::CommandContext, config::Config, registry::InMemoryRegistry,
+    adapters::{CommandRunError, CommandRunner},
+    commands::{CommandContext, CommandError},
+    config::Config,
+    registry::InMemoryRegistry,
     registry::Registry,
 };
 use std::{
@@ -205,6 +215,84 @@ where
                 request_id,
             )
         }
+    }
+
+    pub(crate) fn run_task_start(&self, request: StartTaskRequest, request_id: &str) -> Response {
+        let task_id = ajax_core::commands::start_task_identity(&request.repo, &request.title);
+        let (mut context, mut runner, mut bridge) = {
+            let _flight = self.refresh_flight.blocking_lock();
+            let guard = self.shared();
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+            )
+        };
+        let mut delta = StartTaskDelta::new(task_id, &context);
+        let result = bridge.execute_start_task_with_checkpoint(
+            request,
+            &mut context,
+            &mut runner,
+            &mut |checkpoint: &CommandContext<InMemoryRegistry>| {
+                self.commit_start_delta(&mut delta, checkpoint, None)
+            },
+        );
+        let committed = self.commit_start_delta(&mut delta, &context, Some(bridge));
+        let guard = self.shared();
+        let response = match (committed, result) {
+            (Ok(()), Ok(outcome)) => operation_success_response(outcome, &guard.context),
+            (Ok(()), Err(failure)) => operation_error_response(failure, &guard.context),
+            (Err(error), _) => {
+                let error = OperateError::Command(error, false);
+                operation_error_response(
+                    ActionFailure {
+                        message: format_operate_error(&error),
+                        code: operate_error_code(&error).to_string(),
+                        state_changed: false,
+                    },
+                    &guard.context,
+                )
+            }
+        };
+        match response {
+            Ok(response) => operation_response_with_request_id(response, Some(request_id)),
+            Err(error) => response_from_web_error(error, Some(request_id)),
+        }
+    }
+
+    /// Takes `control_lane` only for the apply: the start's own task state is merged
+    /// into the shared context, then persisted, so the shared context stays the
+    /// truth and no stale whole-registry clone is written.
+    fn commit_start_delta(
+        &self,
+        delta: &mut StartTaskDelta,
+        working: &CommandContext<InMemoryRegistry>,
+        executed: Option<B>,
+    ) -> Result<(), CommandError> {
+        let _lane = self.control_lane.blocking_lock();
+        let mut guard = self.shared();
+        let mut next = guard.context.clone();
+        let mut next_delta = delta.clone();
+        let applied = apply_start_task_delta(&mut next, working, &mut next_delta);
+        if let Some(executed) = executed {
+            guard.bridge.adopt_start_task_bridge(executed);
+        }
+        let changed = applied?;
+        if changed {
+            guard
+                .bridge
+                .persist_registry_snapshot(&mut next)
+                .map_err(|error| {
+                    CommandError::CommandRun(CommandRunError::SpawnFailed(format!(
+                        "persist task start: {error}"
+                    )))
+                })?;
+            guard.context = next;
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+        }
+        *delta = next_delta;
+        Ok(())
     }
 
     pub(crate) fn run_read(

@@ -518,30 +518,7 @@ where
     let error_request_id = request_id.clone();
     let task_key_for_finish = task_key.clone();
     let response = tokio::task::spawn_blocking(move || {
-        let _flight = state.refresh_flight.blocking_lock();
-        let _lane = state.control_lane.blocking_lock();
-        let response = state.run_optimistic(
-            Some(&request_id),
-            "cockpit state changed while task start was running",
-            |context, runner, bridge| {
-                let result = bridge.execute_start_task(request, context, runner);
-                let (durable, http_result) = match result {
-                    Ok(outcome) => {
-                        let durable = outcome.state_changed;
-                        (durable, operation_success_response(outcome, context))
-                    }
-                    Err(error) => {
-                        let durable = error.state_changed;
-                        (durable, operation_error_response(error, context))
-                    }
-                };
-                let response = match http_result {
-                    Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
-                    Err(error) => response_from_web_error(error, Some(&request_id)),
-                };
-                (response, durable)
-            },
-        );
+        let response = state.run_task_start(request, &request_id);
         state.finish_operation(Some(&request_id), &task_key, &response);
         response
     })
