@@ -39,7 +39,7 @@ mod operation_outcomes;
 mod state;
 mod task_routes;
 use task_routes::{
-    axum_action, axum_cockpit, axum_start_task, axum_task_get, axum_task_post,
+    axum_action, axum_cockpit, axum_presence, axum_start_task, axum_task_get, axum_task_post,
     refresh_cockpit_and_cache,
 };
 
@@ -106,6 +106,7 @@ where
             get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>),
         )
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
+        .route("/api/presence", post(axum_presence::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
             "/api/tasks/{*handle}",
@@ -845,6 +846,8 @@ mod cursor_auth_access_tests {
 }
 #[cfg(test)]
 mod activity_report_tests;
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod refresh_lane_tests;
 #[cfg(test)]

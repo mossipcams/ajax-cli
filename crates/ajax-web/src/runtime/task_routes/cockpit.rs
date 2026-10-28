@@ -18,7 +18,7 @@ use ajax_core::{
     runtime_refresh::RefreshTier,
 };
 use axum::{
-    extract::{Path as AxumPath, Request as AxumRequest, State},
+    extract::{rejection::JsonRejection, Json, Path as AxumPath, Request as AxumRequest, State},
     http::{header, HeaderMap},
     response::Response as AxumResponse,
 };
@@ -36,6 +36,36 @@ pub(crate) fn request_marks_foreground_presence(headers: &HeaderMap) -> bool {
             let value = value.trim();
             value == "1" || value.eq_ignore_ascii_case("true")
         })
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct PresenceRequest {
+    visible: bool,
+}
+
+pub(crate) async fn axum_presence<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Result<Json<PresenceRequest>, JsonRejection>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let Json(request) = match body {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({ "ok": false, "error": error.body_text() }),
+            );
+        }
+    };
+    if request.visible {
+        state.mark_browser_cockpit_seen();
+    } else {
+        state.clear_browser_cockpit_seen();
+    }
+    json_value_response(200, serde_json::json!({ "ok": true }))
 }
 
 pub(crate) async fn axum_cockpit<C, B>(

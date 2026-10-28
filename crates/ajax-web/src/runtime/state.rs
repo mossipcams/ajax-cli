@@ -30,7 +30,7 @@ use std::{
 };
 
 pub(crate) const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
-pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
+pub(crate) const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(45);
 pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const MAX_COMPLETED_OPERATIONS: usize = 128;
 pub(crate) const SESSION_MODEL_PERSIST_RUNTIME_ERROR: &str =
@@ -629,6 +629,13 @@ impl<C, B> WebAppState<C, B> {
             .last_browser_cockpit_at
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    pub fn clear_browser_cockpit_seen(&self) {
+        *self
+            .last_browser_cockpit_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 
     pub fn browser_connected(&self) -> bool {
