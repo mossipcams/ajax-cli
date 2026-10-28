@@ -1,3 +1,4 @@
+mod acp_adopted;
 mod acp_launch;
 mod agent_event;
 mod apply_model;
@@ -42,6 +43,8 @@ pub use config_options::{
 };
 pub use prompt_capability_descriptors::{prompt_capability_descriptor, PromptCapabilityDescriptor};
 
+#[cfg(test)]
+mod acp_adopted_tests;
 #[cfg(test)]
 mod agent_event_tests;
 #[cfg(test)]
