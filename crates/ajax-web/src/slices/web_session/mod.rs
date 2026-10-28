@@ -32,6 +32,7 @@ mod shim_adoption;
 mod startup_recovery;
 mod task_pane_agent;
 mod task_session;
+mod task_session_adopt;
 mod task_session_answers;
 mod task_session_child;
 mod task_session_commit;
@@ -426,6 +427,8 @@ mod tests;
 #[cfg(test)]
 mod fake_acp_tests;
 
+#[cfg(test)]
+mod task_session_adopt_tests;
 #[cfg(test)]
 mod task_session_restore_tests;
 
