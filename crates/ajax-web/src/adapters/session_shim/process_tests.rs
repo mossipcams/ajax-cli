@@ -195,6 +195,19 @@ fn write_then_close_client_still_shuts_harness_down() {
 }
 
 #[test]
+fn unreplayable_offset_closes_client_and_still_honours_shutdown() {
+    let state_dir = scratch_state_dir("bad-replay-offset");
+    let socket = socket_for(&state_dir, "h");
+    let serve = start_serve(&state_dir, "h", &["sh", "-c", ECHO_LOOP]);
+
+    let mut client = Client::open(&socket, "REPLAY 99");
+    assert_eq!(client.recv(), "");
+    client.send("SHUTDOWN");
+    assert_eq!(await_serve(&serve).unwrap(), 0);
+    assert!(!socket.exists());
+}
+
+#[test]
 fn shutdown_escalates_to_sigkill_when_harness_ignores_stdin_eof() {
     let state_dir = scratch_state_dir("sigkill");
     let socket = socket_for(&state_dir, "h");

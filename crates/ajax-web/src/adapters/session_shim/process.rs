@@ -201,6 +201,9 @@ fn handle_client(stream: UnixStream, state: &ShimState) -> io::Result<()> {
     })?;
     let _ = stream.set_read_timeout(None);
     let attached = attach(state, &stream, offset);
+    if attached.is_err() {
+        let _ = stream.shutdown(Shutdown::Write);
+    }
     let result = forward_client_lines(&mut reader, state);
     if let Ok(token) = attached.as_ref() {
         state.relay.detach(*token);

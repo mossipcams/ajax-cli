@@ -296,6 +296,26 @@ pub fn try_append_events_with_rewrites<T: Serialize + DeserializeOwned>(
     Ok(())
 }
 
+pub fn try_events_after<T: DeserializeOwned>(
+    store: &SqliteRegistryStore,
+    handle: &str,
+    keep_through_seq: u64,
+) -> io::Result<Vec<T>> {
+    let Some(run) = store
+        .latest_run_for_task(handle)
+        .map_err(io::Error::other)?
+    else {
+        return Ok(Vec::new());
+    };
+    let rows = store
+        .execution_events_since(&run.run_id, keep_through_seq)
+        .map_err(io::Error::other)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(_, payload)| serde_json::from_str(&payload).ok())
+        .collect())
+}
+
 pub fn try_truncate_events_after(
     store: &SqliteRegistryStore,
     handle: &str,
