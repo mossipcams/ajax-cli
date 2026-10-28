@@ -1,6 +1,7 @@
 use ajax_core::{
     models::{CockpitActionItem, LifecycleStatus, OperatorAction, TaskId},
     output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
+    remediation,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -118,6 +119,13 @@ impl SelectableKind {
     }
 }
 
+fn is_tui_remediation(action: &str) -> bool {
+    matches!(
+        action,
+        remediation::FIX_CI | remediation::RESOLVE_MERGE_CONFLICTS
+    )
+}
+
 fn card_action_reason(card: &TaskCard) -> String {
     card.annotations
         .first()
@@ -146,7 +154,11 @@ fn build_selectables(
                     actions.push(action);
                 }
             }
-            for remediation in &drawer_task.remediations {
+            for remediation in drawer_task
+                .remediations
+                .iter()
+                .filter(|remediation| is_tui_remediation(&remediation.id))
+            {
                 out.push(SelectableKind::Remediation {
                     task: drawer_task.clone(),
                     action: remediation.id.clone(),
@@ -848,4 +860,59 @@ pub struct CockpitSnapshot {
     pub repos: ReposResponse,
     pub cards: Vec<TaskCard>,
     pub inbox: InboxResponse,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_selectables, AppView, SelectableKind};
+    use ajax_core::{
+        models::{LifecycleStatus, OperatorAction, TaskId},
+        output::{InboxResponse, ReposResponse, TaskCard},
+        remediation::{RemediationOption, CREATE_PR, FIX_CI, MERGE_PR, RESTART_AGENT},
+        ui_state::{AttentionBand, TaskStatus},
+    };
+
+    fn chat_card_with_remediations(ids: &[&str]) -> TaskCard {
+        TaskCard {
+            id: TaskId::new("task-1"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            status: TaskStatus::Waiting,
+            status_explanation: None,
+            lifecycle: LifecycleStatus::Active,
+            last_activity_at: std::time::UNIX_EPOCH,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![OperatorAction::Resume],
+            remediations: ids
+                .iter()
+                .map(|id| RemediationOption {
+                    id: id.to_string(),
+                    label: id.to_string(),
+                    skill_name: String::new(),
+                })
+                .collect(),
+            attention: AttentionBand::Idle,
+        }
+    }
+
+    #[test]
+    fn drawer_hides_web_only_chat_verb_remediations() {
+        let card = chat_card_with_remediations(&[CREATE_PR, MERGE_PR, RESTART_AGENT, FIX_CI]);
+        let selectables = build_selectables(
+            &AppView::Projects,
+            &ReposResponse { repos: Vec::new() },
+            &InboxResponse { items: Vec::new() },
+            std::slice::from_ref(&card),
+            &Some(card.id.clone()),
+        );
+        let remediation_ids = selectables
+            .iter()
+            .filter_map(|selectable| match selectable {
+                SelectableKind::Remediation { action, .. } => Some(action.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(remediation_ids, vec![FIX_CI]);
+    }
 }
