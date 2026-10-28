@@ -7,11 +7,42 @@ use super::{
     },
     task_session_spawn,
     transcript::MAX_IDLE_SESSIONS,
-    PersistSessionModel, ReportSessionActivity, SessionClientMessage, SessionError,
-    SessionServerEvent, SessionStorage,
+    PersistSessionModel, ReportSessionActivity, SessionActivity, SessionClientMessage,
+    SessionError, SessionServerEvent, SessionStorage,
 };
 
 pub(crate) type DeferredActivityPending = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+type LiveActivityMap = Mutex<HashMap<String, (u64, SessionActivity)>>;
+
+#[derive(Clone)]
+pub(super) struct LiveActivitySlot {
+    entries: Arc<LiveActivityMap>,
+    owner: u64,
+}
+
+impl LiveActivitySlot {
+    fn new(entries: Arc<LiveActivityMap>) -> Self {
+        static NEXT_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let owner = NEXT_OWNER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self { entries, owner }
+    }
+
+    pub(super) fn publish(&self, handle: &str, activity: SessionActivity) {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert(handle.to_string(), (self.owner, activity));
+    }
+
+    pub(super) fn retire(&self, handle: &str) {
+        let owner = self.owner;
+        self.entries
+            .lock()
+            .unwrap()
+            .retain(|key, (current, _)| key != handle || *current != owner);
+    }
+}
 
 async fn send_command<T>(
     tx: &TaskSessionSender,
@@ -25,12 +56,18 @@ async fn send_command<T>(
         .map_err(|_| SessionError::protocol("session task dropped reply"))
 }
 use crate::adapters::web_session_store::{self, prompt_ledger::PromptPhase};
-use ajax_core::models::AgentClient;
+use ajax_core::{
+    adapters::acp_launch_for_agent,
+    commands::CommandContext,
+    live::apply_authoritative_observation_at,
+    models::{AgentClient, LiveObservation, TaskId},
+    registry::{InMemoryRegistry, Registry},
+};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 
 struct SessionEntry {
@@ -45,6 +82,7 @@ pub(crate) struct TaskSessionDirectory {
     storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
     deferred_activity_pending: Mutex<Option<DeferredActivityPending>>,
+    live_entries: Arc<LiveActivityMap>,
     headless_scanned: std::sync::atomic::AtomicBool,
     headless_handed_out: Mutex<HashSet<String>>,
 }
@@ -59,9 +97,59 @@ impl TaskSessionDirectory {
             storage,
             report_activity: Mutex::new(None),
             deferred_activity_pending: Mutex::new(None),
+            live_entries: Arc::new(Mutex::new(HashMap::new())),
             headless_scanned: std::sync::atomic::AtomicBool::new(false),
             headless_handed_out: Mutex::new(HashSet::new()),
         })
+    }
+
+    pub(crate) fn live_activities(&self) -> Vec<(String, SessionActivity)> {
+        self.live_entries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(handle, (_, activity))| (handle.clone(), *activity))
+            .collect()
+    }
+
+    pub(crate) fn applied_live_activity(&self, handle: &str, activity: SessionActivity) {
+        self.live_entries
+            .lock()
+            .unwrap()
+            .retain(|key, (_, live)| key != handle || *live != activity);
+    }
+
+    pub(crate) fn live_overlay(
+        &self,
+        context: &CommandContext<InMemoryRegistry>,
+    ) -> Option<CommandContext<InMemoryRegistry>> {
+        let pending: Vec<(TaskId, LiveObservation)> = self
+            .live_activities()
+            .into_iter()
+            .filter_map(|(handle, activity)| {
+                let task = context
+                    .registry
+                    .list_tasks()
+                    .into_iter()
+                    .find(|task| task.qualified_handle() == handle)?;
+                let acp_chat = task.skip_interactive_agent()
+                    && acp_launch_for_agent(task.selected_agent).is_some();
+                let observation = activity.observation();
+                (acp_chat && task.live_status.as_ref() != Some(&observation))
+                    .then(|| (task.id.clone(), observation))
+            })
+            .collect();
+        if pending.is_empty() {
+            return None;
+        }
+        let now = SystemTime::now();
+        let mut overlaid = context.clone();
+        for (task_id, observation) in pending {
+            if let Some(task) = overlaid.registry.get_task_mut(&task_id) {
+                apply_authoritative_observation_at(task, observation, now);
+            }
+        }
+        Some(overlaid)
     }
 
     pub(crate) fn set_report_session_activity(&self, report: ReportSessionActivity) {
@@ -194,6 +282,7 @@ impl TaskSessionDirectory {
             self.report_activity_for_spawn(),
             self.deferred_activity_pending_for_spawn(),
             self.ownership.clone(),
+            LiveActivitySlot::new(Arc::clone(&self.live_entries)),
         );
         sessions.insert(
             handle.to_string(),
@@ -231,6 +320,7 @@ impl TaskSessionDirectory {
             self.report_activity_for_spawn(),
             self.deferred_activity_pending_for_spawn(),
             self.ownership.clone(),
+            LiveActivitySlot::new(Arc::clone(&self.live_entries)),
         );
         sessions.insert(
             handle.to_string(),

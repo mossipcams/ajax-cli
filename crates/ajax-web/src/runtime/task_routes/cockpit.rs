@@ -98,7 +98,9 @@ where
 /// The current shared projection, served without running or applying a refresh.
 fn current_projection_response<C, B>(state: &WebAppState<C, B>) -> AxumResponse {
     let guard = state.shared();
-    match serde_json::to_value(cockpit::browser_cockpit_view(&guard.context)) {
+    let overlaid = state.task_session_directory.live_overlay(&guard.context);
+    let context = overlaid.as_ref().unwrap_or(&guard.context);
+    match serde_json::to_value(cockpit::browser_cockpit_view(context)) {
         Ok(value) => json_value_response(200, value),
         Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
     }
@@ -176,6 +178,13 @@ where
             return web_error_response(error);
         }
     };
+    let served = match served_response(state, &context, &response) {
+        Ok(served) => served,
+        Err(error) => {
+            drop(lane);
+            return web_error_response(error);
+        }
+    };
     {
         let mut guard = state.shared();
         if guard.revision == base_revision {
@@ -197,8 +206,7 @@ where
         }
     }
     drop(lane);
-    deliver_and_record(state, deliver_notifications)
-        .unwrap_or_else(|| response.into_axum_response())
+    deliver_and_record(state, deliver_notifications).unwrap_or_else(|| served.into_axum_response())
 }
 
 fn cockpit_response(
@@ -209,6 +217,17 @@ fn cockpit_response(
         serde_json::to_value(cockpit::browser_cockpit_view(context))
             .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
     )
+}
+
+fn served_response<C, B>(
+    state: &WebAppState<C, B>,
+    context: &ajax_core::commands::CommandContext<InMemoryRegistry>,
+    raw: &Response,
+) -> Result<Response, WebError> {
+    match state.task_session_directory.live_overlay(context) {
+        Some(overlaid) => cockpit_response(&overlaid),
+        None => Ok(raw.clone()),
+    }
 }
 
 /// Delivers pending agent notifications and, when `deliver_notifications`, web
@@ -278,6 +297,7 @@ where
             });
         }
     }
+    let response = response.and_then(|raw| served_response(state, &guard.context, &raw));
     drop(guard);
     drop(lane);
     Some(match response {
@@ -342,7 +362,9 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let guard = state.shared();
-    match cockpit::browser_task_detail_view(&guard.context, &handle) {
+    let overlaid = state.task_session_directory.live_overlay(&guard.context);
+    let context = overlaid.as_ref().unwrap_or(&guard.context);
+    match cockpit::browser_task_detail_view(context, &handle) {
         Some(detail) => json_value_response(200, serde_json::to_value(detail).unwrap_or_default()),
         None => json_value_response(
             404,
