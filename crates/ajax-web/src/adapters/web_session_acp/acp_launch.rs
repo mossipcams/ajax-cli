@@ -20,6 +20,7 @@ use super::client::{
 use std::path::PathBuf;
 
 use super::client::acp_args_for_program;
+use crate::adapters::session_shim::shim_spawn;
 
 fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
     let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
@@ -167,6 +168,11 @@ pub(super) fn spawn_acp_process(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(shim) = shim_spawn(&command).map_err(|error| error.to_string())? {
+            return shim
+                .into_child_with_pipes()
+                .map_err(|error| error.to_string());
+        }
         if let Ok(child) = super::process_group::spawn_leader(&mut command) {
             return Ok(child);
         }
