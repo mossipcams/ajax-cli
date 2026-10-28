@@ -1,4 +1,7 @@
-use crate::models::{LifecycleStatus, SideFlag, Task};
+use crate::{
+    diff_review::{stored_pull_requests, PullRequestState},
+    models::{LifecycleStatus, SideFlag, Task},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskOperation {
@@ -93,6 +96,12 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     } else {
         OperationEligibility::Blocked(reasons)
     }
+}
+
+pub fn has_open_pull_request(task: &Task) -> bool {
+    stored_pull_requests(task)
+        .iter()
+        .any(|pr| pr.state == PullRequestState::Open)
 }
 
 fn missing_substrate_blocks_operation(task: &Task, operation: TaskOperation) -> bool {
