@@ -1,12 +1,14 @@
 use crate::{
     adapters::{CommandOutput, CommandRunner, TmuxAdapter},
     commands::CommandContext,
-    models::{LiveStatusKind, SideFlag, Task},
+    models::{LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskKind},
+    operation::has_open_pull_request,
     registry::Registry,
 };
 
 pub const FIX_CI: &str = "fix-ci";
 pub const RESOLVE_MERGE_CONFLICTS: &str = "resolve-merge-conflicts";
+pub const CREATE_PR: &str = "create-pr";
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RemediationOption {
@@ -39,11 +41,27 @@ pub fn remediations_for_task(task: &Task) -> Vec<RemediationOption> {
             skill_name: "gh-fix-ci".to_string(),
         });
     }
+    if offers_create_pr(task) {
+        options.push(RemediationOption {
+            id: CREATE_PR.to_string(),
+            label: "Create PR".to_string(),
+            skill_name: String::new(),
+        });
+    }
     options
 }
 
 pub fn is_remediation_action(action: &str) -> bool {
-    action == FIX_CI || action == RESOLVE_MERGE_CONFLICTS
+    action == FIX_CI || action == RESOLVE_MERGE_CONFLICTS || action == CREATE_PR
+}
+
+fn offers_create_pr(task: &Task) -> bool {
+    task.kind() == TaskKind::Chat
+        && !has_open_pull_request(task)
+        && !matches!(
+            task.lifecycle_status,
+            LifecycleStatus::Merged | LifecycleStatus::Removed
+        )
 }
 
 fn has_merge_conflict(task: &Task) -> bool {
@@ -80,6 +98,12 @@ pub fn format_brief(remediation_id: &str, task: &Task, skill_path: &str) -> Opti
              (base branch {base}). Compare ancestor, ours, and theirs for each conflicted file; \
              preserve valid behavior from both sides; run project validation before finishing."
         )),
+        CREATE_PR => Some(format!(
+            "Create a pull request for task {handle} (base branch {base}). Commit any uncommitted \
+             work on this branch, push the branch, then open a pull request for it with \
+             `gh pr create`: use a conventional-commit title (type(scope): summary) and a body \
+             that summarizes the change. Report the pull request URL when done."
+        )),
         _ => None,
     }
 }
@@ -96,12 +120,23 @@ pub fn chat_remediation_brief<R: Registry>(
     remediation_id: &str,
     skill_path: impl FnOnce(&str) -> Option<String>,
 ) -> Result<(Task, String), RemediationError> {
-    let skill_name = skill_name(remediation_id)
-        .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?;
+    let skill = if remediation_id == CREATE_PR {
+        None
+    } else {
+        Some(
+            skill_name(remediation_id)
+                .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?,
+        )
+    };
     let task = find_task(context, task_handle)?;
-    let skill_path = skill_path(skill_name).ok_or(RemediationError::UnsupportedCapability(
-        "required agent skill is not installed on the companion host",
-    ))?;
+    let skill_path = match skill {
+        Some(skill_name) => {
+            skill_path(skill_name).ok_or(RemediationError::UnsupportedCapability(
+                "required agent skill is not installed on the companion host",
+            ))?
+        }
+        None => String::new(),
+    };
     let brief = format_brief(remediation_id, task, &skill_path)
         .ok_or_else(|| RemediationError::UnknownRemediation(remediation_id.to_string()))?;
     Ok((task.clone(), brief))
@@ -188,15 +223,17 @@ fn format_remediation_output(output: &CommandOutput, remediation_id: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_remediation_brief, execute_remediation, format_brief, remediations_for_task, FIX_CI,
-        RESOLVE_MERGE_CONFLICTS,
+        chat_remediation_brief, execute_remediation, format_brief, remediations_for_task,
+        CREATE_PR, FIX_CI, RESOLVE_MERGE_CONFLICTS,
     };
     use crate::{
         adapters::RecordingCommandRunner,
         commands::CommandContext,
         config::{Config, ManagedRepo},
+        diff_review::{remember_pull_requests, PullRequestRef, PullRequestState},
         models::{
-            AgentClient, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId, TmuxStatus,
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
+            TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -253,6 +290,73 @@ mod tests {
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].id, FIX_CI);
         assert_eq!(options[0].skill_name, "gh-fix-ci");
+    }
+
+    #[test]
+    fn chat_task_without_open_pr_offers_create_pr() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+
+        let options = remediations_for_task(&task);
+
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id, CREATE_PR);
+        assert_eq!(options[0].label, "Create PR");
+    }
+
+    #[test]
+    fn chat_task_with_open_pr_does_not_offer_create_pr() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        remember_pull_requests(
+            &mut task,
+            &[PullRequestRef {
+                number: 7,
+                title: "feat(web): chat".to_string(),
+                url: "https://github.com/mossipcams/ajax-cli/pull/7".to_string(),
+                state: PullRequestState::Open,
+                head_ref: "ajax/chat".to_string(),
+                head_sha: None,
+            }],
+        );
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn terminal_task_never_offers_create_pr() {
+        let task = task("terminal");
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn merged_or_removed_chat_task_does_not_offer_create_pr() {
+        for lifecycle in [LifecycleStatus::Merged, LifecycleStatus::Removed] {
+            let mut task = task("done");
+            task.set_skip_interactive_agent(true);
+            task.lifecycle_status = lifecycle;
+
+            assert!(remediations_for_task(&task)
+                .iter()
+                .all(|option| option.id != CREATE_PR));
+        }
+    }
+
+    #[test]
+    fn chat_remediation_brief_for_create_pr_needs_no_skill() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        let context = context_with_task(task);
+
+        let (_, brief) = chat_remediation_brief(&context, "web/chat", CREATE_PR, |_| None).unwrap();
+
+        assert!(brief.contains("gh pr create"));
+        assert!(brief.contains("web/chat"));
     }
 
     #[test]

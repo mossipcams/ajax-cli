@@ -9,7 +9,7 @@ use ajax_core::{
     config::Config,
     models::{AgentClient, Task, TaskId},
     registry::{InMemoryRegistry, Registry},
-    remediation::FIX_CI,
+    remediation::{CREATE_PR, FIX_CI},
 };
 use std::time::Duration;
 
@@ -167,6 +167,51 @@ fn chat_task_remediation_submits_brief_on_chat_queue_without_tmux() {
             events.iter().any(|event| {
                 matches!(event, SessionServerEvent::Message { role, text, .. }
                     if role == "user" && text.contains("/skills/gh-fix-ci/SKILL.md"))
+            })
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn chat_task_create_pr_submits_one_brief_on_chat_queue() {
+    let dir = scratch_dir("ci-create-pr");
+    let handle = "web/ci-create-pr";
+    let mut task = Task::new(
+        TaskId::new("task-create-pr"),
+        "web",
+        "ci-create-pr",
+        "Create PR",
+        "ajax/create-pr",
+        "main",
+        &dir,
+        "web-create-pr",
+        "task",
+        AgentClient::Cursor,
+    );
+    task.set_skip_interactive_agent(true);
+    let mut registry = InMemoryRegistry::default();
+    registry.create_task(task).unwrap();
+    let context = CommandContext::new(Config::default(), registry);
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        let outcome = directory
+            .runtime_handle()
+            .block_on(super::deliver_remediation(
+                directory.inner(),
+                &context,
+                handle,
+                CREATE_PR,
+                |_| None,
+            ))
+            .unwrap();
+        assert_eq!(outcome.output, "create-pr: skill brief sent to chat task");
+        pump_until(&directory, handle, Duration::from_secs(5), |events| {
+            events.iter().any(|event| {
+                matches!(event, SessionServerEvent::Message { role, text, .. }
+                    if role == "user" && text.contains("gh pr create"))
             })
         });
     });
