@@ -100,14 +100,24 @@ fn sidecar_exit_surfaces_one_error_then_none() {
     session.cancel();
 }
 
+struct ScriptFile(std::path::PathBuf);
+
+impl Drop for ScriptFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+const SIDECAR_WAIT: Duration = Duration::from_secs(30);
+
 #[test]
 fn expected_completion_does_not_surface_sidecar_exit_error() {
-    let script = std::env::temp_dir().join(format!(
+    let script = ScriptFile(std::env::temp_dir().join(format!(
         "ajax_stt_complete_sidecar_{}.sh",
         std::process::id()
-    ));
+    )));
     std::fs::write(
-        &script,
+        &script.0,
         concat!(
             "#!/bin/sh\n",
             "printf '%s\\n' '{\"type\":\"stt.ready\"}'\n",
@@ -119,17 +129,17 @@ fn expected_completion_does_not_surface_sidecar_exit_error() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&script).expect("meta").permissions();
+        let mut perms = std::fs::metadata(&script.0).expect("meta").permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod");
+        std::fs::set_permissions(&script.0, perms).expect("chmod");
     }
     let mut provider =
-        MoonshineProvider::new(Some(script.to_string_lossy().into_owned()), 2_000, 700);
+        MoonshineProvider::new(Some(script.0.to_string_lossy().into_owned()), 2_000, 700);
     let mut session = provider.start_session(session_config()).expect("session");
 
     let mut saw_ready = false;
     let mut saw_completed = false;
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let deadline = std::time::Instant::now() + SIDECAR_WAIT;
     while std::time::Instant::now() < deadline && !(saw_ready && saw_completed) {
         match session.poll_event() {
             Some(ProviderEvent::Ready) => saw_ready = true,
@@ -148,20 +158,22 @@ fn expected_completion_does_not_surface_sidecar_exit_error() {
     );
     assert!(session.is_completed());
 
-    let drain_deadline = std::time::Instant::now() + Duration::from_secs(1);
-    while std::time::Instant::now() < drain_deadline {
+    let exit_deadline = std::time::Instant::now() + SIDECAR_WAIT;
+    while std::time::Instant::now() < exit_deadline && !session.sidecar_ended {
         match session.poll_event() {
             Some(ProviderEvent::Error { message }) => {
                 panic!("delayed exit must not error after completion: {message}");
             }
             Some(_) => {}
-            None => break,
+            None => thread::sleep(Duration::from_millis(10)),
         }
-        thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        session.sidecar_ended,
+        "expected the completed sidecar to exit"
+    );
     assert_eq!(session.poll_event(), None);
     session.cancel();
-    let _ = std::fs::remove_file(&script);
 }
 
 #[test]
