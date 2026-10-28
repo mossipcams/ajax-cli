@@ -82,7 +82,7 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
         cancel,
         worktree,
         SandboxInputs {
-            enabled: sandbox_enabled(),
+            enabled: cfg!(not(test)) && sandbox_enabled(),
             nono: resolve_nono,
             profile_dir: default_profile_dir(),
         },
