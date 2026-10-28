@@ -69,6 +69,7 @@ import {
 import { checkHealth } from "@/shared/lib/api";
 import { reloadCockpitDocument } from "@/shared/lib/reloadCockpitDocument";
 import { setupScreenWakeLock } from "@/shared/lib/screenWakeLock";
+import { setupPresence } from "@/shared/lib/presence";
 
 const RESUME_DEBOUNCE_MS = 750;
 
@@ -420,6 +421,7 @@ function AppContent() {
     }
   });
   useEffect(() => setupScreenWakeLock(), []);
+  useEffect(() => setupPresence(), []);
 
   useEffect(() => {
     const idleHandle = onShellMount();

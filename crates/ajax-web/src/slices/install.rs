@@ -162,6 +162,7 @@ mod tests {
         for endpoint in [
             "/api/cockpit",
             "/api/operations",
+            "/api/presence",
             "/api/push",
             "/api/server/test-in-stable",
             "#/settings",
