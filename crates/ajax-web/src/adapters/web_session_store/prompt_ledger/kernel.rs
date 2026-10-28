@@ -16,11 +16,21 @@ pub(super) fn entry_content_json(entry: &PromptLedgerEntry) -> String {
         "transcript_text": entry.transcript_text,
         "prompt_text": entry.prompt_text,
         "content_blocks": entry.content_blocks,
+        "shim_offset": entry.shim_offset,
+        "transcript_cursor": entry.transcript_cursor,
     })
     .to_string()
 }
 
-fn content_fields(content_json: &str) -> (String, String, Vec<serde_json::Value>) {
+type ContentFields = (
+    String,
+    String,
+    Vec<serde_json::Value>,
+    Option<u64>,
+    Option<u64>,
+);
+
+fn content_fields(content_json: &str) -> ContentFields {
     let object = serde_json::from_str::<serde_json::Value>(content_json)
         .ok()
         .and_then(|value| value.as_object().cloned());
@@ -41,8 +51,14 @@ fn content_fields(content_json: &str) -> (String, String, Vec<serde_json::Value>
                 .and_then(serde_json::Value::as_array)
                 .cloned()
                 .unwrap_or_default(),
+            object
+                .get("shim_offset")
+                .and_then(serde_json::Value::as_u64),
+            object
+                .get("transcript_cursor")
+                .and_then(serde_json::Value::as_u64),
         ),
-        None => (String::new(), String::new(), Vec::new()),
+        None => (String::new(), String::new(), Vec::new(), None, None),
     }
 }
 
@@ -55,9 +71,9 @@ pub(super) fn ledger_from_prompts(prompts: &[RunPrompt]) -> PromptLedger {
         ) {
             continue;
         }
-        let (transcript_text, prompt_text, content_blocks) =
+        let (transcript_text, prompt_text, content_blocks, shim_offset, transcript_cursor) =
             if prompt.state == ExecutionState::Completed {
-                (String::new(), String::new(), Vec::new())
+                (String::new(), String::new(), Vec::new(), None, None)
             } else {
                 content_fields(&prompt.content_json)
             };
@@ -76,6 +92,8 @@ pub(super) fn ledger_from_prompts(prompts: &[RunPrompt]) -> PromptLedger {
             transcript_text,
             prompt_text,
             content_blocks,
+            shim_offset,
+            transcript_cursor,
         });
     }
     PromptLedger { entries }
@@ -185,7 +203,9 @@ pub(super) fn plan_commit(
         }
 
         if let Some(current_content) = existing_content_json {
-            if target == ExecutionState::Pending && entry_content_json(entry) != current_content {
+            let rewritable = target == ExecutionState::Pending
+                || (start == ExecutionState::Pending && target == ExecutionState::Running);
+            if rewritable && entry_content_json(entry) != current_content {
                 commit.prompt_content_updates.push(PromptContentUpdate {
                     idempotency_key: key.to_string(),
                     content_json: entry_content_json(entry),

@@ -55,6 +55,10 @@ pub struct PromptLedgerEntry {
     pub prompt_text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_blocks: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shim_offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_cursor: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +109,8 @@ impl PromptLedger {
             entry.transcript_text = transcript_text;
             entry.prompt_text = prompt_text;
             entry.content_blocks = content_blocks;
+            entry.shim_offset = None;
+            entry.transcript_cursor = None;
             return;
         }
         self.entries.push(PromptLedgerEntry {
@@ -113,7 +119,25 @@ impl PromptLedger {
             transcript_text,
             prompt_text,
             content_blocks,
+            shim_offset: None,
+            transcript_cursor: None,
         });
+    }
+
+    pub fn record_dispatch_marks(
+        &mut self,
+        client_message_id: &str,
+        shim_offset: Option<u64>,
+        transcript_cursor: u64,
+    ) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.client_message_id == client_message_id)
+        {
+            entry.shim_offset = shim_offset;
+            entry.transcript_cursor = Some(transcript_cursor);
+        }
     }
 
     pub fn mark_dispatching(&mut self, client_message_id: &str) -> bool {
@@ -140,6 +164,8 @@ impl PromptLedger {
         entry.transcript_text.clear();
         entry.prompt_text.clear();
         entry.content_blocks.clear();
+        entry.shim_offset = None;
+        entry.transcript_cursor = None;
         true
     }
 
@@ -459,3 +485,147 @@ fn force_persist_fail() -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod dispatch_marks {
+    use super::*;
+
+    fn scratch_dir(label: &str) -> PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/prompt-ledger-dispatch-marks")
+            .join(format!("{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn queued_ledger() -> PromptLedger {
+        let mut ledger = PromptLedger::default();
+        ledger.upsert_queued(
+            "m1".to_string(),
+            "hello".to_string(),
+            "hello".to_string(),
+            Vec::new(),
+        );
+        ledger
+    }
+
+    #[test]
+    fn entry_round_trips_dispatch_marks() {
+        let entry = PromptLedgerEntry {
+            client_message_id: "m1".to_string(),
+            phase: PromptPhase::Dispatching,
+            transcript_text: String::new(),
+            prompt_text: String::new(),
+            content_blocks: Vec::new(),
+            shim_offset: Some(4096),
+            transcript_cursor: Some(12),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"shim_offset\":4096"));
+        assert!(json.contains("\"transcript_cursor\":12"));
+        let loaded: PromptLedgerEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, entry);
+    }
+
+    #[test]
+    fn entry_without_marks_omits_them_and_old_json_loads() {
+        let entry = queued_ledger().entries.remove(0);
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("shim_offset"));
+        assert!(!json.contains("transcript_cursor"));
+        let old = r#"{"clientMessageId":"m1","phase":"queued","prompt_text":"p"}"#;
+        let loaded: PromptLedgerEntry = serde_json::from_str(old).unwrap();
+        assert_eq!(loaded.shim_offset, None);
+        assert_eq!(loaded.transcript_cursor, None);
+    }
+
+    #[test]
+    fn record_dispatch_marks_sets_only_the_matching_entry() {
+        let mut ledger = queued_ledger();
+        ledger.record_dispatch_marks("other", Some(1), 2);
+        assert_eq!(ledger.entries[0].shim_offset, None);
+        ledger.record_dispatch_marks("m1", None, 3);
+        assert_eq!(ledger.entries[0].shim_offset, None);
+        assert_eq!(ledger.entries[0].transcript_cursor, Some(3));
+    }
+
+    #[test]
+    fn direct_dispatch_persists_marks_in_the_dispatching_update() {
+        let dir = scratch_dir("persist-marks");
+        let handle = "web/dispatch-marks";
+        let mut ledger = PromptLedger::default();
+        ledger.upsert_queued(
+            "m1".to_string(),
+            "hello".to_string(),
+            "hello".to_string(),
+            Vec::new(),
+        );
+        ledger.mark_dispatching("m1");
+        ledger.record_dispatch_marks("m1", Some(4096), 12);
+        persist(&dir, handle, &ledger).expect("persist dispatching");
+
+        let loaded = load(&dir, handle).expect("load dispatching");
+        let entry = loaded.entry("m1").expect("entry");
+        assert_eq!(entry.phase, PromptPhase::Dispatching);
+        assert_eq!(entry.shim_offset, Some(4096));
+        assert_eq!(entry.transcript_cursor, Some(12));
+    }
+
+    #[test]
+    fn queued_prompt_dispatch_rewrites_its_row_with_the_marks() {
+        let dir = scratch_dir("queued-dispatch-marks");
+        let handle = "web/queued-dispatch-marks";
+        let mut ledger = queued_ledger();
+        persist(&dir, handle, &ledger).expect("persist queued");
+
+        ledger.mark_dispatching("m1");
+        ledger.record_dispatch_marks("m1", Some(512), 9);
+        persist(&dir, handle, &ledger).expect("persist dispatching");
+
+        let loaded = load(&dir, handle).expect("load dispatching");
+        let entry = loaded.entry("m1").expect("entry");
+        assert_eq!(entry.phase, PromptPhase::Dispatching);
+        assert_eq!(entry.shim_offset, Some(512));
+        assert_eq!(entry.transcript_cursor, Some(9));
+    }
+
+    #[test]
+    fn non_shim_direct_dispatch_persists_null_shim_offset_and_a_cursor() {
+        let dir = scratch_dir("persist-non-shim");
+        let handle = "web/dispatch-no-shim";
+        let mut ledger = PromptLedger::default();
+        ledger.upsert_queued(
+            "m1".to_string(),
+            "hello".to_string(),
+            "hello".to_string(),
+            Vec::new(),
+        );
+        ledger.mark_dispatching("m1");
+        ledger.record_dispatch_marks("m1", None, 7);
+        persist(&dir, handle, &ledger).expect("persist dispatching");
+
+        let loaded = load(&dir, handle).expect("load dispatching");
+        let entry = loaded.entry("m1").expect("entry");
+        assert_eq!(entry.shim_offset, None);
+        assert_eq!(entry.transcript_cursor, Some(7));
+    }
+
+    #[test]
+    fn legacy_ledger_file_without_marks_still_loads() {
+        let dir = scratch_dir("legacy-without-marks");
+        let handle = "web/legacy";
+        let path = ledger_path(&dir, handle);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"kind":"prompt_ledger","v":1,"entries":[{"clientMessageId":"m1","phase":"queued","transcript_text":"t","prompt_text":"p"}]}"#,
+        )
+        .unwrap();
+        let loaded = load(&dir, handle).expect("load legacy");
+        let entry = loaded.entry("m1").expect("entry");
+        assert_eq!(entry.phase, PromptPhase::Queued);
+        assert_eq!(entry.shim_offset, None);
+        assert_eq!(entry.transcript_cursor, None);
+    }
+}

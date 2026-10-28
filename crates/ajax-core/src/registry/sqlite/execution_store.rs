@@ -324,6 +324,29 @@ impl SqliteRegistryStore {
             )?;
         }
 
+        for update in &commit.prompt_content_updates {
+            let task_exec_id: Option<String> = transaction
+                .query_row(
+                    "SELECT task_exec_id FROM prompt_submissions \
+                     WHERE run_id = ?1 AND idempotency_key = ?2",
+                    params![commit.run_id, update.idempotency_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let task_exec_id = task_exec_id
+                .ok_or_else(|| ExecutionCommitError::UnknownTask(update.idempotency_key.clone()))?;
+            if task_state(&transaction, &commit.run_id, &task_exec_id)? != ExecutionState::Pending {
+                return Err(ExecutionCommitError::PromptNotQueued {
+                    idempotency_key: update.idempotency_key.clone(),
+                });
+            }
+            transaction.execute(
+                "UPDATE prompt_submissions SET content_json = ?2 \
+                 WHERE run_id = ?1 AND idempotency_key = ?3",
+                params![commit.run_id, update.content_json, update.idempotency_key],
+            )?;
+        }
+
         for task_transition in &commit.transitions {
             let from = task_state(&transaction, &commit.run_id, &task_transition.task_exec_id)?;
             transition(from, task_transition.to).map_err(|_| {
@@ -362,29 +385,6 @@ impl SqliteRegistryStore {
                 params![task_exec_id],
             )?;
         }
-        for update in &commit.prompt_content_updates {
-            let task_exec_id: Option<String> = transaction
-                .query_row(
-                    "SELECT task_exec_id FROM prompt_submissions \
-                     WHERE run_id = ?1 AND idempotency_key = ?2",
-                    params![commit.run_id, update.idempotency_key],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let task_exec_id = task_exec_id
-                .ok_or_else(|| ExecutionCommitError::UnknownTask(update.idempotency_key.clone()))?;
-            if task_state(&transaction, &commit.run_id, &task_exec_id)? != ExecutionState::Pending {
-                return Err(ExecutionCommitError::PromptNotQueued {
-                    idempotency_key: update.idempotency_key.clone(),
-                });
-            }
-            transaction.execute(
-                "UPDATE prompt_submissions SET content_json = ?2 \
-                 WHERE run_id = ?1 AND idempotency_key = ?3",
-                params![commit.run_id, update.content_json, update.idempotency_key],
-            )?;
-        }
-
         for key in &commit.prompt_content_clears {
             let updated = transaction.execute(
                 "UPDATE prompt_submissions SET content_json = '{}' \
@@ -568,5 +568,104 @@ impl SqliteRegistryStore {
             params![run_id, idempotency_key],
             |row| row.get(0),
         )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_store(label: &str) -> SqliteRegistryStore {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/execution-store-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{label}-{}.sqlite", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let store = SqliteRegistryStore::new(path);
+        store
+            .create_run(&NewRun {
+                run_id: "run-1".into(),
+                task_id: "registry-task".into(),
+                harness: "codex".into(),
+                model: "model".into(),
+                created_unix_ms: 1234,
+            })
+            .unwrap();
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                new_tasks: vec![NewExecutionTask {
+                    kind: "prompt".into(),
+                    parent_id: None,
+                    task_exec_id: "t1".into(),
+                }],
+                prompts: vec![NewPrompt {
+                    idempotency_key: "k1".into(),
+                    content_json: "queued".into(),
+                    task_exec_id: "t1".into(),
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        store
+    }
+
+    fn content_update(content: &str) -> PromptContentUpdate {
+        PromptContentUpdate {
+            idempotency_key: "k1".into(),
+            content_json: content.into(),
+        }
+    }
+
+    #[test]
+    fn pending_prompt_content_update_commits_with_its_dispatch_transition() {
+        let store = scratch_store("content-with-dispatch");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                prompt_content_updates: vec![content_update("dispatched")],
+                transitions: vec![TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Running,
+                    outcome_json: None,
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let prompts = store.prompts_for_run("run-1").unwrap();
+        assert_eq!(prompts[0].state, ExecutionState::Running);
+        assert_eq!(prompts[0].content_json, "dispatched");
+    }
+
+    #[test]
+    fn running_prompt_content_update_in_a_later_commit_is_rejected() {
+        let store = scratch_store("running-content-rejected");
+        store
+            .commit_execution(&ExecutionCommit {
+                run_id: "run-1".into(),
+                transitions: vec![TaskTransition {
+                    task_exec_id: "t1".into(),
+                    to: ExecutionState::Running,
+                    outcome_json: None,
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+
+        let result = store.commit_execution(&ExecutionCommit {
+            run_id: "run-1".into(),
+            prompt_content_updates: vec![content_update("too-late")],
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            result,
+            Err(ExecutionCommitError::PromptNotQueued { .. })
+        ));
+        let prompts = store.prompts_for_run("run-1").unwrap();
+        assert_eq!(prompts[0].content_json, "queued");
     }
 }
