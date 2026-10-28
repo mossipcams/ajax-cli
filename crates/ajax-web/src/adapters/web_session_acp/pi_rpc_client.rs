@@ -12,6 +12,7 @@ use super::pi_rpc_handshake::handshake_with_model_provider;
 use super::pi_rpc_map::map_record;
 use super::rpc_client::RpcClientCore;
 use super::rpc_session::RpcSession;
+use super::session_client::ADOPTED_PROMPT_REQUEST_ID;
 
 const USAGE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -96,6 +97,21 @@ pub(super) fn builtin_command(message: &str) -> Option<(&'static str, Value)> {
 }
 
 impl PiRpcClient {
+    pub(crate) fn adopt(process: JsonlProcess, session_id: String) -> Self {
+        let session = RpcSession::adopt(map_record, process, session_id).with_image_type_tag();
+        let core = RpcClientCore::adopt(session, ADOPTED_PROMPT_REQUEST_ID, Some(pi_usage_hook));
+        PiRpcClient {
+            core,
+            catalog: Box::new(Mutex::new(Catalog {
+                models: Vec::new(),
+                thinking_levels: Vec::new(),
+                current_model_id: None,
+                current_model_provider: None,
+                current_thinking_level: None,
+            })),
+        }
+    }
+
     pub fn spawn(
         program: &Path,
         extra_args: &[String],
@@ -332,5 +348,23 @@ impl PiRpcClient {
 
     pub fn host_exited(&self) -> bool {
         self.core.host_exited()
+    }
+}
+
+#[cfg(test)]
+mod adopt_tests {
+    use std::path::Path;
+
+    use ajax_core::models::AgentClient;
+    use serde_json::json;
+
+    use super::super::session_client::{assert_adopted_turn_finishes, with_test_pi_program};
+
+    #[test]
+    fn adopted_pi_turn_finishes_without_a_prompt_or_handshake() {
+        let finish = json!({"type": "agent_settled"});
+        with_test_pi_program(Path::new("pi"), &[], || {
+            assert_adopted_turn_finishes(AgentClient::Pi, &finish.to_string(), "get_session_stats");
+        });
     }
 }
