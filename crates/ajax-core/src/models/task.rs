@@ -47,6 +47,12 @@ pub struct Task {
     side_flags: BTreeSet<SideFlag>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskKind {
+    Chat,
+    TerminalAgent,
+}
+
 pub const SKIP_INTERACTIVE_AGENT_KEY: &str = "skip_interactive_agent";
 
 pub const SESSION_MODEL_KEY: &str = "session_model";
@@ -143,6 +149,14 @@ impl Task {
         self.metadata
             .get(SKIP_INTERACTIVE_AGENT_KEY)
             .is_some_and(|value| value == "1")
+    }
+
+    pub fn kind(&self) -> TaskKind {
+        if self.skip_interactive_agent() {
+            TaskKind::Chat
+        } else {
+            TaskKind::TerminalAgent
+        }
     }
 
     pub fn set_skip_interactive_agent(&mut self, skip: bool) {
@@ -452,5 +466,37 @@ impl Task {
             source,
             error,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_task() -> Task {
+        Task::new(
+            TaskId::new("task-kind"),
+            "web",
+            "kind",
+            "Kind task",
+            "ajax/kind",
+            "main",
+            "/tmp/worktrees/kind",
+            "ajax-web-kind",
+            "task",
+            AgentClient::Codex,
+        )
+    }
+
+    #[test]
+    fn kind_is_chat_exactly_when_interactive_agent_is_skipped() {
+        let mut task = sample_task();
+        assert_eq!(task.kind(), TaskKind::TerminalAgent);
+
+        task.set_skip_interactive_agent(true);
+        assert_eq!(task.kind(), TaskKind::Chat);
+
+        task.set_skip_interactive_agent(false);
+        assert_eq!(task.kind(), TaskKind::TerminalAgent);
     }
 }

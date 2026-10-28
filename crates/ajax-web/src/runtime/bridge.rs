@@ -4,7 +4,7 @@ use crate::{slices::actions::supported_web_action, WebError};
 use ajax_core::{
     adapters::CommandRunner,
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
-    commands::CommandContext,
+    commands::{CommandContext, CommandError},
     models::{OperatorAction, Task},
     registry::InMemoryRegistry,
     runtime_refresh::RefreshTier,
@@ -54,6 +54,23 @@ pub trait RuntimeBridge<C: CommandRunner> {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
+
+    fn execute_start_task_with_checkpoint(
+        &mut self,
+        request: crate::slices::operate::StartTaskRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+        _checkpoint: &mut dyn FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CommandError>,
+    ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure> {
+        self.execute_start_task(request, context, runner)
+    }
+
+    fn adopt_start_task_bridge(&mut self, executed: Self)
+    where
+        Self: Sized,
+    {
+        *self = executed;
+    }
 
     fn acknowledge_operator_input(
         &mut self,

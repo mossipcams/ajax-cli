@@ -8,13 +8,14 @@ function presenceBody(visible: boolean): string {
   return JSON.stringify({ visible });
 }
 
-function postVisible(visible: boolean): void {
+function postVisible(visible: boolean, signal: AbortSignal): void {
   void fetch(PRESENCE_PATH, {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
     headers: { ...AJAX_PROTECTED_HEADERS, "content-type": "application/json" },
     body: presenceBody(visible),
+    signal,
   }).catch(() => {});
 }
 
@@ -44,6 +45,7 @@ export function setupPresence(): () => void {
 
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let reportedVisible = false;
+  let visibleRequest: AbortController | null = null;
 
   const stopHeartbeat = () => {
     if (heartbeat === null) return;
@@ -53,11 +55,14 @@ export function setupPresence(): () => void {
 
   const reportVisible = () => {
     reportedVisible = true;
-    postVisible(true);
+    visibleRequest = new AbortController();
+    postVisible(true, visibleRequest.signal);
   };
 
   const reportHidden = () => {
     stopHeartbeat();
+    visibleRequest?.abort();
+    visibleRequest = null;
     if (!reportedVisible) return;
     reportedVisible = false;
     postHidden();

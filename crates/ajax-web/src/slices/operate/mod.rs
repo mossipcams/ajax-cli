@@ -4,8 +4,8 @@ use ajax_core::{
         CommandOutput, CommandRunError, CommandRunner,
     },
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
-    models::{LifecycleStatus, OperatorAction, SideFlag},
-    registry::Registry,
+    models::{LifecycleStatus, OperatorAction, SideFlag, Task, TaskId},
+    registry::{InMemoryRegistry, Registry},
     remediation::{self, RemediationError},
     task_operations::{
         drop_task::{
@@ -234,6 +234,91 @@ fn start_task_with_checkpoint_inner<R: Registry>(
         state_changed: true,
         output: format!("started task: {}", core_request.title),
     })
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StartTaskDelta {
+    task_id: TaskId,
+    applied_task: Option<Task>,
+    applied_events: usize,
+}
+
+impl StartTaskDelta {
+    pub(crate) fn new(task_id: TaskId, base: &CommandContext<InMemoryRegistry>) -> Self {
+        Self {
+            applied_task: base.registry.get_task(&task_id).cloned(),
+            applied_events: base.registry.events_for_task(&task_id).len(),
+            task_id,
+        }
+    }
+}
+
+/// Copies only the new task's own state from a start's working context into the
+/// shared context: its record, its lifecycle events and its step receipts. The start
+/// owns the task id, so a refresh's edits to a live record yield to the working copy;
+/// only the record appearing or vanishing under the start is a conflict. Returns
+/// whether the shared context changed.
+pub(crate) fn apply_start_task_delta(
+    shared: &mut CommandContext<InMemoryRegistry>,
+    working: &CommandContext<InMemoryRegistry>,
+    delta: &mut StartTaskDelta,
+) -> Result<bool, CommandError> {
+    let task_id = delta.task_id.clone();
+    let mut changed = false;
+    let is_live = |row: Option<&Task>| {
+        row.is_some_and(|existing| existing.lifecycle_status != LifecycleStatus::Removed)
+    };
+    if let Some(task) = working.registry.get_task(&task_id).cloned() {
+        if delta.applied_task.as_ref() != Some(&task) {
+            let live_now = is_live(shared.registry.get_task(&task_id));
+            if live_now != is_live(delta.applied_task.as_ref()) {
+                return Err(CommandError::PlanBlocked(vec![format!(
+                    "{} changed while it was starting",
+                    task_id.as_str()
+                )]));
+            }
+            if live_now {
+                if let Some(slot) = shared.registry.get_task_mut(&task_id) {
+                    *slot = task.clone();
+                }
+            } else {
+                shared
+                    .registry
+                    .create_task(task.clone())
+                    .map_err(CommandError::Registry)?;
+                delta.applied_events = working.registry.events_for_task(&task_id).len();
+            }
+            changed = true;
+            delta.applied_task = shared.registry.get_task(&task_id).cloned();
+        }
+    }
+
+    let events = working.registry.events_for_task(&task_id);
+    for event in events.iter().skip(delta.applied_events) {
+        shared
+            .registry
+            .record_event(task_id.clone(), event.kind, event.message.clone())
+            .map_err(CommandError::Registry)?;
+        changed = true;
+    }
+    delta.applied_events = events.len();
+
+    for receipt in working.registry.step_receipts_for_task(&task_id) {
+        let present = shared
+            .registry
+            .step_receipts_for_task(&task_id)
+            .into_iter()
+            .any(|existing| existing == receipt);
+        if !present {
+            shared
+                .registry
+                .record_step_receipt(receipt.clone())
+                .map_err(CommandError::Registry)?;
+            changed = true;
+        }
+    }
+
+    Ok(changed)
 }
 
 fn start_plan_observation<R: Registry>(

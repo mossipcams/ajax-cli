@@ -10,7 +10,7 @@ Solo operators and power users running many parallel AI coding agents on their o
 
 ## Product Purpose
 
-Ajax is the operator layer for that fleet: one place to see what is active, what needs input, what is ready to review, and which action is safe next. Success means staying in control—never missing an approval or a stuck task—while still shipping faster than raw git and tmux alone. Control and attention are the primary win; speed follows from that clarity.
+Ajax is the operator layer for that fleet: one place to see what is active, what needs input, what is ready to review, and which action is safe next. Ajax Chat is the work surface: a task is one agent conversation in its own worktree, ending in a PR; Terminal is a tab (lazy tmux). Success means staying in control—never missing an approval or a stuck task—while still shipping faster than raw git and tmux alone. Control and attention are the primary win; speed follows from that clarity.
 
 ## Positioning
 
@@ -27,7 +27,7 @@ Fast, decisive, under-control. The interface should feel like an operator consol
 
 ## Design Principles
 
-1. **Terminal is the work surface** — chrome supports the task; it never competes with the pane.
+1. **Chat is the work surface** — chrome supports the conversation; Terminal is a tab, never the default.
 2. **Status and next safe action beat decoration** — every screen should answer what is happening and what to do.
 3. **Mobile-reachable without diluting host authority** — phone access is first-class; task truth stays on the host.
 4. **Decisive actions over exploratory chrome** — prefer clear operator intents over browsing UI for its own sake.

@@ -67,6 +67,9 @@ correctness or remote execution.
 - Browser code must not become an alternate registry, policy engine, lifecycle
   owner, or task source of truth.
 - Runtime state must reconcile through core/backend contracts.
+- Chat is the default task path. Terminal-agent tasks, the native TUI, and tmux
+  verbs are frozen: fixes for breakage only, no new features. See the
+  "Chat-first" section of `architecture.md`.
 
 Do not bypass lifecycle, registry, command, task-operation, or
 runtime-reconciliation boundaries. Git, tmux, and supervised processes remain
