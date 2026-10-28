@@ -28,6 +28,7 @@ mod session_cleanup;
 mod session_error;
 mod session_evidence;
 mod session_storage;
+mod shim_adoption;
 mod startup_recovery;
 mod task_pane_agent;
 mod task_session;
