@@ -9,7 +9,8 @@ use ajax_core::{
 
 use super::state::WebAppState;
 use crate::slices::web_session::{
-    run_headless_dispatch, HeadlessTarget, TaskSessionDirectory, HEARTBEAT_EVERY,
+    adoptable_handles, run_headless_dispatch, HeadlessTarget, SessionStorage, TaskSessionDirectory,
+    HEARTBEAT_EVERY,
 };
 
 const CLAIM_RETRIES: usize = 6;
@@ -49,10 +50,14 @@ where
 {
     let directory = Arc::clone(&state.task_session_directory);
     let shared = Arc::clone(&state.shared);
+    let state_dir = Arc::clone(&state.state_dir);
     tokio::spawn(async move {
-        let Some(handles) = claim_startup_handles(&directory, HEARTBEAT_EVERY).await else {
+        let Some(claimed) = claim_startup_handles(&directory, HEARTBEAT_EVERY).await else {
             return;
         };
+        let storage = SessionStorage::under((*state_dir).clone());
+        let adoptable = adoptable_handles(&storage.registry_store(), &storage.state_dir);
+        let handles = startup_handles(claimed, adoptable);
         if handles.is_empty() {
             return;
         }
@@ -71,6 +76,16 @@ where
             "headless dispatch finished"
         );
     });
+}
+
+fn startup_handles(claimed: Vec<String>, adoptable: Vec<String>) -> Vec<String> {
+    let mut handles = claimed;
+    for handle in adoptable {
+        if !handles.contains(&handle) {
+            handles.push(handle);
+        }
+    }
+    handles
 }
 
 async fn claim_startup_handles(
@@ -154,6 +169,18 @@ mod tests {
         );
         assert_eq!(targets[0].model, "auto");
         assert_eq!(targets[0].agent, AgentClient::Codex);
+    }
+
+    #[test]
+    fn startup_handles_appends_adoptable_handles_once() {
+        let handles = startup_handles(
+            vec!["web/a".to_owned(), "web/b".to_owned()],
+            vec!["web/b".to_owned(), "web/c".to_owned()],
+        );
+        assert_eq!(
+            handles,
+            vec!["web/a".to_owned(), "web/b".to_owned(), "web/c".to_owned()]
+        );
     }
 
     #[test]

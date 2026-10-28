@@ -6,6 +6,7 @@ use crate::adapters::session_shim::{self, shim_paths};
 use crate::adapters::web_session_acp::{SessionClient, ADOPTED_PROMPT_REQUEST_ID};
 use crate::adapters::web_session_store::prompt_ledger::{self as ledger_module, PromptPhase};
 use crate::adapters::web_session_store::{self, StoredSession};
+use ajax_core::registry::{Registry, SqliteRegistryStore};
 
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::ActivePrompt;
@@ -13,8 +14,21 @@ use super::shim_adoption::{adoptable, Adoptable};
 use super::startup_recovery::interrupted_by_restart_events;
 use super::task_session::{agent_client_name, TaskSessionState};
 use super::task_session_exit::restore_queued_prompts;
+use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{SessionError, SessionServerEvent};
+
+pub(crate) fn adoptable_handles(store: &SqliteRegistryStore, state_dir: &Path) -> Vec<String> {
+    let Ok(registry) = store.load_tasks_only() else {
+        return Vec::new();
+    };
+    registry
+        .list_tasks()
+        .into_iter()
+        .map(|task| task.qualified_handle())
+        .filter(|handle| adoptable(store, state_dir, handle).is_some())
+        .collect()
+}
 
 pub(super) fn try_adopt(state: &mut TaskSessionState) -> Result<bool, SessionError> {
     let store = state.storage.registry_store();
@@ -205,6 +219,29 @@ pub(super) fn release_finished_adopted_client(state: &mut TaskSessionState) {
         let _ = client.shutdown();
     }
     state.acp.acp_alive = false;
+}
+
+pub(super) async fn resume_queued_after_release(state: &mut TaskSessionState) {
+    if state.acp.client.is_some() || state.acp.acp_alive || state.prompts.queued.is_empty() {
+        return;
+    }
+    let Some(worktree) = state.worktree_path.clone() else {
+        return;
+    };
+    let holders = state.holders.0;
+    if holders == 0 {
+        return;
+    }
+    let model = state.acp.model.clone();
+    let agent = state.agent;
+    let resumed = task_session_spawn::acquire(state, &worktree, &model, agent).await;
+    state.holders.0 = holders;
+    if let Err(error) = resumed {
+        state.prompts.queued.clear();
+        let _ = state.append_to_log(vec![SessionServerEvent::Error {
+            message: error.to_string(),
+        }]);
+    }
 }
 
 fn send_shutdown(state_dir: &Path, worktree: &Path) {
