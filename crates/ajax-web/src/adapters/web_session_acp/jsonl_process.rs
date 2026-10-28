@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
@@ -13,6 +14,8 @@ use crate::adapters::session_shim::shim_spawn;
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
 
 const DROP_GRACE: Duration = Duration::from_secs(2);
+
+pub(super) const SHIM_EXIT_GRACE: Duration = Duration::from_secs(5);
 
 const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
@@ -29,6 +32,7 @@ pub struct JsonlProcess {
     stderr_tail: Arc<Mutex<Vec<u8>>>,
     child: Child,
     next_id: u64,
+    shimmed: bool,
 }
 
 impl JsonlProcess {
@@ -36,10 +40,16 @@ impl JsonlProcess {
         let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd)?;
         let command = piped_command(&program, &args, cwd);
         if let Some(shim) = shim_spawn(&command)? {
-            let writer = shim.stream.try_clone()?;
-            return Self::from_parts(shim.child, Box::new(writer), Box::new(shim.stream), None);
+            return Self::from_shim(shim.child, shim.stream);
         }
         Self::spawn_command(command)
+    }
+
+    fn from_shim(child: Child, stream: UnixStream) -> io::Result<Self> {
+        let writer = stream.try_clone()?;
+        let mut process = Self::from_parts(child, Box::new(writer), Box::new(stream), None)?;
+        process.shimmed = true;
+        Ok(process)
     }
 
     pub fn spawn_unsandboxed(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
@@ -91,6 +101,7 @@ impl JsonlProcess {
             stderr_tail,
             child,
             next_id: 0,
+            shimmed: false,
         })
     }
 
@@ -170,6 +181,11 @@ impl JsonlProcess {
     }
 
     pub fn close_stdin(&mut self) {
+        if self.shimmed {
+            if let Some(stdin) = self.stdin.as_mut() {
+                let _ = request_shim_shutdown(stdin);
+            }
+        }
         self.stdin.take();
     }
 }
@@ -177,27 +193,35 @@ impl JsonlProcess {
 impl Drop for JsonlProcess {
     fn drop(&mut self) {
         let pid = self.child.id();
-        self.stdin.take();
-
-        let deadline = Instant::now() + DROP_GRACE;
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => {
-                    super::process_group::kill_group(pid);
-                    return;
-                }
-                Ok(None) => {}
-                Err(_) => break,
-            }
-            if Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-
+        let grace = if self.shimmed {
+            SHIM_EXIT_GRACE
+        } else {
+            DROP_GRACE
+        };
+        self.close_stdin();
+        let exited = wait_for_exit(&mut self.child, grace);
         super::process_group::kill_group(pid);
-        let _ = self.child.kill();
+        if !exited {
+            let _ = self.child.kill();
+        }
         let _ = self.child.wait();
+    }
+}
+
+pub(super) fn request_shim_shutdown(stdin: &mut impl Write) -> io::Result<()> {
+    stdin.write_all(b"SHUTDOWN\n").and_then(|()| stdin.flush())
+}
+
+pub(super) fn wait_for_exit(child: &mut Child, grace: Duration) -> bool {
+    let deadline = Instant::now() + grace;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => return false,
+        }
     }
 }
 
@@ -309,5 +333,56 @@ fn value_kind(value: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Array(_) => "array",
         Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonlProcess;
+    use std::fs;
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::net::UnixStream;
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::thread;
+
+    #[test]
+    fn shimmed_client_drop_sends_shutdown_so_harness_sees_stdin_eof() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/jsonl-shim-drop");
+        fs::create_dir_all(&dir).expect("scratch dir");
+        let marker = dir.join("eof");
+        let _ = fs::remove_file(&marker);
+        let script = format!(
+            "while read l; do :; done; echo eof > '{}'",
+            marker.display()
+        );
+        let mut harness = Command::new("sh")
+            .args(["-c", &script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn harness");
+        let harness_stdin = harness.stdin.take().expect("piped stdin");
+        let (client, shim) = UnixStream::pair().expect("socket pair");
+        thread::spawn(move || {
+            let mut lines = BufReader::new(shim);
+            let mut line = String::new();
+            while lines.read_line(&mut line).is_ok_and(|read| read > 0) {
+                if line == "SHUTDOWN\n" {
+                    return;
+                }
+                line.clear();
+            }
+            drop(harness_stdin);
+        });
+
+        let process = JsonlProcess::from_shim(harness, client).expect("shimmed process");
+        drop(process);
+
+        assert!(
+            marker.exists(),
+            "harness must see stdin EOF before the kill"
+        );
     }
 }

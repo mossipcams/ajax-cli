@@ -1,10 +1,13 @@
 use super::process::{serve, ShimArgs, Teardown};
 use super::shim_paths;
+use super::spawn::{connect_to_child, retire_live_shim, start_shim};
+use super::ShimSpawn;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -202,5 +205,128 @@ fn stale_socket_from_dead_shim_is_replaced() {
     client.send("SHUTDOWN");
     assert_eq!(client.recv(), "");
     assert_eq!(await_serve(&serve).unwrap(), 0);
+    assert!(!socket.exists());
+}
+
+const SHIM_CHILD_STATE_ENV: &str = "AJAX_SESSION_SHIM_TEST_STATE_DIR";
+const SHIM_CHILD_HANDLE: &str = "h";
+
+#[test]
+fn shim_child_helper() {
+    let Some(state_dir) = std::env::var_os(SHIM_CHILD_STATE_ENV) else {
+        return;
+    };
+    let args = ShimArgs {
+        handle: SHIM_CHILD_HANDLE.to_owned(),
+        state_dir: PathBuf::from(state_dir),
+        argv: ["sh", "-c", ECHO_LOOP].iter().map(OsString::from).collect(),
+    };
+    let code = serve(args, Teardown::Child).unwrap_or(1);
+    std::process::exit(code);
+}
+
+fn shim_child_command(state_dir: &Path) -> Command {
+    let mut command = Command::new(std::env::current_exe().expect("test binary path"));
+    command
+        .args([
+            "--exact",
+            "adapters::session_shim::process_tests::shim_child_helper",
+            "--nocapture",
+        ])
+        .env(SHIM_CHILD_STATE_ENV, state_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
+fn await_exit(child: &mut Child) -> ExitStatus {
+    let deadline = Instant::now() + EXIT_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait().expect("poll child") {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "child did not exit");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn retire_live_shim_shuts_down_old_shim_before_returning() {
+    let state_dir = scratch_state_dir("retire");
+    let socket = socket_for(&state_dir, "h");
+    let serve = start_serve(&state_dir, "h", &["sh", "-c", ECHO_LOOP]);
+
+    let mut client = Client::open(&socket, "REPLAY 0");
+    client.send("a");
+    assert_eq!(client.recv(), "got:a\n");
+
+    retire_live_shim(&socket).expect("retire live shim");
+    assert_eq!(await_serve(&serve).unwrap(), 0);
+    assert!(!socket.exists());
+}
+
+#[test]
+fn retire_live_shim_is_a_no_op_without_a_live_shim() {
+    let state_dir = scratch_state_dir("retire-none");
+    retire_live_shim(&socket_for(&state_dir, "h")).expect("nothing to retire");
+}
+
+#[test]
+fn spawned_stream_is_never_connected_to_a_foreign_shim() {
+    let state_dir = scratch_state_dir("foreign");
+    let socket = socket_for(&state_dir, "h");
+    let serve = start_serve(&state_dir, "h", &["sh", "-c", ECHO_LOOP]);
+
+    let mut foreign = Client::open(&socket, "REPLAY 0");
+    foreign.send("a");
+    assert_eq!(foreign.recv(), "got:a\n");
+
+    let mut impostor = Command::new("sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn impostor");
+    let error = connect_to_child(&mut impostor, &socket)
+        .expect_err("a foreign shim must not be adopted by a new child");
+    assert!(error.to_string().contains("not spawned pid"), "{error}");
+    let _ = impostor.wait();
+
+    let mut survivor = Client::open(&socket, "REPLAY 0");
+    assert_eq!(survivor.recv(), "got:a\n");
+    survivor.send("b");
+    assert_eq!(survivor.recv(), "got:b\n");
+    survivor.send("SHUTDOWN");
+    assert_eq!(await_serve(&serve).unwrap(), 0);
+}
+
+#[test]
+fn respawn_retires_live_shim_and_attaches_only_to_the_new_child() {
+    let state_dir = scratch_state_dir("respawn");
+    let socket = socket_for(&state_dir, "h");
+    let old = start_serve(&state_dir, "h", &["sh", "-c", ECHO_LOOP]);
+
+    let mut old_client = Client::open(&socket, "REPLAY 0");
+    old_client.send("a");
+    assert_eq!(old_client.recv(), "got:a\n");
+
+    let ShimSpawn { mut child, stream } =
+        start_shim(&mut shim_child_command(&state_dir), &socket).expect("respawn shim");
+    assert_eq!(await_serve(&old).unwrap(), 0);
+
+    stream
+        .set_read_timeout(Some(CLIENT_TIMEOUT))
+        .expect("client read timeout");
+    let mut writer = stream.try_clone().expect("clone socket");
+    writer.write_all(b"x\n").expect("send input");
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read harness output");
+    assert_eq!(line, "got:x\n");
+
+    writer.write_all(b"SHUTDOWN\n").expect("send shutdown");
+    assert!(await_exit(&mut child).success());
     assert!(!socket.exists());
 }

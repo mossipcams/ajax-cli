@@ -6,6 +6,7 @@ use ajax_core::{
 };
 use std::{
     collections::HashMap,
+    os::unix::net::UnixStream,
     path::Path,
     process::{Child, Stdio},
     sync::Mutex,
@@ -88,7 +89,7 @@ pub(super) fn spawn_acp_process(
     agent: AgentClient,
     worktree_path: &Path,
     model: Option<&str>,
-) -> Result<Child, String> {
+) -> Result<(Child, Option<UnixStream>), String> {
     #[cfg(test)]
     fn fake_acp_state_dir(worktree_path: &Path) -> PathBuf {
         worktree_path.to_path_buf()
@@ -117,6 +118,7 @@ pub(super) fn spawn_acp_process(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         return super::process_group::spawn_leader(&mut command)
+            .map(|child| (child, None))
             .map_err(|error| format!("failed to spawn test acp program: {error}"));
     }
 
@@ -144,6 +146,7 @@ pub(super) fn spawn_acp_process(
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             return super::process_group::spawn_leader(&mut command)
+                .map(|child| (child, None))
                 .map_err(|error| format!("failed to spawn test acp command: {error}"));
         }
     }
@@ -168,13 +171,19 @@ pub(super) fn spawn_acp_process(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(shim) = shim_spawn(&command).map_err(|error| error.to_string())? {
-            return shim
-                .into_child_with_pipes()
-                .map_err(|error| error.to_string());
+        match shim_spawn(&command) {
+            Ok(Some(shim)) => {
+                let control = shim.stream.try_clone().map_err(|error| error.to_string())?;
+                let child = shim
+                    .into_child_with_pipes()
+                    .map_err(|error| error.to_string())?;
+                return Ok((child, Some(control)));
+            }
+            Ok(None) => {}
+            Err(_) => continue,
         }
         if let Ok(child) = super::process_group::spawn_leader(&mut command) {
-            return Ok(child);
+            return Ok((child, None));
         }
     }
     Err(format!(

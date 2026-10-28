@@ -1,5 +1,5 @@
 use super::log::ShimLog;
-use super::relay::{classify_client_line, parse_client_hello, replay_to, ClientLine, ClientSlot};
+use super::relay::{classify_client_line, parse_client_hello, ClientLine, ClientToken, ShimRelay};
 use super::shim_paths;
 use crate::adapters::web_session_store::WEB_SESSION_DIR;
 use nix::errno::Errno;
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+pub(super) const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const STDOUT_DRAIN_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
@@ -52,14 +52,13 @@ pub(crate) fn serve(args: ShimArgs, teardown: Teardown) -> io::Result<i32> {
     listener.set_nonblocking(true)?;
     fs::write(&paths.log, [])?;
     let log = ShimLog::open(&paths.log)?;
+    let relay = ShimRelay::new(log);
     let mut child = spawn_harness(&args.argv, &paths.stderr)?;
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
         return Err(io::Error::other("harness pipes were not created"));
     };
     let state = Arc::new(ShimState {
-        log: Mutex::new(log),
-        log_path: paths.log,
-        client: ClientSlot::default(),
+        relay,
         attached: Mutex::new(None),
         stdin: Mutex::new(Some(stdin)),
         shutdown: AtomicBool::new(false),
@@ -87,9 +86,7 @@ pub(crate) fn serve(args: ShimArgs, teardown: Teardown) -> io::Result<i32> {
 }
 
 struct ShimState {
-    log: Mutex<ShimLog>,
-    log_path: PathBuf,
-    client: ClientSlot,
+    relay: ShimRelay,
     attached: Mutex<Option<UnixStream>>,
     stdin: Mutex<Option<ChildStdin>>,
     shutdown: AtomicBool,
@@ -198,20 +195,20 @@ fn handle_client(stream: UnixStream, state: &ShimState) -> io::Result<()> {
         )
     })?;
     stream.set_read_timeout(None)?;
-    attach(state, &stream, offset)?;
-    forward_client_lines(&mut reader, state)
+    let token = attach(state, &stream, offset)?;
+    let result = forward_client_lines(&mut reader, state);
+    state.relay.detach(token);
+    result
 }
 
-fn attach(state: &ShimState, stream: &UnixStream, offset: u64) -> io::Result<()> {
-    let _log = locked(&state.log);
+fn attach(state: &ShimState, stream: &UnixStream, offset: u64) -> io::Result<ClientToken> {
     let mut attached = locked(&state.attached);
     if let Some(previous) = attached.take() {
         let _ = previous.shutdown(Shutdown::Both);
     }
-    replay_to(&state.log_path, offset, &mut stream.try_clone()?)?;
-    state.client.attach(Box::new(stream.try_clone()?));
+    let token = state.relay.attach(offset, Box::new(stream.try_clone()?))?;
     *attached = Some(stream.try_clone()?);
-    Ok(())
+    Ok(token)
 }
 
 fn forward_client_lines(reader: &mut impl BufRead, state: &ShimState) -> io::Result<()> {
@@ -260,9 +257,7 @@ fn pump_harness_stdout(stdout: ChildStdout, state: &ShimState) -> io::Result<()>
         if line.last() == Some(&b'\n') {
             line.pop();
         }
-        let mut log = locked(&state.log);
-        log.append_line(&line)?;
-        state.client.deliver(&line);
+        state.relay.append_and_deliver(&line)?;
     }
 }
 
