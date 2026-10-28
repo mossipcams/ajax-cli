@@ -8,8 +8,10 @@ mod process;
 mod process_tests;
 #[cfg_attr(not(test), allow(dead_code))]
 mod relay;
+mod spawn;
 
 pub use process::{run_session_shim, ShimArgs};
+pub use spawn::{enable, shim_spawn, ShimSpawn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ShimPaths {

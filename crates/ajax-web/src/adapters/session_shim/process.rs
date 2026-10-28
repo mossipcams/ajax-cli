@@ -50,6 +50,7 @@ pub(crate) fn serve(args: ShimArgs, teardown: Teardown) -> io::Result<i32> {
     let listener = bind_socket(&paths.socket)?;
     let _socket = SocketFile(paths.socket.clone());
     listener.set_nonblocking(true)?;
+    fs::write(&paths.log, [])?;
     let log = ShimLog::open(&paths.log)?;
     let mut child = spawn_harness(&args.argv, &paths.stderr)?;
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {

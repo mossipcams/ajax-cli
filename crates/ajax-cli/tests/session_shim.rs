@@ -2,13 +2,13 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     os::unix::net::UnixStream,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
 
-use ajax_web::adapters::session_shim::shim_paths;
+use ajax_web::adapters::session_shim::{enable, shim_paths, shim_spawn, ShimSpawn};
 use nix::{
     errno::Errno,
     sys::signal::killpg,
@@ -100,4 +100,61 @@ fn session_shim_relays_client_lines_and_exits_on_shutdown() {
     );
 
     let _ = fs::remove_dir_all(&state_dir);
+}
+
+#[test]
+fn shim_spawn_round_trips_through_shim_and_kills_harness_group() {
+    let state_dir = std::env::temp_dir().join(format!("ajss-{}", std::process::id()));
+    let cwd = state_dir.join("worktree");
+    fs::create_dir_all(&cwd).expect("create scratch worktree");
+    enable(
+        PathBuf::from(env!("CARGO_BIN_EXE_ajax-cli")),
+        state_dir.clone(),
+    );
+
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "while read l; do echo got:$l; done"])
+        .current_dir(&cwd);
+    let ShimSpawn { mut child, stream } = shim_spawn(&command)
+        .expect("shim spawn")
+        .expect("shim enabled");
+    let shim_pid = child.id();
+    let group = Pid::from_raw(i32::try_from(shim_pid).expect("pid fits in i32"));
+    let _harness_guard = GroupKill(shim_pid);
+
+    stream
+        .set_read_timeout(Some(TIMEOUT))
+        .expect("set read timeout");
+    let mut writer = stream.try_clone().expect("clone socket");
+    writer.write_all(b"x\n").expect("send harness input");
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read harness output");
+    assert_eq!(line, "got:x\n");
+
+    let killed = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{shim_pid}")])
+        .status()
+        .expect("run kill");
+    assert!(killed.success(), "kill of shim group failed");
+    child.wait().expect("reap shim");
+    assert!(
+        wait_until(|| killpg(group, None) == Err(Errno::ESRCH)),
+        "harness process group must not survive the shim group kill"
+    );
+
+    let _ = fs::remove_dir_all(&state_dir);
+}
+
+struct GroupKill(u32);
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", self.0)])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }

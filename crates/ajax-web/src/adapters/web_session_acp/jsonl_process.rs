@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::adapters::session_shim::shim_spawn;
+
 const STDERR_TAIL_BYTES: usize = 4 * 1024;
 
 const DROP_GRACE: Duration = Duration::from_secs(2);
@@ -32,17 +34,19 @@ pub struct JsonlProcess {
 impl JsonlProcess {
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
         let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd)?;
-        Self::spawn_unsandboxed(&program, &args, cwd)
+        let command = piped_command(&program, &args, cwd);
+        if let Some(shim) = shim_spawn(&command)? {
+            let writer = shim.stream.try_clone()?;
+            return Self::from_parts(shim.child, Box::new(writer), Box::new(shim.stream), None);
+        }
+        Self::spawn_command(command)
     }
 
     pub fn spawn_unsandboxed(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
-        let mut command = Command::new(program);
-        command
-            .args(args)
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        Self::spawn_command(piped_command(program, args, cwd))
+    }
+
+    fn spawn_command(mut command: Command) -> io::Result<Self> {
         super::process_group::own_group(&mut command);
         let mut child = command.spawn()?;
 
@@ -284,6 +288,17 @@ fn drain_stderr(stderr: impl Read + Send, tail: &Mutex<Vec<u8>>) {
             Err(_) => break,
         }
     }
+}
+
+fn piped_command(program: &Path, args: &[String], cwd: &Path) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
 }
 
 fn value_kind(value: &Value) -> &'static str {
