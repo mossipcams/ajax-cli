@@ -1341,7 +1341,7 @@ the crate:
   `/api/cockpit` refresh path (same single-flight lock, cache TTL, and
   revision-checked commit) so attention push fires without a browser poll; the
   interval is 30 seconds. The tick skips while foreground presence is warm
-  (90s TTL). Cockpit data polls always run at the same speed; only a poll that
+  (45s `BROWSER_CONNECTED_TTL`). Cockpit data polls always run at the same speed; only a poll that
   carries `X-Ajax-Foreground: 1` (SPA sets this when
   `document.visibilityState === "visible"`) refreshes that TTL. Background /
   Simulator / hidden-tab polls refresh projection only and do not suppress
@@ -1574,10 +1574,13 @@ Runtime coordination contract (implemented):
   reloads the delivered marks before it computes pending. A persist failure is
   logged as an error; the delivered marks stay in memory, so they are not resent
   until restart.
-- Lock order is `refresh_flight` then `control_lane`, everywhere. Actions, task
-  start, and harness swap take `refresh_flight` before the lane, so they still
-  wait for an in-flight refresh (#555 action contract: the refresh result is
-  committed, not discarded). Session-path writers (activity reports, session
+- Lock order is `refresh_flight` then `control_lane`, everywhere. Non-chat
+  actions, task start, and harness swap take `refresh_flight` before the lane, so
+  they still wait for an in-flight refresh (#555 action contract: the refresh
+  result is committed, not discarded). Chat-task remediation (Fix CI, Resolve
+  conflicts) takes neither: it copies the registry under a brief shared-state
+  lock and delivers the brief outside the control lane on a spawned task, so the
+  operation finishes even if the client disconnects. Session-path writers (activity reports, session
   model persist, attach) take only the lane and never wait on refresh probes.
 - Shared `std::sync::Mutex` guards are held only to clone or replace
   in-memory state, never across commands, persistence, probes, or `.await`.
@@ -1606,8 +1609,9 @@ Runtime coordination contract (implemented):
   surfaces them.
 
 The control lane (`control_lane`) is acquired by the cockpit refresh apply step
-(blocking) and, after `refresh_flight` and operation admission, by the action,
-task-start, and harness-swap handlers, pinned by runtime concurrency tests. The
+(blocking) and, after `refresh_flight` and operation admission, by the non-chat
+action, task-start, and harness-swap handlers (chat-task remediation does not
+take it), pinned by runtime concurrency tests. The
 refresh probe holds only `refresh_flight`; the browser GET takes `refresh_flight`
 with `try_lock` and the push tick with `blocking_lock`.
 

@@ -694,19 +694,35 @@ where
     let directory = Arc::clone(&state.task_session_directory);
     let handle_for_cleanup = task_key.clone();
     let response = if let Some(context) = chat_remediation_snapshot(&state, &request) {
-        let response = match chat_remediation_response(
-            &directory,
-            &context,
-            &request.task_handle,
-            &request.action,
-        )
-        .await
-        {
-            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-            Err(error) => response_from_web_error(error, request_id.as_deref()),
-        };
-        state.finish_operation(request_id.as_deref(), &task_key, &response);
-        response
+        let delivery_state = state.clone();
+        let delivery_directory = Arc::clone(&directory);
+        let delivery = tokio::spawn(async move {
+            let response = match chat_remediation_response(
+                &delivery_directory,
+                &context,
+                &request.task_handle,
+                &request.action,
+            )
+            .await
+            {
+                Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+                Err(error) => response_from_web_error(error, request_id.as_deref()),
+            };
+            delivery_state.finish_operation(request_id.as_deref(), &task_key, &response);
+            response
+        });
+        delivery.await.unwrap_or_else(|error| {
+            let response = response_from_web_error(
+                WebError::CommandFailed(format!("operation worker failed: {error}")),
+                error_request_id.as_deref(),
+            );
+            state_for_finish.finish_operation(
+                error_request_id.as_deref(),
+                &task_key_for_finish,
+                &response,
+            );
+            response
+        })
     } else {
         tokio::task::spawn_blocking(move || {
             let _flight = state.refresh_flight.blocking_lock();

@@ -116,6 +116,25 @@ describe("setupPresence", () => {
     expect(beaconMock).toHaveBeenCalledTimes(1);
   });
 
+  it("aborts the in-flight visible heartbeat before sending the hide beacon", () => {
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    let heartbeatAbortedAtBeacon: boolean | null = null;
+    beaconMock.mockImplementation(() => {
+      heartbeatAbortedAtBeacon = heartbeatSignal?.aborted ?? null;
+      return true;
+    });
+    cleanup = setupPresence();
+    const [, init] = presenceCalls(fetchMock)[0] as [string, RequestInit];
+    const heartbeatSignal = init.signal;
+    expect(heartbeatSignal?.aborted).toBe(false);
+
+    setVisibility("hidden");
+
+    expect(heartbeatSignal?.aborted).toBe(true);
+    expect(heartbeatAbortedAtBeacon).toBe(true);
+    expect(beaconMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send a second visible=false on pagehide after the hide already reported", () => {
     cleanup = setupPresence();
 

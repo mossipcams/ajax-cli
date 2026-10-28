@@ -2,7 +2,7 @@ use super::tests::{
     app_with, blocking_notification_bridge, blocking_refresh_bridge, context_with_task, get,
     json_of, post_json, release_gate, scratch_dir, unsaved_notification_bridge, TestBridge,
 };
-use crate::adapters::web_session_acp::set_test_acp_command;
+use crate::adapters::web_session_acp::{set_test_acp_command, with_test_handshake_timeout};
 use ajax_core::registry::Registry as _;
 use axum::http::StatusCode;
 use std::{
@@ -320,4 +320,79 @@ async fn chat_remediation_delivery_runs_without_control_lane() {
     assert_eq!(body["ok"], true);
     assert_eq!(body["request_id"], "chat-remediation-lane-a");
     assert_eq!(body["output"], "fix-ci: skill brief sent to chat task");
+}
+
+async fn wait_until(mut ready: impl FnMut() -> bool, failure: &str) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect(failure);
+}
+
+#[test]
+fn chat_remediation_releases_operation_gate_when_client_disconnects() {
+    let skill_root = scratch_dir("chat-remediation-disconnect-skills");
+    let skill_dir = skill_root.join("gh-fix-ci");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# skill").unwrap();
+    std::env::set_var("AJAX_SKILL_ROOT", &skill_root);
+    let worktree = scratch_dir("chat-remediation-disconnect-worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.worktree_path = worktree;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    set_test_acp_command(Some((std::path::Path::new("sleep"), &["60"])));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    with_test_handshake_timeout(200, || {
+        runtime.block_on(async {
+            let (state, cookie, app) =
+                app_with(context, TestBridge::default(), "chat-remediation-disconnect");
+            let remediate = |request_id: &str| {
+                format!(
+                    r#"{{"request_id":"{request_id}","task_handle":"web/fix-login","action":"fix-ci"}}"#
+                )
+            };
+            let request = tokio::spawn({
+                let app = app.clone();
+                let cookie = cookie.clone();
+                let body = remediate("chat-remediation-disconnect-a");
+                async move { post_json(&app, &cookie, "/api/actions", &body).await }
+            });
+            wait_until(
+                || state.operations().has_in_flight_mutation(),
+                "chat remediation never claimed the operation gate",
+            )
+            .await;
+
+            request.abort();
+            wait_until(
+                || !state.operations().has_in_flight_mutation(),
+                "dropped chat remediation left the operation gate held",
+            )
+            .await;
+
+            let response = post_json(
+                &app,
+                &cookie,
+                "/api/actions",
+                &remediate("chat-remediation-disconnect-b"),
+            )
+            .await;
+            let body = json_of(response).await;
+            assert_ne!(
+                body["error"], "operation already in progress",
+                "a following action was rejected by a leaked operation gate"
+            );
+        })
+    });
+    set_test_acp_command(None);
 }
