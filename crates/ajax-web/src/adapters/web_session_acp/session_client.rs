@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -195,6 +196,7 @@ impl SessionClient {
         stream: UnixStream,
         shim_pid: u32,
         session_id: String,
+        answered: HashSet<String>,
     ) -> Result<SessionClient, String> {
         let reader = stream
             .try_clone()
@@ -207,6 +209,7 @@ impl SessionClient {
                     shim_pid,
                     session_id,
                     ADOPTED_PROMPT_REQUEST_ID,
+                    answered,
                 )))
             }
             ajax_core::adapters::HarnessTransport::ClaudeSdk => {
@@ -645,8 +648,14 @@ pub(crate) fn assert_adopted_turn_finishes(
     use std::time::Instant;
 
     let (shim_end, mut peer) = UnixStream::pair().expect("socket pair");
-    let session = SessionClient::adopt(agent, shim_end, 4242, "adopted-session".to_string())
-        .expect("adopt live shim");
+    let session = SessionClient::adopt(
+        agent,
+        shim_end,
+        4242,
+        "adopted-session".to_string(),
+        HashSet::new(),
+    )
+    .expect("adopt live shim");
     assert!(session.is_adopted());
 
     peer.write_all(format!("{finish_record}\n").as_bytes())

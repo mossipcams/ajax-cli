@@ -1,10 +1,13 @@
 use super::acp_adopted::{session_update_event, AcpAdoptedClient};
 use super::client::AcpClientEvent;
 use super::session_client::SessionClient;
+use crate::adapters::session_shim::answered_request_ids;
 use agent_client_protocol::schema::v1::SessionNotification;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Cursor, Write};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -39,6 +42,14 @@ fn lines(values: &[Value]) -> Vec<u8> {
 }
 
 fn adopt_from(bytes: Vec<u8>, prompt_request_id: u64) -> (AcpAdoptedClient, RecordingWriter) {
+    adopt_with_answers(bytes, prompt_request_id, HashSet::new())
+}
+
+fn adopt_with_answers(
+    bytes: Vec<u8>,
+    prompt_request_id: u64,
+    answered: HashSet<String>,
+) -> (AcpAdoptedClient, RecordingWriter) {
     let writer = RecordingWriter::default();
     let client = AcpAdoptedClient::adopt(
         Box::new(Cursor::new(bytes)),
@@ -46,8 +57,18 @@ fn adopt_from(bytes: Vec<u8>, prompt_request_id: u64) -> (AcpAdoptedClient, Reco
         4242,
         "session-1".to_string(),
         prompt_request_id,
+        answered,
     );
     (client, writer)
+}
+
+fn permission_request(id: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/request_permission",
+        "params": {}
+    })
 }
 
 fn collect_until_exit(client: &AcpAdoptedClient) -> Vec<AcpClientEvent> {
@@ -191,13 +212,90 @@ fn response_with_a_different_request_id_still_ends_the_adopted_turn() {
 }
 
 #[test]
+fn answered_agent_request_is_skipped_and_the_turn_finishes_on_stop_reason() {
+    let bytes = lines(&[
+        permission_request(3),
+        session_update_line(&agent_message_chunk_params()),
+        stop_reason_response(9),
+    ]);
+    let (client, writer) = adopt_with_answers(bytes, 9, HashSet::from(["3".to_string()]));
+    let events = collect_until_exit(&client);
+
+    assert_eq!(events.len(), 3);
+    assert!(matches!(
+        &events[0],
+        AcpClientEvent::SessionUpdate(notification) if matches!(
+            notification.update,
+            agent_client_protocol::schema::v1::SessionUpdate::AgentMessageChunk(_)
+        )
+    ));
+    assert!(matches!(
+        &events[1],
+        AcpClientEvent::RequestFinished { id: 9, method: "session/prompt", result: Ok(result) }
+            if result["stopReason"] == "end_turn"
+    ));
+    assert!(matches!(events[2], AcpClientEvent::Exited));
+    assert!(writer.written().is_empty());
+    assert!(!client.prompt_in_flight());
+}
+
+#[test]
+fn answered_ids_read_from_the_shim_inbound_log_keep_replay_alive() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/acp-adopted-tests/answered-inbound");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let inbound = dir.join("session.shim.in.log");
+    std::fs::write(
+        &inbound,
+        format!(
+            "{}\n",
+            json!({ "jsonrpc": "2.0", "id": 3, "result": { "outcome": "selected" } })
+        ),
+    )
+    .expect("write inbound log");
+
+    let answered: HashSet<String> = answered_request_ids(&inbound)
+        .expect("read inbound log")
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    let (client, writer) = adopt_with_answers(
+        lines(&[permission_request(3), stop_reason_response(9)]),
+        9,
+        answered,
+    );
+    let events = collect_until_exit(&client);
+
+    assert!(matches!(
+        &events[0],
+        AcpClientEvent::RequestFinished {
+            id: 9,
+            method: "session/prompt",
+            result: Ok(_)
+        }
+    ));
+    assert!(writer.written().is_empty());
+}
+
+#[test]
+fn unanswered_agent_request_still_shuts_down_when_other_ids_were_answered() {
+    let bytes = lines(&[permission_request(3), stop_reason_response(9)]);
+    let (client, writer) = adopt_with_answers(bytes, 9, HashSet::from(["4".to_string()]));
+    let events = collect_until_exit(&client);
+
+    assert!(matches!(
+        &events[0],
+        AcpClientEvent::Error(message) if message.contains("session/request_permission")
+    ));
+    assert_eq!(writer.written(), b"SHUTDOWN\n".to_vec());
+    assert!(!client.prompt_in_flight());
+    assert!(client.host_exited());
+}
+
+#[test]
 fn agent_request_writes_shutdown_interrupts_the_turn_and_stops_reading() {
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "method": "session/request_permission",
-        "params": {}
-    });
+    let request = permission_request(3);
     let trailing = session_update_line(&agent_message_chunk_params());
     let (client, writer) = adopt_from(lines(&[request, trailing]), 9);
     let events = collect_until_exit(&client);
@@ -250,6 +348,7 @@ fn shutdown_reaches_the_shim_socket_as_a_single_shutdown_line() {
         4242,
         "session-1".to_string(),
         9,
+        HashSet::new(),
     );
     assert!(matches!(
         client.wait_event(WAIT),
@@ -274,6 +373,7 @@ fn session_client_adopted_arm_refuses_new_prompts_and_shuts_down() {
         4242,
         "session-1".to_string(),
         9,
+        HashSet::new(),
     );
     let mut session = SessionClient::AcpAdopted(client);
 

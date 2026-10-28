@@ -1,4 +1,4 @@
-use super::log::ShimLog;
+use super::log::{inbound_log_path, json_rpc_response_id, ShimLog};
 use super::relay::{classify_client_line, parse_client_hello, ClientLine, ClientToken, ShimRelay};
 use super::shim_paths;
 use crate::adapters::web_session_store::WEB_SESSION_DIR;
@@ -53,12 +53,16 @@ pub(crate) fn serve(args: ShimArgs, teardown: Teardown) -> io::Result<i32> {
     fs::write(&paths.log, [])?;
     let log = ShimLog::open(&paths.log)?;
     let relay = ShimRelay::new(log);
+    let inbound_path = inbound_log_path(&paths.log);
+    fs::write(&inbound_path, [])?;
+    let inbound = ShimLog::open(&inbound_path)?;
     let mut child = spawn_harness(&args.argv, &paths.stderr)?;
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
         return Err(io::Error::other("harness pipes were not created"));
     };
     let state = Arc::new(ShimState {
         relay,
+        inbound: Mutex::new(inbound),
         attached: Mutex::new(None),
         stdin: Mutex::new(Some(stdin)),
         shutdown: AtomicBool::new(false),
@@ -87,6 +91,7 @@ pub(crate) fn serve(args: ShimArgs, teardown: Teardown) -> io::Result<i32> {
 
 struct ShimState {
     relay: ShimRelay,
+    inbound: Mutex<ShimLog>,
     attached: Mutex<Option<UnixStream>>,
     stdin: Mutex<Option<ChildStdin>>,
     shutdown: AtomicBool,
@@ -219,7 +224,12 @@ fn forward_client_lines(reader: &mut impl BufRead, state: &ShimState) -> io::Res
                 state.shutdown.store(true, Ordering::SeqCst);
                 return Ok(());
             }
-            ClientLine::Inbound(bytes) => write_to_harness(state, &bytes)?,
+            ClientLine::Inbound(bytes) => {
+                write_to_harness(state, &bytes)?;
+                if json_rpc_response_id(&bytes).is_some() {
+                    locked(&state.inbound).append_line(&bytes)?;
+                }
+            }
         }
     }
     Ok(())

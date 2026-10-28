@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -63,6 +64,7 @@ struct ReplayState {
     events: Sender<AcpClientEvent>,
     writer: SharedWriter,
     prompt_request_id: u64,
+    answered: HashSet<String>,
     turn_done: Arc<AtomicBool>,
     exited: Arc<AtomicBool>,
 }
@@ -112,6 +114,7 @@ impl AcpAdoptedClient {
         shim_pid: u32,
         session_id: String,
         prompt_request_id: u64,
+        answered: HashSet<String>,
     ) -> Self {
         let (events_tx, events) = mpsc::channel();
         let turn_done = Arc::new(AtomicBool::new(false));
@@ -121,6 +124,7 @@ impl AcpAdoptedClient {
             events: events_tx,
             writer: Arc::clone(&writer),
             prompt_request_id,
+            answered,
             turn_done: Arc::clone(&turn_done),
             exited: Arc::clone(&exited),
         };
@@ -212,7 +216,10 @@ fn replay_line(line: &[u8], state: &ReplayState) -> bool {
             }
             true
         }
-        (Some(method), Some(_)) => {
+        (Some(method), Some(id)) => {
+            if state.answered.contains(&id.to_string()) {
+                return true;
+            }
             state.abort_on_agent_request(method);
             false
         }
