@@ -1,0 +1,423 @@
+diff --git pre/crates/ajax-core/src/adapters/github.rs post/crates/ajax-core/src/adapters/github.rs
+index ee2821d..fc356be 100644
+--- pre/crates/ajax-core/src/adapters/github.rs
++++ post/crates/ajax-core/src/adapters/github.rs
+@@ -120,6 +120,42 @@ impl GithubChecksAdapter {
+         Ok(rows.into_iter().map(map_pr_row).collect())
+     }
+ 
++    pub fn pr_view_stats(&self, worktree_path: &str, number: u64) -> CommandSpec {
++        CommandSpec::new(
++            &self.program,
++            [
++                "pr",
++                "view",
++                &number.to_string(),
++                "--json",
++                "additions,deletions",
++            ],
++        )
++        .with_cwd(worktree_path)
++        .with_timeout(GH_PR_CHECKS_TIMEOUT)
++    }
++
++    pub fn parse_pr_view_stats(
++        result: &Result<CommandOutput, CommandRunError>,
++    ) -> Result<(u32, u32), String> {
++        let output = match result {
++            Err(error) => return Err(error.to_string()),
++            Ok(output) => output,
++        };
++        if output.status_code != 0 {
++            return Err(if output.stderr.is_empty() {
++                format!("gh pr view failed with status {}", output.status_code)
++            } else {
++                output.stderr.clone()
++            });
++        }
++
++        let row: PrViewStatsRow = serde_json::from_str(&output.stdout)
++            .map_err(|error| format!("unparsable gh pr view output: {error}"))?;
++
++        Ok((row.additions, row.deletions))
++    }
++
+     pub fn pr_diff(&self, worktree_path: &str, number: u64) -> CommandSpec {
+         CommandSpec::new(&self.program, ["pr", "diff", &number.to_string()])
+             .with_cwd(worktree_path)
+@@ -151,6 +187,12 @@ struct CheckRow {
+     link: Option<String>,
+ }
+ 
++#[derive(Deserialize)]
++struct PrViewStatsRow {
++    additions: u32,
++    deletions: u32,
++}
++
+ #[derive(Deserialize)]
+ struct PrListRow {
+     number: u64,
+@@ -646,6 +688,60 @@ mod tests {
+         assert!(prs.is_empty());
+     }
+ 
++    #[test]
++    fn pr_view_stats_plans_gh_additions_and_deletions_in_worktree() {
++        let adapter = GithubChecksAdapter::new("gh");
++
++        let spec = adapter.pr_view_stats("/worktrees/ajax-fix-login", 42);
++
++        assert_eq!(
++            spec,
++            CommandSpec::new("gh", ["pr", "view", "42", "--json", "additions,deletions"])
++                .with_cwd("/worktrees/ajax-fix-login")
++                .with_timeout(GH_PR_CHECKS_TIMEOUT)
++        );
++    }
++
++    #[test]
++    fn parse_pr_view_stats_reads_additions_and_deletions() {
++        let result = Ok(ok_output(0, r#"{"additions":120,"deletions":7}"#, ""));
++
++        let stats = GithubChecksAdapter::parse_pr_view_stats(&result).expect("stats should parse");
++
++        assert_eq!(stats, (120, 7));
++    }
++
++    #[test]
++    fn parse_pr_view_stats_nonzero_status_is_error() {
++        let result = Ok(ok_output(1, "", "gh: Could not resolve to a PullRequest"));
++
++        let error =
++            GithubChecksAdapter::parse_pr_view_stats(&result).expect_err("nonzero should err");
++
++        assert!(error.contains("Could not resolve"));
++    }
++
++    #[test]
++    fn parse_pr_view_stats_runner_error_is_error() {
++        let result: Result<CommandOutput, CommandRunError> =
++            Err(CommandRunError::SpawnFailed("gh missing".to_string()));
++
++        let error =
++            GithubChecksAdapter::parse_pr_view_stats(&result).expect_err("runner error should err");
++
++        assert!(error.contains("gh missing"));
++    }
++
++    #[test]
++    fn parse_pr_view_stats_malformed_json_is_error() {
++        let result = Ok(ok_output(0, r#"[{"additions":1}]"#, ""));
++
++        let error =
++            GithubChecksAdapter::parse_pr_view_stats(&result).expect_err("malformed should err");
++
++        assert!(error.contains("unparsable gh pr view output"));
++    }
++
+     #[test]
+     fn pr_diff_plans_gh_command_in_worktree() {
+         let adapter = GithubChecksAdapter::new("gh");
+diff --git pre/crates/ajax-core/src/diff_review/tests.rs post/crates/ajax-core/src/diff_review/tests.rs
+index d54e4b4..8ee536d 100644
+--- pre/crates/ajax-core/src/diff_review/tests.rs
++++ post/crates/ajax-core/src/diff_review/tests.rs
+@@ -1,7 +1,9 @@
+ use super::{
+     assess_diff_judgment, classify_diff_path, merge_pull_request_lists, parse_unified_diff,
+-    project_task_diff, remember_pull_requests, select_default_pr, stored_pull_requests, DiffFile,
+-    DiffFileRole, DiffFlagKind, DiffFlagSeverity, DiffHunk, PullRequestRef, PullRequestState,
++    project_task_diff, remember_pull_request_stats, remember_pull_requests, select_default_pr,
++    stored_pull_request_stats, stored_pull_requests, DiffFile, DiffFileRole, DiffFlagKind,
++    DiffFlagSeverity, DiffHunk, PullRequestRef, PullRequestState, PullRequestStats,
++    AJAX_PULL_REQUESTS_KEY,
+ };
+ use crate::adapters::{
+     CommandOutput, CommandRunError, CommandRunner, CommandSpec, GithubChecksAdapter,
+@@ -217,6 +219,51 @@ fn remember_pull_requests_round_trips_through_task_metadata() {
+     assert_eq!(stored[1].number, 3);
+ }
+ 
++#[test]
++fn pull_request_stats_round_trip_under_separate_key() {
++    let mut task = sample_task();
++    let stats = PullRequestStats {
++        number: 7,
++        additions: 120,
++        deletions: 9,
++    };
++
++    remember_pull_request_stats(&mut task, stats);
++
++    assert_eq!(stored_pull_request_stats(&task), Some(stats));
++    assert!(!task.metadata.contains_key(AJAX_PULL_REQUESTS_KEY));
++    assert!(stored_pull_requests(&task).is_empty());
++}
++
++#[test]
++fn remember_pull_request_stats_replaces_previous_stats() {
++    let mut task = sample_task();
++    remember_pull_request_stats(
++        &mut task,
++        PullRequestStats {
++            number: 7,
++            additions: 1,
++            deletions: 1,
++        },
++    );
++    let newer = PullRequestStats {
++        number: 8,
++        additions: 30,
++        deletions: 4,
++    };
++
++    remember_pull_request_stats(&mut task, newer);
++
++    assert_eq!(stored_pull_request_stats(&task), Some(newer));
++}
++
++#[test]
++fn stored_pull_request_stats_is_none_without_metadata() {
++    let task = sample_task();
++
++    assert_eq!(stored_pull_request_stats(&task), None);
++}
++
+ #[test]
+ fn empty_stored_pull_requests_returns_empty_vec() {
+     let task = sample_task();
+diff --git pre/crates/ajax-core/src/diff_review.rs post/crates/ajax-core/src/diff_review.rs
+index f01e68c..41e77d7 100644
+--- pre/crates/ajax-core/src/diff_review.rs
++++ post/crates/ajax-core/src/diff_review.rs
+@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
+ 
+ pub const AJAX_PULL_REQUESTS_KEY: &str = "ajax_pull_requests";
++pub const AJAX_PULL_REQUEST_STATS_KEY: &str = "ajax_pull_request_stats";
+ 
+ #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+ pub enum PullRequestState {
+@@ -22,6 +23,13 @@ pub struct PullRequestRef {
+     pub head_sha: Option<String>,
+ }
+ 
++#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
++pub struct PullRequestStats {
++    pub number: u64,
++    pub additions: u32,
++    pub deletions: u32,
++}
++
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct DiffHunk {
+     pub header: String,
+@@ -332,6 +340,19 @@ pub fn remember_pull_requests(task: &mut Task, refs: &[PullRequestRef]) {
+     }
+ }
+ 
++pub fn stored_pull_request_stats(task: &Task) -> Option<PullRequestStats> {
++    task.metadata
++        .get(AJAX_PULL_REQUEST_STATS_KEY)
++        .and_then(|json| serde_json::from_str(json).ok())
++}
++
++pub fn remember_pull_request_stats(task: &mut Task, stats: PullRequestStats) {
++    if let Ok(json) = serde_json::to_string(&stats) {
++        task.metadata
++            .insert(AJAX_PULL_REQUEST_STATS_KEY.to_string(), json);
++    }
++}
++
+ pub fn merge_pull_request_lists(
+     stored: &[PullRequestRef],
+     live: &[PullRequestRef],
+diff --git pre/crates/ajax-core/src/runtime_refresh/ci_monitor/tests.rs post/crates/ajax-core/src/runtime_refresh/ci_monitor/tests.rs
+index 99f66ba..f484ff1 100644
+--- pre/crates/ajax-core/src/runtime_refresh/ci_monitor/tests.rs
++++ post/crates/ajax-core/src/runtime_refresh/ci_monitor/tests.rs
+@@ -7,7 +7,10 @@ use crate::{
+     agent_notification::{
+         record_delivery, AgentNotificationDelivery, AgentNotificationDeliveryStatus,
+     },
+-    diff_review::{PullRequestRef, PullRequestState},
++    diff_review::{
++        stored_pull_request_stats, stored_pull_requests, PullRequestRef, PullRequestState,
++        PullRequestStats,
++    },
+     models::Task,
+     registry::Registry,
+ };
+@@ -34,6 +37,40 @@ impl CommandRunner for MonitorRunner {
+     }
+ }
+ 
++struct StatsRunner {
++    prs: String,
++    checks: String,
++    stats: Option<String>,
++    commands: Vec<CommandSpec>,
++}
++
++impl CommandRunner for StatsRunner {
++    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
++        self.commands.push(command.clone());
++        let is_view = command.args.get(1).is_some_and(|arg| arg == "view");
++        if is_view {
++            return match &self.stats {
++                Some(stdout) => Ok(CommandOutput {
++                    status_code: 0,
++                    stdout: stdout.clone(),
++                    stderr: String::new(),
++                }),
++                None => Err(CommandRunError::SpawnFailed("gh unavailable".to_string())),
++            };
++        }
++        let stdout = if command.args.get(1).is_some_and(|arg| arg == "list") {
++            self.prs.clone()
++        } else {
++            self.checks.clone()
++        };
++        Ok(CommandOutput {
++            status_code: 0,
++            stdout,
++            stderr: String::new(),
++        })
++    }
++}
++
+ fn open_pr(number: u64, head: &str) -> PullRequestRef {
+     PullRequestRef {
+         number,
+@@ -457,6 +494,76 @@ fn red_ci_under_approval_gate_still_withholds_ship() {
+     );
+ }
+ 
++#[test]
++fn open_pr_discovery_stores_pull_request_diff_stats() {
++    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
++    let success =
++        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
++    let mut changed = false;
++    let mut ctx = context_with_active_task();
++    reset_monitor(&mut ctx);
++    let mut runner = StatsRunner {
++        prs: open.into(),
++        checks: success.into(),
++        stats: Some(r#"{"additions":120,"deletions":7}"#.into()),
++        commands: vec![],
++    };
++
++    tick_stats(&mut ctx, &mut runner, 1000, &mut changed);
++
++    assert_eq!(
++        stored_pull_request_stats(&task0(&ctx.registry)),
++        Some(PullRequestStats {
++            number: 42,
++            additions: 120,
++            deletions: 7,
++        })
++    );
++    assert!(runner
++        .commands
++        .iter()
++        .any(|c| c.program == "gh" && c.args.get(1).is_some_and(|arg| arg == "view")));
++}
++
++#[test]
++fn failed_pr_stats_call_keeps_prior_stats_and_refresh_still_succeeds() {
++    let open = r#"[{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"aaa"}]"#;
++    let success =
++        r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
++    let mut changed = false;
++    let mut ctx = context_with_active_task();
++    reset_monitor(&mut ctx);
++    let mut runner = StatsRunner {
++        prs: open.into(),
++        checks: success.into(),
++        stats: Some(r#"{"additions":120,"deletions":7}"#.into()),
++        commands: vec![],
++    };
++    tick_stats(&mut ctx, &mut runner, 1000, &mut changed);
++    let prior = stored_pull_request_stats(&task0(&ctx.registry));
++    assert!(prior.is_some());
++
++    runner.stats = None;
++    tick_stats(&mut ctx, &mut runner, 1300, &mut changed);
++
++    let task = task0(&ctx.registry);
++    assert_eq!(stored_pull_request_stats(&task), prior);
++    assert_eq!(
++        stored_pull_requests(&task).first().map(|pr| pr.number),
++        Some(42)
++    );
++    assert_eq!(load_state(&task).status, CiAttemptStatus::Passed);
++}
++
++fn tick_stats(
++    ctx: &mut crate::commands::CommandContext<crate::registry::InMemoryRegistry>,
++    runner: &mut StatsRunner,
++    now: u64,
++    changed: &mut bool,
++) {
++    refresh_ci_monitor(ctx, runner, now, &snapshots(&ctx.registry), changed);
++}
++
+ fn pr_list_head(runner: &MonitorRunner) -> Option<String> {
+     runner
+         .commands
+diff --git pre/crates/ajax-core/src/runtime_refresh/ci_monitor.rs post/crates/ajax-core/src/runtime_refresh/ci_monitor.rs
+index 09a4ef7..2490fb3 100644
+--- pre/crates/ajax-core/src/runtime_refresh/ci_monitor.rs
++++ post/crates/ajax-core/src/runtime_refresh/ci_monitor.rs
+@@ -6,7 +6,10 @@ use crate::{
+         AgentNotification, AgentNotificationDelivery, CiFailedCheck, CI_MONITOR_STATE_KEY,
+     },
+     commands::CommandContext,
+-    diff_review::{stored_pull_requests, PullRequestRef, PullRequestState, AJAX_PULL_REQUESTS_KEY},
++    diff_review::{
++        remember_pull_request_stats, stored_pull_requests, PullRequestRef, PullRequestState,
++        PullRequestStats, AJAX_PULL_REQUESTS_KEY,
++    },
+     models::Task,
+     registry::Registry,
+ };
+@@ -159,10 +162,35 @@ fn discover_open_pr(
+         }
+         state.last_pr_discovery_at = Some(now);
+     }
+-    stored_pull_requests(task)
++    let open_pr = stored_pull_requests(task)
+         .into_iter()
+         .filter(|pr| pr.state == PullRequestState::Open)
+-        .max_by_key(|pr| pr.number)
++        .max_by_key(|pr| pr.number);
++    if let Some(pr) = open_pr.as_ref().filter(|_| due) {
++        refresh_pr_stats(task, runner, github, pr.number);
++    }
++    open_pr
++}
++
++fn refresh_pr_stats(
++    task: &mut Task,
++    runner: &mut impl CommandRunner,
++    github: &GithubChecksAdapter,
++    number: u64,
++) {
++    let command = github.pr_view_stats(&task.worktree_path.display().to_string(), number);
++    if let Ok((additions, deletions)) =
++        GithubChecksAdapter::parse_pr_view_stats(&runner.run(&command))
++    {
++        remember_pull_request_stats(
++            task,
++            PullRequestStats {
++                number,
++                additions,
++                deletions,
++            },
++        );
++    }
+ }
+ 
+ fn refresh_open_pr(
