@@ -143,6 +143,28 @@ fn shutdown_ends_harness_and_removes_socket() {
 }
 
 #[test]
+fn write_then_close_client_still_shuts_harness_down() {
+    let state_dir = scratch_state_dir("write-then-close");
+    let socket = socket_for(&state_dir, "h");
+    let log = shim_paths(&state_dir, "h").log;
+    let serve = start_serve(&state_dir, "h", &["sh", "-c", "printf 'one\\n'; cat"]);
+
+    let deadline = Instant::now() + CLIENT_TIMEOUT;
+    while fs::metadata(&log).map_or(true, |metadata| metadata.len() == 0) {
+        assert!(Instant::now() < deadline, "harness output never logged");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mut stream = connect(&socket);
+    stream
+        .write_all(b"REPLAY 0\nSHUTDOWN\n")
+        .expect("write hello and shutdown");
+    drop(stream);
+
+    assert_eq!(await_serve(&serve).unwrap(), 0);
+    assert!(!socket.exists());
+}
+
+#[test]
 fn shutdown_escalates_to_sigkill_when_harness_ignores_stdin_eof() {
     let state_dir = scratch_state_dir("sigkill");
     let socket = socket_for(&state_dir, "h");

@@ -188,7 +188,7 @@ fn accept_pending(listener: &UnixListener, state: &Arc<ShimState>) -> io::Result
 }
 
 fn handle_client(stream: UnixStream, state: &ShimState) -> io::Result<()> {
-    stream.set_read_timeout(Some(HELLO_TIMEOUT))?;
+    let _ = stream.set_read_timeout(Some(HELLO_TIMEOUT));
     let mut reader = BufReader::new(stream.try_clone()?);
     let hello = read_client_line(&mut reader)?.unwrap_or_default();
     let offset = parse_client_hello(&hello).map_err(|error| {
@@ -197,9 +197,10 @@ fn handle_client(stream: UnixStream, state: &ShimState) -> io::Result<()> {
             format!("invalid session shim hello: {error:?}"),
         )
     })?;
-    stream.set_read_timeout(None)?;
-    attach(state, &stream, offset)?;
-    forward_client_lines(&mut reader, state)
+    let _ = stream.set_read_timeout(None);
+    let attached = attach(state, &stream, offset);
+    forward_client_lines(&mut reader, state)?;
+    attached
 }
 
 fn attach(state: &ShimState, stream: &UnixStream, offset: u64) -> io::Result<()> {
