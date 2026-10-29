@@ -150,6 +150,22 @@ function upsertOrPushUser(
   contentBlocks?: OutputContentBlock[],
 ): ChatSessionReducerState {
   if (itemId) {
+    const optimisticIndex = state.view.conversation.findIndex(
+      (row) =>
+        row.kind === "prose" &&
+        row.clientMessageId !== undefined &&
+        `u:${row.clientMessageId}` === itemId,
+    );
+    const optimistic = state.view.conversation[optimisticIndex];
+    if (optimistic?.kind === "prose") {
+      return replaceAt(state, optimisticIndex, {
+        ...optimistic,
+        id: itemId,
+        text,
+        ...(contentBlocks ? { contentBlocks } : {}),
+        messageId: messageId ?? optimistic.messageId,
+      });
+    }
     const tail = state.view.conversation[state.view.conversation.length - 1];
     if (
       tail?.kind === "prose" &&
