@@ -135,6 +135,82 @@ describe("TaskDetailsSheet chat entry", () => {
   });
 });
 
+describe("TaskDetailsSheet restart agent action", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [{ id: "auto", label: "Auto" }],
+        }),
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shows a Restart agent button for a healthy chat with no actions", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({ actions: [], agent_status: "Running" })}
+      />,
+    );
+
+    const quickActions = screen.getByTestId("session-quick-actions");
+    expect(quickActions).toBeInTheDocument();
+    expect(
+      within(quickActions).getByRole("button", { name: "Restart agent" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows exactly one Restart agent button when remediation already offers it", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({
+          actions: [
+            {
+              action: "restart-agent",
+              label: "Restart agent",
+              destructive: false,
+              confirmation_required: true,
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Restart agent" })).toHaveLength(1);
+  });
+
+  it("does not add Restart agent in terminal mode", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="terminal"
+        detail={detail({ actions: [] })}
+      />,
+    );
+
+    expect(screen.queryByTestId("session-quick-actions")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restart agent" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("TaskDetailsSheet terminal entry", () => {
   it("opens from terminal mode with Ajax chat when orchestration chat is enabled", () => {
     const onOpenChat = vi.fn();

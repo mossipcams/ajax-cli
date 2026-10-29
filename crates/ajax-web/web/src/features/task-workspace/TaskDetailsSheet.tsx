@@ -61,7 +61,19 @@ export default function TaskDetailsSheet({
   if (!open) return null;
 
   const handle = detail.qualified_handle;
-  const actions = visibleTaskActions(detail.actions);
+  const baseActions = visibleTaskActions(detail.actions);
+  const actions =
+    mode === "chat" && !baseActions.some((action) => action.action === "restart-agent")
+      ? [
+          ...baseActions,
+          {
+            action: "restart-agent",
+            label: "Restart agent",
+            destructive: false,
+            confirmation_required: true,
+          },
+        ]
+      : baseActions;
   const showAjaxChat =
     mode === "terminal" &&
     orchestrationChat &&
@@ -188,7 +200,7 @@ export default function TaskDetailsSheet({
                   onResult={onResult}
                 />
 
-                {mode === "chat" && actions.length ? (
+                {mode === "chat" ? (
                   <div
                     className="session-sheet-actions session-sheet-actions-muted"
                     data-testid="session-quick-actions"
