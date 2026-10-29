@@ -69,6 +69,26 @@ describe("optimistic prompt acknowledgement", () => {
     expect(next.view.conversation[0]).toMatchObject({ pending: true, clientMessageId: "c1" });
   });
 
+  it("folds the server echo into the optimistic prompt by clientMessageId", () => {
+    const optimistic = applyOptimisticPrompt(initialChatSessionReducerState, "Ship it", "c1");
+    const withNote = applyTurnEvent(optimistic, { type: "host_note", text: "note" });
+    const echoed = applyTurnEvent(withNote, {
+      type: "user_message",
+      text: "Ship it\n\n[attached: shot.png]",
+      itemId: "u:c1",
+    });
+    const users = echoed.view.conversation.filter(
+      (item) => item.kind === "prose" && item.role === "user",
+    );
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({
+      id: "u:c1",
+      text: "Ship it\n\n[attached: shot.png]",
+      clientMessageId: "c1",
+      pending: true,
+    });
+  });
+
   it("never marks a transcript-restored prompt as pending", () => {
     const restored = applyTurnEvent(initialChatSessionReducerState, {
       type: "user_message",
