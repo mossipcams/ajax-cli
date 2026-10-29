@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 const OPTIONAL_CALL_TIMEOUT_MS = 15_000;
 const SHUTDOWN_PUMP_TIMEOUT_MS = 5_000;
 const DRAIN_FALLBACK_MS = 2_000;
+const INTERRUPT_DEADLINE_MS = 5_000;
 
 let pendingWrites = 0;
 let wantExit = false;
@@ -435,8 +436,25 @@ function handlePrompt(cmd) {
 async function handleAbort(cmd) {
   if (!state.initialized) return fail("abort", cmd.id, "not initialized");
   cancelPendingElicitations();
-  const result = await state.query.interrupt();
-  respond("abort", cmd.id, true, result ?? null);
+  let clearDeadline = () => {};
+  const deadline = new Promise((resolve) => {
+    const handle = setTimeout(() => resolve("timeout"), INTERRUPT_DEADLINE_MS);
+    clearDeadline = () => clearTimeout(handle);
+    handle.unref();
+  });
+  const raced = await Promise.race([
+    Promise.resolve(state.query.interrupt()).then((result) => ({ ok: true, result })),
+    deadline.then(() => ({ ok: false })),
+  ]);
+  clearDeadline();
+  if (!raced.ok) {
+    log(`abort interrupt did not complete within ${INTERRUPT_DEADLINE_MS}ms`);
+    respond("abort", cmd.id, true, null);
+    reportLostTurn("Claude did not stop within 5s; restarting the agent");
+    void shutdown();
+    return;
+  }
+  respond("abort", cmd.id, true, raced.result ?? null);
 }
 
 async function handleSetModel(cmd) {

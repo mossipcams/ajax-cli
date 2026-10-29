@@ -45,6 +45,7 @@ export function query({ prompt, options = {} }) {
   let systemEmitted = false;
   fakeCall("queryOptions", [options]);
   let interrupted = false;
+  let wedged = false;
   let throwing = false;
   let closed = false;
 
@@ -151,6 +152,13 @@ export function query({ prompt, options = {} }) {
       systemInit();
       streamEvent("dying");
       queue.end();
+      return;
+    }
+    if (text.includes("WEDGE")) {
+      systemInit();
+      streamEvent("wedged");
+      wedged = true;
+      await new Promise(() => {});
       return;
     }
     if (text.includes("SLOW")) {
@@ -293,6 +301,7 @@ export function query({ prompt, options = {} }) {
     },
     async interrupt() {
       fakeCall("interrupt", []);
+      if (wedged) return new Promise(() => {});
       interrupted = true;
       return null;
     },
