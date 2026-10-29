@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebAction } from "@/shared/lib/types";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
-import { armDropUndo, type DropUndoHandles } from "./taskMutations";
+import { armDropUndo, commitConfirmedAction, type DropUndoHandles } from "./taskMutations";
 
 const dropAction = { action: "drop" } as WebAction;
 
@@ -163,5 +163,82 @@ describe("armDropUndo", () => {
     await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
 
     expect(executeOperation).not.toHaveBeenCalled();
+  });
+});
+
+describe("commitConfirmedAction", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("defers merge-pr through the undo window before posting", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const onResult = vi.fn();
+    const callbacks = { onResult, onMutated: vi.fn() };
+    const mergeAction = { action: "merge-pr", label: "Merge PR" } as WebAction;
+
+    commitConfirmedAction(mergeAction, "web/x", "tap-1", callbacks, freshHandles(), executeOperation);
+
+    expect(executeOperation).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(
+      "Merge PR for web/x…",
+      null,
+      false,
+      expect.objectContaining({ onUndo: expect.any(Function) }),
+    );
+
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS - 1);
+    expect(executeOperation).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(executeOperation).toHaveBeenCalledOnce();
+    expect(executeOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ task_handle: "web/x", action: "merge-pr", confirmed: true }),
+    );
+  });
+
+  it("cancels the merge-pr post when Undo is pressed", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const results: Array<{ onUndo?: () => void }> = [];
+    const callbacks = {
+      onResult: vi.fn((_message, _output, _isError, options) => {
+        results.push(options ?? {});
+      }),
+      onMutated: vi.fn(),
+    };
+    const mergeAction = { action: "merge-pr", label: "Merge PR" } as WebAction;
+
+    commitConfirmedAction(mergeAction, "web/x", "tap-1", callbacks, freshHandles(), executeOperation);
+    results[0]?.onUndo?.();
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+
+    expect(executeOperation).not.toHaveBeenCalled();
+  });
+
+  it("defers create-pr through the undo window before posting", async () => {
+    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: {} });
+    const onResult = vi.fn();
+    const callbacks = { onResult, onMutated: vi.fn() };
+    const createAction = { action: "create-pr", label: "Create PR" } as WebAction;
+
+    commitConfirmedAction(createAction, "web/x", "tap-1", callbacks, freshHandles(), executeOperation);
+
+    expect(executeOperation).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(
+      "Create PR for web/x…",
+      null,
+      false,
+      expect.objectContaining({ onUndo: expect.any(Function) }),
+    );
+
+    await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    expect(executeOperation).toHaveBeenCalledOnce();
+    expect(executeOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ task_handle: "web/x", action: "create-pr", confirmed: true }),
+    );
   });
 });

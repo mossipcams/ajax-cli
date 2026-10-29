@@ -517,6 +517,32 @@ describe("TaskList", () => {
     expect(revealedRule).toMatch(/pointer-events:\s*none/);
   });
 
+  it("keeps Create PR and Merge PR off the dashboard row while other actions stay inline", () => {
+    const prCard: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/pr",
+          qualified_handle: "web/pr",
+          repo: "web",
+          title: "PR",
+          status: "idle",
+          last_activity_unix_secs: 0,
+          actions: [
+            { action: "create-pr", label: "Create PR", destructive: false, confirmation_required: false },
+            { action: "merge-pr", label: "Merge PR", destructive: false, confirmation_required: false },
+            { action: "review", label: "Review", destructive: false, confirmation_required: false },
+          ],
+        },
+      ],
+    };
+    const { container } = render(<TaskList cockpit={prCard} />);
+    const row = screen.getByRole("button", { name: /web\/pr/ });
+    expect(within(row).getByRole("button", { name: "Review" })).toBeInTheDocument();
+    expect(container.querySelector('[data-action="create-pr"]')).toBeNull();
+    expect(container.querySelector('[data-action="merge-pr"]')).toBeNull();
+  });
+
   it("drops the row transform transition only while a touch drag is held", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");
