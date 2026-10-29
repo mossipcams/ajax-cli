@@ -275,6 +275,47 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
 }
 
 #[test]
+fn cancel_ends_turn_when_harness_is_wedged() {
+    let client = spawn_client(None, None);
+    let id = client
+        .begin_prompt(&text_blocks("please WEDGE"))
+        .expect("begin_prompt");
+    assert_eq!(id, 1);
+
+    loop {
+        let event = client
+            .wait_event(TIMEOUT)
+            .expect("event during wedged prompt");
+        if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
+            break;
+        }
+    }
+
+    let _ = client.cancel();
+
+    loop {
+        let event = match client.wait_event(TIMEOUT) {
+            Some(event) => event,
+            None => panic!(
+                "Stop must end a wedged turn within TIMEOUT; harness never answered interrupt"
+            ),
+        };
+        if let AgentEvent::Native(NativeEvent::TurnFinished { request_id, .. }) = &event {
+            assert_eq!(*request_id, 1);
+            break;
+        }
+    }
+
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !client.host_exited() {
+        if std::time::Instant::now() >= deadline {
+            panic!("sidecar must exit after wedged stop recovery");
+        }
+        let _ = client.wait_event(Duration::from_millis(50));
+    }
+}
+
+#[test]
 fn set_model_and_set_effort_round_trip() {
     let client = spawn_client(None, None);
 

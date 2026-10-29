@@ -332,6 +332,9 @@ append the same authentication error repeatedly.
 - Cancel with `keepQueue: false` cancels the in-flight turn.
 - Cancel with `keepQueue: true` cancels the in-flight turn but preserves queued
   prompts for the next flush.
+- Claude SDK cancel uses a bounded interrupt deadline; when the harness does not
+  answer interrupt in time, the sidecar finishes the in-flight turn as failed and
+  exits so host-crash recovery can restart the sidecar and resume the session.
 - When the host has already sent `session/cancel` for the in-flight prompt and
   `session/prompt` then fails with a cancellation-shaped transport abort (for
   example plain `canceled`/`cancelled` text such as `context canceled`, harness
