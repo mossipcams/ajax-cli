@@ -14,7 +14,7 @@ const STAGE_TAGS: Array<{
   { key: "final_eval_passed", label: "Eval passed" },
 ];
 
-function formatBytes(bytes: number | null): string {
+export function formatBytes(bytes: number | null): string {
   if (bytes === null) return "size unknown";
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB", "TB"];

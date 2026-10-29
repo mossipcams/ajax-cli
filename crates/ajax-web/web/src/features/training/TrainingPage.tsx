@@ -202,6 +202,8 @@ export default function TrainingPage({ onBack }: Props) {
             status={status}
             championRunId={championRunId}
             jobsDisabled={jobsDisabled}
+            evals={catalog.evals}
+            datasets={catalog.datasets}
             onAction={setPending}
           />
         </>

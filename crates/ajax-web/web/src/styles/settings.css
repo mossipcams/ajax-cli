@@ -506,37 +506,193 @@
   border-radius: 6px;
 }
 
+.training-flow-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.training-flow-position {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.training-flow-segments {
+  display: flex;
+  gap: 3px;
+}
+
+.training-flow-segment {
+  flex: 1 1 0;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--rule);
+}
+
+.training-flow-segment.is-done {
+  background: #16a34a;
+}
+
+.training-flow-segment.is-active {
+  background: #2563eb;
+}
+
+.training-flow-segment.is-next {
+  background: #d97706;
+}
+
 .training-page-steps {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .training-page-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
+}
+
+.training-flow-dot {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: center;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  margin-top: 14px;
+  border: 2px solid var(--rule);
+  border-radius: 50%;
+  background: var(--paper-raised);
+}
+
+.training-page-step.is-done .training-flow-dot {
+  border-color: #16a34a;
+  background: #16a34a;
+}
+
+.training-page-step.is-active .training-flow-dot {
+  border-color: #2563eb;
+  background: #2563eb;
+  animation: training-flow-pulse 1.6s ease-out infinite;
+}
+
+.training-page-step.is-next .training-flow-dot {
+  border-color: #d97706;
+}
+
+.training-flow-body {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--rule);
   border-radius: 6px;
   background: var(--paper-raised);
 }
 
-.training-page-step.is-done {
+.training-page-step.is-done .training-flow-body {
   border-color: color-mix(in srgb, #16a34a 35%, var(--rule));
 }
 
-.training-page-step.is-next {
+.training-page-step.is-active .training-flow-body {
+  border-color: color-mix(in srgb, #2563eb 55%, var(--rule));
+}
+
+.training-page-step.is-next .training-flow-body {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--rule));
+}
+
+.training-page-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .training-page-step-label {
   font-weight: 600;
   flex: 1 1 120px;
+}
+
+.training-page-step .training-page-progress {
+  margin: 4px 0 0;
+}
+
+.training-flow-link {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+}
+
+.training-flow-rail {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  justify-self: center;
+  margin-top: 26px;
+  margin-bottom: -14px;
+  width: 2px;
+  background: var(--rule);
+}
+
+.training-flow-rail.is-done {
+  background: #16a34a;
+}
+
+.training-flow-rail.is-flowing {
+  background: repeating-linear-gradient(to bottom, #2563eb 0 4px, transparent 4px 8px);
+  background-size: 100% 8px;
+  animation: training-flow-run 0.9s linear infinite;
+}
+
+.training-flow-artifact {
+  align-self: center;
+  min-width: 0;
+  padding: 4px 0;
+  font-size: var(--text-micro);
+  color: var(--muted-foreground, #737373);
+  overflow-wrap: anywhere;
+}
+
+.training-flow-link.is-flowing .training-flow-artifact {
+  color: #2563eb;
+}
+
+@keyframes training-flow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, #2563eb 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, #2563eb 0%, transparent);
+  }
+}
+
+@keyframes training-flow-run {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .training-page-step.is-active .training-flow-dot,
+  .training-flow-rail.is-flowing {
+    animation: none;
+  }
 }
 
 .training-page-secondary {
