@@ -1443,14 +1443,17 @@ lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
 when the operator needs full interactive attach.
 
 Chat tasks offer chat verbs as remediation IDs, not `OperatorAction`s. Create PR
-sends a chat prompt through the chat queue and is offered when the task has no
-open PR. Merge PR requires confirmation, runs `gh pr merge <n> --squash` through
-the core GitHub adapter, and records the PR as merged; the lifecycle follows on
-the next CI-monitor reconcile. Restart agent detaches the session, acquires it
-again, and releases it, resuming the stored session; a missing worktree is an
-error and is not re-provisioned. Fix CI and Resolve conflicts are offered only
-when flagged. Stop is the chat head control (`LiveHead`), not a remediation. The
-frozen TUI drawer shows only Fix CI and Resolve conflicts.
+sends a chat prompt through the chat queue and is offered only when the task has
+no open PR, has uncommitted or unpushed work, and the agent is not running.
+Create PR and Merge PR both require confirmation; once confirmed, they
+open the same short undo window as Drop before the operation is sent. Merge PR
+runs `gh pr merge <n> --squash` through the core GitHub adapter, and records the
+PR as merged; the lifecycle follows on the next CI-monitor reconcile. Restart
+agent detaches the session, acquires it again, and releases it, resuming the
+stored session; a missing worktree is an error and is not re-provisioned. Fix CI
+and Resolve conflicts are offered only when flagged. Stop is the chat head
+control (`LiveHead`), not a remediation. The frozen TUI drawer shows only Fix CI
+and Resolve conflicts.
 
 Opening a task in the browser is the resume gesture: entering a task workspace
 route dispatches the `resume` operation (acknowledging attention through core,

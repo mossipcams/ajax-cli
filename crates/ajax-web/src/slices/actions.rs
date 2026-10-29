@@ -41,7 +41,8 @@ pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOpti
         action: option.id.clone(),
         label: option.label.clone(),
         destructive: false,
-        confirmation_required: option.id == ajax_core::remediation::MERGE_PR,
+        confirmation_required: option.id == ajax_core::remediation::CREATE_PR
+            || option.id == ajax_core::remediation::MERGE_PR,
     }
 }
 
@@ -101,18 +102,38 @@ pub fn supported_browser_action(action: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_actions, supported_browser_action, supported_web_action, web_action};
+    use super::{
+        browser_actions, remediation_action_state, supported_browser_action, supported_web_action,
+        web_action,
+    };
     use ajax_core::{
         commands::CommandContext,
         config::Config,
         diff_review::{remember_pull_requests, PullRequestRef, PullRequestState},
         models::{
-            LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag, TaskId,
+            GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag,
+            TaskId,
         },
         output::TaskCard,
         registry::InMemoryRegistry,
         remediation::{CREATE_PR, FIX_CI, MERGE_PR},
     };
+
+    fn dirty_git_status() -> GitStatus {
+        GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }
+    }
 
     #[test]
     fn resume_action_is_supported_in_web_cockpit() {
@@ -191,11 +212,25 @@ mod tests {
     fn create_pr_remediation_is_a_supported_browser_action() {
         let mut task = crate::test_support::fix_login_task();
         task.set_skip_interactive_agent(true);
+        task.git_status = Some(dirty_git_status());
         let remediations = ajax_core::remediation::remediations_for_task(&task);
         assert!(remediations.iter().any(|option| option.id == CREATE_PR));
 
         assert!(supported_browser_action(CREATE_PR));
         assert!(!supported_browser_action("sync"));
+    }
+
+    #[test]
+    fn create_pr_remediation_requires_confirmation() {
+        let mut task = crate::test_support::fix_login_task();
+        task.set_skip_interactive_agent(true);
+        task.git_status = Some(dirty_git_status());
+        let option = ajax_core::remediation::remediations_for_task(&task)
+            .into_iter()
+            .find(|option| option.id == CREATE_PR)
+            .expect("create-pr remediation");
+
+        assert!(remediation_action_state(&option).confirmation_required);
     }
 
     #[test]
