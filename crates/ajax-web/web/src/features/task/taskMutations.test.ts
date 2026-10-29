@@ -195,8 +195,7 @@ describe("commitConfirmedAction", () => {
     expect(executeOperation).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(executeOperation).toHaveBeenCalledOnce();
-    expect(executeOperation).toHaveBeenCalledWith(
+    expect(executeOperation).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ task_handle: "web/x", action: "merge-pr", confirmed: true }),
     );
   });
@@ -236,8 +235,7 @@ describe("commitConfirmedAction", () => {
     );
 
     await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
-    expect(executeOperation).toHaveBeenCalledOnce();
-    expect(executeOperation).toHaveBeenCalledWith(
+    expect(executeOperation).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ task_handle: "web/x", action: "create-pr", confirmed: true }),
     );
   });

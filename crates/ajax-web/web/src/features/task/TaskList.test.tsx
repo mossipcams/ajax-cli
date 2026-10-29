@@ -536,11 +536,11 @@ describe("TaskList", () => {
         },
       ],
     };
-    const { container } = render(<TaskList cockpit={prCard} />);
+    render(<TaskList cockpit={prCard} />);
     const row = screen.getByRole("button", { name: /web\/pr/ });
     expect(within(row).getByRole("button", { name: "Review" })).toBeInTheDocument();
-    expect(container.querySelector('[data-action="create-pr"]')).toBeNull();
-    expect(container.querySelector('[data-action="merge-pr"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create PR" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge PR" })).not.toBeInTheDocument();
   });
 
   it("drops the row transform transition only while a touch drag is held", () => {
