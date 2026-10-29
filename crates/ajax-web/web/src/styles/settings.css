@@ -506,191 +506,505 @@
   border-radius: 6px;
 }
 
-.training-flow-header {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.training-flow-position {
-  margin: 0;
-  font-weight: 600;
-  font-size: 0.9rem;
+.training-map {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.training-flow-segments {
-  display: flex;
-  gap: 3px;
-}
-
-.training-flow-segment {
-  flex: 1 1 0;
-  height: 6px;
-  border-radius: 2px;
-  background: var(--rule);
-}
-
-.training-flow-segment.is-done {
-  background: #16a34a;
-}
-
-.training-flow-segment.is-active {
-  background: #2563eb;
-}
-
-.training-flow-segment.is-next {
-  background: #d97706;
-}
-
-.training-page-steps {
-  list-style: none;
+.training-map h4,
+.training-map p {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
 }
 
-.training-page-step {
+.training-map h4 {
+  font-size: 1.1rem;
+  line-height: 1.4;
+}
+
+.training-map-eyebrow {
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.training-map-now {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  column-gap: 12px;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-raised);
+  font-size: var(--text-label);
+}
+
+.training-map-now > div {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
-.training-flow-dot {
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: center;
-  box-sizing: border-box;
-  width: 12px;
-  height: 12px;
-  margin-top: 14px;
+.training-map-hardware {
+  padding: 2px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+  text-align: center;
+}
+
+.training-map-lane {
+  --lane-color: var(--accent);
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--lane-color);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lane-color) 3%, var(--paper-raised));
+}
+
+.training-map-lane.is-training {
+  --lane-color: #b7a5ee;
+}
+
+.training-map-lane > header {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.training-map-lane > header p {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--text-label);
+  color: var(--muted-foreground);
+}
+
+.training-map-lane code,
+.training-map-tokens code {
+  color: var(--ink);
+}
+
+.training-map-rail {
+  list-style: none;
+  margin: 0;
+  padding: 18px 10px 0 30px;
+}
+
+.training-map-stage {
+  position: relative;
+  min-width: 0;
+  padding-bottom: 18px;
+}
+
+.training-map-stage::before {
+  content: "";
+  position: absolute;
+  left: -17px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--rule);
+}
+
+.training-map-stage:first-child::before {
+  top: 20px;
+}
+
+.training-map-stage:last-child::before {
+  bottom: calc(100% - 20px);
+}
+
+.training-map-stage.is-active::before {
+  background: repeating-linear-gradient(to bottom, var(--lane-color) 0 5px, var(--rule) 5px 10px);
+  background-size: 100% 10px;
+  animation: training-map-flow 1s linear infinite;
+}
+
+.training-map-node {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  left: -21px;
+  width: 10px;
+  height: 10px;
   border: 2px solid var(--rule);
-  border-radius: 50%;
+  border-radius: 2px;
   background: var(--paper-raised);
 }
 
-.training-page-step.is-done .training-flow-dot {
-  border-color: #16a34a;
-  background: #16a34a;
+.training-map-node::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 2px;
+  width: 11px;
+  height: 2px;
+  background: var(--rule);
 }
 
-.training-page-step.is-active .training-flow-dot {
-  border-color: #2563eb;
-  background: #2563eb;
-  animation: training-flow-pulse 1.6s ease-out infinite;
+.training-map-stage.is-done .training-map-node {
+  background: var(--lane-color);
+  border-color: var(--lane-color);
 }
 
-.training-page-step.is-next .training-flow-dot {
-  border-color: #d97706;
+.training-map-stage.is-active .training-map-node {
+  background: var(--lane-color);
+  border-color: var(--lane-color);
+  animation: training-map-pulse 1.6s ease-out infinite;
 }
 
-.training-flow-body {
-  grid-column: 2;
-  grid-row: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.training-map-stage.is-next .training-map-node {
+  border-color: var(--lane-color);
+}
+
+.training-map-tile {
+  display: grid;
+  gap: 8px;
   min-width: 0;
-  padding: 10px 12px;
   border: 1px solid var(--rule);
   border-radius: 6px;
   background: var(--paper-raised);
 }
 
-.training-page-step.is-done .training-flow-body {
-  border-color: color-mix(in srgb, #16a34a 35%, var(--rule));
+.training-map-stage.is-active .training-map-tile,
+.training-map-stage.is-next .training-map-tile {
+  border-color: var(--lane-color);
 }
 
-.training-page-step.is-active .training-flow-body {
-  border-color: color-mix(in srgb, #2563eb 55%, var(--rule));
+.training-map-stage.is-failed .training-map-tile {
+  border-color: var(--destructive, #ef6666);
 }
 
-.training-page-step.is-next .training-flow-body {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--rule));
+.training-map-summary {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.training-page-step-head {
+.training-map-summary::-webkit-details-marker {
+  display: none;
+}
+
+.training-map-summary:focus-visible,
+.training-map-point:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.training-map-stage-head {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.training-page-step-label {
-  font-weight: 600;
-  flex: 1 1 120px;
+.training-map-stage-head strong {
+  flex: 1 1 100px;
+  font-size: var(--text-label);
 }
 
-.training-page-step .training-page-progress {
-  margin: 4px 0 0;
+.training-map-state {
+  font-size: var(--text-micro);
+  color: var(--muted-foreground);
 }
 
-.training-flow-link {
-  grid-column: 2;
-  grid-row: 2;
+.training-map-stage.is-active .training-map-state {
+  color: var(--lane-color);
+}
+
+.training-map-purpose,
+.training-map-fact,
+.training-map-explainer {
+  font-size: var(--text-label);
+  line-height: 1.5;
+}
+
+.training-map-purpose,
+.training-map-disclosure {
+  color: var(--muted-foreground);
+}
+
+.training-map-disclosure {
+  font-size: var(--text-micro);
+}
+
+.training-map-disclosure::after {
+  content: " +";
+}
+
+.training-map-tile details[open] .training-map-disclosure::after {
+  content: " −";
+}
+
+.training-map-explainer {
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.training-map-explainer dt {
+  color: var(--muted-foreground);
+  margin-top: 8px;
+}
+
+.training-map-explainer dd {
+  margin: 2px 0 0;
+}
+
+.training-map-tile > button {
+  justify-self: start;
+  margin: 0 10px 10px;
+  min-height: 40px;
+  border-radius: 6px;
+}
+
+.training-map-tile > p,
+.training-map-tile > progress {
+  margin: 0 10px 10px;
+  width: calc(100% - 20px);
+}
+
+.training-map-handoff {
+  display: grid;
+  gap: 10px;
+  margin: -16px 12px;
+  padding: 20px 12px;
+  border-inline: 2px solid var(--rule);
+  font-size: var(--text-label);
+  background: color-mix(in srgb, var(--accent) 5%, var(--paper-raised));
+}
+
+.training-map-tokens {
+  display: grid;
+  gap: 6px;
+}
+
+.training-map-tokens > span {
   display: flex;
-  align-items: center;
-  min-height: 28px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted-foreground);
 }
 
-.training-flow-rail {
-  grid-column: 1;
-  grid-row: 1 / 3;
-  justify-self: center;
-  margin-top: 26px;
-  margin-bottom: -14px;
-  width: 2px;
+.training-map-destination {
+  border-top: 1px solid var(--rule);
+  padding-top: 10px;
+  font-weight: 600;
+}
+
+.training-map-chart {
+  min-width: 0;
+  margin: 12px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--rule);
+}
+
+.training-map-chart figcaption {
+  display: grid;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.training-map-plot {
+  position: relative;
+  height: 180px;
+  margin-top: 10px;
+}
+
+.training-map-plot > svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.training-map-grid,
+.training-map-reference,
+.training-map-line {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.training-map-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.training-map-reference {
+  stroke: #e5be72;
+  stroke-dasharray: 4 4;
+}
+
+.training-map-axis {
+  position: absolute;
+  left: 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  transform: translateY(-50%);
+}
+
+.training-map-axis.is-top { top: 12%; }
+.training-map-axis.is-middle { top: 50%; }
+.training-map-axis.is-bottom { top: 88%; }
+
+.training-map-point {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.training-map-point svg {
+  display: grid;
+  place-items: center;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--paper-raised);
+}
+
+.training-map-point.is-best svg,
+.training-map-point[aria-pressed="true"] svg {
+  background: var(--accent);
+}
+
+.training-map-point.is-champion svg {
+  width: 18px;
+  height: 18px;
+  border-color: #e5be72;
+  color: #e5be72;
+  background: var(--paper-raised);
+  font-size: 13px;
+}
+
+.training-map-axis-labels {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 12%;
+  color: var(--muted-foreground);
+  font-size: var(--text-micro);
+}
+
+.training-map-chart-caption,
+.training-map-reference-label {
+  padding-top: 10px;
+  font-size: var(--text-label);
+}
+
+.training-map-reference-label {
+  color: #e5be72;
+}
+
+.training-map-chart-caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.training-map-champion {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, #e5be72 60%, var(--rule));
+  border-radius: 6px;
+  background: color-mix(in srgb, #e5be72 6%, var(--paper-raised));
+}
+
+.training-map-champion-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.training-map-champion-heading > svg {
+  width: 32px;
+  height: 32px;
+  color: #e5be72;
+}
+
+.training-map-score {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 12px;
+  font-size: var(--text-label);
+}
+
+.training-map-score meter {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 12px;
+}
+
+.training-map-score meter::-webkit-meter-bar {
+  border: 0;
   background: var(--rule);
 }
 
-.training-flow-rail.is-done {
-  background: #16a34a;
+.training-map-score meter::-webkit-meter-optimum-value {
+  background: #e5be72;
 }
 
-.training-flow-rail.is-flowing {
-  background: repeating-linear-gradient(to bottom, #2563eb 0 4px, transparent 4px 8px);
-  background-size: 100% 8px;
-  animation: training-flow-run 0.9s linear infinite;
+.training-map-score meter::-moz-meter-bar {
+  background: #e5be72;
 }
 
-.training-flow-artifact {
-  align-self: center;
-  min-width: 0;
-  padding: 4px 0;
-  font-size: var(--text-micro);
-  color: var(--muted-foreground, #737373);
-  overflow-wrap: anywhere;
+.training-map-experiments {
+  padding: 14px;
+  border: 1px dashed var(--rule);
+  border-radius: 6px;
 }
 
-.training-flow-link.is-flowing .training-flow-artifact {
-  color: #2563eb;
+.training-map-experiments .training-map-chart {
+  margin-inline: 0;
 }
 
-@keyframes training-flow-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, #2563eb 55%, transparent);
-  }
-  70% {
-    box-shadow: 0 0 0 7px color-mix(in srgb, #2563eb 0%, transparent);
-  }
+.training-map-live {
+  list-style: none;
+  padding: 12px;
+  margin: 0;
 }
 
-@keyframes training-flow-run {
-  from {
-    background-position: 0 0;
-  }
-  to {
-    background-position: 0 8px;
-  }
+.training-map-live li {
+  display: grid;
+  gap: 5px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+  font-size: var(--text-label);
+}
+
+@keyframes training-map-pulse {
+  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--lane-color) 25%, transparent); }
+}
+
+@keyframes training-map-flow {
+  to { background-position: 0 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .training-page-step.is-active .training-flow-dot,
-  .training-flow-rail.is-flowing {
+  .training-map-stage.is-active::before,
+  .training-map-stage.is-active .training-map-node {
     animation: none;
   }
 }
