@@ -126,8 +126,12 @@ export function armDropUndo(
   window.addEventListener("pagehide", commit);
   timer = setTimeout(commit, DROP_UNDO_MS);
   handles.dropTimerRef.current = timer;
-  callbacks.onResult?.(`Dropping ${handle}…`, null, false, { onUndo: undo, onCommit: commit });
+  const message =
+    action.action === "drop" ? `Dropping ${handle}…` : `${action.label} for ${handle}…`;
+  callbacks.onResult?.(message, null, false, { onUndo: undo, onCommit: commit });
 }
+
+const DEFERRED_ACTIONS = new Set(["drop", "create-pr", "merge-pr"]);
 
 export function commitConfirmedAction(
   action: WebAction,
@@ -137,7 +141,7 @@ export function commitConfirmedAction(
   dropHandles: DropUndoHandles,
   executeOperation: ExecuteTaskOperation = postOperation,
 ): void {
-  if (action.action === "drop") {
+  if (DEFERRED_ACTIONS.has(action.action)) {
     armDropUndo(action, handle, interactionId, callbacks, dropHandles, executeOperation);
     return;
   }

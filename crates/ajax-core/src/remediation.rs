@@ -2,7 +2,7 @@ use crate::{
     adapters::{CommandOutput, CommandRunner, TmuxAdapter},
     commands::CommandContext,
     diff_review::{stored_pull_requests, PullRequestState},
-    models::{LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskKind},
+    models::{LifecycleStatus, LiveStatusClass, LiveStatusKind, SideFlag, Task, TaskKind},
     operation::has_open_pull_request,
     registry::Registry,
 };
@@ -81,9 +81,25 @@ fn offers_create_pr(task: &Task) -> bool {
                 | LifecycleStatus::Error
                 | LifecycleStatus::Orphaned
         )
+        && has_work_to_publish(task)
+        && !agent_is_running(task)
         && stored_pull_requests(task)
             .iter()
             .all(|pr| pr.state == PullRequestState::Closed)
+}
+
+fn has_work_to_publish(task: &Task) -> bool {
+    task.git_status
+        .as_ref()
+        .is_some_and(|git| git.dirty || git.has_unpushed_work())
+}
+
+fn agent_is_running(task: &Task) -> bool {
+    task.has_side_flag(SideFlag::AgentRunning)
+        || task
+            .live_status
+            .as_ref()
+            .is_some_and(|live| live.kind.class() == LiveStatusClass::Running)
 }
 
 fn offers_merge_pr(task: &Task) -> bool {
@@ -275,8 +291,8 @@ mod tests {
         config::{Config, ManagedRepo},
         diff_review::{remember_pull_requests, PullRequestRef, PullRequestState},
         models::{
-            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
-            TmuxStatus,
+            AgentClient, GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag,
+            Task, TaskId, TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -335,16 +351,80 @@ mod tests {
         assert_eq!(options[0].skill_name, "gh-fix-ci");
     }
 
+    fn git_status(dirty: bool, ahead: u32) -> GitStatus {
+        GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/chat".to_string()),
+            dirty,
+            ahead,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }
+    }
+
     #[test]
     fn chat_task_without_open_pr_offers_create_pr() {
         let mut task = task("chat");
         task.set_skip_interactive_agent(true);
+        task.git_status = Some(git_status(false, 1));
 
         let options = remediations_for_task(&task);
 
         let ids: Vec<&str> = options.iter().map(|option| option.id.as_str()).collect();
         assert_eq!(ids, vec![CREATE_PR]);
         assert_eq!(options[0].label, "Create PR");
+    }
+
+    #[test]
+    fn create_pr_is_offered_when_dirty_with_no_commits_ahead() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        task.git_status = Some(git_status(true, 0));
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .any(|option| option.id == CREATE_PR));
+    }
+
+    #[test]
+    fn create_pr_is_not_offered_without_git_status() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn create_pr_is_not_offered_when_clean_with_nothing_unpushed() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        task.git_status = Some(git_status(false, 0));
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != CREATE_PR));
+    }
+
+    #[test]
+    fn create_pr_is_not_offered_while_agent_is_running() {
+        let mut task = task("chat");
+        task.set_skip_interactive_agent(true);
+        task.git_status = Some(git_status(true, 1));
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+
+        assert!(remediations_for_task(&task)
+            .iter()
+            .all(|option| option.id != CREATE_PR));
     }
 
     #[test]
@@ -487,6 +567,7 @@ mod tests {
     fn chat_task_whose_pr_was_closed_without_merge_offers_create_pr_again() {
         let mut task = task("chat");
         task.set_skip_interactive_agent(true);
+        task.git_status = Some(git_status(false, 1));
         remember_pull_requests(
             &mut task,
             &[PullRequestRef {

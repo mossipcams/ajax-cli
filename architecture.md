@@ -173,8 +173,10 @@ differ, chat is the default path and terminal-agent is the special case.
   the 1 s client convergence remain until Matt signs off on the test contracts
   that pin them.
 - Chat verbs are remediation IDs, not `OperatorAction`s (Phase 4). Create PR is
-  a chat prompt through the chat queue and is offered when the task has no open
-  PR. Merge PR runs `gh pr merge <n> --squash` after confirmation and records the
+  a chat prompt through the chat queue and is offered only when the task has no
+  open PR, has uncommitted or unpushed work, and the agent is not running. Create
+  PR and Merge PR need confirmation, then the same undo window as
+  Drop before sending. Merge PR runs `gh pr merge <n> --squash` and records the
   PR as merged; the lifecycle follows on the next CI-monitor reconcile. Restart
   agent detaches, acquires, and releases, resuming the stored session; a missing
   worktree is an error, not re-provisioned. Fix CI and Resolve conflicts are
