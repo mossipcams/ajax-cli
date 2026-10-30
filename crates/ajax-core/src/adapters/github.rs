@@ -51,15 +51,6 @@ impl GithubChecksAdapter {
         }
     }
 
-    pub fn pr_checks(&self, worktree_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["pr", "checks", branch, "--json", "name,state,link"],
-        )
-        .with_cwd(worktree_path)
-        .with_timeout(GH_PR_CHECKS_TIMEOUT)
-    }
-
     pub fn pr_checks_for_pr(&self, worktree_path: &str, number: u64) -> CommandSpec {
         CommandSpec::new(
             &self.program,
@@ -368,7 +359,6 @@ mod tests {
         CiChecksObservation, CommandOutput, CommandRunError, CommandSpec, GithubChecksAdapter,
         PrMergeability, GH_PR_CHECKS_TIMEOUT, GH_PR_MERGE_TIMEOUT,
     };
-    use std::path::Path;
 
     fn ok_output(status_code: i32, stdout: &str, stderr: &str) -> CommandOutput {
         CommandOutput {
@@ -376,34 +366,6 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
         }
-    }
-
-    #[test]
-    fn pr_checks_plans_gh_json_in_worktree_with_timeout() {
-        let adapter = GithubChecksAdapter::new("gh");
-
-        let spec = adapter.pr_checks("/worktrees/ajax-fix-login", "feature-branch");
-
-        assert_eq!(
-            spec,
-            CommandSpec::new(
-                "gh",
-                [
-                    "pr",
-                    "checks",
-                    "feature-branch",
-                    "--json",
-                    "name,state,link"
-                ]
-            )
-            .with_cwd("/worktrees/ajax-fix-login")
-            .with_timeout(GH_PR_CHECKS_TIMEOUT)
-        );
-        assert_eq!(
-            spec.cwd.as_deref(),
-            Some(Path::new("/worktrees/ajax-fix-login"))
-        );
-        assert_eq!(spec.timeout, Some(GH_PR_CHECKS_TIMEOUT));
     }
 
     fn parse(result: &Result<CommandOutput, CommandRunError>) -> CiChecksObservation {
