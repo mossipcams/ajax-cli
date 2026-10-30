@@ -28,7 +28,7 @@
 .sheet-card {
   background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 22px;
   width: min(440px, 100%);
   max-height: calc(100% - 40px);
@@ -56,7 +56,7 @@
 .sheet-grabber {
   width: 36px;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--rule-strong);
 }
 

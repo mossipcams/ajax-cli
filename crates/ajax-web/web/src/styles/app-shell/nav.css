@@ -24,7 +24,7 @@
 .bottom-nav button {
   min-height: 44px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #a9a9ad;
   font-size: var(--text-body);

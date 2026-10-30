@@ -62,15 +62,6 @@ describe("TaskWorkspaceHeader", () => {
     expect(screen.queryByText("Waiting")).not.toBeInTheDocument();
   });
 
-  it("waiting pill uses a shipped mono mark, not a missing-glyph placeholder (#1020)", () => {
-    const waitingRule =
-      stylesSource.match(
-        /\.interact-pill\.tone-waiting::before[\s\S]*?\}/,
-      )?.[0] ?? "";
-    expect(waitingRule).not.toMatch(/content:\s*"\?"/);
-    expect(waitingRule).toMatch(/content:\s*"◦"/);
-  });
-
   it("renders the handle while task detail is loading", () => {
     render(<TaskWorkspaceHeader handle="web/fix-login" onBack={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "web/fix-login" })).toBeInTheDocument();

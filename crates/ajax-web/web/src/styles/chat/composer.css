@@ -62,7 +62,7 @@ html.keyboard-open .session-composer {
   min-width: 44px;
   padding: 8px 12px;
   border: 1px solid var(--rule-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   font-size: var(--text-label);
@@ -190,7 +190,7 @@ html.keyboard-open .session-composer textarea {
   min-height: 32px;
   padding: 4px 8px;
   border: 1px solid var(--rule);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: var(--text-micro);
 }
 
@@ -216,7 +216,7 @@ html.keyboard-open .session-composer textarea {
   margin: 0 0 6px;
   padding: 0;
   border: 1px solid var(--rule);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--paper);
   max-height: 180px;
   overflow: auto;
