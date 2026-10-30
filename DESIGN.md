@@ -294,7 +294,8 @@ Square-shouldered and calm: 6px corners on every operator control, sparse hairli
 
 ### Task identity
 A task looks the same on every screen: the dashboard row, the chat head, the terminal header and the task details sheet all show the same three pieces.
-- **Title:** sans, `--text-body`, weight 600. Never mono, never uppercase.
+- **Title:** sans, weight 600: `--text-body` in lists, `--text-heading` as the page title. Never mono, never uppercase.
+- **Waiting rows:** the dashboard row's label uses `#d6b88f`, the one status color outside `--tone`.
 - **Status:** a 9px dot in `--tone` plus a sentence-case label (`Running`, `Needs input`, `Error`, `Done`). The label is neutral (Ink Muted) and takes `--tone` only for waiting and error. No glyph-and-uppercase variant.
 - **Back:** neutral Ink text, sans, not uppercase. The same treatment on every screen, never blue and never tinted by status.
 

@@ -30,7 +30,7 @@
 
 .detail-title {
   margin: 0;
-  font-size: var(--text-body);
+  font-size: var(--text-heading);
   font-weight: 600;
   line-height: 1.3;
   text-transform: none;

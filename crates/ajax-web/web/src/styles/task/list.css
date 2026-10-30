@@ -160,6 +160,10 @@
   min-width: 0;
 }
 
+.task-row.tone-waiting {
+  --tone: #d6b88f;
+}
+
 /* Clean status text, no pill box, no uppercase. Neutral by default; only rows
    that need the operator (waiting / error) carry their hue into the text. */
 .task-row-status {

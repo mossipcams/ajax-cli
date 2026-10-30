@@ -98,4 +98,9 @@ is known not to run under nono. CI's Web job has to cover it.
 - Not run: `web:smoke` and all browser e2e (no browser runs in this sandbox), full-workspace nextest, clippy (no Rust changed)
 - No browser has rendered this design. Layout needs CI's Web job and a look on a phone.
 
+A real render through the host-Chrome Playwright MCP (393 wide, mocked API) replaced the "no browser" gap above for the dashboard and the chat head. It found what vitest could not: `e2e/visual.test.ts` still pinned the old design.
+- Line 45 (runs in CI) pins `#d6b88f` on the waiting row label. Kept the test: `.task-row.tone-waiting` restores that value, and `DESIGN.md` records it as the one status color outside `--tone`.
+- Line 157 (desktop-chromium only) pins a 16px task page title. `.detail-title` returns to `--text-heading`, the foundation token for it, and the 13px phone override is gone, so the page title is 16px everywhere. `DESIGN.md` now says `--text-body` in lists and `--text-heading` as the page title.
+- Line 154 (desktop-chromium only) pinned the same `◦`, so that one assertion is deleted under the "Retire the o" approval.
+
 The user approved retiring the #1020 `◦` test on 2026-10-30. The test and the `.interact-pill.tone-waiting::before` rule are deleted. Qwen hit a provider error mid-round, so the ledger update was re-routed.
