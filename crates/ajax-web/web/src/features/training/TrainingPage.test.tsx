@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import * as trainingApi from "./trainingApi";
-import { formatElapsed, formatEta } from "./trainingPageModel";
+import { finishLabel, formatElapsed, formatEta } from "./trainingPageModel";
 
 const fetchDatasets = vi.spyOn(trainingApi, "fetchTrainingDatasets");
 const fetchEvals = vi.spyOn(trainingApi, "fetchTrainingEvals");
@@ -412,5 +412,92 @@ describe("TrainingPage run stats", () => {
     mountPage();
     await screen.findByLabelText("Run stats");
     expect(screen.queryByRole("figure", { name: "Loss trend" })).toBeNull();
+  });
+});
+
+describe("TrainingPage finish time", () => {
+  it("shows a finish block from the run eta_s while training runs", async () => {
+    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: baseStatus({
+        device: "gpu", pipeline,
+        run: {
+          kind: "canary",
+          started: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          running: true,
+          external: false,
+          progress: { step: 1240, total: 3000, loss: 0.47, eta_s: 3410 },
+          log_tail: [],
+        },
+      }),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    const block = await screen.findByTestId("training-page-eta");
+    expect(within(block).getByText(`Done around ${finishLabel(3410)}`)).toBeTruthy();
+    expect(within(block).getByText(`${formatEta(3410)} left`)).toBeTruthy();
+  });
+
+  it("shows an estimating line while a job runs without an estimate", async () => {
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: baseStatus({
+        device: "gpu", pipeline,
+        run: { kind: "canary", started: "", running: true, external: false, progress: null, log_tail: [] },
+      }),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    expect(await screen.findByTestId("training-page-eta")).toHaveTextContent("Estimating finish time…");
+  });
+
+  it("shows an eval-based finish block from eval_progress", async () => {
+    vi.setSystemTime(new Date("2026-01-15T12:00:00Z"));
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: baseStatus({
+        device: "cpu", pipeline,
+        eval_progress: [{ checkpoint_label: "step-100", group: "g1", labels: ["a", "b", "c", "d"], done: ["a", "b"], current: null, elapsed_s: 60 }],
+      }),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    const block = await screen.findByTestId("training-page-eta");
+    expect(within(block).getByText(`Done around ${finishLabel(60)}`)).toBeTruthy();
+    expect(within(block).getByText(`${formatEta(60)} left`)).toBeTruthy();
+  });
+
+  it("hides the finish block when nothing is active", async () => {
+    mountPage();
+    await screen.findByTestId("training-device");
+    expect(screen.queryByTestId("training-page-eta")).toBeNull();
+  });
+});
+
+describe("TrainingPage disclosures", () => {
+  it("keeps Pipeline collapsed when idle and while a job runs", async () => {
+    const view = mountPage();
+    expect(await screen.findByTestId("training-disclosure-pipeline")).toHaveProperty("open", false);
+
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: runningStatus([]),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    view.rerender(<TrainingPage onBack={vi.fn()} />);
+    expect(screen.getByTestId("training-disclosure-pipeline")).toHaveProperty("open", false);
+  });
+
+  it("keeps Datasets, Evals and Log collapsed by default", async () => {
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: runningStatus([]),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    for (const id of ["training-disclosure-datasets", "training-disclosure-evals", "training-disclosure-log"]) {
+      expect(await screen.findByTestId(id)).toHaveProperty("open", false);
+    }
   });
 });

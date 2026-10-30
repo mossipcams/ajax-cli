@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { finishClock, lossSeries, stepsPerMinute } from "./trainingPageModel";
+import { evalEtaSeconds, finishClock, finishLabel, formatElapsed, lossSeries, parseStartedMs, rowsEtaSeconds, stepsPerMinute } from "./trainingPageModel";
 
 describe("lossSeries", () => {
   it("returns loss values in line order from dict-style logs", () => {
@@ -57,6 +57,30 @@ describe("stepsPerMinute", () => {
     const started = new Date(now - 10 * 60 * 1000).toISOString();
     expect(stepsPerMinute(0, started, now)).toBeNull();
   });
+
+
+  it("parses the compact gpu-ctl started timestamp (#1523)", () => {
+    const compactNow = Date.parse("2026-10-29T14:35:35Z");
+    expect(stepsPerMinute(100, "20261029T143355", compactNow)).toBeCloseTo(60);
+  });
+});
+
+
+describe("parseStartedMs", () => {
+  it("parses ISO strings via Date.parse", () => {
+    expect(parseStartedMs("2026-01-15T12:00:00Z")).toBe(Date.parse("2026-01-15T12:00:00Z"));
+  });
+
+  it("reads the compact gpu-ctl form as UTC", () => {
+    expect(parseStartedMs("20261029T143355")).toBe(Date.parse("2026-10-29T14:33:55Z"));
+  });
+
+  it("returns null for empty, null or garbage input", () => {
+    expect(parseStartedMs(null)).toBeNull();
+    expect(parseStartedMs("")).toBeNull();
+    expect(parseStartedMs("garbage")).toBeNull();
+    expect(parseStartedMs("2026-13-99T99:99:99Z")).toBeNull();
+  });
 });
 
 describe("finishClock", () => {
@@ -76,5 +100,82 @@ describe("finishClock", () => {
 
   it("returns null when eta is not finite", () => {
     expect(finishClock(Number.NaN, now)).toBeNull();
+  });
+});
+
+describe("formatElapsed compact started timestamps (#1523)", () => {
+  it("parses the compact gpu-ctl started timestamp instead of Date.parse", () => {
+    const now = Date.parse("2026-10-29T14:44:55Z");
+    expect(formatElapsed("20261029T143355", now)).toBe("11 min");
+  });
+});
+
+describe("finishLabel", () => {
+  const now = Date.parse("2026-01-15T12:00:00Z");
+
+  it("returns just the clock when finishing on the same calendar day", () => {
+    expect(finishLabel(60, now)).toBe(finishClock(60, now));
+  });
+
+  it("prefixes tomorrow for the next calendar day", () => {
+    const target = new Date(now);
+    target.setDate(target.getDate() + 1);
+    target.setHours(8, 0, 0, 0);
+    const eta = (target.getTime() - now) / 1000;
+    expect(finishLabel(eta, now)).toBe(`tomorrow ${finishClock(eta, now)}`);
+  });
+
+  it("uses the short weekday for days beyond tomorrow", () => {
+    const target = new Date(now);
+    target.setDate(target.getDate() + 3);
+    target.setHours(9, 0, 0, 0);
+    const eta = (target.getTime() - now) / 1000;
+    expect(finishLabel(eta, now)).toBe(`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][target.getDay()]} ${finishClock(eta, now)}`);
+  });
+
+  it("returns null when eta is null or not finite", () => {
+    expect(finishLabel(null, now)).toBeNull();
+    expect(finishLabel(Number.NaN, now)).toBeNull();
+  });
+});
+
+describe("evalEtaSeconds", () => {
+  const entry = (done: number, labels = 4, elapsedS: number | null = 120) => ({
+    checkpoint_label: "ckpt",
+    group: "grp",
+    current: null,
+    labels: Array.from({ length: labels }, (_, i) => `label-${i}`),
+    done: Array.from({ length: done }, (_, i) => `label-${i}`),
+    elapsed_s: elapsedS,
+  });
+
+  it("returns the max remaining seconds across qualifying entries", () => {
+    expect(evalEtaSeconds([entry(2, 4, 120), entry(3, 6, 30)])).toBe(120);
+  });
+
+  it("skips entries without progress and returns null when none qualify", () => {
+    expect(evalEtaSeconds([])).toBeNull();
+    expect(evalEtaSeconds([entry(0), entry(2, 4, 0), entry(2, 4, null)])).toBeNull();
+  });
+});
+
+describe("rowsEtaSeconds", () => {
+  const t0 = Date.parse("2026-01-15T12:00:00Z");
+
+  it("divides remaining rows by the observed rate", () => {
+    expect(rowsEtaSeconds({ rows: 100, atMs: t0 }, { rows: 400, atMs: t0 + 60_000 }, 1000)).toBe(120);
+  });
+
+  it("returns null when target is null", () => {
+    expect(rowsEtaSeconds({ rows: 100, atMs: t0 }, { rows: 400, atMs: t0 + 60_000 }, null)).toBeNull();
+  });
+
+  it("returns null when rows did not increase", () => {
+    expect(rowsEtaSeconds({ rows: 400, atMs: t0 }, { rows: 400, atMs: t0 + 60_000 }, 1000)).toBeNull();
+    expect(rowsEtaSeconds({ rows: 500, atMs: t0 }, { rows: 400, atMs: t0 + 60_000 }, 1000)).toBeNull();
+  });
+
+  it("returns null when the samples are under 60 seconds apart", () => {
+    expect(rowsEtaSeconds({ rows: 100, atMs: t0 }, { rows: 400, atMs: t0 + 59_000 }, 1000)).toBeNull();
   });
 });
