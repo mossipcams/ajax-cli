@@ -1,3 +1,4 @@
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::TryRecvError;
@@ -5,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::jsonl_process::{JsonlProcess, JsonlRecord, FAIL_READER_SPAWN};
 
 fn pid_alive(pid: u64) -> bool {
     Command::new("kill")
@@ -77,5 +78,77 @@ fn dropping_the_process_also_kills_its_grandchildren() {
     assert!(
         gone,
         "grandchild {grandchild} survived dropping JsonlProcess: the child must run in its own process group and the group must be killed"
+    );
+}
+
+#[test]
+fn issue_1278_failed_reader_start_kills_and_reaps_the_child() {
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", "exec sleep 300"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    super::process_group::own_group(&mut command);
+    let mut child = command.spawn().expect("spawn sleep");
+    let pid = u64::from(child.id());
+    let stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+
+    let (done_sender, done) = std::sync::mpsc::channel::<bool>();
+    let start = std::thread::spawn(move || {
+        FAIL_READER_SPAWN.with(|fail| fail.set(true));
+        let result = JsonlProcess::from_parts(
+            child,
+            Box::new(stdin),
+            Box::new(stdout),
+            Some(Box::new(stderr)),
+        );
+        let _ = done_sender.send(result.is_err());
+    });
+
+    let returned_err = done.recv_timeout(Duration::from_secs(5)).ok();
+    let alive = pid_alive(pid);
+    if alive {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+    start.join().expect("start thread");
+
+    assert_eq!(
+        returned_err,
+        Some(true),
+        "reader spawn failure must surface as an error"
+    );
+    assert!(
+        !alive,
+        "child {pid} survived a failed JsonlProcess start: the child must be killed and reaped"
+    );
+}
+
+#[test]
+fn issue_1278_failed_reader_start_in_attach_leaves_the_shim_alive() {
+    let mut shim = Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("spawn shim stand-in");
+    let pid = shim.id();
+    let (reader, _peer_reader) = UnixStream::pair().expect("reader socket pair");
+    let (writer, _peer_writer) = UnixStream::pair().expect("writer socket pair");
+
+    FAIL_READER_SPAWN.with(|fail| fail.set(true));
+    let result = JsonlProcess::attach(Box::new(reader), Box::new(writer), pid);
+
+    let alive = pid_alive(u64::from(pid));
+    let _ = shim.kill();
+    let _ = shim.wait();
+
+    assert!(
+        result.is_err(),
+        "reader spawn failure must surface as an error"
+    );
+    assert!(
+        alive,
+        "attach must not kill the shim {pid}: it holds a running agent"
     );
 }

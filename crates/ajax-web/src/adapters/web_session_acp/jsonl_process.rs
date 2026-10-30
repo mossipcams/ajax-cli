@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -18,6 +20,11 @@ const DROP_GRACE: Duration = Duration::from_secs(2);
 pub(super) const SHIM_EXIT_GRACE: Duration = Duration::from_secs(5);
 
 const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static FAIL_READER_SPAWN: Cell<bool> = const { Cell::new(false) };
+}
 
 #[derive(Debug)]
 pub enum JsonlRecord {
@@ -99,20 +106,13 @@ impl JsonlProcess {
         stderr: Option<Box<dyn Read + Send>>,
     ) -> io::Result<Self> {
         let (sender, records) = mpsc::channel::<JsonlRecord>();
-        std::thread::Builder::new()
-            .name("jsonl-stdout".to_owned())
-            .spawn(move || {
-                read_stdout_lines(stdout, &sender);
-            })?;
-
         let stderr_tail: Arc<Mutex<Vec<u8>>> = Arc::default();
-        if let Some(stderr) = stderr {
-            let tail_guard = Arc::clone(&stderr_tail);
-            std::thread::Builder::new()
-                .name("jsonl-stderr".to_owned())
-                .spawn(move || {
-                    drain_stderr(stderr, &tail_guard);
-                })?;
+        if let Err(error) = spawn_reader_threads(stdout, stderr, sender, Arc::clone(&stderr_tail)) {
+            if let Some(mut child) = child {
+                super::process_group::kill_tree(&mut child);
+                let _ = child.wait();
+            }
+            return Err(error);
         }
 
         Ok(Self {
@@ -236,6 +236,32 @@ impl Drop for JsonlProcess {
         }
         let _ = child.wait();
     }
+}
+
+fn spawn_reader_threads(
+    stdout: Box<dyn Read + Send>,
+    stderr: Option<Box<dyn Read + Send>>,
+    sender: mpsc::Sender<JsonlRecord>,
+    stderr_tail: Arc<Mutex<Vec<u8>>>,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_READER_SPAWN.with(|fail| fail.replace(false)) {
+        return Err(io::Error::other("injected reader thread spawn failure"));
+    }
+    std::thread::Builder::new()
+        .name("jsonl-stdout".to_owned())
+        .spawn(move || {
+            read_stdout_lines(stdout, &sender);
+        })?;
+
+    if let Some(stderr) = stderr {
+        std::thread::Builder::new()
+            .name("jsonl-stderr".to_owned())
+            .spawn(move || {
+                drain_stderr(stderr, &stderr_tail);
+            })?;
+    }
+    Ok(())
 }
 
 pub(super) fn request_shim_shutdown(stdin: &mut impl Write) -> io::Result<()> {
