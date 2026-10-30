@@ -565,3 +565,245 @@ fn retiring_a_task_without_ci_state_leaves_it_unchanged() {
         .metadata
         .contains_key(crate::agent_notification::CI_MONITOR_STATE_KEY));
 }
+
+struct MergeRunner {
+    prs: String,
+    checks: String,
+    mergeable: String,
+    commands: Vec<CommandSpec>,
+}
+
+impl CommandRunner for MergeRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        self.commands.push(command.clone());
+        let stdout = match command.args.get(1).map(String::as_str) {
+            Some("list") => self.prs.clone(),
+            Some("view") => self.mergeable.clone(),
+            _ => self.checks.clone(),
+        };
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+fn pr_list_json(head: &str) -> String {
+    format!(
+        r#"[{{"number":42,"title":"Fix","url":"https://github.test/pull/42","state":"OPEN","headRefName":"ajax/fix-login","headRefOid":"{head}"}}]"#
+    )
+}
+
+fn mergeable_json(state: &str) -> String {
+    format!(r#"{{"mergeable":"{state}"}}"#)
+}
+
+const SUCCESS_CHECKS: &str =
+    r#"[{"name":"CI","state":"SUCCESS","link":"https://github.test/actions/runs/1"}]"#;
+const FAILURE_CHECKS: &str =
+    r#"[{"name":"CI","state":"FAILURE","link":"https://github.test/actions/runs/1"}]"#;
+
+fn merge_tick(
+    ctx: &mut crate::commands::CommandContext<crate::registry::InMemoryRegistry>,
+    runner: &mut MergeRunner,
+    now: u64,
+) {
+    let mut changed = false;
+    refresh_ci_monitor(ctx, runner, now, &snapshots(&ctx.registry), &mut changed);
+}
+
+fn record_for_stored_task(
+    ctx: &mut crate::commands::CommandContext<crate::registry::InMemoryRegistry>,
+    status: AgentNotificationDeliveryStatus,
+) {
+    let notification_id = pending_notification(&task0(&ctx.registry))
+        .expect("notification")
+        .id()
+        .to_string();
+    let stored = ctx
+        .registry
+        .get_task_mut(&crate::models::TaskId::new("task-1"))
+        .unwrap();
+    record_delivery(
+        stored,
+        AgentNotificationDelivery {
+            notification_id,
+            status,
+            detail: None,
+        },
+    );
+}
+
+fn pr_view_count(commands: &[CommandSpec]) -> usize {
+    commands
+        .iter()
+        .filter(|command| command.args.get(1).is_some_and(|arg| arg == "view"))
+        .count()
+}
+
+#[test]
+fn merge_conflict_notifies_once_until_delivery_is_queued() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: SUCCESS_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    merge_tick(&mut ctx, &mut runner, 1400);
+    let notification = pending_notification(&task0(&ctx.registry)).expect("conflict notification");
+    assert!(matches!(
+        notification,
+        crate::agent_notification::AgentNotification::MergeConflict { .. }
+    ));
+    assert_eq!(notification.id(), "merge-conflict:task-1:42:aaa");
+
+    record_for_stored_task(&mut ctx, AgentNotificationDeliveryStatus::Error);
+    assert!(pending_notification(&task0(&ctx.registry)).is_some());
+
+    record_for_stored_task(&mut ctx, AgentNotificationDeliveryStatus::Queued);
+    merge_tick(&mut ctx, &mut runner, 1800);
+    assert!(pending_notification(&task0(&ctx.registry)).is_none());
+}
+
+#[test]
+fn merge_conflict_on_new_head_notifies_again() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: SUCCESS_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    merge_tick(&mut ctx, &mut runner, 1400);
+    record_for_stored_task(&mut ctx, AgentNotificationDeliveryStatus::Accepted);
+    assert!(pending_notification(&task0(&ctx.registry)).is_none());
+
+    runner.prs = pr_list_json("bbb");
+    merge_tick(&mut ctx, &mut runner, 1800);
+    assert_eq!(pr_view_count(&runner.commands), 1);
+    assert!(!load_state(&task0(&ctx.registry)).merge_conflict);
+    assert!(pending_notification(&task0(&ctx.registry)).is_none());
+    merge_tick(&mut ctx, &mut runner, 2200);
+    let notification = pending_notification(&task0(&ctx.registry)).expect("new head notification");
+    assert_eq!(notification.id(), "merge-conflict:task-1:42:bbb");
+}
+
+#[test]
+fn mergeable_probe_clears_merge_conflict() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: SUCCESS_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    merge_tick(&mut ctx, &mut runner, 1400);
+    assert!(load_state(&task0(&ctx.registry)).merge_conflict);
+
+    runner.mergeable = mergeable_json("MERGEABLE");
+    merge_tick(&mut ctx, &mut runner, 1800);
+    assert!(!load_state(&task0(&ctx.registry)).merge_conflict);
+    assert!(pending_notification(&task0(&ctx.registry)).is_none());
+}
+
+#[test]
+fn unknown_mergeable_keeps_prior_merge_conflict() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: SUCCESS_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    merge_tick(&mut ctx, &mut runner, 1400);
+
+    runner.mergeable = mergeable_json("UNKNOWN");
+    runner.checks = FAILURE_CHECKS.into();
+    merge_tick(&mut ctx, &mut runner, 1800);
+    assert!(load_state(&task0(&ctx.registry)).merge_conflict);
+    assert_eq!(
+        load_state(&task0(&ctx.registry)).last_mergeable_probe_at,
+        Some(1800)
+    );
+    assert_eq!(pr_view_count(&runner.commands), 2);
+    merge_tick(&mut ctx, &mut runner, 1810);
+    assert_eq!(pr_view_count(&runner.commands), 2);
+}
+
+#[test]
+fn failing_ci_on_conflicted_head_yields_merge_conflict_not_ci_failed() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: FAILURE_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    merge_tick(&mut ctx, &mut runner, 1400);
+    let state = load_state(&task0(&ctx.registry));
+    assert_eq!(state.status, CiAttemptStatus::Failed);
+    assert!(state.episode_id.is_some());
+    let notification = pending_notification(&task0(&ctx.registry)).expect("notification");
+    assert!(matches!(
+        notification,
+        crate::agent_notification::AgentNotification::MergeConflict { .. }
+    ));
+}
+
+#[test]
+fn mergeability_probe_skipped_on_first_head_probe_then_runs_once_when_due() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: SUCCESS_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    assert_eq!(pr_view_count(&runner.commands), 0);
+
+    merge_tick(&mut ctx, &mut runner, 1300);
+    assert_eq!(pr_view_count(&runner.commands), 1);
+}
+
+#[test]
+fn mergeability_probe_uses_discovery_cadence_while_checks_are_active() {
+    let mut ctx = context_with_active_task();
+    reset_monitor(&mut ctx);
+    let mut runner = MergeRunner {
+        prs: pr_list_json("aaa"),
+        checks: FAILURE_CHECKS.into(),
+        mergeable: mergeable_json("CONFLICTING"),
+        commands: Vec::new(),
+    };
+    merge_tick(&mut ctx, &mut runner, 1000);
+    assert_eq!(pr_view_count(&runner.commands), 0);
+    assert_eq!(runner.commands.len(), 2);
+
+    merge_tick(&mut ctx, &mut runner, 1010);
+    assert_eq!(pr_view_count(&runner.commands), 0);
+    assert_eq!(runner.commands.len(), 3);
+
+    merge_tick(&mut ctx, &mut runner, 1290);
+    assert_eq!(pr_view_count(&runner.commands), 0);
+    merge_tick(&mut ctx, &mut runner, 1300);
+    assert_eq!(pr_view_count(&runner.commands), 1);
+
+    merge_tick(&mut ctx, &mut runner, 1310);
+    assert_eq!(pr_view_count(&runner.commands), 1);
+    merge_tick(&mut ctx, &mut runner, 1600);
+    assert_eq!(pr_view_count(&runner.commands), 2);
+}
