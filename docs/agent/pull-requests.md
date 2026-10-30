@@ -134,12 +134,16 @@ title (`feat`, `fix`, `perf`, `refactor`, `chore`).
 
 1. Requires a feature branch (not `main` or detached).
 2. Parses `type/scope/description` from the branch name.
-3. Fetches `origin/$BASE_BRANCH` (default `main`).
-4. Commits dirty worktrees with the derived title when needed.
-5. Exits if there are no commits ahead of the base branch.
-6. Pushes the branch to `origin`.
-7. Prints the existing PR URL when one already exists for the branch.
-8. Otherwise creates the PR, strips Cursor footer / co-author lines from the
+3. Checks for an existing PR on the branch before committing or pushing: it
+   remembers an open PR, and if none exists it checks for a merged PR; a
+   merged PR blocks the run, prints its URL with a message to move the work
+   to a new `type/scope/description` branch, and exits.
+4. Fetches `origin/$BASE_BRANCH` (default `main`).
+5. Commits dirty worktrees with the derived title when needed.
+6. Exits if there are no commits ahead of the base branch.
+7. Pushes the branch to `origin`.
+8. Prints the existing PR URL when one already exists for the branch.
+9. Otherwise creates the PR, strips Cursor footer / co-author lines from the
    body, and prints the URL.
 
 The orchestrator reviews the delta and reports that URL.
