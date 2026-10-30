@@ -331,6 +331,10 @@ impl fmt::Display for RegistrySnapshotError {
                 formatter,
                 "state revision conflict: expected {expected}, found {actual}"
             ),
+            Self::IncompatibleSchema { found, supported } if found < supported => write!(
+                formatter,
+                "incompatible state schema: found {found}, supported {supported}; upgrade through ajax-cli v0.59.0 first"
+            ),
             Self::IncompatibleSchema { found, supported } => write!(
                 formatter,
                 "incompatible state schema: found {found}, supported {supported}"
