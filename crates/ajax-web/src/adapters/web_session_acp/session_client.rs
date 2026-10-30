@@ -159,7 +159,7 @@ impl SessionClient {
     }
 
     fn pi(client: PiRpcClient, adopted: bool) -> Self {
-        let session_id = client.session_id();
+        let session_id = client.core().session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Pi(PiSession {
             client,
@@ -170,7 +170,7 @@ impl SessionClient {
     }
 
     fn claude(client: ClaudeSdkClient, adopted: bool) -> Self {
-        let session_id = client.session_id();
+        let session_id = client.core().session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Claude(ClaudeSession {
             client,
@@ -181,7 +181,7 @@ impl SessionClient {
     }
 
     fn cursor(client: CursorSdkClient, adopted: bool) -> Self {
-        let session_id = client.session_id();
+        let session_id = client.core().session_id();
         let session_new_result = serde_json::json!({ "sessionId": session_id });
         SessionClient::Cursor(CursorSession {
             client,
@@ -290,9 +290,9 @@ impl SessionClient {
         .map_err(AcpSpawnError::Message)?;
 
         if let Some(expected) = resume_session_id {
-            let actual = client.session_id();
+            let actual = client.core().session_id();
             if actual != expected {
-                client.shutdown();
+                client.core().shutdown();
                 return Err(AcpSpawnError::Restore(RestoreFailure::Rejected {
                     session_id: expected.to_string(),
                     method: RestoreMethod::Resume,
@@ -405,11 +405,17 @@ impl SessionClient {
             }
             SessionClient::Claude(session) => {
                 let (text, images) = prompt_parts(blocks);
-                session.client.begin_prompt_with_images(&text, &images)
+                session
+                    .client
+                    .core()
+                    .begin_prompt_with_images(&text, &images)
             }
             SessionClient::Cursor(session) => {
                 let (text, images) = prompt_parts(blocks);
-                session.client.begin_prompt_with_images(&text, &images)
+                session
+                    .client
+                    .core()
+                    .begin_prompt_with_images(&text, &images)
             }
         }
     }

@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::agent_event::NativeImage;
 use super::agent_event::{AgentEvent, NativeCommand, NativeEvent};
 use super::claude_sdk_map::map_sdk_message;
 use super::jsonl_process::JsonlProcess;
@@ -50,9 +49,6 @@ struct ClaudeState {
 }
 
 impl ClaudeSdkClient {
-    pub fn child_pid(&self) -> Option<u32> {
-        self.core.child_pid()
-    }
     pub fn spawn(
         program: &Path,
         program_args: &[String],
@@ -150,14 +146,6 @@ impl ClaudeSdkClient {
         &self.core
     }
 
-    pub fn session_id(&self) -> String {
-        self.core.session_id()
-    }
-
-    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.core.take_available_commands()
-    }
-
     pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let state = self.state.lock().expect("claude_sdk_client mutex poisoned");
         let mut options = Vec::new();
@@ -251,26 +239,6 @@ impl ClaudeSdkClient {
         Ok(())
     }
 
-    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
-        self.core.begin_prompt(message)
-    }
-
-    pub fn begin_prompt_with_images(
-        &self,
-        message: &str,
-        images: &[NativeImage],
-    ) -> Result<u64, String> {
-        self.core.begin_prompt_with_images(message, images)
-    }
-
-    pub fn cancel(&self) -> Result<(), String> {
-        self.core.cancel()
-    }
-
-    pub fn prompt_in_flight(&self) -> bool {
-        self.core.prompt_in_flight()
-    }
-
     pub fn respond_elicitation(
         &self,
         request_id: &str,
@@ -278,22 +246,6 @@ impl ClaudeSdkClient {
     ) -> Result<(), String> {
         self.core
             .respond("elicitation_response", request_id, fields)
-    }
-
-    pub fn poll_event(&self) -> Option<AgentEvent> {
-        self.core.poll_event()
-    }
-
-    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
-        self.core.wait_event(timeout)
-    }
-
-    pub fn shutdown(&self) -> Option<String> {
-        self.core.shutdown()
-    }
-
-    pub fn host_exited(&self) -> bool {
-        self.core.host_exited()
     }
 }
 
