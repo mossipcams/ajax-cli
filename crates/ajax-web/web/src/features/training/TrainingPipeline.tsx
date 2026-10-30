@@ -20,13 +20,20 @@ export default function TrainingPipeline({ status, championRunId, jobsDisabled, 
       <h3 id="training-pipeline-heading">Pipeline</h3>
       <p className="training-muted">Training map · from candidate rows to a champion checkpoint</p>
       <TrainingFlowMap flow={flow} onAction={onAction} />
-      <div className="training-actions-secondary training-page-secondary">
-        <Button type="button" variant="secondary" disabled={jobsDisabled} onClick={() => onAction({ kind: "job", job: "generate" })}>
-          Generate data
-        </Button>
-        <Button type="button" variant="secondary" disabled={jobsDisabled} onClick={() => onAction({ kind: "job", job: "wake-train" })}>
-          Wake train
-        </Button>
+      <div className="training-other-jobs" role="group" aria-label="Other jobs">
+        <span className="training-map-eyebrow">Other jobs</span>
+        <div className="training-other-job">
+          <Button type="button" variant="secondary" disabled={jobsDisabled} onClick={() => onAction({ kind: "job", job: "generate" })}>
+            Generate data
+          </Button>
+          <span className="training-muted">Draft new candidate rows for a dataset.</span>
+        </div>
+        <div className="training-other-job">
+          <Button type="button" variant="secondary" disabled={jobsDisabled} onClick={() => onAction({ kind: "job", job: "wake-train" })}>
+            Wake train
+          </Button>
+          <span className="training-muted">Trains the wake-word model; runs outside this pipeline.</span>
+        </div>
       </div>
     </section>
   );
