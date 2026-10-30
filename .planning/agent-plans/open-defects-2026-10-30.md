@@ -85,6 +85,9 @@ needs thread-spawn failure, which is rare. #1407 and #1365 affect only tests.
 
 ### Batch 1: #1534, finish `fix/web/restart-silent-success`
 
+Not started by this plan. As of 2026-10-30 the work is still uncommitted in
+`../ajax-restart-agent`, owned by that session, so it was left alone.
+
 The worktree has server output, a `Restarting agent…` message, a success
 message, and `settle_resent_prompt`, which marks the prompt interrupted between
 detach and acquire so recovery writes no false note.
@@ -101,7 +104,7 @@ detach and acquire so recovery writes no false note.
   dispatching prompts are "never resent". The branch only updates
   `web-session-behavior.md`.
 
-### Batch 2: #1435, branch `fix/web/transcript-backlog-shutdown`
+### Batch 2: #1435, PR #1539
 
 Write scope: `task_session.rs`, `task_session_commit.rs`,
 `transcript_backlog_tests.rs` (new), `web-session-behavior.md`. Put new logic in
@@ -128,27 +131,27 @@ that resets the backoff, because `issue_1503` expects a pump to clear the fault
 immediately. `TaskSessionState::new` was extracted so tests can build bare state;
 a line-multiset diff confirmed it is a pure move.
 
-### Batch 3: #1278, branch `fix/web/jsonl-reader-spawn-leak`
+### Batch 3: #1278, PR #1540
 
 Write scope: `jsonl_process.rs`, `jsonl_process_group_tests.rs`.
 
-- [ ] Extract the reader-thread spawns from `start()`. On failure, call
+- [x] Extract the reader-thread spawns from `start()`. On failure, call
   `kill_tree` and `wait` on the owned child.
-- [ ] Do not kill in the `attach` path. There `child` is `None` and `pid` is a
+- [x] Do not kill in the `attach` path. There `child` is `None` and `pid` is a
   live shim holding a running agent. Add a test for this.
-- [ ] Port `failed_reader_thread_start_kills_and_reaps_the_child` from #1482.
+- [x] Port `failed_reader_thread_start_kills_and_reaps_the_child` from #1482.
 
-### Batch 4: #1407 and #1365, branch `fix/web/session-test-races`
+### Batch 4: #1407 and #1365, PR #1541
 
 Write scope: `pi_dialog_tests.rs`, `live_harness_tests.rs`, `client.rs` and
 `adapters/web_session_acp/mod.rs` (visibility only). These change tests because
 the bugs are in the tests. No assertion changes.
 
-- [ ] #1407: poll the ledger with a 5 s deadline in the pi dialog test before the
+- [x] #1407: poll the ledger with a 5 s deadline in the pi dialog test before the
   existing assertion, as #1482 did.
-- [ ] #1365: run the live resume on `RESTORE_HANDSHAKE_TIMEOUT` via
+- [x] #1365: run the live resume on `RESTORE_HANDSHAKE_TIMEOUT` via
   `with_test_restore_timeout`, and expose that constant to the test.
-- [ ] #1365: run the opt-in live test unsandboxed. It needs real Codex credentials:
+- [x] #1365: run the opt-in live test unsandboxed. It needs real Codex credentials:
   `AJAX_LIVE_HARNESS=codex cargo test -p ajax-web --lib live_harness_parity -- --ignored --nocapture`
 
 ## Validation
@@ -179,6 +182,14 @@ pkill -f vite; CI=1 npm run web:smoke
   parent); `cargo fmt --check` clean; workspace clippy reported clean by the
   delegate. The delegate's report is flagged invalid only because its
   fail-before entries correctly recorded `fail`.
+- Batch 2 gate on `f7e6849a`: workspace clippy clean, `nextest --workspace
+  --all-features` 3441 passed, 1 skipped. CI green on #1539.
+- Batch 3 gate on `f7e6849a`: workspace clippy clean, 3435 passed, 1 skipped.
+  CI green on #1540. Removing the kill fails its test.
+- Batch 4 gate on `f7e6849a`: workspace clippy clean, 3433 passed, 1 skipped. The
+  pi dialog test passed 20 of 20. The live Codex test passed once, including the
+  resume; the defect failed about 2 runs in 3, so that is not conclusive alone.
+- `git merge-tree` shows #1539 merges cleanly with each of #1540 and #1541.
 - The triage itself ran no local build, because of the disk precondition.
 - Fixed-on-main status comes from reading code at `1139d018` and from CI: Rust
   Test passed on #1532 (`464aaabd`), and Web Unit and Web E2E passed on #1531
@@ -187,6 +198,8 @@ pkill -f vite; CI=1 npm run web:smoke
 
 ## Deviations and assumptions
 
+- Qwen returned `PROVIDER_ERROR` on Batch 3, so Batches 3 and 4 ran on the Haiku
+  fallback.
 - The status checks were focused reads in this session, not a delegated
   discovery round. Implementation still goes through the router.
 - The request was cut off at "resolve each afte". This plan assumes it asked for
