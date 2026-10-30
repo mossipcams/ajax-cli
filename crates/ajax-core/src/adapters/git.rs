@@ -110,21 +110,6 @@ impl GitAdapter {
         )
     }
 
-    pub fn delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["-C", repo_path, "branch", "-d", branch])
-    }
-
-    pub fn force_delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["-C", repo_path, "branch", "-D", branch])
-    }
-
-    pub fn delete_remote_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["-C", repo_path, "push", "origin", "--delete", branch],
-        )
-    }
-
     pub fn delete_branch_substrate(
         &self,
         repo_path: &str,
@@ -165,25 +150,6 @@ impl GitAdapter {
         CommandSpec::new(
             &self.program,
             ["-C", repo_path, "merge", "--ff-only", branch],
-        )
-    }
-
-    pub fn merge_base_is_ancestor(
-        &self,
-        worktree_path: &str,
-        ancestor: &str,
-        descendant: &str,
-    ) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "-C",
-                worktree_path,
-                "merge-base",
-                "--is-ancestor",
-                ancestor,
-                descendant,
-            ],
         )
     }
 
@@ -404,26 +370,6 @@ detached
                     "branch",
                     "-r",
                     "--format=%(refname:short)"
-                ]
-            )
-        );
-    }
-
-    #[test]
-    fn delete_remote_branch_pushes_delete_to_origin() {
-        let adapter = GitAdapter::new("git");
-
-        assert_eq!(
-            adapter.delete_remote_branch("/repos/web", "ajax/fix-login"),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/repos/web",
-                    "push",
-                    "origin",
-                    "--delete",
-                    "ajax/fix-login"
                 ]
             )
         );

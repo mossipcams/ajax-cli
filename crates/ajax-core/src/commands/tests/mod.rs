@@ -1,13 +1,12 @@
 #![allow(unused_imports)]
 pub(super) use super::{
     check_task_plan, clean_task_plan, cockpit, cockpit_inbox, diff_task_plan,
-    doctor_with_environment, inbox, inspect_task, list_repos, list_tasks, mark_stale_tasks,
-    merge_task_plan, new_task_plan, next, observe_drop_resources, open_task_plan,
-    plan_drop_from_observation, plan_drop_from_observation_for_task,
-    refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
-    task_from_new_request, task_window_repair_plan, CommandContext, CommandError,
-    DoctorEnvironment, DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
-    StartProvisioningStep,
+    doctor_with_environment, inbox, inspect_task, list_repos, list_tasks, merge_task_plan,
+    new_task_plan, next, observe_drop_resources, open_task_plan, plan_drop_from_observation,
+    plan_drop_from_observation_for_task, refresh_git_substrate_evidence, remove_task_plan,
+    review_queue, status, sweep_cleanup_plan, task_from_new_request, task_window_repair_plan,
+    CommandContext, CommandError, DoctorEnvironment, DropObservation, DropOp, NewTaskRequest,
+    OpenMode, ResourceState, StartProvisioningStep,
 };
 pub(super) use crate::{
     adapters::{
@@ -545,47 +544,6 @@ proptest! {
         } else {
             prop_assert!(tmux_repair.is_empty());
         }
-    }
-
-    #[test]
-    fn stale_task_marking_uses_seven_day_boundary(
-        seconds_before_boundary in 0u64..(7 * 24 * 60 * 60)
-    ) {
-        let last_activity = std::time::SystemTime::UNIX_EPOCH;
-        let stale_after = std::time::Duration::from_secs(7 * 24 * 60 * 60);
-        let mut before_context = context_with_tasks();
-        before_context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap()
-            .last_activity_at = last_activity;
-        let before_changed = mark_stale_tasks(
-            &mut before_context,
-            last_activity + std::time::Duration::from_secs(seconds_before_boundary),
-        );
-
-        prop_assert_eq!(before_changed, 0);
-        prop_assert!(!before_context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .unwrap()
-            .has_side_flag(SideFlag::Stale));
-
-        let mut boundary_context = context_with_tasks();
-        boundary_context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap()
-            .last_activity_at = last_activity;
-        let boundary_changed =
-            mark_stale_tasks(&mut boundary_context, last_activity + stale_after);
-
-        prop_assert_eq!(boundary_changed, 1);
-        prop_assert!(boundary_context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .unwrap()
-            .has_side_flag(SideFlag::Stale));
     }
 }
 

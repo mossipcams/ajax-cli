@@ -43,30 +43,6 @@ fn doctor_reports_repo_config_problems() {
         Some((false, "no test command configured"))
     );
 }
-
-#[test]
-fn stale_task_marking_marks_inactive_old_tasks() {
-    let mut context = context_with_tasks();
-    let old_activity = std::time::SystemTime::UNIX_EPOCH;
-    context
-        .registry
-        .get_task_mut(&TaskId::new("task-1"))
-        .unwrap()
-        .last_activity_at = old_activity;
-
-    let changed = mark_stale_tasks(
-        &mut context,
-        old_activity + std::time::Duration::from_secs(8 * 24 * 60 * 60),
-    );
-
-    assert_eq!(changed, 1);
-    assert!(context
-        .registry
-        .get_task(&TaskId::new("task-1"))
-        .unwrap()
-        .has_side_flag(SideFlag::Stale));
-}
-
 #[test]
 fn refresh_git_substrate_evidence_updates_stale_missing_worktree_and_branch() {
     let mut context = context_with_tasks();

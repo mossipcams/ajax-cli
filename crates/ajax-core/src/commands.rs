@@ -57,7 +57,7 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::{interpret_git_status, worktree_path_matches},
     config::Config,
-    models::{GitStatus, LifecycleStatus, SideFlag, Task},
+    models::{GitStatus, LifecycleStatus, Task},
     registry::Registry,
 };
 use lookup::find_task;
@@ -67,10 +67,7 @@ use projection::{
     is_visible_task, task_card, task_summary, CockpitProjection, CockpitResponse, CockpitView,
     InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
 };
-use std::{collections::BTreeSet, time::Duration, time::SystemTime};
-
-const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
+use std::collections::BTreeSet;
 pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
     let all_tasks = context.registry.list_tasks();
     list_repos_from_tasks(&context.config, all_tasks.as_slice())
@@ -260,33 +257,6 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         inbox,
     }
 }
-
-pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| is_visible_task(task))
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    let mut tasks_changed = 0;
-
-    for task_id in &task_ids {
-        if let Some(task) = context.registry.get_task_mut(task_id) {
-            let Ok(inactive_for) = now.duration_since(task.last_activity_at) else {
-                continue;
-            };
-
-            if inactive_for >= STALE_AFTER && !task.has_side_flag(SideFlag::Stale) {
-                task.add_side_flag(SideFlag::Stale);
-                tasks_changed += 1;
-            }
-        }
-    }
-
-    tasks_changed
-}
-
 pub fn refresh_git_evidence<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
