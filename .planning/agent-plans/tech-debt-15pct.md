@@ -1,7 +1,7 @@
 # Tech debt: 15% code reduction
 
-Status: Stage 1 and Stage 2 approved 2026-10-30, in progress. Stages 3 to 5 are
-not approved. D4 is rejected: its code is live.
+Status: Stage 1 and Stage 2 done 2026-10-30, removing about 2,400 lines net (0.9%).
+Stages 3 to 5 are not approved. D4 is rejected: its code is live.
 
 ## Goal
 
@@ -56,8 +56,8 @@ removal still needs approval under `AGENTS.md`.
 
 | Tier | Contents | Lines | Cumulative | Approval |
 |---|---|---:|---:|---|
-| 0 | Dead code, literal duplicates, copies of existing code | ~1,750 after corrections | 0.7% | Approved |
-| 1 | Compatibility cutoffs (D7 approved; B-02 deferred) | ~390 | 0.8% | D7 approved |
+| 0 | Dead code, literal duplicates, copies of existing code | 1,648 net, actual | 0.6% | Done |
+| 1 | Compatibility cutoffs (D7 done; B-02 deferred) | 764 net, actual | 0.9% | Done |
 | 2 | Remove TUI and supervisor (A1, A2) | ~18,140 | 8.2% | **Reverses a documented decision** |
 | 3 | Stop creating terminal-agent tasks (A3/G-02) | unmeasured, est. 3-5k | ~9.7% | Lifecycle and registry change |
 | 4 | Remove separable live features (STT, exploratory, Cloudflare Access) | ~9,760 | ~13.5% | Product decision |
@@ -219,19 +219,25 @@ Starts on approval of Tier 0. No public behavior changes.
     `ObservedTaskRuntime`, and `reconcile_runtime_for_task`.
   - Packet 3: D5 after confirming no CLI verb reaches
     `registry_export_json_snapshot`; D6; the two closure items.
-- [ ] PR 2 `chore/core/remove-test-only-code`, about 65 production lines plus their
-  tests, uncredited. Review cut the ~470 estimate: most items are wrappers over live
-  code, the shipped durable-execution family (`docs/architecture/durable-execution.md`),
-  or supervisor-owned, and they stay.
+- [x] PR 2 `chore/core/remove-test-only-code` (#1530): +8, -206. Review cut the ~470
+  estimate: most items are wrappers over live code, the shipped durable-execution
+  family (`docs/architecture/durable-execution.md`), or supervisor-owned, and they
+  stay. Nothing in production sets `SideFlag::Stale` now; its readers stay for
+  existing tasks.
   - Review each test-only item in `ajax-core`: `plan_start_task_operation`,
     `mark_stale_tasks`, `unfinished_executions`, `resolve_recovery`, and the rest
     of the sweep list. Delete it with its tests only when no production path
     needs the behavior. Keep the `run_with_*` seams.
-- [ ] PR 3 `chore/web/remove-dead-code`, ~420 lines
+- [x] PR 3 `chore/web/remove-dead-code` (#1531): +11, -382, excluding `dist`. The
+  four `TestBridge` fields are set and read, so they stay. Two of the eight
+  duplicate groups cover different modules, and the speech pair documents two
+  contracts, so those stay too.
   - B-04 Rust helpers; C1 and C2 barrel exports, re-grepping each export first;
     `ActivityDisclosure.tsx` only, not its test; dead `TestBridge` fields; two CSS
     rules, updating the CSS BASELINE ledger; the literal test duplicates.
-- [ ] PR 3b `chore/web/reuse-existing-helpers`, ~320 lines
+- [x] PR 3b `chore/web/reuse-existing-helpers` (#1532): +169, -244. The E-1 copies
+  under `adapters/web_session_acp` stay: `architecture.rs:157,209` forbid adapters
+  from importing `slices`.
   - E-1: delete local `scratch_dir`, `fake_acp_fixture`, and `pump_until` copies
     where `test_support.rs` already covers them. Assertions do not change. The two
     `adapters` variants stay unless an existing helper fits; none gets created.
@@ -254,16 +260,19 @@ Approved 2026-10-30 with the cutoff left to best practice. Decisions:
   now would make v0.59.0 chat history look empty after an upgrade. Revisit once a
   tagged release has carried the import through at least one further release.
 
-- [ ] PR 5 `feat/core/drop-old-schema-migrations`, ~390 lines
+- [x] PR 5 `feat/core/drop-old-schema-migrations`: +36, -800. Disk was too low for the
+  workspace gate, so local checks ran on `ajax-core`, and CI ran the workspace.
   - Delete `migrate_v2_to_v3` through `migrate_v7_to_current_schema` and the calls
     in `migrate()`. Keep `migrate_v9_to_v10`, `ensure_agent_runs_columns`, and
     `create_current_schema`.
   - No new code path: below v9, the existing `IncompatibleSchema` branch already
-    refuses and leaves the database untouched. Only its message changes, naming
-    ajax-cli v0.59.0 as the upgrade path.
-  - Delete tests that exist only to drive the removed steps. Keep every
-    `IncompatibleSchema` and `LegacySqlitePayloadSchema` test; add v7 to the
-    refusal coverage if it is not there.
+    refuses and leaves the database untouched. A new `found < supported` message
+    arm names ajax-cli v0.59.0 as the upgrade path. The pinned message for a
+    newer-than-supported database is unchanged.
+  - Deleted the six tests that drove the removed steps and their v5, v6, and v7
+    fixtures. Every
+    `IncompatibleSchema` and `LegacySqlitePayloadSchema` test stays, and a new v7
+    test asserts the refusal, the message, and an unchanged `user_version`.
 
 ### Stage 3: Tier 2
 
@@ -346,4 +355,5 @@ Implementation results are recorded per PR in the stage checklists.
   scripts, CSS, feature costs, and transitive closure
 - [x] Implementation plan written
 - [x] Stage 1 and Stage 2 approved 2026-10-30
-- [ ] Stage 1 and Stage 2 implementation (see stage checklists)
+- [x] Stage 1 and Stage 2 implementation (see stage checklists)
+- [ ] Stages 3 to 5: not approved
