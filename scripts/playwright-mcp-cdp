@@ -1,0 +1,2 @@
+#!/bin/sh
+exec npx --yes @playwright/mcp@0.0.83 --cdp-endpoint http://127.0.0.1:9222 --isolated --output-dir "${TMPDIR:-/tmp}/playwright-mcp" "$@"
