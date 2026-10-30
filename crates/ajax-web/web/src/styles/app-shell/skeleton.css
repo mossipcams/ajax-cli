@@ -7,7 +7,7 @@
 
 .skeleton-row {
   height: 56px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-sm);
   background: linear-gradient(
     100deg,
     var(--paper-tint) 30%,

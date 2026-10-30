@@ -23,7 +23,7 @@
   flex: 0 0 auto;
   background: transparent;
   border: 1px solid var(--rule-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--ink);
   font-size: var(--text-label);
   font-weight: 600;
@@ -94,16 +94,11 @@
   cursor: progress;
 }
 
-.action:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* PILL BUTTONS (connection / result / sheet / settings / pane) ------------ */
 .pill {
   background: transparent;
   border: 1px solid var(--rule-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--ink);
   font-size: var(--text-label);
   font-weight: 600;
@@ -143,7 +138,16 @@
   border-color: var(--danger-bright);
 }
 
-.pill:disabled {
-  opacity: 0.4;
+.action:disabled,
+.action.primary:disabled,
+.action.primary[data-destructive="true"]:disabled,
+.action[data-destructive="true"]:disabled,
+.pill:disabled,
+.pill.is-primary:disabled,
+.pill.is-danger:disabled {
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--ink-faint);
+  opacity: 1;
   cursor: not-allowed;
 }

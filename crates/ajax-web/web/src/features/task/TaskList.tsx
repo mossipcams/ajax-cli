@@ -388,6 +388,19 @@ export default function TaskList({
     });
   }, [calm]);
 
+  const { needsYou, otherTasks } = useMemo(() => {
+    const needs: BrowserTaskCard[] = [];
+    const others: BrowserTaskCard[] = [];
+    for (const card of calm) {
+      if (card.attention === "needs-you" || card.attention === "review") {
+        needs.push(card);
+      } else {
+        others.push(card);
+      }
+    }
+    return { needsYou: needs, otherTasks: others };
+  }, [calm]);
+
   const rowProps = {
     nowSecs,
     onOffset: setOffset,
@@ -400,19 +413,26 @@ export default function TaskList({
     onCancelPendingConfirm,
   };
 
+  const renderRow = (card: BrowserTaskCard) => (
+    <TaskRow
+      key={card.qualified_handle}
+      card={card}
+      offset={offsets[card.qualified_handle] ?? 0}
+      {...rowProps}
+    />
+  );
+
   return (
     <>
       {calm.length > 0 ? (
         <section className="tasks" aria-label="Tasks" aria-live="polite">
           <div className="task-list">
-            {calm.map((card) => (
-              <TaskRow
-                key={card.qualified_handle}
-                card={card}
-                offset={offsets[card.qualified_handle] ?? 0}
-                {...rowProps}
-              />
-            ))}
+            {needsYou.length > 0 ? <h2 className="task-group-heading">Needs you</h2> : null}
+            {needsYou.map(renderRow)}
+            {needsYou.length > 0 && otherTasks.length > 0 ? (
+              <h2 className="task-group-heading">Other tasks</h2>
+            ) : null}
+            {otherTasks.map(renderRow)}
           </div>
         </section>
       ) : null}

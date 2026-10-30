@@ -29,8 +29,6 @@
   cursor: pointer;
   font-size: var(--text-label);
   font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -116,8 +114,6 @@
   border-radius: var(--radius-sm);
   font-size: var(--text-micro);
   font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
   color: var(--ink-muted);
 }
 
@@ -225,7 +221,7 @@
 
   .detail-header { margin-bottom: 8px; }
   .detail-header .back { min-height: 32px; padding: 4px 10px 4px 0; }
-  .detail-title { font-size: var(--text-body-sm); line-height: 1.2; }
+  .detail-title { line-height: 1.2; }
 
   /* The details hairline sits flush under the terminal hotbar. */
   .task-meta-chrome {
