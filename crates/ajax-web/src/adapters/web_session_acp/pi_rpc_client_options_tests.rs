@@ -156,7 +156,7 @@ fn pi_current_model_keeps_provider_when_providers_share_model_ids_1279() {
 #[test]
 fn set_model_and_thinking_level_fail_after_shutdown() {
     let client = spawn_client();
-    client.shutdown();
+    client.core().shutdown();
     assert!(client.set_model("fake-provider/fake-model").is_err());
     assert!(client.set_thinking_level("high").is_err());
 }

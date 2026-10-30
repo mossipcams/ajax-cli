@@ -52,6 +52,23 @@ export function busyText(action: PageAction): string {
   }
 }
 
+export function parseStartedMs(started: string | null): number | null {
+  if (!started) return null;
+  if (/^\d{8}T\d{6}$/.test(started)) {
+    const utcMs = Date.UTC(
+      Number(started.slice(0, 4)),
+      Number(started.slice(4, 6)) - 1,
+      Number(started.slice(6, 8)),
+      Number(started.slice(9, 11)),
+      Number(started.slice(11, 13)),
+      Number(started.slice(13, 15)),
+    );
+    return Number.isFinite(utcMs) ? utcMs : null;
+  }
+  const iso = Date.parse(started);
+  return Number.isFinite(iso) ? iso : null;
+}
+
 export function formatEta(seconds: number): string {
   const minutes = Math.round(seconds / 60);
   if (minutes < 1) return `~${Math.max(1, Math.round(seconds))}s`;
@@ -62,9 +79,8 @@ export function formatEta(seconds: number): string {
 }
 
 export function formatElapsed(started: string | null, nowMs: number = Date.now()): string | null {
-  if (!started) return null;
-  const startedMs = Date.parse(started);
-  if (!Number.isFinite(startedMs)) return null;
+  const startedMs = parseStartedMs(started);
+  if (startedMs === null) return null;
   const diff = Math.max(0, nowMs - startedMs);
   if (diff <= 5000) return null;
   const seconds = Math.floor(diff / 1000);
@@ -143,15 +159,52 @@ export function lossSeries(logTail: string[]): number[] {
 const MIN_RATE_ELAPSED_S = 60;
 
 export function stepsPerMinute(step: number, started: string | null, nowMs: number = Date.now()): number | null {
-  if (!started) return null;
-  const startedMs = Date.parse(started);
-  if (!Number.isFinite(startedMs)) return null;
+  const startedMs = parseStartedMs(started);
+  if (startedMs === null || step === 0) return null;
   const elapsedS = (nowMs - startedMs) / 1000;
-  if (elapsedS < MIN_RATE_ELAPSED_S || step === 0) return null;
+  if (elapsedS < MIN_RATE_ELAPSED_S) return null;
   return step / (elapsedS / 60);
 }
 
 export function finishClock(etaSeconds: number | null, nowMs: number = Date.now()): string | null {
   if (etaSeconds === null || !Number.isFinite(etaSeconds)) return null;
   return new Date(nowMs + etaSeconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export function finishLabel(etaSeconds: number | null, nowMs: number = Date.now()): string | null {
+  if (etaSeconds === null || !Number.isFinite(etaSeconds)) return null;
+  const clock = finishClock(etaSeconds, nowMs);
+  if (clock === null) return null;
+  const target = new Date(nowMs + etaSeconds * 1000);
+  const today = new Date(nowMs);
+  const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const daysAhead = Math.round((dayStart(target) - dayStart(today)) / 86_400_000);
+  if (daysAhead === 1) return `tomorrow ${clock}`;
+  if (daysAhead > 1) return `${WEEKDAY_LABELS[target.getDay()]} ${clock}`;
+  return clock;
+}
+
+export function evalEtaSeconds(progress: trainingApi.TrainingEvalProgress[]): number | null {
+  let max: number | null = null;
+  for (const entry of progress) {
+    const elapsedS = entry.elapsed_s ?? 0;
+    if (elapsedS <= 0 || entry.done.length === 0) continue;
+    const remaining = (elapsedS / entry.done.length) * (entry.labels.length - entry.done.length);
+    max = max === null ? remaining : Math.max(max, remaining);
+  }
+  return max;
+}
+
+export function rowsEtaSeconds(
+  first: { rows: number; atMs: number },
+  latest: { rows: number; atMs: number },
+  target: number | null,
+): number | null {
+  if (target === null) return null;
+  const dtS = (latest.atMs - first.atMs) / 1000;
+  if (dtS < MIN_RATE_ELAPSED_S || latest.rows <= first.rows) return null;
+  const rate = (latest.rows - first.rows) / dtS;
+  return (target - latest.rows) / rate;
 }

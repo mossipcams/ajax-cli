@@ -15,7 +15,7 @@ mod tests {
 
     const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
 
-    const KERNEL_MODULES: [&str; 11] = [
+    const KERNEL_MODULES: [&str; 10] = [
         "models",
         "lifecycle",
         "live",
@@ -26,7 +26,6 @@ mod tests {
         "policy",
         "output",
         "ghost_task",
-        "validity",
     ];
 
     #[test]

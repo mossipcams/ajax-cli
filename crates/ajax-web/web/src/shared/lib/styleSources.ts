@@ -4,10 +4,10 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const BASELINE = {
-  sourceStylesCssBytes: 133_551,
-  builtAppCssBytes: 111_770,
-  builtAppCssGzipBytes: 18_728,
-  classSelectorLines: 806,
+  sourceStylesCssBytes: 134_084,
+  builtAppCssBytes: 112_221,
+  builtAppCssGzipBytes: 18_792,
+  classSelectorLines: 811,
   hasSelectors: 18,
 } as const;
 

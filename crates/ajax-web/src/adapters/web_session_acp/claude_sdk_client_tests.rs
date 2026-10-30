@@ -67,6 +67,7 @@ fn collect_until_finished(client: &ClaudeSdkClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
         let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
@@ -116,7 +117,7 @@ fn select_view(options: &[super::NeutralConfigOption], id: &str) -> SelectView {
 fn spawn_reports_generated_session_and_config_options() {
     let client = spawn_client(None, None);
 
-    let session_id = client.session_id();
+    let session_id = client.core().session_id();
     assert_eq!(session_id.len(), 36, "uuid session id length");
     assert!(
         session_id.contains('-'),
@@ -167,13 +168,14 @@ fn spawn_with_model_applies_it() {
 fn spawn_with_resume_reuses_the_session_id() {
     let client = spawn_client(None, Some("r-1"));
 
-    assert_eq!(client.session_id(), "r-1");
+    assert_eq!(client.core().session_id(), "r-1");
 }
 
 #[test]
 fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
     let client = spawn_client(None, None);
     let id = client
+        .core()
         .begin_prompt(&text_blocks("hello"))
         .expect("begin_prompt");
     assert_eq!(id, 1);
@@ -205,13 +207,14 @@ fn prompt_flow_streams_text_usage_and_finishes_end_turn() {
     assert_eq!(finished_id, 1);
     assert_eq!(stop_reason(&events[finish_index]), Some("end_turn"));
 
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
 fn finished_turn_emits_context_usage_from_sidecar_1334() {
     let client = spawn_client(None, None);
     client
+        .core()
         .begin_prompt(&text_blocks("hello"))
         .expect("begin_prompt");
 
@@ -239,12 +242,14 @@ fn finished_turn_emits_context_usage_from_sidecar_1334() {
 fn abort_flow_cancels_and_reuses_the_same_host() {
     let client = spawn_client(None, None);
     let id = client
+        .core()
         .begin_prompt(&text_blocks("please SLOW down"))
         .expect("begin_prompt");
     assert_eq!(id, 1);
 
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event during slow prompt");
         if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
@@ -252,7 +257,10 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
         }
     }
 
-    client.cancel().expect("cancel of an in-flight prompt");
+    client
+        .core()
+        .cancel()
+        .expect("cancel of an in-flight prompt");
 
     let events = collect_until_finished(&client);
     let last = &events[events.len() - 1];
@@ -261,6 +269,7 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
     assert_eq!(reason, Some("cancelled"));
 
     let second_id = client
+        .core()
         .begin_prompt(&text_blocks("hello"))
         .expect("second begin_prompt");
     assert_eq!(second_id, 2);
@@ -271,19 +280,21 @@ fn abort_flow_cancels_and_reuses_the_same_host() {
     assert_eq!(finished_id, 2);
     assert_eq!(reason, Some("end_turn"));
 
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
 fn cancel_ends_turn_when_harness_is_wedged() {
     let client = spawn_client(None, None);
     let id = client
+        .core()
         .begin_prompt(&text_blocks("please WEDGE"))
         .expect("begin_prompt");
     assert_eq!(id, 1);
 
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event during wedged prompt");
         if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
@@ -291,10 +302,10 @@ fn cancel_ends_turn_when_harness_is_wedged() {
         }
     }
 
-    let _ = client.cancel();
+    let _ = client.core().cancel();
 
     loop {
-        let event = match client.wait_event(TIMEOUT) {
+        let event = match client.core().wait_event(TIMEOUT) {
             Some(event) => event,
             None => panic!(
                 "Stop must end a wedged turn within TIMEOUT; harness never answered interrupt"
@@ -307,11 +318,11 @@ fn cancel_ends_turn_when_harness_is_wedged() {
     }
 
     let deadline = std::time::Instant::now() + TIMEOUT;
-    while !client.host_exited() {
+    while !client.core().host_exited() {
         if std::time::Instant::now() >= deadline {
             panic!("sidecar must exit after wedged stop recovery");
         }
-        let _ = client.wait_event(Duration::from_millis(50));
+        let _ = client.core().wait_event(Duration::from_millis(50));
     }
 }
 
@@ -342,23 +353,25 @@ fn set_model_and_set_effort_round_trip() {
 #[test]
 fn shutdown_returns_the_session_id_once_then_none() {
     let client = spawn_client(None, None);
-    let session_id = client.session_id();
+    let session_id = client.core().session_id();
 
-    assert_eq!(client.shutdown(), Some(session_id));
-    assert_eq!(client.shutdown(), None);
-    assert!(client.host_exited());
+    assert_eq!(client.core().shutdown(), Some(session_id));
+    assert_eq!(client.core().shutdown(), None);
+    assert!(client.core().host_exited());
 }
 
 #[test]
 fn busy_prompt_and_idle_cancel_are_rejected() {
     let client = spawn_client(None, None);
     let first_id = client
+        .core()
         .begin_prompt(&text_blocks("please SLOW down"))
         .expect("begin_prompt");
     assert_eq!(first_id, 1);
 
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event during slow prompt");
         if matches!(&event, AgentEvent::Native(NativeEvent::AgentText(_))) {
@@ -367,14 +380,19 @@ fn busy_prompt_and_idle_cancel_are_rejected() {
     }
 
     let err = client
+        .core()
         .begin_prompt(&text_blocks("again"))
         .expect_err("second prompt while one is in flight must fail");
     assert!(!err.is_empty());
 
-    client.cancel().expect("cancel of the in-flight prompt");
+    client
+        .core()
+        .cancel()
+        .expect("cancel of the in-flight prompt");
     collect_until_finished(&client);
 
     let err = client
+        .core()
         .cancel()
         .expect_err("cancel with no active run must fail");
     assert!(!err.is_empty());
@@ -408,6 +426,7 @@ fn production_embedded_script_launch_path_prompts_to_end_turn() {
     .expect("sidecar must launch via the production embedded-script path (is node installed?)");
 
     let id = client
+        .core()
         .begin_prompt(&text_blocks("hello"))
         .expect("begin_prompt");
 
@@ -417,7 +436,7 @@ fn production_embedded_script_launch_path_prompts_to_end_turn() {
     assert_eq!(finished_id, id);
     assert_eq!(reason, Some("end_turn"));
 
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
@@ -425,7 +444,7 @@ fn spawn_exposes_the_advertised_command_list_once() {
     let client = spawn_client(None, None);
 
     assert_eq!(
-        client.take_available_commands(),
+        client.core().take_available_commands(),
         [NativeCommand {
             name: "compact".to_string(),
             description: "Compact the conversation".to_string(),
@@ -434,7 +453,7 @@ fn spawn_exposes_the_advertised_command_list_once() {
         "the fake SDK fixture advertises exactly one command"
     );
     assert!(
-        client.take_available_commands().is_empty(),
+        client.core().take_available_commands().is_empty(),
         "the second take must not re-deliver the handshake commands"
     );
 }
@@ -470,7 +489,7 @@ fn claude_error_result_finishes_prompt_as_failed_1275() {
     )
     .expect("inline fake sidecar must spawn (is node installed?)");
 
-    let id = client.begin_prompt("hello").expect("begin_prompt");
+    let id = client.core().begin_prompt("hello").expect("begin_prompt");
 
     let events = collect_until_finished(&client);
     let finished = events.last().expect("a turn-finished event");
@@ -488,5 +507,5 @@ fn claude_error_result_finishes_prompt_as_failed_1275() {
         other => panic!("error result must finish the prompt as failed, got {other:?}"),
     }
 
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }

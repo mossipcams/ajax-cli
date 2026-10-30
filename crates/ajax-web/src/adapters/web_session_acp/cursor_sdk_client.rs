@@ -7,7 +7,7 @@ use std::time::Duration;
 use ajax_core::adapters::{parse_model_selection, ModelSelection};
 use serde_json::{json, Value};
 
-use super::agent_event::{AgentEvent, NativeCommand, NativeImage};
+use super::agent_event::NativeCommand;
 use super::cursor_sdk_map::map_cursor_message;
 use super::jsonl_process::JsonlProcess;
 use super::rpc_client::RpcClientCore;
@@ -224,20 +224,8 @@ impl CursorSdkClient {
         Ok(client)
     }
 
-    pub fn child_pid(&self) -> Option<u32> {
-        self.core.child_pid()
-    }
-
     pub(super) fn core(&self) -> &RpcClientCore {
         &self.core
-    }
-
-    pub fn session_id(&self) -> String {
-        self.core.session_id()
-    }
-
-    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.core.take_available_commands()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CursorState> {
@@ -394,42 +382,6 @@ impl CursorSdkClient {
                 has_fast: model.parameters.iter().any(|p| p.id == "fast"),
             })
             .collect()
-    }
-
-    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
-        self.core.begin_prompt(message)
-    }
-
-    pub fn begin_prompt_with_images(
-        &self,
-        message: &str,
-        images: &[NativeImage],
-    ) -> Result<u64, String> {
-        self.core.begin_prompt_with_images(message, images)
-    }
-
-    pub fn cancel(&self) -> Result<(), String> {
-        self.core.cancel()
-    }
-
-    pub fn prompt_in_flight(&self) -> bool {
-        self.core.prompt_in_flight()
-    }
-
-    pub fn poll_event(&self) -> Option<AgentEvent> {
-        self.core.poll_event()
-    }
-
-    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
-        self.core.wait_event(timeout)
-    }
-
-    pub fn shutdown(&self) -> Option<String> {
-        self.core.shutdown()
-    }
-
-    pub fn host_exited(&self) -> bool {
-        self.core.host_exited()
     }
 }
 

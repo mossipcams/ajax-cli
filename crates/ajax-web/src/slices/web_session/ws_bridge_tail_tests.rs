@@ -1,6 +1,6 @@
 use super::test_support::BlockingSessionDirectory;
+use super::test_support::{fake_acp_fixture, scratch_dir};
 use super::ws_bridge::{outbound_frames, should_skip_replayed_envelopes};
-use super::ws_bridge_tests::{fake_acp_fixture, scratch_dir};
 use super::{
     apply_client_message, SessionClientMessage, SessionEventEnvelope, SessionServerEvent,
     SessionSnapshot,

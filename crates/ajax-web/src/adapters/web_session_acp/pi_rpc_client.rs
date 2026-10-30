@@ -179,18 +179,6 @@ impl PiRpcClient {
         &self.core
     }
 
-    pub fn session_id(&self) -> String {
-        self.core.session_id()
-    }
-
-    pub fn take_available_commands(&self) -> Vec<NativeCommand> {
-        self.core.take_available_commands()
-    }
-
-    pub fn child_pid(&self) -> Option<u32> {
-        self.core.child_pid()
-    }
-
     pub fn config_options(&self) -> Vec<super::NeutralConfigOption> {
         let c = self.catalog.lock().expect("pi_rpc_client mutex poisoned");
         let mut options = Vec::new();
@@ -301,10 +289,6 @@ impl PiRpcClient {
         Ok(())
     }
 
-    pub fn begin_prompt(&self, message: &str) -> Result<u64, String> {
-        self.core.begin_prompt(message)
-    }
-
     pub fn begin_prompt_with_images(
         &self,
         message: &str,
@@ -314,24 +298,9 @@ impl PiRpcClient {
             if let Some((command, fields)) = builtin_command(message) {
                 return self.core.begin_command(command, fields);
             }
+            return self.core.begin_prompt(message);
         }
         self.core.begin_prompt_with_images(message, images)
-    }
-
-    pub fn cancel(&self) -> Result<(), String> {
-        self.core.cancel()
-    }
-
-    pub fn prompt_in_flight(&self) -> bool {
-        self.core.prompt_in_flight()
-    }
-
-    pub fn poll_event(&self) -> Option<AgentEvent> {
-        self.core.poll_event()
-    }
-
-    pub fn wait_event(&self, timeout: Duration) -> Option<AgentEvent> {
-        self.core.wait_event(timeout)
     }
 
     pub fn respond_dialog(
@@ -341,13 +310,6 @@ impl PiRpcClient {
     ) -> Result<(), String> {
         self.core
             .respond("extension_ui_response", request_id, fields)
-    }
-    pub fn shutdown(&self) -> Option<String> {
-        self.core.shutdown()
-    }
-
-    pub fn host_exited(&self) -> bool {
-        self.core.host_exited()
     }
 }
 

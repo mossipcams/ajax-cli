@@ -4,7 +4,6 @@ pub mod acp_execution_state;
 pub mod adapters;
 pub mod agent_capability;
 pub mod agent_notification;
-pub mod agent_prompt;
 pub mod agent_status;
 pub mod analysis;
 pub mod attention;
@@ -30,7 +29,6 @@ pub mod runtime;
 pub mod runtime_refresh;
 pub mod task_operations;
 pub mod ui_state;
-pub mod validity;
 
 #[cfg(test)]
 mod architecture;

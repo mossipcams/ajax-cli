@@ -92,7 +92,7 @@ export default function TaskWorkspace({
   }, []);
 
   useEffect(() => {
-    if (pendingConfirmAction === "drop") setDetailsOpen(false);
+    if (pendingConfirmAction !== null) setDetailsOpen(false);
   }, [pendingConfirmAction]);
 
   const actions = taskDetail ? visibleTaskActions(taskDetail.actions) : [];

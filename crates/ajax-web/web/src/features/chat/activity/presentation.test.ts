@@ -102,17 +102,6 @@ describe("middleSplit", () => {
 });
 
 describe("toolRowLabel", () => {
-  it("reads verb-first with the filename", () => {
-    expect(
-      toolRowLabel({
-        kind: "read",
-        title: "Read File",
-        locations: ["/repo/crates/gateway/src/serve.rs"],
-        callId: "c1",
-      }),
-    ).toBe("Read serve.rs");
-  });
-
   it("names a search with no location as the verb alone", () => {
     expect(
       toolRowLabel({

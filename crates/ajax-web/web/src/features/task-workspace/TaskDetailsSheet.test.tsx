@@ -318,7 +318,7 @@ describe("TaskDetailsSheet restart agent action", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("keeps the sheet open and reports an error when Fresh session cannot run disconnected", () => {
+  it("closes the sheet and reports an error when Fresh session cannot run disconnected", () => {
     const onClearSession = vi.fn(() => false);
     const onOpenChange = vi.fn();
     const onResult = vi.fn();
@@ -338,13 +338,12 @@ describe("TaskDetailsSheet restart agent action", () => {
     fireEvent.click(screen.getByTestId("session-fresh-session"));
 
     expect(onClearSession).toHaveBeenCalledOnce();
-    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onResult).toHaveBeenCalledWith(
       "Not connected. Try again once the session reconnects.",
       null,
       true,
     );
-    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
     expect(screen.getByTestId("session-fresh-session")).toHaveTextContent("Fresh session");
   });
 

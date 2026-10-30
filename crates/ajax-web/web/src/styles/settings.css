@@ -369,19 +369,6 @@
   background: var(--accent);
 }
 
-.training-log {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--paper-tint);
-  font-size: var(--text-micro);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
 .training-page-link {
   width: 100%;
   margin-top: 12px;
@@ -445,6 +432,50 @@
 
 .training-page-run {
   margin: 8px 0 4px;
+}
+
+.training-page-eta {
+  display: grid;
+  gap: 2px;
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
+}
+
+.training-page-eta-main {
+  margin: 0;
+  font-size: var(--text-display, var(--text-heading));
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink-bright);
+}
+
+.training-page-eta-sub {
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--ink-muted);
+}
+
+.training-disclosure {
+  margin: var(--space-3) 0;
+}
+
+.training-disclosure > summary {
+  cursor: pointer;
+  padding: var(--space-2) 0;
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.training-disclosure > .training-section {
+  margin-top: var(--space-2);
+}
+
+.training-disclosure > .training-section > h3 {
+  display: none;
 }
 
 .training-kpis {
@@ -1101,10 +1132,6 @@
   padding: 10px 0;
   border-top: 1px solid var(--rule);
   font-size: var(--text-label);
-}
-
-.training-page-secondary {
-  margin-top: 12px;
 }
 
 .training-page-list {

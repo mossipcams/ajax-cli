@@ -41,10 +41,6 @@ impl AgentCapabilityProfile {
         }
     }
 
-    pub fn supports_native(self, fact: CapabilityFact) -> bool {
-        matches!(self.support_for(fact), CapabilitySupport::Native)
-    }
-
     pub fn allows_pane_fallback(self, fact: CapabilityFact) -> bool {
         matches!(
             self.support_for(fact),
@@ -142,10 +138,15 @@ mod tests {
     #[test]
     fn claude_profile_has_native_permission_and_question() {
         let profile = profile_for_agent_client(AgentClient::Claude);
-        assert!(profile.supports_native(CapabilityFact::PermissionWait));
-        assert!(profile.supports_native(CapabilityFact::QuestionWait));
+        assert_eq!(
+            profile.support_for(CapabilityFact::PermissionWait),
+            CapabilitySupport::Native
+        );
+        assert_eq!(
+            profile.support_for(CapabilityFact::QuestionWait),
+            CapabilitySupport::Native
+        );
     }
-
     #[test]
     fn pane_fallback_allowed_only_when_unavailable_or_unverified() {
         let cursor = profile_for_hook_client("cursor");

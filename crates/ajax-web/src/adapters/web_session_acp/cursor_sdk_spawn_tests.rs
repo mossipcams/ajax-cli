@@ -56,7 +56,7 @@ fn spawn_applies_a_legacy_pin() {
         assert!(!report.resumed);
         let options = report.config_options.expect("config options advertised");
         assert!(!options.is_empty());
-        client.shutdown();
+        client.core().shutdown();
     });
 }
 
@@ -67,7 +67,7 @@ fn spawn_applies_an_encoded_pin() {
         let (client, report) = spawn_cursor_sdk(&worktree, "grok-4.6|effort=low", None)
             .expect("spawn with an encoded pin");
         assert_eq!(report.applied_model, "grok-4.6|effort=low");
-        client.shutdown();
+        client.core().shutdown();
     });
 }
 
@@ -80,7 +80,7 @@ fn spawn_reports_an_unknown_pin_without_failing() {
         let error = report.model_apply_error.expect("pin error reported");
         assert!(error.contains("unknown model"), "{error}");
         assert_eq!(report.applied_model, "default");
-        client.shutdown();
+        client.core().shutdown();
     });
 }
 
@@ -91,7 +91,7 @@ fn spawn_with_an_unspecified_pin_stays_on_default() {
         let (client, report) = spawn_cursor_sdk(&worktree, "", None).expect("unspecified pin");
         assert_eq!(report.applied_model, "default");
         assert!(report.model_apply_error.is_none());
-        client.shutdown();
+        client.core().shutdown();
     });
 }
 
@@ -132,6 +132,6 @@ fn spawn_report_advertises_image_prompts() {
             report.prompt_capabilities.image,
             "image prompt capability must be advertised"
         );
-        client.shutdown();
+        client.core().shutdown();
     });
 }

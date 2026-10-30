@@ -38,10 +38,13 @@ the existing Back/dismiss routes and the `#/` hash. The modal shows model
 profiles and llama.cpp serving plus a read-only training progress line (run
 label, elapsed time, and step progress) while a run is active. All training jobs
 and Stop live on the Training page (`#/training`), reached from the modal's
-Training button. While open, the modal polls `/api/training/status` every 3s (and
-never while closed) and uses select-then-confirm for every mutation; its styles
-live in `styles/settings.css` under the owned-module ledger, and it talks to the
-`/api/training/*` routes whose backend slice is documented in backend PR #1205.
+Training button. The Training page leads with a finish-time block for training,
+generation, and evals; every secondary section, Pipeline included, sits in a
+collapsed disclosure. While open, the modal polls `/api/training/status` every
+3s (and never while closed) and uses select-then-confirm for every mutation;
+its styles live in `styles/settings.css` under the owned-module ledger, and it
+talks to the `/api/training/*` routes whose backend slice is documented in
+backend PR #1205.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,
