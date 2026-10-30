@@ -288,6 +288,25 @@ describe("TaskWorkspace", () => {
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
   });
 
+  it("closes task details when a non-drop confirm opens behind the sheet", () => {
+    const props = {
+      handle: "web/fix-login",
+      mode: "terminal" as const,
+      detail: readyDetail({ ...taskDetail, session_capable: true }),
+      orchestrationChat: true,
+      onGo: vi.fn(),
+      onBack: vi.fn(),
+      onOpenDiff: vi.fn(),
+    };
+    const { rerender } = render(<TaskWorkspace {...props} />);
+    fireEvent.click(screen.getByTestId("task-details"));
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+
+    rerender(<TaskWorkspace {...props} pendingConfirmAction="restart-agent" />);
+
+    expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
+  });
+
   it("opens one task details sheet from terminal footer Task details", () => {
     render(
       <TaskWorkspace
