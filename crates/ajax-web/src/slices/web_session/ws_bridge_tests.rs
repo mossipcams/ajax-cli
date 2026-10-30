@@ -1,4 +1,4 @@
-use super::test_support::BlockingSessionDirectory;
+use super::test_support::{fake_acp_fixture, scratch_dir, BlockingSessionDirectory};
 use super::ws_bridge::{should_send_keepalive, MAX_SESSION_FRAME_BYTES, SESSION_PING_INTERVAL};
 use super::{
     apply_client_message, ApplyClientMessageOutcome, SessionClientMessage, SessionServerEvent,
@@ -9,20 +9,9 @@ use crate::adapters::web_session_acp::{
 };
 use ajax_core::models::AgentClient;
 use std::{
-    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
-
-pub(super) fn scratch_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("ajax-web-bridge-{label}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-pub(super) fn fake_acp_fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js")
-}
 
 fn model_config_message(model: &str) -> SessionClientMessage {
     SessionClientMessage::SetConfigOption {

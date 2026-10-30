@@ -206,5 +206,5 @@ fn client_resume_missing_session_fails_and_known_session_succeeds() {
         Ok(client) => client,
         Err(_) => panic!("claude sdk client must spawn against the fake fixture"),
     };
-    assert_eq!(known.session_id(), "r-1");
+    assert_eq!(known.core().session_id(), "r-1");
 }

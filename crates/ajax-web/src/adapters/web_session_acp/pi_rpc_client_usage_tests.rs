@@ -45,6 +45,7 @@ fn collect_until_finished(client: &PiRpcClient) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
         let finished = matches!(&event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
@@ -58,7 +59,10 @@ fn collect_until_finished(client: &PiRpcClient) -> Vec<AgentEvent> {
 #[test]
 fn prompt_flow_reports_usage_between_message_and_finish() {
     let client = spawn_client(&[]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
     let events = collect_until_finished(&client);
 
@@ -108,7 +112,10 @@ fn prompt_flow_reports_usage_between_message_and_finish() {
 #[test]
 fn silent_stats_still_finishes_without_usage() {
     let client = spawn_client(&["--silent-stats"]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
     let events = collect_until_finished(&client);
 
@@ -136,17 +143,20 @@ fn silent_stats_still_finishes_without_usage() {
 #[test]
 fn aborted_run_reports_usage_before_cancelled_finish() {
     let client = spawn_client(&["--hold-run"]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
     let deadline = Instant::now() + TIMEOUT;
-    while !client.prompt_in_flight() {
+    while !client.core().prompt_in_flight() {
         assert!(
             Instant::now() < deadline,
             "held run never became active before cancel"
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    client.cancel().expect("cancel");
+    client.core().cancel().expect("cancel");
 
     let events = collect_until_finished(&client);
 
@@ -187,11 +197,15 @@ fn aborted_run_reports_usage_before_cancelled_finish() {
 #[test]
 fn rejected_prompt_finishes_without_usage() {
     let client = spawn_client(&["--reject-prompt"]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
     let mut events = Vec::new();
     loop {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .expect("event before RequestFinished");
         let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
