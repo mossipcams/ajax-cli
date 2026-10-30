@@ -650,6 +650,26 @@ whole transcript inside `session/load` before responding.
   fetches send no `Origin` header and are allowed; a present `Origin` must match
   the `Host` authority or the request is refused with 403.
 
+## Transcript backlog retry and shutdown flush
+
+- A transcript append that fails keeps its events in the in-memory backlog,
+  oldest first, ahead of the next batch. The backlog is retried on the actor's
+  50 ms poll tick, whether or not an ACP client exists, so a session with no
+  client still drains it. A retry is skipped while a prompt terminal is pending,
+  because the terminal commit owns that flush; a retry mid-turn (active prompt
+  with no terminal yet) runs normally.
+- Retries back off: the first retry waits 2 s after the failure, each failed
+  retry doubles the wait, and the wait caps at 30 s. A successful persist, from
+  a retry or a normal batch or a ledger commit, resets the backoff. Events that
+  arrive during an outage join the backlog without resetting the schedule.
+- A repeated identical failure does not republish the transcript error
+  snapshot, and a successful persist clears the transcript durability fault.
+- When the actor loop ends with a non-empty backlog, it flushes once before
+  close handling. If a prompt terminal is pending, the flush finalizes through
+  the prompt ledger so the backlog and the terminal commit together. Events
+  still unpersisted after shutdown are dropped and logged as a
+  `transcript backlog dropped at shutdown` warning with the handle and count.
+
 ## Session shim and restart adoption
 
 - Chat harnesses (ACP, Claude SDK, Pi RPC and the Cursor sidecar) run behind a
