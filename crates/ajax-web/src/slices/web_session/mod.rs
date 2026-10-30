@@ -441,6 +441,9 @@ mod task_session_restart_tests;
 mod transcript_tests;
 
 #[cfg(test)]
+mod transcript_backlog_tests;
+
+#[cfg(test)]
 mod available_commands_tests;
 #[cfg(test)]
 mod elicitation_tests;

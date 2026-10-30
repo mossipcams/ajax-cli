@@ -6,6 +6,7 @@ use super::prompt_queue::PromptQueue;
 use super::protocol::{SessionEventEnvelope, SessionSnapshot};
 use super::session_evidence::SessionEvidence;
 use super::startup_recovery::persisted_chat_running_for;
+use super::task_session_commit::BacklogRetryBackoff;
 use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{
@@ -163,6 +164,7 @@ pub(crate) struct TaskSessionState {
     pub(super) log: TranscriptLog,
     pub(super) stored_loaded: bool,
     pub(super) unpersisted: Vec<SessionServerEvent>,
+    pub(super) backlog_retry: BacklogRetryBackoff,
     pub(super) stream_normalizer: StreamNormalizer,
     pub(super) last_released: Option<Instant>,
     pub(super) agent: AgentClient,
@@ -180,6 +182,72 @@ pub(super) fn agent_client_name(agent: AgentClient) -> &'static str {
     }
 }
 impl TaskSessionState {
+    pub(super) fn new(
+        qualified_handle: String,
+        storage: SessionStorage,
+        report_activity: Option<super::ReportSessionActivity>,
+        live_activity: Option<super::task_session_directory::LiveActivitySlot>,
+        prompt_ledger: PromptLedger,
+        ledger_unusable: Option<String>,
+        ownership: std::sync::Arc<ExecutionOwnership>,
+    ) -> Self {
+        Self {
+            qualified_handle,
+            storage,
+            acp: AcpSlot {
+                client: None,
+                model: String::new(),
+                applied_model: String::new(),
+                acp_alive: false,
+                restore_advertised: false,
+                session_config_options: None,
+                pending_config_snapshot: None,
+                session_available_commands: None,
+                pending_commands_snapshot: None,
+                session_prompt_capabilities: None,
+                pending_capabilities_snapshot: None,
+                pending_model_snapshot: None,
+                session_title: None,
+                pending_title_snapshot: false,
+                usage_deduper: super::acp_usage::UsageDeduper::default(),
+            },
+            prompts: PromptQueue {
+                prompt_ledger,
+                active_prompt: None,
+                queued: std::collections::VecDeque::new(),
+                queue_persist_error_reported: false,
+                ledger_unusable,
+                pending_exit_interruption: None,
+                suppress_exit_evidence: false,
+                child_exit_reconciled: false,
+            },
+            evidence: SessionEvidence {
+                activity_reporter: super::SessionActivityReporter::default(),
+                pending_activity_report: None,
+                report_activity,
+                activity_report_fault: None,
+                pending_activity_report_error_snapshot: false,
+                last_logged_spawn_error_id: None,
+                transcript_durability_fault: None,
+                pending_transcript_error_snapshot: false,
+                transcript_corruption: None,
+                live_activity,
+            },
+            background: BackgroundLevel::default(),
+            generation: 0,
+            holders: HolderCount(0),
+            log: TranscriptLog::default(),
+            stored_loaded: false,
+            unpersisted: Vec::new(),
+            backlog_retry: BacklogRetryBackoff::default(),
+            stream_normalizer: StreamNormalizer::default(),
+            last_released: None,
+            agent: AgentClient::Cursor,
+            worktree_path: None,
+            ownership,
+        }
+    }
+
     pub(super) fn acquire_holder(&mut self) {
         self.holders.acquire();
     }
@@ -253,7 +321,10 @@ impl TaskSessionState {
         self.persist_log_batch(events)
     }
 
-    fn persist_log_batch(&mut self, events: Vec<SessionServerEvent>) -> Result<(), SessionError> {
+    pub(super) fn persist_log_batch(
+        &mut self,
+        events: Vec<SessionServerEvent>,
+    ) -> Result<(), SessionError> {
         let events = self.filter_events_for_log(events);
         let mut filtered = std::mem::take(&mut self.unpersisted);
         filtered.extend(events);
@@ -275,6 +346,8 @@ impl TaskSessionState {
             &rewrites,
         ) {
             self.unpersisted = filtered;
+            self.backlog_retry
+                .record_failure_if_unscheduled(Instant::now());
             let reason = format!("transcript could not be saved: {error}");
             if self.evidence.transcript_durability_fault.as_ref() != Some(&reason) {
                 self.evidence
@@ -282,6 +355,7 @@ impl TaskSessionState {
             }
             return Err(SessionError::persist(reason));
         }
+        self.backlog_retry.record_success();
         self.evidence.clear_transcript_durability_fault();
         self.report_committed_events(&filtered);
         self.log.mark_superseded(&cursors);
@@ -302,17 +376,10 @@ impl TaskSessionState {
         self.prompts.busy(client_busy)
     }
 
-    fn retry_unpersisted_backlog(&mut self) {
-        if self.prompts.active_prompt.is_none() && !self.unpersisted.is_empty() {
-            let _ = self.persist_log_batch(Vec::new());
-        }
-    }
-
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
         self.evidence
             .retry_pending_activity_report(&self.qualified_handle);
-        self.retry_unpersisted_backlog();
         let prompt_cancel = self
             .prompts
             .active_prompt
@@ -384,60 +451,15 @@ pub(crate) fn spawn_task_session(
         Err(error) => (PromptLedger::default(), Some(error.to_string())),
     };
     let join = tokio::spawn(async move {
-        let mut state = TaskSessionState {
-            qualified_handle: handle,
+        let mut state = TaskSessionState::new(
+            handle,
             storage,
-            acp: AcpSlot {
-                client: None,
-                model: String::new(),
-                applied_model: String::new(),
-                acp_alive: false,
-                restore_advertised: false,
-                session_config_options: None,
-                pending_config_snapshot: None,
-                session_available_commands: None,
-                pending_commands_snapshot: None,
-                session_prompt_capabilities: None,
-                pending_capabilities_snapshot: None,
-                pending_model_snapshot: None,
-                session_title: None,
-                pending_title_snapshot: false,
-                usage_deduper: super::acp_usage::UsageDeduper::default(),
-            },
-            prompts: PromptQueue {
-                prompt_ledger,
-                active_prompt: None,
-                queued: std::collections::VecDeque::new(),
-                queue_persist_error_reported: false,
-                ledger_unusable,
-                pending_exit_interruption: None,
-                suppress_exit_evidence: false,
-                child_exit_reconciled: false,
-            },
-            evidence: SessionEvidence {
-                activity_reporter: super::SessionActivityReporter::default(),
-                pending_activity_report: None,
-                report_activity,
-                activity_report_fault: None,
-                pending_activity_report_error_snapshot: false,
-                last_logged_spawn_error_id: None,
-                transcript_durability_fault: None,
-                pending_transcript_error_snapshot: false,
-                transcript_corruption: None,
-                live_activity: Some(live_activity),
-            },
-            background: BackgroundLevel::default(),
-            generation: 0,
-            holders: HolderCount(0),
-            log: TranscriptLog::default(),
-            stored_loaded: false,
-            unpersisted: Vec::new(),
-            stream_normalizer: StreamNormalizer::default(),
-            last_released: None,
-            agent: AgentClient::Cursor,
-            worktree_path: None,
+            report_activity,
+            Some(live_activity),
+            prompt_ledger,
+            ledger_unusable,
             ownership,
-        };
+        );
         let persisted_running =
             persisted_chat_running_for(&state.storage.registry_store(), &state.qualified_handle);
         let deferred_pending = deferred_activity_pending
@@ -478,6 +500,7 @@ pub(crate) fn spawn_task_session(
                     state
                         .evidence
                         .retry_pending_activity_report(&state.qualified_handle);
+                    state.retry_unpersisted_backlog();
                     if state.acp.client.is_some() {
                         state.pump();
                     }
@@ -489,6 +512,7 @@ pub(crate) fn spawn_task_session(
         state
             .evidence
             .retry_pending_activity_report(&state.qualified_handle);
+        state.flush_unpersisted_backlog();
         if close_on_exit {
             state.prompts.queued.clear();
             state.prompts.prompt_ledger.remove_queued();
@@ -517,6 +541,7 @@ pub(crate) fn spawn_task_session(
         if !close_on_exit {
             settle_running_activity_on_end(&mut state);
         }
+        state.warn_if_backlog_dropped();
         if let Some(live) = &state.evidence.live_activity {
             live.retire(&state.qualified_handle);
         }
@@ -652,7 +677,10 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             let _ = reply.send(());
         }
         #[cfg(test)]
-        TaskSessionCommand::Pump => state.pump(),
+        TaskSessionCommand::Pump => {
+            state.retry_unpersisted_backlog_now();
+            state.pump();
+        }
         TaskSessionCommand::EvictionSnapshot { reply } => {
             let persisted_session_id = web_session_store::try_load::<SessionServerEvent>(
                 &state.storage.registry_store(),
