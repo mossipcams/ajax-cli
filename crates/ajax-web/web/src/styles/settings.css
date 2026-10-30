@@ -369,19 +369,6 @@
   background: var(--accent);
 }
 
-.training-log {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--paper-tint);
-  font-size: var(--text-micro);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 240px;
-  overflow-y: auto;
-}
-
 .training-page-link {
   width: 100%;
   margin-top: 12px;
@@ -1161,10 +1148,6 @@
   padding: 10px 0;
   border-top: 1px solid var(--rule);
   font-size: var(--text-label);
-}
-
-.training-page-secondary {
-  margin-top: 12px;
 }
 
 .training-page-list {

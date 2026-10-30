@@ -331,12 +331,6 @@ pub enum ToolContent {
 
 pub const MAX_QUEUED_PROMPTS: usize = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PromptDispatch {
-    StartNow,
-    Queued,
-}
-
 #[derive(Debug, Clone)]
 pub struct QueuedPrompt {
     pub client_message_id: String,
@@ -344,25 +338,6 @@ pub struct QueuedPrompt {
     pub prompt_text: String,
     pub wire_blocks: Vec<prompt_content::PromptContentBlockWire>,
     pub blocks: Vec<agent_client_protocol::schema::v1::ContentBlock>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PromptQueueFull;
-
-pub fn dispatch_prompt(
-    prompt_in_flight: bool,
-    queued: &mut VecDeque<QueuedPrompt>,
-    payload: QueuedPrompt,
-) -> Result<PromptDispatch, PromptQueueFull> {
-    if prompt_in_flight {
-        if queued.len() >= MAX_QUEUED_PROMPTS {
-            return Err(PromptQueueFull);
-        }
-        queued.push_back(payload);
-        Ok(PromptDispatch::Queued)
-    } else {
-        Ok(PromptDispatch::StartNow)
-    }
 }
 
 pub fn clear_prompt_queue(queued: &mut VecDeque<QueuedPrompt>) {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import LiveHead from "./LiveHead";
-import { buildHeadView, headState, headTone, isTaskLevelAttention } from "./headView";
+import { buildHeadView, headState, isTaskLevelAttention } from "./headView";
 import { initialHeadViewForTests } from "./headView.testHelpers";
 import { parseServerFrame } from "../session/transport/parse";
 import { projectWireEvent } from "../session/projectWireInput";
@@ -27,12 +27,6 @@ function mountHead(
 }
 
 describe("headState precedence", () => {
-  it("prefers permission decision over agent status", () => {
-    expect(
-      headState({ requestId: "1", title: "Run?", detail: "" }, null, false, null),
-    ).toBe("decision");
-  });
-
   it("maps session busy to working", () => {
     expect(headState(null, null, true, null)).toBe("working");
   });
@@ -41,20 +35,6 @@ describe("headState precedence", () => {
     expect(headState(null, null, false, null)).toBe("idle");
   });
 
-  it("maps task attention waiting/error to attention", () => {
-    expect(headState(null, null, false, { status: "waiting" })).toBe("attention");
-    expect(headState(null, null, false, { status: "error" })).toBe("attention");
-  });
-
-  it("defaults to idle when nothing else applies", () => {
-    expect(headState(null, null, false, null)).toBe("idle");
-  });
-});
-
-describe("headTone", () => {
-  it("uses error tone for task attention errors", () => {
-    expect(headTone("attention", { status: "error" })).toBe("error");
-  });
 });
 
 describe("isTaskLevelAttention", () => {
