@@ -7,8 +7,8 @@ import TrainingPipeline from "./TrainingPipeline";
 import TrainingDatasets from "./TrainingDatasets";
 import TrainingEvals from "./TrainingEvals";
 import {
-  busyReason, busyText, confirmDescription, finishClock, formatElapsed, formatEta, jobLabel,
-  lossSeries, messageOf, stepsPerMinute,
+  busyReason, busyText, confirmDescription, evalEtaSeconds, finishClock, finishLabel, formatElapsed, formatEta,
+  jobLabel, lossSeries, messageOf, rowsEtaSeconds, stepsPerMinute,
   useTrainingCatalog, type PageAction,
 } from "./trainingPageModel";
 
@@ -119,6 +119,7 @@ export default function TrainingPage({ onBack }: Props) {
   const runRunning = Boolean(run?.running);
   const genRunning = Boolean(generation?.running);
   const evalRunning = Boolean(status?.eval_progress.length);
+  const jobActive = runRunning || genRunning || evalRunning;
   const busy = active !== null;
   const champion = catalog.evals?.champion ?? null;
   const championRunId = champion?.run_id ?? null;
@@ -137,6 +138,15 @@ export default function TrainingPage({ onBack }: Props) {
   }, [runRunning, status?.eval_progress, refreshCatalog]);
 
   const actionInFlightRef = useRef(false);
+
+  const genBaselineRef = useRef<{ rows: number; atMs: number } | null>(null);
+  useEffect(() => {
+    if (!genRunning) {
+      genBaselineRef.current = null;
+      return;
+    }
+    if (genBaselineRef.current === null) genBaselineRef.current = { rows: generation?.rows ?? 0, atMs: Date.now() };
+  }, [genRunning, generation?.rows]);
 
   async function execute(action: PageAction): Promise<void> {
     if (actionInFlightRef.current) return;
@@ -174,6 +184,18 @@ export default function TrainingPage({ onBack }: Props) {
   const runElapsed = run && run.running ? formatElapsed(run.started) : null;
   const busyLine = busyReason(status);
 
+  let etaSeconds: number | null = null;
+  if (run?.running && run.kind !== "generate" && progress?.eta_s != null) {
+    etaSeconds = progress.eta_s;
+  } else if (genRunning) {
+    const baseline = genBaselineRef.current;
+    if (generation !== null && baseline !== null) {
+      etaSeconds = rowsEtaSeconds(baseline, { rows: generation.rows ?? 0, atMs: Date.now() }, generation.target);
+    }
+  } else if (evalRunning) {
+    etaSeconds = evalEtaSeconds(status?.eval_progress ?? []);
+  }
+
   const logText = logTail.join("\n");
   const logRef = useRef<HTMLPreElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -182,6 +204,11 @@ export default function TrainingPage({ onBack }: Props) {
     const el = logRef.current;
     if (!el) return;
     stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 24;
+  }
+
+  function handleLogDisclosureToggle(event: { currentTarget: HTMLDetailsElement }): void {
+    const logEl = logRef.current;
+    if (event.currentTarget.open && logEl) logEl.scrollTop = logEl.scrollHeight;
   }
 
   useLayoutEffect(() => {
@@ -217,6 +244,19 @@ export default function TrainingPage({ onBack }: Props) {
               {status.active_profile ? ` · ${status.active_profile}` : ""}
             </span>
           </div>
+
+          {jobActive ? (
+            <div className="training-page-eta" data-testid="training-page-eta">
+              {etaSeconds !== null ? (
+                <>
+                  <p className="training-page-eta-main">Done around {finishLabel(etaSeconds)}</p>
+                  <p className="training-page-eta-sub">{formatEta(etaSeconds)} left</p>
+                </>
+              ) : (
+                <p className="training-page-eta-main">Estimating finish time…</p>
+              )}
+            </div>
+          ) : null}
 
           {run ? (
             <p className="training-page-run" data-testid="training-page-run">
@@ -261,11 +301,16 @@ export default function TrainingPage({ onBack }: Props) {
               <p className="training-muted">
                 {progress?.total ? `Step ${progress.step} of ${progress.total}` : progress ? `Step ${progress.step}` : "Waiting for progress"}
                 {progress?.loss != null ? ` · loss ${progress.loss.toFixed(4)}` : ""}
-                {progress?.eta_s != null ? ` · ETA ${formatEta(progress.eta_s)}` : ""}
                 {runElapsed ? ` · ${runElapsed} elapsed` : ""}
               </p>
-              <RunKpis run={run} />
             </>
+          ) : null}
+
+          {run?.running && run.kind !== "generate" ? (
+            <details className="training-disclosure">
+              <summary>Run details</summary>
+              <RunKpis run={run} />
+            </details>
           ) : null}
 
           {run?.running && !run.external ? (
@@ -281,13 +326,18 @@ export default function TrainingPage({ onBack }: Props) {
         </section>
       ) : null}
 
+      {status && busyLine ? (
+        <p className="training-muted" data-testid="training-page-busy">
+          Jobs unavailable: {busyLine}
+        </p>
+      ) : null}
+
       {status ? (
-        <>
-          {busyLine ? (
-            <p className="training-muted" data-testid="training-page-busy">
-              Jobs unavailable: {busyLine}
-            </p>
-          ) : null}
+        <details
+          className="training-disclosure"
+          data-testid="training-disclosure-pipeline"
+        >
+          <summary>Pipeline</summary>
           <TrainingPipeline
             status={status}
             championRunId={championRunId}
@@ -296,32 +346,47 @@ export default function TrainingPage({ onBack }: Props) {
             datasets={catalog.datasets}
             onAction={setPending}
           />
-        </>
+        </details>
       ) : null}
-      <TrainingDatasets
-        datasets={catalog.datasets}
-        promotedRunId={catalog.catalogPromotedRunId}
-        selectDisabled={selectDisabled}
-        onAction={setPending}
-      />
-      <TrainingEvals evals={catalog.evals} progress={status?.eval_progress ?? []} />
+
+      <details className="training-disclosure" data-testid="training-disclosure-datasets">
+        <summary>Datasets</summary>
+        <TrainingDatasets
+          datasets={catalog.datasets}
+          promotedRunId={catalog.catalogPromotedRunId}
+          selectDisabled={selectDisabled}
+          onAction={setPending}
+        />
+      </details>
+
+      <details className="training-disclosure" data-testid="training-disclosure-evals">
+        <summary>Evals</summary>
+        <TrainingEvals evals={catalog.evals} progress={status?.eval_progress ?? []} />
+      </details>
 
       {run ? (
-        <section
-          className="training-section"
-          aria-labelledby="training-log-heading"
-          data-testid="training-page-log-section"
+        <details
+          className="training-disclosure"
+          data-testid="training-disclosure-log"
+          onToggle={handleLogDisclosureToggle}
         >
-          <h3 id="training-log-heading">Log</h3>
-          <pre
-            className="training-page-log"
-            data-testid="training-page-log"
-            ref={logRef}
-            onScroll={handleLogScroll}
+          <summary>Log</summary>
+          <section
+            className="training-section"
+            aria-labelledby="training-log-heading"
+            data-testid="training-page-log-section"
           >
-            {logText.length > 0 ? logText : "No log lines yet."}
-          </pre>
-        </section>
+            <h3 id="training-log-heading">Log</h3>
+            <pre
+              className="training-page-log"
+              data-testid="training-page-log"
+              ref={logRef}
+              onScroll={handleLogScroll}
+            >
+              {logText.length > 0 ? logText : "No log lines yet."}
+            </pre>
+          </section>
+        </details>
       ) : null}
 
       {catalog.error ? (
