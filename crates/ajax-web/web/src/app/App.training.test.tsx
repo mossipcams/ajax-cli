@@ -76,7 +76,7 @@ describe("App training modal route coupling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Local" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Training")).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Local" })).toBeInTheDocument();
     await vi.waitFor(() => expect(trainingStatusCalls()).toBeGreaterThan(0));
 
     fireEvent.keyDown(dialog, { key: "Escape" });

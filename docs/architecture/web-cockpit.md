@@ -31,14 +31,17 @@ Terminal). Bare `#/session` is the New Task sheet, not a workspace.
 | **Ajax Chat** | Multi-harness orchestration chat (Cursor via the `@cursor/sdk` Node sidecar; Codex via its ACP adapter, Pi over its RPC mode, Claude over the Claude Agent SDK sidecar). Default for provisioned, session-capable tasks when orchestration chat is enabled and Terminal is not preferred |
 | **Ajax Terminal** | Authenticated raw xterm.js/tmux bridge to the task tmux session. Required for interactive/non-session-capable tasks, when the operator selects Terminal, or when session attach is unavailable |
 
-**Training modal.** The bottom-nav **Train** button replaced the former
-Dashboard button and opens the Training modal (`features/training`, whose
+**Training modal.** The bottom-nav **Local** button replaced the former
+Dashboard button and opens the Local modal (`features/training`, whose
 `public.ts` exports `TrainingModal` only); the dashboard stays reachable through
-the existing Back/dismiss routes and the `#/` hash. While open, the modal polls
-`/api/training/status` every 3s (and never while closed) and uses
-select-then-confirm for every mutation; its styles live in `styles/settings.css`
-under the owned-module ledger, and it talks to the `/api/training/*` routes whose
-backend slice is documented in backend PR #1205.
+the existing Back/dismiss routes and the `#/` hash. The modal shows model
+profiles and llama.cpp serving plus a read-only training progress line (run
+label, elapsed time, and step progress) while a run is active. All training jobs
+and Stop live on the Training page (`#/training`), reached from the modal's
+Training button. While open, the modal polls `/api/training/status` every 3s (and
+never while closed) and uses select-then-confirm for every mutation; its styles
+live in `styles/settings.css` under the owned-module ledger, and it talks to the
+`/api/training/*` routes whose backend slice is documented in backend PR #1205.
 **Frontend import boundaries (production):** cross-feature coupling goes only
 through each feature's `public.ts` (`features/task-workspace/public.ts`,
 `features/chat/public.ts`, `features/terminal/public.ts`,

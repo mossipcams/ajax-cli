@@ -7,8 +7,8 @@ import TrainingPipeline from "./TrainingPipeline";
 import TrainingDatasets from "./TrainingDatasets";
 import TrainingEvals from "./TrainingEvals";
 import {
-  busyReason, busyText, confirmDescription, formatElapsed, formatEta, jobLabel,
-  messageOf,
+  busyReason, busyText, confirmDescription, finishClock, formatElapsed, formatEta, jobLabel,
+  lossSeries, messageOf, stepsPerMinute,
   useTrainingCatalog, type PageAction,
 } from "./trainingPageModel";
 
@@ -17,6 +17,95 @@ interface Props {
 }
 
 const LOG_TAIL_LINES = 40;
+
+function RunKpis({ run }: { run: trainingApi.TrainingRun }) {
+  const progress = run.progress;
+  const losses = lossSeries(run.log_tail);
+  const first = losses[0] ?? null;
+  const last = losses.length > 0 ? losses[losses.length - 1] : null;
+  const lossValue = progress?.loss ?? last;
+  const rate = progress ? stepsPerMinute(progress.step, run.started) : null;
+  const finish = progress?.eta_s != null ? finishClock(progress.eta_s) : null;
+  const delta = first !== null && last !== null && losses.length >= 2 ? last - first : null;
+  const deltaClass = delta === null || delta === 0 ? "" : delta < 0 ? "is-good" : "is-bad";
+  const deltaArrow = delta === null || delta === 0 ? "→" : delta < 0 ? "↓" : "↑";
+  const percent = progress?.total ? Math.round((progress.step / progress.total) * 100) : null;
+
+  return (
+    <>
+      <dl className="training-kpis" aria-label="Run stats">
+        <div className="training-kpi">
+          <dt>Progress</dt>
+          <dd>{percent !== null ? `${percent}%` : "—"}</dd>
+          {progress ? (
+            <dd className="training-kpi-note">
+              {progress.total
+                ? `${progress.step.toLocaleString()} / ${progress.total.toLocaleString()} steps`
+                : `${progress.step.toLocaleString()} steps`}
+            </dd>
+          ) : null}
+        </div>
+        <div className="training-kpi">
+          <dt>Finish</dt>
+          <dd>{finish ? `~${finish}` : "—"}</dd>
+          {progress?.eta_s != null ? <dd className="training-kpi-note">{`in ${formatEta(progress.eta_s)}`}</dd> : null}
+        </div>
+        <div className="training-kpi">
+          <dt>Speed</dt>
+          <dd>{rate !== null ? rate.toFixed(1) : "—"}</dd>
+          {rate !== null ? <dd className="training-kpi-note">steps/min</dd> : null}
+        </div>
+        <div className="training-kpi">
+          <dt>Loss</dt>
+          <dd>{lossValue !== null ? lossValue.toFixed(4) : "—"}</dd>
+          {delta !== null ? (
+            <dd className={`training-kpi-note ${deltaClass}`}>
+              {`${deltaArrow} ${Math.abs(delta).toFixed(4)} since first logged step`}
+            </dd>
+          ) : null}
+        </div>
+      </dl>
+      {losses.length >= 3 ? <LossTrend losses={losses} /> : null}
+    </>
+  );
+}
+
+function LossTrend({ losses }: { losses: number[] }) {
+  const min = Math.min(...losses);
+  const max = Math.max(...losses);
+  const range = max - min || 1;
+  const points = losses.map((loss, index) => {
+    const x = (index / (losses.length - 1)) * 100;
+    const y = 30 - ((loss - min) / range) * 28;
+    return { x, y };
+  });
+  const lastPoint = points[points.length - 1];
+  const first = losses[0].toFixed(4);
+  const latest = losses[losses.length - 1].toFixed(4);
+  return (
+    <figure className="training-loss" aria-label="Loss trend">
+      <div className="training-loss-plot">
+        <svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img">
+          <title>{`Loss over the last ${losses.length} logged steps: ${first} → ${latest}`}</title>
+          <polyline
+            fill="none"
+            points={points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ")}
+            vector-effect="non-scaling-stroke"
+          />
+        </svg>
+        <span
+          className="training-loss-dot"
+          aria-hidden="true"
+          style={{ left: `${lastPoint.x}%`, top: `${(lastPoint.y / 32) * 100}%` }}
+        />
+      </div>
+      <figcaption>
+        <span>First logged</span>
+        <span>Now</span>
+      </figcaption>
+    </figure>
+  );
+}
 
 export default function TrainingPage({ onBack }: Props) {
   const { status, error: statusError, refresh: refreshStatus } = useTrainingStatus(true);
@@ -175,6 +264,7 @@ export default function TrainingPage({ onBack }: Props) {
                 {progress?.eta_s != null ? ` · ETA ${formatEta(progress.eta_s)}` : ""}
                 {runElapsed ? ` · ${runElapsed} elapsed` : ""}
               </p>
+              <RunKpis run={run} />
             </>
           ) : null}
 

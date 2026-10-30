@@ -7,7 +7,7 @@ import Skeleton from "@/shared/ui/Skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { useTrainingStatus } from "./useTrainingStatus";
 import TrainingProfileList from "./TrainingProfileList";
-import TrainingStatusPanel from "./TrainingStatusPanel";
+import { formatElapsed, jobLabel } from "./trainingPageModel";
 import * as trainingApi from "./trainingApi";
 
 interface Props {
@@ -15,17 +15,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const JOB_LABELS = trainingApi.TRAINING_JOB_LABELS;
-
-const SECONDARY_JOBS: trainingApi.TrainingJobKind[] = [
-  "generate",
-  "lfm-eval",
-  "wake-train",
-];
-
 type PendingAction =
-  | { kind: "job"; job: trainingApi.TrainingJobKind }
-  | { kind: "stop" }
   | { kind: "serve" }
   | { kind: "serve-stop" }
   | { kind: "switch"; profile: string };
@@ -33,10 +23,6 @@ type PendingAction =
 
 function confirmDescription(action: PendingAction): string {
   switch (action.kind) {
-    case "job":
-      return `Start the ${JOB_LABELS[action.job]} job?`;
-    case "stop":
-      return "Stop the current training run?";
     case "serve":
       return "Start llama.cpp serving for the active profile?";
     case "serve-stop":
@@ -48,10 +34,6 @@ function confirmDescription(action: PendingAction): string {
 
 function busyText(action: PendingAction): string {
   switch (action.kind) {
-    case "job":
-      return `Starting ${JOB_LABELS[action.job]}`;
-    case "stop":
-      return "Stopping run";
     case "serve":
       return "Starting serving";
     case "serve-stop":
@@ -92,21 +74,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const busy = active !== null;
   const runRunning = Boolean(run?.running);
   const genRunning = Boolean(generation && generation.running);
-  const heroMode: "run" | "generation" | "live" | "idle" = runRunning
-    ? "run"
-    : genRunning
-      ? "generation"
-      : trainLabel
-        ? "live"
-        : "idle";
-
-  function armJob(job: trainingApi.TrainingJobKind): void {
-    setPending({ kind: "job", job });
-  }
-
-  function armStop(): void {
-    setPending({ kind: "stop" });
-  }
 
   function armServe(): void {
     setPending({ kind: "serve" });
@@ -134,9 +101,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
     setActive(action);
     setActionError(null);
     try {
-      if (action.kind === "job") await trainingApi.startTrainingJob(action.job);
-      else if (action.kind === "stop" || action.kind === "serve-stop")
-        await trainingApi.stopTraining();
+      if (action.kind === "serve-stop") await trainingApi.stopTraining();
       else if (action.kind === "serve") await trainingApi.serveLlama();
       else await trainingApi.switchTrainingProfile(action.profile);
       setPending(null);
@@ -166,17 +131,8 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const switchBlocked =
     runRunning || genRunning ? "a job is in progress" : trainLabel ? `state is ${status?.state}` : null;
   const confirmInFlight = busy && active !== null && pending === active;
-
-  const heroTitle =
-    heroMode === "run" && run
-      ? `${JOB_LABELS[run.kind as trainingApi.TrainingJobKind] ?? run.kind} running`
-      : heroMode === "generation"
-        ? "Data generation running"
-        : heroMode === "live"
-          ? `Training in progress: ${trainLabel}`
-          : runtimeUp
-            ? "Runtime ready"
-            : "Idle";
+  const progress = run?.progress ?? null;
+  const elapsed = run ? formatElapsed(run.started) : null;
 
   return (
     <FullscreenLayer zIndex={50}>
@@ -184,7 +140,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
         <SheetContent className="training-modal" aria-describedby={undefined} data-testid="training">
           <div className="training-header">
             <SheetTitle asChild>
-              <h2>Training</h2>
+              <h2>Local</h2>
             </SheetTitle>
             <button
               type="button"
@@ -221,54 +177,34 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
                 Training
               </Button>
 
-              <TrainingStatusPanel
-                heroMode={heroMode}
-                heroTitle={heroTitle}
-                state={status.state}
-                run={run}
-                generation={generation}
-                runtimeUp={runtimeUp}
-                activeProfile={activeProfile}
-                busy={busy}
-                runRunning={runRunning}
-                genRunning={genRunning}
-                onStop={armStop}
-                onServeStop={armServeStop}
-                onTrain={() => armJob("lfm-train")}
-              />
-
-              {run && !run.running ? (
-                <div className="training-run" data-testid="training-run-idle">
-                  <p className="training-muted">
-                    {JOB_LABELS[run.kind as trainingApi.TrainingJobKind] ?? run.kind} finished
-                  </p>
-                </div>
-              ) : null}
-
-              <section className="training-section" aria-labelledby="training-jobs-heading">
-                <h3 id="training-jobs-heading">Jobs</h3>
-<Button
-                  type="button"
-                  className="training-actions-primary"
-                  disabled={runRunning || busy}
-                  onClick={() => armJob("lfm-train")}
+              {run?.running ? (
+                <section
+                  className="training-local-run"
+                  aria-label="Training progress"
+                  data-testid="training-local-run"
                 >
-                  Unsloth train
-                </Button>
-                <div className="training-actions-secondary">
-                  {SECONDARY_JOBS.map((job) => (
-                    <Button
-                      key={job}
-                      type="button"
-                      variant="secondary"
-                      disabled={runRunning || busy}
-                      onClick={() => armJob(job)}
-                    >
-                      {JOB_LABELS[job]}
-                    </Button>
-                  ))}
-                </div>
-              </section>
+                  <p className="training-local-run-label">{jobLabel(run.kind)}</p>
+                  {elapsed ? (
+                    <p className="training-local-run-text">{elapsed} elapsed</p>
+                  ) : null}
+                  <p className="training-local-run-text">
+                    {progress
+                      ? progress.total !== null
+                        ? `Step ${progress.step} / ${progress.total}`
+                        : `Step ${progress.step}`
+                      : "Waiting for progress"}
+                  </p>
+                  {progress && progress.total !== null ? (
+                    <progress
+                      value={progress.step}
+                      max={progress.total}
+                      aria-label="Training step progress"
+                    />
+                  ) : (
+                    <progress aria-label="Training step progress" />
+                  )}
+                </section>
+              ) : null}
 
               <TrainingProfileList
                 runtimeUp={runtimeUp}

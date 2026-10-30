@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@/test/testing-library-shim";
+import { fireEvent, render, screen, waitFor, within } from "@/test/testing-library-shim";
 import TrainingPage from "./TrainingPage";
 import type { TrainingStatus } from "./trainingApi";
 import { dirname, join } from "node:path";
@@ -357,5 +357,60 @@ describe("TrainingPage styles", () => {
     const block = stylesSource.match(/(?:^|\n)\.training-page\s*\{([^}]*)\}/)?.[1];
     expect(block).toBeDefined();
     expect(block).not.toMatch(/\bpadding\s*:/);
+  });
+});
+
+describe("TrainingPage run stats", () => {
+  const lossLines = [
+    "{'loss': 0.9012, 'grad_norm': 0.8, 'epoch': 0.1}",
+    "{'loss': 0.7345, 'grad_norm': 0.7, 'epoch': 0.2}",
+    "{'loss': 0.6101, 'grad_norm': 0.6, 'epoch': 0.3}",
+    "{'loss': 0.5523, 'grad_norm': 0.5, 'epoch': 0.4}",
+    "{'loss': 0.4710, 'grad_norm': 0.4, 'epoch': 0.5}",
+  ];
+
+  it("shows progress, finish, speed, and loss tiles plus the loss trend for a running run", async () => {
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: baseStatus({
+        device: "gpu", pipeline,
+        run: {
+          kind: "canary",
+          started: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          running: true,
+          external: false,
+          progress: { step: 1240, total: 3000, loss: 0.47, eta_s: 3410 },
+          log_tail: lossLines,
+        },
+      }),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    const stats = await screen.findByLabelText("Run stats");
+    expect(within(stats).getByText("41%")).toBeTruthy();
+    expect(within(stats).getByText("steps/min", { exact: false })).toBeTruthy();
+    expect(within(stats).getByText(/^~/)).toBeTruthy();
+    expect(screen.getByRole("figure", { name: "Loss trend" })).toBeTruthy();
+  });
+
+  it("omits the loss trend figure with fewer than 3 loss lines", async () => {
+    mockedUseTrainingStatus.mockImplementation(() => ({
+      status: baseStatus({
+        device: "gpu", pipeline,
+        run: {
+          kind: "canary",
+          started: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          running: true,
+          external: false,
+          progress: { step: 1240, total: 3000, loss: 0.47, eta_s: 3410 },
+          log_tail: lossLines.slice(0, 2),
+        },
+      }),
+      error: null,
+      refresh: refreshStatus,
+    }));
+    mountPage();
+    await screen.findByLabelText("Run stats");
+    expect(screen.queryByRole("figure", { name: "Loss trend" })).toBeNull();
   });
 });
