@@ -130,6 +130,16 @@ failed, and every 300 seconds after a stable pass. Probes run on
 runs Full refresh (including CI probes) and attention delivery every 30 seconds
 on the same tick before notifying. A changed head SHA starts a new attempt;
 closed or merged PRs retire the attempt.
+The mergeability probe, `gh pr view <number> --json mergeable`, runs on the
+300 second cadence, starting 300 seconds after a head's first checks probe,
+because GitHub computes mergeability lazily. A
+`CONFLICTING` result sets `merge_conflict` in the CI monitor state, and
+`MERGEABLE` clears it; `UNKNOWN` or a failed probe leaves it unchanged. While
+set, the monitor auto-prompts the agent once per head SHA with
+`AgentNotification::MergeConflict`, which asks it to update from the base
+branch, resolve conflicts, verify, commit, and push. Operator-run remediations
+(`fix-ci`, `resolve-merge-conflicts`) on the task card remain available
+alongside this automatic prompt.
 
 Failed checks reduce to
 `LiveStatusKind::CiFailed` with summary `ci failed: <check>`, distinct from

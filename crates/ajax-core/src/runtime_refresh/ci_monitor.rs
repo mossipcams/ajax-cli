@@ -1,6 +1,7 @@
 use crate::{
     adapters::{
-        CiChecksObservation, CiChecksReport, CiChecksState, CommandRunner, GithubChecksAdapter,
+        github::PrMergeability, CiChecksObservation, CiChecksReport, CiChecksState, CommandRunner,
+        GithubChecksAdapter,
     },
     agent_notification::{
         AgentNotification, AgentNotificationDelivery, CiFailedCheck, CI_MONITOR_STATE_KEY,
@@ -36,11 +37,13 @@ pub(crate) struct CiMonitorState {
     pub has_pending: bool,
     pub last_pr_discovery_at: Option<u64>,
     pub last_check_probe_at: Option<u64>,
+    pub last_mergeable_probe_at: Option<u64>,
     pub episode_id: Option<String>,
     pub last_failure_identities: Vec<String>,
     pub saw_pending_after_failure: bool,
     pub last_notified_failure: Option<String>,
     pub delivery: Option<AgentNotificationDelivery>,
+    pub merge_conflict: bool,
 }
 
 pub(crate) fn load_state(task: &Task) -> CiMonitorState {
@@ -184,6 +187,35 @@ fn refresh_open_pr(
     let command = github.pr_checks_for_pr(&task.worktree_path.display().to_string(), pr.number);
     let report = GithubChecksAdapter::parse_pr_checks_report(&runner.run(&command));
     let _ = reduce_report(task, pr, report, now);
+    refresh_merge_conflict(task, runner, github, pr, now);
+}
+
+fn refresh_merge_conflict(
+    task: &mut Task,
+    runner: &mut impl CommandRunner,
+    github: &GithubChecksAdapter,
+    pr: &PullRequestRef,
+    now: u64,
+) {
+    let mut state = load_state(task);
+    let Some(last_probe_at) = state.last_mergeable_probe_at else {
+        state.last_mergeable_probe_at = Some(now);
+        store_state(task, &state);
+        return;
+    };
+    if now.saturating_sub(last_probe_at) < DISCOVERY_INTERVAL_SECS {
+        return;
+    }
+    state.last_mergeable_probe_at = Some(now);
+    store_state(task, &state);
+    let command = github.pr_mergeable(&task.worktree_path.display().to_string(), pr.number);
+    let merge_conflict = match GithubChecksAdapter::parse_pr_mergeable(&runner.run(&command)) {
+        PrMergeability::Conflicting => true,
+        PrMergeability::Mergeable => false,
+        PrMergeability::Unknown => return,
+    };
+    state.merge_conflict = merge_conflict;
+    store_state(task, &state);
 }
 
 pub(crate) fn checks_due(state: &CiMonitorState, now: u64) -> bool {
@@ -410,6 +442,9 @@ fn apply_observation(
 
 pub fn pending_notification(task: &Task) -> Option<AgentNotification> {
     let state = load_state(task);
+    if state.merge_conflict {
+        return pending_merge_conflict(task, &state);
+    }
     let episode_id = state.episode_id.clone()?;
     if state.status != CiAttemptStatus::Failed
         || state.last_notified_failure.as_deref() == Some(&episode_id)
@@ -423,6 +458,21 @@ pub fn pending_notification(task: &Task) -> Option<AgentNotification> {
         pr_number: state.pr_number?,
         head_sha: state.head_sha?,
         failed_checks: state.failed_checks,
+    })
+}
+
+fn pending_merge_conflict(task: &Task, state: &CiMonitorState) -> Option<AgentNotification> {
+    let pr_number = state.pr_number?;
+    let head_sha = state.head_sha.clone()?;
+    let episode_id = format!("merge-conflict:{}:{pr_number}:{head_sha}", task.id.as_str());
+    if state.last_notified_failure.as_deref() == Some(&episode_id) {
+        return None;
+    }
+    Some(AgentNotification::MergeConflict {
+        episode_id,
+        task_id: task.id.clone(),
+        pr_number,
+        head_sha,
     })
 }
 
