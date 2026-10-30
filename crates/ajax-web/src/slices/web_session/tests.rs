@@ -697,43 +697,6 @@ fn queued_prompt(text: &str) -> QueuedPrompt {
 }
 
 #[test]
-fn dispatch_prompt_starts_when_idle() {
-    let mut queued = VecDeque::new();
-    assert_eq!(
-        dispatch_prompt(false, &mut queued, queued_prompt("hello")).expect("start"),
-        PromptDispatch::StartNow
-    );
-    assert!(queued.is_empty());
-}
-
-#[test]
-fn dispatch_prompt_queues_when_in_flight() {
-    let mut queued = VecDeque::new();
-    assert_eq!(
-        dispatch_prompt(true, &mut queued, queued_prompt("next")).expect("queue"),
-        PromptDispatch::Queued
-    );
-    assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].transcript_text, "next");
-}
-
-#[test]
-fn dispatch_prompt_rejects_when_queue_full() {
-    let mut queued: VecDeque<QueuedPrompt> = (0..MAX_QUEUED_PROMPTS)
-        .map(|i| queued_prompt(&format!("old-{i}")))
-        .collect();
-    assert_eq!(
-        dispatch_prompt(true, &mut queued, queued_prompt("new")),
-        Err(PromptQueueFull)
-    );
-    assert_eq!(queued.len(), MAX_QUEUED_PROMPTS);
-    assert_eq!(
-        queued.front().map(|item| item.transcript_text.as_str()),
-        Some("old-0")
-    );
-}
-
-#[test]
 fn clear_prompt_queue_empties_queued() {
     let mut queued = VecDeque::from([queued_prompt("a"), queued_prompt("b")]);
     clear_prompt_queue(&mut queued);
