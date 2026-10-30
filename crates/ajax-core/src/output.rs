@@ -172,12 +172,6 @@ pub struct CockpitResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct RegistryExportSnapshot {
-    pub tasks: Vec<Task>,
-    pub events: Vec<RegistryEvent>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct StateExportMetadata {
     pub format_version: u32,
     pub repo_count: usize,
@@ -191,13 +185,6 @@ pub struct StateExportSnapshot {
     pub repos: Vec<ManagedRepo>,
     pub tasks: Vec<Task>,
     pub events: Vec<RegistryEvent>,
-}
-
-pub fn registry_export_snapshot<R: Registry>(registry: &R) -> RegistryExportSnapshot {
-    RegistryExportSnapshot {
-        tasks: registry.list_tasks().into_iter().cloned().collect(),
-        events: registry.list_events().into_iter().cloned().collect(),
-    }
 }
 
 pub fn state_export_snapshot<R: Registry>(config: &Config, registry: &R) -> StateExportSnapshot {
@@ -224,12 +211,6 @@ pub fn state_export_snapshot<R: Registry>(config: &Config, registry: &R) -> Stat
     }
 }
 
-pub fn registry_export_json_snapshot<R: Registry>(
-    registry: &R,
-) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&registry_export_snapshot(registry))
-}
-
 pub fn state_export_json_snapshot<R: Registry>(
     config: &Config,
     registry: &R,
@@ -240,13 +221,11 @@ pub fn state_export_json_snapshot<R: Registry>(
 #[cfg(test)]
 mod tests {
     use super::{
-        registry_export_json_snapshot, CockpitResponse, CockpitSummary, DoctorCheck,
-        DoctorResponse, InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse,
-        TaskSummary, TasksResponse,
+        CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
+        InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     };
-    use crate::{
-        models::{AgentClient, LiveObservation, LiveStatusKind, OperatorAction, Task, TaskId},
-        registry::{InMemoryRegistry, Registry, RegistryEventKind},
+    use crate::models::{
+        AgentClient, LiveObservation, LiveStatusKind, OperatorAction, Task, TaskId,
     };
 
     fn sample_task() -> Task {
@@ -444,34 +423,5 @@ mod tests {
                 "next": next
             })
         );
-    }
-
-    #[test]
-    fn registry_export_snapshot_serializes_state_as_json_contract() {
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("task-1"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/tmp/worktrees/web-fix-login",
-                "ajax-web-fix-login",
-                "task",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        registry
-            .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
-            .unwrap();
-
-        let json = registry_export_json_snapshot(&registry).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed["tasks"][0]["repo"], "web");
-        assert_eq!(parsed["tasks"][0]["handle"], "fix-login");
-        assert_eq!(parsed["events"][1]["message"], "ready");
     }
 }

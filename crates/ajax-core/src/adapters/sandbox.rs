@@ -275,23 +275,6 @@ pub fn sandbox_command(
     ))
 }
 
-pub fn sandbox_command_from_env(
-    cwd: &Path,
-    extra_read_write: &[PathBuf],
-    program: &str,
-    args: &[String],
-) -> Result<(String, Vec<String>), String> {
-    sandbox_command(
-        sandbox_enabled(),
-        resolve_nono,
-        default_profile_dir(),
-        cwd,
-        extra_read_write,
-        program,
-        args,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
