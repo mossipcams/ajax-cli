@@ -105,7 +105,6 @@ export default function TaskDetailsSheet({
     const sent = onClearSession ? onClearSession() : true;
     if (!sent) {
       onResult?.("Not connected. Try again once the session reconnects.", null, true);
-      return;
     }
     close();
   }

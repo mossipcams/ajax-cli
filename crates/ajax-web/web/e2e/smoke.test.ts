@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch } from "./fixtures";
+import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, sessionSnapshotJson } from "./fixtures";
 
 
 
@@ -85,4 +85,41 @@ test("destructive action requires two taps to execute", async ({ page }) => {
 
   await confirmPanel.getByRole("button", { name: "Confirm" }).click();
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 5_000 });
+});
+
+test("restart agent confirm from task details reaches the operation endpoint", async ({ page }) => {
+  await mockFetch(page, {
+    __detail__: {
+      ...DETAIL_FIXTURE,
+      agent: "Cursor",
+      session_capable: true,
+      actions: [
+        { action: "restart-agent", label: "Restart agent", destructive: false, confirmation_required: true },
+      ],
+    },
+  });
+  await page.addInitScript(() => {
+    localStorage.setItem("ajax.web.session.orchestrationChat", "true");
+    const mockedFetch = globalThis.fetch;
+    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url, location.href).pathname === "/api/operations" && init?.method === "POST") {
+        sessionStorage.setItem("ajax-e2e-operation-body", String(init.body));
+      }
+      return mockedFetch(input, init);
+    };
+  });
+  await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.send(sessionSnapshotJson({ reset: true, cursor: 0, transcript: [] }));
+  });
+  await page.goto("/app.html#/session/web%2Ffix-login");
+  await expect(page.getByTestId("session-details")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByTestId("session-details").click();
+  await page.getByTestId("session-restart-agent").click();
+  await page.getByTestId("result-panel-confirm").getByRole("button", { name: "Confirm" }).click();
+
+  await expect
+    .poll(() => page.evaluate(() => sessionStorage.getItem("ajax-e2e-operation-body")))
+    .toContain('"restart-agent"');
 });
