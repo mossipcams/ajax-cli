@@ -29,6 +29,16 @@ DESCRIPTION="${DESCRIPTION//-/ }"
 DESCRIPTION="${DESCRIPTION//_/ }"
 PR_TITLE="$TITLE_TYPE($SCOPE): $DESCRIPTION"
 
+existing_url="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
+if [[ -z "$existing_url" ]]; then
+  merged_url="$(gh pr list --head "$BRANCH" --state merged --json url --jq '.[0].url // ""')"
+  if [[ -n "$merged_url" ]]; then
+    echo "A merged PR already exists for $BRANCH: $merged_url"
+    echo "Move the new work to a new type/scope/description branch."
+    exit 1
+  fi
+fi
+
 git fetch origin "$BASE_BRANCH" --quiet
 
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -46,7 +56,6 @@ if ! git branch --set-upstream-to="origin/$BRANCH" >/dev/null 2>&1; then
   echo "note: could not record upstream for $BRANCH (.git/config not writable); push succeeded" >&2
 fi
 
-existing_url="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""')"
 if [[ -n "$existing_url" ]]; then
   printf '%s\n' "$existing_url"
   exit 0
