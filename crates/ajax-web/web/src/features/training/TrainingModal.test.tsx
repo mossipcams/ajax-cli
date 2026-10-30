@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import TrainingModal from "./TrainingModal";
-import * as trainingApi from "./trainingApi";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
 let postResponse: { body: unknown; status?: number } = { body: {} };
@@ -80,7 +79,7 @@ describe("TrainingModal", () => {
     expect(ruleBody).toMatch(/touch-action:\s*pan-y/);
     expect(ruleBody).toMatch(/overscroll-behavior:\s*contain/);
   });
-  it("shows a skeleton while the first status fetch is pending, then the hero", async () => {
+  it("shows a skeleton while the first status fetch is pending, then the model list", async () => {
     const routeMock = globalThis.fetch as unknown as FetchMock;
     let settleStatus: (response: Response) => void = () => undefined;
     try {
@@ -98,40 +97,31 @@ describe("TrainingModal", () => {
       openModal();
 
       expect(screen.getByTestId("training-loading")).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "Unsloth train" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Start serving" })).toBeNull();
 
       await act(async () => {
         settleStatus(jsonResponse(idleStatus));
         vi.advanceTimersByTime(10);
       });
-      expect(await screen.findByTestId("training-state")).toBeTruthy();
+      expect(await screen.findByRole("heading", { name: "llama.cpp & profiles" })).toBeTruthy();
       expect(screen.queryByTestId("training-loading")).toBeNull();
     } finally {
       vi.stubGlobal("fetch", routeMock);
     }
   });
 
-  it("renders the idle hero with an obvious primary action and no visible raw state", async () => {
+  it("names the dialog and its heading Local", async () => {
     openModal();
-    const hero = await screen.findByTestId("training-hero");
-    expect(hero).toHaveTextContent("Idle");
-    const raw = screen.getByTestId("training-raw-state");
-    expect(raw).toHaveClass("training-sr-only");
-    expect(raw).toHaveTextContent("idle");
-    expect(hero).toHaveAttribute("title", "idle");
-
-    const primary = screen.getAllByRole("button", { name: "Unsloth train" });
-    expect(primary.length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Data generation" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Wake train" })).toBeTruthy();
-    expect(hero).toHaveTextContent(/Start a job to begin/);
-    expect(hero).toHaveTextContent("No run in progress.");
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
+    expect(screen.getByRole("dialog", { name: "Local" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Local", level: 2 })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Training", level: 2 })).toBeNull();
   });
 
   it("renders the serving profile with a stop action", async () => {
     statusRoute.body = { ...idleStatus, active_profile: "atomic", runtime_up: true };
     openModal();
-    expect(await screen.findByTestId("training-hero")).toHaveTextContent("Runtime ready");
+    expect(await screen.findByTestId("llama-state")).toHaveTextContent("Serving · atomic");
     expect(screen.getByText("serving")).toBeTruthy();
     expect(screen.getByText("ctx 122880, 2 slots")).toBeTruthy();
     expect(
@@ -139,7 +129,7 @@ describe("TrainingModal", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("renders a training run with formatted stats and a Stop action beside them", async () => {
+  it("shows only the run label, elapsed time, and step progress while a run is active", async () => {
     statusRoute.body = {
       ...idleStatus,
       state: "train:lfm-train",
@@ -148,63 +138,32 @@ describe("TrainingModal", () => {
         kind: "lfm-train",
         started: "2026-07-19T08:00:00Z",
         running: true,
-        progress: { step: 30, total: 100, loss: 1.2345, eta_s: 360 },
-        log_tail: ["loss=1.2", "step 30"],
+        progress: { step: 1240, total: 3000, loss: 1.2345, eta_s: 360 },
+        log_tail: ["loss=1.2", "step 1240"],
       },
     };
     openModal();
-    const hero = await screen.findByTestId("training-hero");
-    expect(hero).toHaveTextContent("Unsloth train running");
-    expect(hero).toHaveAttribute("title", "train:lfm-train");
-    expect(screen.getByTestId("training-raw-state")).toHaveClass(
-      "training-sr-only",
-    );
+    const block = await screen.findByTestId("training-local-run");
+    expect(screen.getByRole("region", { name: "Training progress" })).toBe(block);
+    expect(block).toHaveTextContent("Unsloth train");
+    expect(block).toHaveTextContent(/elapsed/);
+    expect(block).toHaveTextContent("Step 1240 / 3000");
+    expect(block).not.toHaveTextContent("1.23");
+    expect(block).not.toHaveTextContent("~6 min");
 
-    const loss = screen.getByTestId("training-loss");
-    expect(loss).toHaveTextContent("1.23");
-    expect(hero).not.toHaveTextContent("1.2345");
+    const bar = screen.getByRole("progressbar", { name: "Training step progress" });
+    expect(bar).toHaveAttribute("max", "3000");
+    expect(bar).toHaveAttribute("value", "1240");
 
-    const eta = screen.getByTestId("training-eta");
-    expect(eta).toHaveTextContent("~6 min");
-    expect(eta.closest(".is-prominent")).toBeTruthy();
-
-    const step = screen.getByTestId("training-step");
-    expect(step).toHaveTextContent("step 30 / 100");
-    expect(screen.getByRole("progressbar", { name: "lfm-train progress" })).toBeTruthy();
-
-    const stop = screen.getByRole("button", { name: "Stop run" });
-    expect(stop.closest(".training-hero-body")).toBeTruthy();
-
-    const log = screen.getByTestId("training-log");
-    expect(Array.from(log.querySelectorAll("li")).map((el) => el.textContent)).toEqual([
-      "loss=1.2",
-      "step 30",
-    ]);
+    for (const name of ["Stop run", "Unsloth train", "Data generation", "Wake train"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
   });
 
-  it("renders generation with target and rows-only when target is null", async () => {
-    statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 40, target: 100, running: true } };
+  it("renders no training block when no run is active", async () => {
     openModal();
-    expect(await screen.findByTestId("training-generation-rows")).toHaveTextContent("40 / 100");
-    expect(screen.getByRole("progressbar", { name: "Data generation progress" })).toBeTruthy();
-
-    statusRoute.body = { ...idleStatus, state: "generate", generation: { rows: 7, target: null, running: true } };
-    await act(async () => {
-      vi.advanceTimersByTime(3000);
-    });
-    expect(await screen.findByTestId("training-generation-rows")).toHaveTextContent("7 rows");
-  });
-
-  it("shows a live training job from the host state when no run object is sent", async () => {
-    statusRoute.body = { ...idleStatus, state: "train:lfm 123 456 1700000000", run: null };
-    openModal();
-    expect(await screen.findByTestId("training-state")).toHaveTextContent(
-      "Training in progress: lfm",
-    );
-    expect(screen.getByTestId("training-live-state")).toHaveTextContent(
-      "No progress reported by the host yet.",
-    );
-    expect(screen.queryByText("No run in progress.")).toBeNull();
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
+    expect(screen.queryByTestId("training-local-run")).toBeNull();
   });
 
   it("sends no mutating request without the confirm bar step", async () => {
@@ -221,15 +180,15 @@ describe("TrainingModal", () => {
     expect(postCalls[0].url).toContain("/api/training/models/switch");
     expect(postCalls[0].body).toEqual({ profile: "unsloth", confirm: true });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[1] ?? screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Start serving" }));
     expect(postCalls).toHaveLength(1);
-    const jobConfirm = await screen.findByTestId("training-confirm");
-    expect(jobConfirm).toHaveTextContent("Start the Unsloth train job?");
+    const serveConfirm = await screen.findByTestId("training-confirm");
+    expect(serveConfirm).toHaveTextContent("Start llama.cpp serving for the active profile?");
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(postCalls).toHaveLength(2));
-    expect(postCalls[1].url).toContain("/api/training/start");
-    expect(postCalls[1].body).toEqual({ job: "lfm-train", confirm: true });
+    expect(postCalls[1].url).toContain("/api/training/serve");
+    expect(postCalls[1].body).toEqual({ confirm: true });
   });
 
   it("disables profile switching while busy and says why", async () => {
@@ -246,11 +205,43 @@ describe("TrainingModal", () => {
     ).toBeTruthy();
   });
 
+  it("disables profile switching while a serve request is in flight", async () => {
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
+    const routeMock = globalThis.fetch as unknown as FetchMock;
+    let settlePost: (response: Response) => void = () => undefined;
+    const pendingPost = new Promise<Response>((resolve) => {
+      settlePost = resolve;
+    });
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
+          return pendingPost;
+        }),
+      );
+      openModal();
+      fireEvent.click(await screen.findByRole("button", { name: "Start serving" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+      expect(await screen.findByRole("button", { name: /Swift 1\.5/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Atomic/ })).toBeDisabled();
+      expect(screen.queryByText(/Switching is unavailable while/)).toBeNull();
+
+      await act(async () => {
+        settlePost(jsonResponse({ ok: true }));
+      });
+    } finally {
+      vi.stubGlobal("fetch", routeMock);
+    }
+  });
+
   it("polls status while open and stops polling when closed", async () => {
     const fetchMock = vi.mocked(globalThis.fetch);
     let open = true;
     const { rerender } = render(<TrainingModal open={open} onOpenChange={onOpenChange} />);
-    await screen.findByTestId("training-state");
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
 
     await act(async () => {
       vi.advanceTimersByTime(6000);
@@ -272,16 +263,62 @@ describe("TrainingModal", () => {
 
   it("labels the in-flight action instead of silently disabling everything", async () => {
     const routeMock = globalThis.fetch as unknown as FetchMock;
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
 
     openModal();
-    await screen.findByTestId("training-state");
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Start serving" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     try {
       const busyButton = await screen.findByRole("button", { name: /Starting/ });
       expect(busyButton).toHaveAttribute("aria-busy", "true");
+    } finally {
+      vi.stubGlobal("fetch", routeMock);
+    }
+  });
+
+  it("sends serve once when Confirm is double-clicked and re-enables Confirm after it settles", async () => {
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
+    const routeMock = globalThis.fetch as unknown as FetchMock;
+    let settlePost: (response: Response) => void = () => undefined;
+    const pendingPost = new Promise<Response>((resolve) => {
+      settlePost = resolve;
+    });
+    const servePosts = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter(
+        ([url, init]) => String(url).includes("/api/training/serve") && init?.method === "POST",
+      ).length;
+
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if ((init?.method ?? "GET") !== "POST") return routeMock(input, init);
+          return pendingPost;
+        }),
+      );
+      openModal();
+      fireEvent.click(await screen.findByRole("button", { name: "Start serving" }));
+      const confirm = await screen.findByRole("button", { name: "Confirm" });
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+
+      expect(servePosts()).toBe(1);
+      expect(confirm).toBeDisabled();
+
+      await act(async () => {
+        settlePost(
+          new Response(JSON.stringify({ ok: false, error: "boom" }), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      });
+      expect(await screen.findByTestId("training-action-error")).toHaveTextContent("boom");
+      expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+      expect(servePosts()).toBe(1);
     } finally {
       vi.stubGlobal("fetch", routeMock);
     }
@@ -323,9 +360,9 @@ describe("TrainingModal", () => {
       const noop = vi.fn();
       const view = render(<TrainingModal open={open} onOpenChange={noop} />);
 
-      await screen.findByTestId("training-state");
+      await screen.findByRole("heading", { name: "llama.cpp & profiles" });
 
-      fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Start serving" }));
       fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
@@ -341,7 +378,7 @@ describe("TrainingModal", () => {
 
       open = true;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
-      await screen.findByTestId("training-state");
+      await screen.findByRole("heading", { name: "llama.cpp & profiles" });
       expect(screen.queryByTestId("training-action-error")).toBeNull();
     } finally {
       vi.stubGlobal("fetch", routeMock);
@@ -369,14 +406,14 @@ describe("TrainingModal", () => {
       let open = true;
       const noop = vi.fn();
       const view = render(<TrainingModal open={open} onOpenChange={noop} />);
-      await screen.findByTestId("training-state");
+      await screen.findByRole("heading", { name: "llama.cpp & profiles" });
 
-      fireEvent.click(screen.getAllByRole("button", { name: "Unsloth train" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "Start serving" }));
       fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
       open = false;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
 
-const calls = (routeMock as unknown as {
+      const calls = (routeMock as unknown as {
         mock: { calls: Array<[RequestInfo | URL, RequestInit?]> };
       }).mock.calls;
       const statusCalls = () => calls.filter((call) => String(call[0]).includes("/status")).length;
@@ -389,7 +426,7 @@ const calls = (routeMock as unknown as {
 
       open = true;
       view.rerender(<TrainingModal open={open} onOpenChange={noop} />);
-      await screen.findByTestId("training-state");
+      await screen.findByRole("heading", { name: "llama.cpp & profiles" });
       expect(statusCalls()).toBeGreaterThan(countBefore);
     } finally {
       vi.stubGlobal("fetch", routeMock);
@@ -401,7 +438,7 @@ const calls = (routeMock as unknown as {
     fetchMock.mockClear();
     statusRoute.body = { ...idleStatus, active_profile: "atomic", runtime_up: true };
     openModal();
-    await screen.findByTestId("training-state");
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
 
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls.some((url) => url.includes("/api/training/status"))).toBe(true);
@@ -419,8 +456,7 @@ const calls = (routeMock as unknown as {
 
   it("shows the status fetch error in the model list banner after a later poll fails, then clears it", async () => {
     openModal();
-    await screen.findByTestId("training-state");
-    expect(screen.getByRole("heading", { name: "llama.cpp & profiles" })).toBeTruthy();
+    await screen.findByRole("heading", { name: "llama.cpp & profiles" });
     expect(screen.queryByTestId("training-profiles-error")).toBeNull();
 
     statusRoute.body = { ok: false, error: "training host command failed" };
@@ -442,81 +478,14 @@ const calls = (routeMock as unknown as {
     await waitFor(() => expect(screen.queryByTestId("training-profiles-error")).toBeNull());
   });
 
-  it("calls stopTraining once when Confirm is double-clicked", async () => {
-    let resolveStop: () => void = () => undefined;
-    const stopTraining = vi.spyOn(trainingApi, "stopTraining").mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveStop = resolve;
-      }),
-    );
-    statusRoute.body = {
-      ...idleStatus,
-      run: {
-        kind: "lfm-train",
-        started: "2026-07-19T08:00:00Z",
-        running: true,
-        progress: null,
-        log_tail: [],
-      },
-    };
-    try {
-      openModal();
-      fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
-      const confirm = await screen.findByRole("button", { name: "Confirm" });
-      act(() => {
-        confirm.click();
-        confirm.click();
-      });
-      expect(stopTraining).toHaveBeenCalledTimes(1);
-      expect(confirm).toBeDisabled();
-      expect(confirm).toHaveTextContent("Stopping run…");
-      expect(confirm).toHaveAttribute("aria-busy", "true");
-    } finally {
-      stopTraining.mockRestore();
-      await act(async () => resolveStop());
-    }
-  });
-
-  it("starts a double-clicked job once and re-enables Confirm after it settles", async () => {
-    let resolveStart: () => void = () => undefined;
-    const startTrainingJob = vi.spyOn(trainingApi, "startTrainingJob").mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveStart = resolve;
-      }),
-    );
-    try {
-      openModal();
-      fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
-      const confirm = await screen.findByRole("button", { name: "Confirm" });
-      act(() => {
-        confirm.click();
-        confirm.click();
-      });
-      expect(startTrainingJob).toHaveBeenCalledTimes(1);
-      expect(confirm).toBeDisabled();
-
-      await act(async () => resolveStart());
-      await waitFor(() => expect(screen.queryByTestId("training-confirm")).toBeNull());
-
-      fireEvent.click((await screen.findAllByRole("button", { name: "Unsloth train" })).at(-1)!);
-      const nextConfirm = await screen.findByRole("button", { name: "Confirm" });
-      expect(nextConfirm).toBeEnabled();
-      fireEvent.click(nextConfirm);
-      await waitFor(() => expect(startTrainingJob).toHaveBeenCalledTimes(2));
-    } finally {
-      startTrainingJob.mockRestore();
-    }
-  });
-
   it("shows an action error banner when a confirmed request fails with 409", async () => {
-    statusRoute.body = {
-      ...idleStatus,
-      run: { kind: "lfm-train", started: "", running: true, progress: null, log_tail: [] },
-    };
+    statusRoute.body = { ...idleStatus, active_profile: "atomic" };
     openModal();
-    fireEvent.click(await screen.findByRole("button", { name: "Stop run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start serving" }));
 
-    expect(await screen.findByText("Stop the current training run?")).toBeTruthy();
+    expect(
+      await screen.findByText("Start llama.cpp serving for the active profile?"),
+    ).toBeTruthy();
     postResponse = { body: { ok: false, error: "a job is running" }, status: 409 };
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(await screen.findByTestId("training-action-error")).toHaveTextContent(

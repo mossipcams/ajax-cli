@@ -128,3 +128,30 @@ export function useTrainingCatalog() {
   return { datasets, catalogPromotedRunId, evals, error, refresh };
 }
 
+
+const LOSS_LINE_RE = /['"]loss['"]\s*:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/;
+
+export function lossSeries(logTail: string[]): number[] {
+  const losses: number[] = [];
+  for (const line of logTail) {
+    const match = LOSS_LINE_RE.exec(line);
+    if (match) losses.push(Number(match[1]));
+  }
+  return losses;
+}
+
+const MIN_RATE_ELAPSED_S = 60;
+
+export function stepsPerMinute(step: number, started: string | null, nowMs: number = Date.now()): number | null {
+  if (!started) return null;
+  const startedMs = Date.parse(started);
+  if (!Number.isFinite(startedMs)) return null;
+  const elapsedS = (nowMs - startedMs) / 1000;
+  if (elapsedS < MIN_RATE_ELAPSED_S || step === 0) return null;
+  return step / (elapsedS / 60);
+}
+
+export function finishClock(etaSeconds: number | null, nowMs: number = Date.now()): string | null {
+  if (etaSeconds === null || !Number.isFinite(etaSeconds)) return null;
+  return new Date(nowMs + etaSeconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
