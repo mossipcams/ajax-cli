@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -26,6 +27,7 @@ export interface TaskDetailsSheetProps {
   detail: BrowserTaskDetail;
   orchestrationChat?: boolean;
   harnessSwapDisabled?: boolean;
+  sessionBusy?: boolean;
   onOpenDiff?: () => void;
   onOpenTerminal?: () => void;
   onOpenChat?: () => void;
@@ -43,6 +45,7 @@ export interface TaskDetailsSheetProps {
   ) => void;
   onMutated?: () => void;
   onDismiss?: () => void;
+  onClearSession?: () => boolean;
   pendingConfirmAction?: string | null;
   onCancelPendingConfirm?: () => void;
 }
@@ -55,6 +58,7 @@ export default function TaskDetailsSheet({
   detail,
   orchestrationChat = false,
   harnessSwapDisabled = false,
+  sessionBusy = false,
   onOpenDiff,
   onOpenTerminal,
   onOpenChat,
@@ -63,15 +67,24 @@ export default function TaskDetailsSheet({
   onResult,
   onMutated,
   onDismiss,
+  onClearSession,
   pendingConfirmAction = null,
   onCancelPendingConfirm,
 }: TaskDetailsSheetProps) {
+  const [freshSessionArmed, setFreshSessionArmed] = useState(false);
+
+  useEffect(() => {
+    if (!open) setFreshSessionArmed(false);
+  }, [open]);
+
   if (!open) return null;
 
   const handle = detail.qualified_handle;
   const actions = visibleTaskActions(detail.actions).filter(
     (action) => action.action !== RESTART_ACTION.action,
   );
+  const showRestartAgent =
+    sessionBusy || detail.actions.some((action) => action.action === RESTART_ACTION.action);
   const showAjaxChat =
     mode === "terminal" &&
     orchestrationChat &&
@@ -81,6 +94,20 @@ export default function TaskDetailsSheet({
 
   function close() {
     onOpenChange(false);
+  }
+
+  function requestFreshSession() {
+    if (!freshSessionArmed) {
+      setFreshSessionArmed(true);
+      return;
+    }
+    setFreshSessionArmed(false);
+    const sent = onClearSession ? onClearSession() : true;
+    if (!sent) {
+      onResult?.("Not connected. Try again once the session reconnects.", null, true);
+      return;
+    }
+    close();
   }
 
   function handleHarnessSwapped() {
@@ -157,13 +184,23 @@ export default function TaskDetailsSheet({
                       Show diff
                     </Button>
                   ) : null}
+                  {showRestartAgent ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      data-testid="session-restart-agent"
+                      onClick={requestRestart}
+                    >
+                      Restart agent
+                    </Button>
+                  ) : null}
                   <Button
                     type="button"
                     variant="secondary"
-                    data-testid="session-restart-agent"
-                    onClick={requestRestart}
+                    data-testid="session-fresh-session"
+                    onClick={requestFreshSession}
                   >
-                    Restart agent
+                    {freshSessionArmed ? "Confirm fresh session" : "Fresh session"}
                   </Button>
                 </div>
               ) : null}

@@ -84,6 +84,7 @@ export type ComposerProviderProps = ComposerCommands & {
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
   composerRef: RefObject<HTMLTextAreaElement | null>;
+  clearRef?: RefObject<(() => boolean) | null>;
   scrollToLatest: () => void;
   children: ReactNode;
 };
@@ -143,6 +144,7 @@ export function ComposerProvider({
   availableCommands,
   promptCapabilities,
   composerRef,
+  clearRef,
   scrollToLatest,
   sendPrompt,
   withdrawQueuedPrompt,
@@ -301,15 +303,23 @@ export function ComposerProvider({
   );
 
 
+  const clearComposer = useCallback(() => {
+    if (!connected) return false;
+    sendClear();
+    setComposerState(clearQueue(composerStateRef.current));
+    scrollToLatest();
+    return true;
+  }, [connected, scrollToLatest, sendClear]);
+
+  if (clearRef) clearRef.current = clearComposer;
+
   const sendDraft = useCallback(() => {
     if (!connected) return;
 
     if (isBuiltInClearCommand(draftRef.current)) {
-      sendClear();
+      clearComposer();
       clearDraftText();
       clearDraftAttachments();
-      setComposerState(clearQueue(composerStateRef.current));
-      scrollToLatest();
       return;
     }
     if (!promptingEnabled) return;
@@ -420,6 +430,7 @@ export function ComposerProvider({
     }
   }, [
     busy,
+    clearComposer,
     clearDraftAttachments,
     clearDraftText,
     composerState,
@@ -429,7 +440,6 @@ export function ComposerProvider({
     promptingEnabled,
     scrollToLatest,
     sendCancel,
-    sendClear,
   ]);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentProps, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, type ComponentProps, type PointerEvent, type ReactNode, type RefObject } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { toolCount, useChatSession, type ConversationItem } from "./session/public";
 import { useHistoryWindow } from "./conversation/useHistoryWindow";
@@ -57,6 +57,7 @@ interface Props {
     model: string;
     busy: boolean;
     sessionConfigOptions?: LiveSessionConfigOption[];
+    clearSession?: () => boolean;
   }) => void;
 }
 
@@ -83,6 +84,7 @@ function ChatSessionBody({
   respondPermission,
   respondElicitation,
   composerRef,
+  composerClearRef,
   notice,
   dismissNotice,
   modelSheetOpen,
@@ -111,6 +113,7 @@ function ChatSessionBody({
   respondPermission: ReturnType<typeof useChatSession>["respondPermission"];
   respondElicitation: ReturnType<typeof useChatSession>["respondElicitation"];
   composerRef: React.RefObject<HTMLTextAreaElement | null>;
+  composerClearRef: RefObject<(() => boolean) | null>;
   notice: string | null;
   dismissNotice: () => void;
   modelSheetOpen: boolean;
@@ -179,6 +182,7 @@ function ChatSessionBody({
           availableCommands={availableCommands}
           promptCapabilities={promptCapabilities}
           composerRef={composerRef}
+          clearRef={composerClearRef}
           scrollToLatest={scrollToLatest}
           sendPrompt={sendPrompt}
           withdrawQueuedPrompt={withdrawQueuedPrompt}
@@ -283,6 +287,7 @@ export default function ChatSurface({
     shouldIgnoreTarget: shouldIgnoreChatTranscriptSwipeTarget,
   });
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerClearRef = useRef<(() => boolean) | null>(null);
   const { notice, showNotice, dismissNotice } = useSessionModelNotice();
   const { modelSheetOpen, setModelSheetOpen } = useSessionModelSheet();
 
@@ -313,6 +318,7 @@ export default function ChatSurface({
       model: sessionModel,
       busy: view.turn.busy,
       sessionConfigOptions,
+      clearSession: () => composerClearRef.current?.() ?? false,
     });
   }, [sessionModel, sessionConfigOptions, view.turn.busy, onSessionActivity]);
 
@@ -354,6 +360,7 @@ export default function ChatSurface({
         respondPermission={respondPermission}
         respondElicitation={respondElicitation}
         composerRef={composerRef}
+        composerClearRef={composerClearRef}
         notice={notice}
         dismissNotice={dismissNotice}
         modelSheetOpen={modelSheetOpen}
