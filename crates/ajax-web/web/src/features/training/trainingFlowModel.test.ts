@@ -183,6 +183,15 @@ describe("trainingFlowModel", () => {
     expect(stage(flow, "Eval")?.fact).toContain("75.0%");
   });
 
+  it("hides the start action on a running lfm-train stage", () => {
+    const { status, evals, datasets } = fixture();
+    status.state = "train:lfm";
+    status.device = "gpu";
+    status.run = { kind: "lfm-train", running: true, started: "", external: false, log_tail: [], progress: null };
+    const flow = trainingFlowModel(status, evals, datasets);
+    expect(stage(flow, "Train")).toMatchObject({ state: "active", actionVisible: false });
+  });
+
   it("hides empty plots and handles missing pipeline and champion", () => {
     const { status } = fixture();
     status.pipeline = null;

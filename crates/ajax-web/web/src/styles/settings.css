@@ -169,16 +169,16 @@
 
 .training-muted {
   margin: 4px 0;
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .training-banner {
   margin: 8px 0;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: color-mix(in srgb, red 12%, transparent);
-  color: #b91c1c;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
   font-size: 0.9rem;
   overflow-wrap: anywhere;
 }
@@ -200,9 +200,9 @@
 /* Status hero — one card that always answers "what is happening now". */
 .training-hero {
   margin-top: 16px;
-  padding: 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-lg, 12px);
+  border-radius: var(--radius-sm);
   background: var(--paper-raised);
 }
 
@@ -221,7 +221,7 @@
 .training-hero-sub {
   margin: 4px 0 10px;
   font-size: var(--text-body-sm);
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-muted);
 }
 
 .training-hero-note {
@@ -250,15 +250,16 @@
   display: block;
   font-size: var(--text-micro);
   font-weight: 600;
-  letter-spacing: var(--tracking-label, 0.08em);
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
-  color: var(--ink-muted, #737373);
+  color: var(--ink-faint);
 }
 
 .training-stat-value {
   display: block;
   font-family: var(--mono);
-  font-size: var(--text-body-sm);
+  font-size: var(--text-data);
+  font-variant-numeric: tabular-nums;
   line-height: 1.5;
   color: var(--ink);
 }
@@ -290,7 +291,7 @@
   margin-top: 16px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--rule));
-  border-radius: var(--radius-lg, 12px);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent) 8%, var(--paper-raised));
 }
 
@@ -320,6 +321,23 @@
 
 .training-actions-secondary button {
   min-height: 40px;
+}
+
+.training-other-jobs {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
+}
+
+.training-other-job {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .training-llama-actions {
@@ -377,18 +395,20 @@
   font-style: normal;
   font-size: var(--text-micro);
   padding: 1px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--primary, #334155) 15%, transparent);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
 }
 
 .training-tag.is-muted {
-  background: rgba(120, 120, 120, 0.15);
+  border-color: var(--rule);
+  color: var(--ink-faint);
 }
 
 /* Long model paths truncate on one line instead of wrapping the row open; full path in tooltip. */
 .training-serving {
   font-size: var(--text-micro);
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -396,7 +416,7 @@
 
 .training-model {
   font-size: var(--text-label);
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -408,24 +428,24 @@
 
 .training-progress {
   width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(120, 120, 120, 0.2);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--paper-high);
   overflow: hidden;
 }
 
 .training-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--primary, #334155);
+  background: var(--accent);
 }
 
 .training-log {
   list-style: none;
   margin: 8px 0 0;
   padding: 8px;
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.06);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
   font-size: var(--text-micro);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -472,43 +492,114 @@
 
 .training-device {
   display: inline-block;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: var(--text-label);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: var(--text-micro);
   font-weight: 600;
-  border: 1px solid var(--rule);
-  background: var(--paper-raised);
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-faint);
 }
 
 .training-device.is-gpu {
-  border-color: color-mix(in srgb, #16a34a 40%, var(--rule));
-  color: #15803d;
+  color: var(--accent);
 }
 
 .training-device.is-cpu {
-  border-color: color-mix(in srgb, #ca8a04 40%, var(--rule));
-  color: #a16207;
+  color: var(--warn);
 }
 
 .training-device.is-idle {
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-faint);
 }
 
 .training-page-run {
   margin: 8px 0 4px;
 }
 
-.training-page-progress {
+.training-page .training-muted {
+  font-size: var(--text-body-sm);
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+
+.training-page .pill {
+  border-radius: var(--radius-sm);
+}
+
+.training-page .pill:disabled,
+.training-page .pill.is-primary:disabled {
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--ink-faint);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.training-page .pill.is-danger,
+.training-page .pill.is-danger:hover,
+.training-page .pill.is-danger:focus-visible {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--rule));
+}
+
+.training-page .training-page-filter {
+  gap: 4px;
+}
+
+.training-page .training-page-filter .pill[aria-pressed="true"] {
+  background: var(--paper-high);
+  color: var(--ink-bright);
+  border-color: var(--rule-strong);
+}
+
+.training-page progress,
+.training-page meter {
+  -webkit-appearance: none;
+  appearance: none;
   display: block;
   width: 100%;
-  height: 8px;
+  height: 4px;
   margin: 8px 0;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--paper-high);
+  overflow: hidden;
+}
+
+.training-page progress::-webkit-progress-bar {
+  background: var(--paper-high);
+}
+
+.training-page progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.training-page progress::-moz-progress-bar {
+  background: var(--accent);
+}
+
+.training-page meter::-webkit-meter-bar {
+  height: 4px;
+  border: 0;
+  background: var(--paper-high);
+}
+
+.training-page meter::-webkit-meter-optimum-value,
+.training-page meter::-webkit-meter-suboptimum-value,
+.training-page meter::-webkit-meter-even-less-good-value {
+  background: var(--ok);
+}
+
+.training-page meter::-moz-meter-bar {
+  background: var(--ok);
 }
 
 .training-map {
   display: grid;
-  gap: 16px;
+  gap: var(--space-3);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -519,25 +610,25 @@
 }
 
 .training-map h4 {
-  font-size: 1.1rem;
+  font-size: var(--text-heading);
   line-height: 1.4;
 }
 
 .training-map-eyebrow {
-  color: var(--muted-foreground);
+  color: var(--ink-faint);
   font-size: var(--text-micro);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }
 
 .training-map-now {
   display: grid;
   gap: 10px;
-  padding: 12px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--paper-raised);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
   font-size: var(--text-label);
 }
 
@@ -549,32 +640,29 @@
 }
 
 .training-map-hardware {
-  padding: 2px 5px;
-  border: 1px solid var(--rule);
-  border-radius: 3px;
-  font-family: var(--font-mono);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--mono);
   font-size: var(--text-micro);
+  color: var(--ink-faint);
   white-space: nowrap;
   text-align: center;
 }
 
 .training-map-lane {
-  --lane-color: var(--accent);
   min-width: 0;
+  padding: var(--space-4);
   border: 1px solid var(--rule);
-  border-top: 3px solid var(--lane-color);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--lane-color) 3%, var(--paper-raised));
-}
-
-.training-map-lane.is-training {
-  --lane-color: #b7a5ee;
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
 }
 
 .training-map-lane > header {
   display: grid;
   gap: 5px;
-  padding: 14px;
+  padding: 0 0 var(--space-3);
   border-bottom: 1px solid var(--rule);
 }
 
@@ -584,7 +672,7 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   font-size: var(--text-label);
-  color: var(--muted-foreground);
+  color: var(--ink-muted);
 }
 
 .training-map-lane code,
@@ -610,7 +698,7 @@
   left: -17px;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: 1px;
   background: var(--rule);
 }
 
@@ -623,9 +711,7 @@
 }
 
 .training-map-stage.is-active::before {
-  background: repeating-linear-gradient(to bottom, var(--lane-color) 0 5px, var(--rule) 5px 10px);
-  background-size: 100% 10px;
-  animation: training-map-flow 1s linear infinite;
+  background: var(--accent);
 }
 
 .training-map-node {
@@ -633,60 +719,69 @@
   z-index: 1;
   top: 16px;
   left: -21px;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--rule);
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--rule-strong);
   border-radius: 2px;
-  background: var(--paper-raised);
+  background: transparent;
 }
 
 .training-map-node::after {
   content: "";
   position: absolute;
   left: 8px;
-  top: 2px;
+  top: 3px;
   width: 11px;
-  height: 2px;
+  height: 1px;
   background: var(--rule);
 }
 
 .training-map-stage.is-done .training-map-node {
-  background: var(--lane-color);
-  border-color: var(--lane-color);
+  background: var(--ok);
+  border-color: var(--ok);
 }
 
 .training-map-stage.is-active .training-map-node {
-  background: var(--lane-color);
-  border-color: var(--lane-color);
-  animation: training-map-pulse 1.6s ease-out infinite;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
-.training-map-stage.is-next .training-map-node {
-  border-color: var(--lane-color);
+.training-map-stage.is-failed .training-map-node {
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .training-map-tile {
   display: grid;
   gap: 8px;
   min-width: 0;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--paper-raised);
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;
 }
 
-.training-map-stage.is-active .training-map-tile,
-.training-map-stage.is-next .training-map-tile {
-  border-color: var(--lane-color);
+.training-map-stage:last-child .training-map-tile {
+  border-bottom: 0;
+}
+
+.training-map-stage.is-active .training-map-tile {
+  padding-left: 10px;
+  border: 0;
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .training-map-stage.is-failed .training-map-tile {
-  border-color: var(--destructive, #ef6666);
+  padding-left: 10px;
+  border-left: 2px solid var(--danger);
 }
 
 .training-map-summary {
   display: grid;
   gap: 7px;
-  padding: 10px;
+  padding: 0;
   cursor: pointer;
   list-style: none;
 }
@@ -710,32 +805,49 @@
 
 .training-map-stage-head strong {
   flex: 1 1 100px;
-  font-size: var(--text-label);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--ink-bright);
 }
 
 .training-map-state {
   font-size: var(--text-micro);
-  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--ink-faint);
 }
 
 .training-map-stage.is-active .training-map-state {
-  color: var(--lane-color);
+  color: var(--accent);
+}
+
+.training-map-stage.is-done .training-map-state {
+  color: var(--ok);
+}
+
+.training-map-stage.is-failed .training-map-state {
+  color: var(--danger);
 }
 
 .training-map-purpose,
-.training-map-fact,
+.training-map-fact {
+  font-size: var(--text-body-sm);
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.training-map-summary .training-map-purpose {
+  display: none;
+}
+
 .training-map-explainer {
   font-size: var(--text-label);
   line-height: 1.5;
 }
 
-.training-map-purpose,
-.training-map-disclosure {
-  color: var(--muted-foreground);
-}
-
 .training-map-disclosure {
   font-size: var(--text-micro);
+  color: var(--ink-faint);
 }
 
 .training-map-disclosure::after {
@@ -753,7 +865,7 @@
 }
 
 .training-map-explainer dt {
-  color: var(--muted-foreground);
+  color: var(--ink-muted);
   margin-top: 8px;
 }
 
@@ -763,25 +875,26 @@
 
 .training-map-tile > button {
   justify-self: start;
-  margin: 0 10px 10px;
+  margin: 0;
   min-height: 40px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .training-map-tile > p,
 .training-map-tile > progress {
-  margin: 0 10px 10px;
-  width: calc(100% - 20px);
+  margin: 0;
+  width: 100%;
 }
 
 .training-map-handoff {
   display: grid;
   gap: 10px;
-  margin: -16px 12px;
-  padding: 20px 12px;
-  border-inline: 2px solid var(--rule);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
   font-size: var(--text-label);
-  background: color-mix(in srgb, var(--accent) 5%, var(--paper-raised));
+  background: var(--paper-tint);
 }
 
 .training-map-tokens {
@@ -794,7 +907,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 6px;
-  color: var(--muted-foreground);
+  color: var(--ink-muted);
 }
 
 .training-map-destination {
@@ -843,7 +956,7 @@
 }
 
 .training-map-reference {
-  stroke: #e5be72;
+  stroke: var(--rule-strong);
   stroke-dasharray: 4 4;
 }
 
@@ -851,7 +964,7 @@
   position: absolute;
   left: 0;
   font-size: 10px;
-  color: var(--muted-foreground);
+  color: var(--ink-faint);
   transform: translateY(-50%);
 }
 
@@ -879,21 +992,22 @@
   place-items: center;
   width: 9px;
   height: 9px;
-  border: 2px solid var(--accent);
+  border: 1px solid var(--ink-muted);
   border-radius: 50%;
-  background: var(--paper-raised);
+  background: transparent;
 }
 
 .training-map-point.is-best svg,
 .training-map-point[aria-pressed="true"] svg {
+  border-color: var(--accent);
   background: var(--accent);
 }
 
 .training-map-point.is-champion svg {
   width: 18px;
   height: 18px;
-  border-color: #e5be72;
-  color: #e5be72;
+  border-color: var(--warn);
+  color: var(--warn);
   background: var(--paper-raised);
   font-size: 13px;
 }
@@ -902,7 +1016,7 @@
   display: flex;
   justify-content: space-between;
   padding-left: 12%;
-  color: var(--muted-foreground);
+  color: var(--ink-faint);
   font-size: var(--text-micro);
 }
 
@@ -913,7 +1027,7 @@
 }
 
 .training-map-reference-label {
-  color: #e5be72;
+  color: var(--ink-muted);
 }
 
 .training-map-chart-caption {
@@ -926,10 +1040,10 @@
 .training-map-champion {
   display: grid;
   gap: 8px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, #e5be72 60%, var(--rule));
-  border-radius: 6px;
-  background: color-mix(in srgb, #e5be72 6%, var(--paper-raised));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
 }
 
 .training-map-champion-heading {
@@ -941,7 +1055,7 @@
 .training-map-champion-heading > svg {
   width: 32px;
   height: 32px;
-  color: #e5be72;
+  color: var(--warn);
 }
 
 .training-map-score {
@@ -953,27 +1067,13 @@
 
 .training-map-score meter {
   grid-column: 1 / -1;
-  width: 100%;
-  height: 12px;
-}
-
-.training-map-score meter::-webkit-meter-bar {
-  border: 0;
-  background: var(--rule);
-}
-
-.training-map-score meter::-webkit-meter-optimum-value {
-  background: #e5be72;
-}
-
-.training-map-score meter::-moz-meter-bar {
-  background: #e5be72;
 }
 
 .training-map-experiments {
-  padding: 14px;
-  border: 1px dashed var(--rule);
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
 }
 
 .training-map-experiments .training-map-chart {
@@ -994,21 +1094,6 @@
   font-size: var(--text-label);
 }
 
-@keyframes training-map-pulse {
-  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--lane-color) 25%, transparent); }
-}
-
-@keyframes training-map-flow {
-  to { background-position: 0 10px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .training-map-stage.is-active::before,
-  .training-map-stage.is-active .training-map-node {
-    animation: none;
-  }
-}
-
 .training-page-secondary {
   margin-top: 12px;
 }
@@ -1023,9 +1108,9 @@
 }
 
 .training-page-row {
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--rule);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--paper-raised);
 }
 
@@ -1038,8 +1123,16 @@
 }
 
 .training-page-runid {
-  font-size: 0.9rem;
+  font-family: var(--mono);
+  font-size: var(--text-data);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+
+.training-page-row-head .training-muted {
+  font-family: var(--mono);
+  font-size: var(--text-data);
+  font-variant-numeric: tabular-nums;
 }
 
 .training-page-badges {
@@ -1050,11 +1143,26 @@
 }
 
 .training-page-champion {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--paper-raised);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--text-body-sm);
+  color: var(--ink-muted);
+}
+
+.training-page-champion p {
+  display: inline;
+  margin: 0;
+}
+
+.training-page-champion p + p::before {
+  content: " · ";
+}
+
+.training-page-champion strong {
+  color: var(--ink-soft);
+  font-weight: 600;
 }
 
 .training-page-champion-checkpoint {
@@ -1075,7 +1183,7 @@
 .training-page-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
   margin-bottom: 12px;
 }
 
@@ -1105,11 +1213,11 @@
 }
 
 .training-page-metrics .is-pass {
-  color: #15803d;
+  color: var(--ok);
 }
 
 .training-page-metrics .is-fail {
-  color: #b91c1c;
+  color: var(--danger);
 }
 
 .training-page-row-details {
@@ -1121,7 +1229,11 @@
 
 .training-page-row-details h4 {
   margin: 8px 0 4px;
-  font-size: 0.85rem;
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--ink-faint);
 }
 
 .training-page-categories {
@@ -1133,7 +1245,7 @@
 
 .training-page-categories dt {
   margin: 0;
-  color: var(--muted-foreground, #737373);
+  color: var(--ink-muted);
 }
 
 .training-page-categories dd {
@@ -1144,8 +1256,8 @@
 .training-page-log {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.06);
+  border-radius: var(--radius-sm);
+  background: var(--paper-tint);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--text-micro);
   white-space: pre-wrap;
@@ -1162,6 +1274,7 @@
   display: grid;
   gap: 8px;
   padding: 10px;
-  border-radius: 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
   background: var(--paper-raised);
 }

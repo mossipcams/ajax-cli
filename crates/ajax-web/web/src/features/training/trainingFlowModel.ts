@@ -155,7 +155,8 @@ export function trainingFlowModel(
     const state: StageState = active ? "active" : done ? "done" : failed ? "failed"
       : !nextAssigned && eligible ? "next" : "pending";
     if (state !== "done") nextAssigned = true;
-    const actionVisible = job === "lfm-train" || state === "next" || state === "failed" || job === "select-checkpoint";
+    const actionVisible = state !== "active"
+      && (job === "lfm-train" || state === "next" || state === "failed" || job === "select-checkpoint");
     const selectedMismatch = (job === "lfm-eval" || job === "promote-model") && selectedId !== promotedId;
     return {
       job, label, hardware, purpose, reads, writes, fact, state, stateText: stateText[state],
