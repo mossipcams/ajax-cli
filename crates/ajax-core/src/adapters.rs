@@ -279,14 +279,6 @@ mod tests {
                 ]
             );
             prop_assert_eq!(
-                adapter.delete_branch(&repo_path, &branch).args,
-                vec!["-C", repo_path.as_str(), "branch", "-d", branch.as_str()]
-            );
-            prop_assert_eq!(
-                adapter.force_delete_branch(&repo_path, &branch).args,
-                vec!["-C", repo_path.as_str(), "branch", "-D", branch.as_str()]
-            );
-            prop_assert_eq!(
                 adapter.switch_branch(&repo_path, &start_point).args,
                 vec!["-C", repo_path.as_str(), "switch", start_point.as_str()]
             );
@@ -374,32 +366,6 @@ mod tests {
             )
         );
         assert_eq!(
-            adapter.delete_branch("/Users/matt/projects/web", "ajax/fix-login"),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
-            )
-        );
-        assert_eq!(
-            adapter.force_delete_branch("/Users/matt/projects/web", "ajax/fix-login"),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
-            )
-        );
-        assert_eq!(
             adapter.switch_branch("/Users/matt/projects/web", "main"),
             CommandSpec::new("git", ["-C", "/Users/matt/projects/web", "switch", "main"])
         );
@@ -473,20 +439,6 @@ mod tests {
                     "status",
                     "--porcelain=v1",
                     "--branch"
-                ]
-            )
-        );
-        assert_eq!(
-            adapter.merge_base_is_ancestor("/tmp/worktree", "ajax/fix-login", "main"),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/tmp/worktree",
-                    "merge-base",
-                    "--is-ancestor",
-                    "ajax/fix-login",
-                    "main"
                 ]
             )
         );

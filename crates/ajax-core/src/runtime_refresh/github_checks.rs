@@ -1,74 +1,15 @@
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    adapters::{CiChecksObservation, CommandRunner, GithubChecksAdapter},
-    commands::CommandContext,
+    adapters::CiChecksObservation,
     live::{self, LiveObservation, LiveStatusKind},
-    models::{LifecycleStatus, LiveStatusClass, Task, TaskId},
-    registry::Registry,
+    models::{LifecycleStatus, LiveStatusClass, Task},
 };
 
-use super::refresh_cached_annotations;
-
-#[allow(dead_code)]
-const CI_CHECKS_PROBE_INTERVAL: Duration = Duration::from_secs(300);
-#[allow(dead_code)]
-const CI_CHECKS_FAILED_PROBE_INTERVAL: Duration = Duration::from_secs(10);
-const CI_CHECKS_PROBED_AT_KEY: &str = "ci_checks_probed_at";
 pub(super) const CI_PROBE_ERROR_KEY: &str = "ci_probe_error";
+
+const CI_CHECKS_PROBED_AT_KEY: &str = "ci_checks_probed_at";
 const GITHUB_CI_FAILED_PREFIX: &str = "ci failed";
-
-#[allow(dead_code)]
-pub(super) fn refresh_github_check_evidence<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    now: SystemTime,
-    registered_runtime_tasks: &[(TaskId, String, String, PathBuf)],
-    github_ci_failure_at_refresh_start: &BTreeMap<TaskId, bool>,
-    changed: &mut bool,
-) {
-    let github = GithubChecksAdapter::new("gh");
-
-    for (task_id, _repo, branch, worktree_path) in registered_runtime_tasks {
-        let had_github_ci_failure = github_ci_failure_at_refresh_start
-            .get(task_id)
-            .copied()
-            .unwrap_or(false);
-        if let Some(task) = context.registry.get_task_mut(task_id) {
-            if github_probe_is_retired(task)
-                && task.live_status.as_ref().is_some_and(is_github_owned_ci)
-            {
-                let previous = task.clone();
-                clear_github_ci_evidence(task);
-                refresh_cached_annotations(task);
-                *changed |= *task != previous;
-            }
-        }
-
-        let should_probe = context
-            .registry
-            .get_task_mut(task_id)
-            .is_some_and(|task| should_probe_github_checks(task, now, had_github_ci_failure));
-        if !should_probe || branch.trim().is_empty() {
-            continue;
-        }
-
-        let command = github.pr_checks(&worktree_path.to_string_lossy(), branch);
-        let result = runner.run(&command);
-        let observation = GithubChecksAdapter::parse_pr_checks(&result);
-
-        if let Some(task) = context.registry.get_task_mut(task_id) {
-            let previous = task.clone();
-            apply_github_checks_observation(task, observation, now);
-            refresh_cached_annotations(task);
-            *changed |= *task != previous;
-        }
-    }
-}
 
 pub(super) fn github_probe_is_retired(task: &Task) -> bool {
     matches!(
@@ -76,29 +17,6 @@ pub(super) fn github_probe_is_retired(task: &Task) -> bool {
         LifecycleStatus::Removed | LifecycleStatus::Merged | LifecycleStatus::Cleanable
     ) || task.branch.trim().is_empty()
         || task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
-}
-
-#[allow(dead_code)]
-fn should_probe_github_checks(task: &Task, now: SystemTime, had_github_ci_failure: bool) -> bool {
-    if github_probe_is_retired(task) {
-        return false;
-    }
-
-    let Some(probed_at) = task
-        .metadata
-        .get(CI_CHECKS_PROBED_AT_KEY)
-        .and_then(|value| value.parse::<u64>().ok())
-    else {
-        return true;
-    };
-
-    let interval =
-        if task.live_status.as_ref().is_some_and(is_github_ci_failure) || had_github_ci_failure {
-            CI_CHECKS_FAILED_PROBE_INTERVAL
-        } else {
-            CI_CHECKS_PROBE_INTERVAL
-        };
-    unix_seconds(now).saturating_sub(probed_at) > interval.as_secs()
 }
 
 pub(super) fn apply_github_checks_observation(

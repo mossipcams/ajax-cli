@@ -64,7 +64,7 @@ Plan helpers                 ajax-core::commands/*  (not kernel)
 Shared kernel                models, lifecycle, live, live_application,
                              agent_status, ui_state, attention, policy, output,
                              registry traits, typed events, ghost_task,
-                             validity, and other cross-slice task-truth
+                             and other cross-slice task-truth
         ↓
 Mechanisms                   adapters/*, registry/sqlite, ajax-supervisor
                              substrates
