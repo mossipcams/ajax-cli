@@ -31,6 +31,7 @@ fn drain_until_finished(client: &PiRpcClient, expected_id: u64) -> (Vec<AgentEve
     let mut events = Vec::new();
     for _ in 0..64 {
         let event = client
+            .core()
             .wait_event(TIMEOUT)
             .unwrap_or_else(|| panic!("timed out waiting for request {expected_id} to finish"));
         if let AgentEvent::Native(NativeEvent::TurnFinished { request_id, .. }) = &event {
@@ -54,15 +55,18 @@ fn stop_reason(result: &Result<String, String>) -> Option<&str> {
 #[test]
 fn spawn_reports_fixture_session_id() {
     let client = spawn_client(&[]);
-    assert_eq!(client.session_id(), "fake-pi-rpc-session-1");
+    assert_eq!(client.core().session_id(), "fake-pi-rpc-session-1");
 }
 
 #[test]
 fn prompt_flow_streams_chunk_then_finishes_end_turn() {
     let client = spawn_client(&[]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
     assert_eq!(id, 1);
-    assert!(client.prompt_in_flight());
+    assert!(client.core().prompt_in_flight());
 
     let (events, finished) = drain_until_finished(&client, 1);
     assert!(
@@ -76,21 +80,30 @@ fn prompt_flow_streams_chunk_then_finishes_end_turn() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
 fn abort_flow_finishes_cancelled() {
     let client = spawn_client(&["--hold-run"]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
-    let first = client.wait_event(TIMEOUT).expect("first prompt event");
+    let first = client
+        .core()
+        .wait_event(TIMEOUT)
+        .expect("first prompt event");
     assert!(
         is_agent_text(&first),
         "expected the first event to be an AgentText: {first:?}"
     );
 
-    client.cancel().expect("cancel while a run is in flight");
+    client
+        .core()
+        .cancel()
+        .expect("cancel while a run is in flight");
 
     let (_, finished) = drain_until_finished(&client, id);
     match finished {
@@ -103,16 +116,18 @@ fn abort_flow_finishes_cancelled() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
 fn second_begin_prompt_while_run_active_is_err() {
     let client = spawn_client(&["--hold-run"]);
     client
+        .core()
         .begin_prompt(&text_blocks())
         .expect("first begin_prompt");
     let error = client
+        .core()
         .begin_prompt(&text_blocks())
         .expect_err("a second prompt while one is in flight must be rejected");
     assert!(!error.is_empty());
@@ -121,8 +136,9 @@ fn second_begin_prompt_while_run_active_is_err() {
 #[test]
 fn issue_1272_idle_cancel_is_adapted_at_session_boundary() {
     let client = spawn_client(&[]);
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
     let error = client
+        .core()
         .cancel()
         .expect_err("cancel with no run must be rejected");
     assert!(!error.is_empty());
@@ -135,7 +151,10 @@ fn issue_1272_idle_cancel_is_adapted_at_session_boundary() {
 #[test]
 fn rejected_prompt_reports_error_result() {
     let client = spawn_client(&["--reject-prompt"]);
-    let id = client.begin_prompt(&text_blocks()).expect("begin_prompt");
+    let id = client
+        .core()
+        .begin_prompt(&text_blocks())
+        .expect("begin_prompt");
 
     let (_, finished) = drain_until_finished(&client, id);
     match finished {
@@ -162,27 +181,29 @@ fn resume_reports_passed_session_id() {
         TIMEOUT,
     )
     .expect("fake pi rpc fixture must spawn");
-    assert_eq!(client.session_id(), "resumed-session-9");
+    assert_eq!(client.core().session_id(), "resumed-session-9");
 }
 
 #[test]
 fn shutdown_returns_session_id_once_then_host_exited() {
     let client = spawn_client(&[]);
-    let id = client.session_id();
+    let id = client.core().session_id();
 
     let first = client
+        .core()
         .shutdown()
         .expect("first shutdown returns the session id");
     assert_eq!(first, id);
-    assert!(client.host_exited());
+    assert!(client.core().host_exited());
 
-    assert_eq!(client.shutdown(), None);
+    assert_eq!(client.core().shutdown(), None);
 }
 
 #[test]
 fn empty_block_list_is_err() {
     let client = spawn_client(&[]);
     let error = client
+        .core()
         .begin_prompt("")
         .expect_err("an empty prompt must be rejected");
     assert!(!error.is_empty());
@@ -192,12 +213,14 @@ fn empty_block_list_is_err() {
 fn second_prompt_after_finish_gets_request_id_two() {
     let client = spawn_client(&[]);
     let first_id = client
+        .core()
         .begin_prompt(&text_blocks())
         .expect("first begin_prompt");
     assert_eq!(first_id, 1);
     drain_until_finished(&client, 1);
 
     let second_id = client
+        .core()
         .begin_prompt(&text_blocks())
         .expect("second begin_prompt");
     assert_eq!(second_id, 2);
@@ -215,8 +238,9 @@ fn issue_1283_resume_of_a_session_pi_never_persisted_keeps_that_id() {
         TIMEOUT,
     )
     .expect("fake pi rpc fixture must spawn with --session-id for an unpersisted session");
-    assert_eq!(client.session_id(), "never-persisted-1283");
+    assert_eq!(client.core().session_id(), "never-persisted-1283");
     client
+        .core()
         .shutdown()
         .expect("shutdown after resume returns the session id");
 }
@@ -226,7 +250,7 @@ fn spawn_exposes_the_advertised_command_list_once() {
     let client = spawn_client(&[]);
 
     assert_eq!(
-        client.take_available_commands(),
+        client.core().take_available_commands(),
         [
             NativeCommand {
                 name: "compact".to_string(),
@@ -242,7 +266,7 @@ fn spawn_exposes_the_advertised_command_list_once() {
         "the fake pi rpc fixture advertises exactly two commands"
     );
     assert!(
-        client.take_available_commands().is_empty(),
+        client.core().take_available_commands().is_empty(),
         "the second take must not re-deliver the handshake commands"
     );
 }
@@ -251,10 +275,11 @@ fn spawn_exposes_the_advertised_command_list_once() {
 fn degraded_handshake_exposes_no_commands() {
     let client = spawn_client(&["--degrade-optionals"]);
     assert!(
-        client.take_available_commands().is_empty(),
+        client.core().take_available_commands().is_empty(),
         "an empty handshake command list must expose no commands on the first take"
     );
     client
+        .core()
         .shutdown()
         .expect("shutdown after degraded handshake");
 }
@@ -288,7 +313,7 @@ fn prompt_with_images_reports_the_wire_shape() {
         }
         other => panic!("drain returned a non-finished event: {other:?}"),
     }
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
@@ -333,7 +358,7 @@ fn issue_1360_compact_routes_to_the_native_command() {
     let id = client
         .begin_prompt_with_images("/compact focus on tests", &[])
         .expect("begin /compact");
-    assert!(client.prompt_in_flight());
+    assert!(client.core().prompt_in_flight());
 
     let (events, finished) = drain_until_finished(&client, id);
     match finished {
@@ -355,7 +380,7 @@ fn issue_1360_compact_routes_to_the_native_command() {
         vec!["Context compacted: 100 → 40 tokens.\n"],
         "/compact must not reach the prompt path: {events:?}"
     );
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }
 
 #[test]
@@ -377,5 +402,5 @@ fn issue_1360_name_routes_to_set_session_name() {
         events.iter().all(|event| !is_agent_text(event)),
         "/name must not reach the prompt path: {events:?}"
     );
-    assert!(!client.prompt_in_flight());
+    assert!(!client.core().prompt_in_flight());
 }

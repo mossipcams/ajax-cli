@@ -105,7 +105,7 @@ pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::Curs
         return Vec::new();
     };
     let models = client.model_catalog();
-    client.shutdown();
+    client.core().shutdown();
     models
 }
 
@@ -135,7 +135,7 @@ pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
         return AgentModelCatalog::empty();
     };
     let options = client.config_options();
-    client.shutdown();
+    client.core().shutdown();
     catalog_from_neutral(&options)
 }
 
@@ -211,7 +211,7 @@ pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
         return AgentModelCatalog::empty();
     };
     let options = client.config_options();
-    client.shutdown();
+    client.core().shutdown();
     catalog_from_neutral(&options)
 }
 

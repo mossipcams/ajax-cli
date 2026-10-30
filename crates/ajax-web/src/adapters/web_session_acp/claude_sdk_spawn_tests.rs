@@ -51,7 +51,7 @@ fn spawn_returns_client_and_report() {
     with_fake_sdk(|cwd| {
         let (client, report) = spawn_claude_sdk(cwd, "", None).expect("spawn must succeed");
 
-        assert!(!client.session_id().is_empty());
+        assert!(!client.core().session_id().is_empty());
         assert_eq!(report.applied_model, "default");
         assert!(report.restore_advertised);
         assert!(!report.close_advertised);
@@ -75,7 +75,7 @@ fn resume_existing_session_reports_resumed() {
         let (client, report) = spawn_claude_sdk(cwd, "", Some("r-1")).expect("resume must succeed");
 
         assert!(report.resumed);
-        assert_eq!(client.session_id(), "r-1");
+        assert_eq!(client.core().session_id(), "r-1");
     });
 }
 
