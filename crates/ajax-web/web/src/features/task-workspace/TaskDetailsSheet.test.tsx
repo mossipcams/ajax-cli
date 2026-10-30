@@ -159,6 +159,7 @@ describe("TaskDetailsSheet restart agent action", () => {
         onOpenChange={vi.fn()}
         panelId="task-panel"
         mode="chat"
+        sessionBusy
         detail={detail({ actions: [] })}
       />,
     );
@@ -214,6 +215,7 @@ describe("TaskDetailsSheet restart agent action", () => {
         onOpenChange={vi.fn()}
         panelId="task-panel"
         mode="chat"
+        sessionBusy
         detail={detail({ actions: [] })}
         onResult={onResult}
       />,
@@ -232,6 +234,141 @@ describe("TaskDetailsSheet restart agent action", () => {
         }),
       }),
     );
+  });
+
+  it("hides Restart agent in chat mode when idle and Core does not offer it", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({ actions: [] })}
+      />,
+    );
+
+    const primaryTools = screen.getByTestId("session-primary-tools");
+    expect(within(primaryTools).queryByTestId("session-restart-agent")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restart agent" })).not.toBeInTheDocument();
+  });
+
+  it("shows Restart agent in chat mode when Core offers restart-agent while idle", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({
+          actions: [
+            {
+              action: "restart-agent",
+              label: "Restart agent",
+              destructive: false,
+              confirmation_required: true,
+            },
+          ],
+        })}
+      />,
+    );
+
+    const primaryTools = screen.getByTestId("session-primary-tools");
+    expect(within(primaryTools).getByTestId("session-restart-agent")).toBeInTheDocument();
+    expect(screen.queryByTestId("session-quick-actions")).not.toBeInTheDocument();
+  });
+
+  it("shows Restart agent in chat mode while the session is busy", () => {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        sessionBusy
+        detail={detail({ actions: [] })}
+      />,
+    );
+
+    const primaryTools = screen.getByTestId("session-primary-tools");
+    expect(within(primaryTools).getByTestId("session-restart-agent")).toBeInTheDocument();
+  });
+
+  it("runs Fresh session only after a second tap", () => {
+    const onClearSession = vi.fn(() => true);
+    const onOpenChange = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({ actions: [] })}
+        onClearSession={onClearSession}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("session-fresh-session"));
+    expect(onClearSession).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    const armed = screen.getByTestId("session-fresh-session");
+    expect(armed).toHaveTextContent("Confirm fresh session");
+
+    fireEvent.click(armed);
+    expect(onClearSession).toHaveBeenCalledOnce();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the sheet open and reports an error when Fresh session cannot run disconnected", () => {
+    const onClearSession = vi.fn(() => false);
+    const onOpenChange = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({ actions: [] })}
+        onClearSession={onClearSession}
+        onResult={onResult}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("session-fresh-session"));
+    fireEvent.click(screen.getByTestId("session-fresh-session"));
+
+    expect(onClearSession).toHaveBeenCalledOnce();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(
+      "Not connected. Try again once the session reconnects.",
+      null,
+      true,
+    );
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+    expect(screen.getByTestId("session-fresh-session")).toHaveTextContent("Fresh session");
+  });
+
+  it("resets the Fresh session armed state when the sheet closes", () => {
+    const onClearSession = vi.fn(() => true);
+    const props = {
+      onOpenChange: vi.fn(),
+      panelId: "task-panel",
+      mode: "chat" as const,
+      detail: detail({ actions: [] }),
+      onClearSession,
+    };
+    const { rerender } = render(<TaskDetailsSheet open {...props} />);
+
+    fireEvent.click(screen.getByTestId("session-fresh-session"));
+    expect(screen.getByTestId("session-fresh-session")).toHaveTextContent(
+      "Confirm fresh session",
+    );
+
+    rerender(<TaskDetailsSheet open={false} {...props} />);
+    rerender(<TaskDetailsSheet open {...props} />);
+
+    expect(screen.getByTestId("session-fresh-session")).toHaveTextContent("Fresh session");
+    expect(onClearSession).not.toHaveBeenCalled();
   });
 
   it("does not add Restart agent in terminal mode", () => {

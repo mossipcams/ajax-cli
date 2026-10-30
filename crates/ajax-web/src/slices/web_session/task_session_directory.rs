@@ -79,7 +79,7 @@ struct SessionEntry {
 pub(crate) struct TaskSessionDirectory {
     sessions: Mutex<HashMap<String, SessionEntry>>,
     ownership: std::sync::Arc<ExecutionOwnership>,
-    storage: SessionStorage,
+    pub(super) storage: SessionStorage,
     report_activity: Mutex<Option<ReportSessionActivity>>,
     deferred_activity_pending: Mutex<Option<DeferredActivityPending>>,
     live_entries: Arc<LiveActivityMap>,

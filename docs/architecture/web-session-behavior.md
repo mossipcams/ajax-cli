@@ -456,6 +456,16 @@ append the same authentication error repeatedly.
 - Queued ledger rows survive unexpected child exit; the host dispatches them only
   after a healthy replacement client is installed and any interrupted active row
   is durable.
+- Operator **Restart agent** replaces the harness process and resumes the stored
+  session id. When a holder is attached and a prompt was dispatching, the original
+  ledger row stays **interrupted** and the host resubmits the same text and content
+  blocks once through the normal FIFO under a new `<clientMessageId>-restart` id, so
+  it runs after prompts already queued. With no attached holder, or when stored
+  content blocks cannot be decoded, nothing is resubmitted. This is the only
+  resubmission path; every other interruption keeps the never-resent rule above.
+  Task details shows Restart agent only while a turn is in flight or Core offers
+  `restart-agent`. **Fresh session** in task details is always available in chat
+  mode, needs a second tap, and takes the same path as the built-in `/clear`.
 
 ## Shutdown and slot retention
 

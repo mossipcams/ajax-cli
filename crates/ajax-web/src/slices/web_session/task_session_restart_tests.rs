@@ -1,3 +1,4 @@
+use super::prompt_content::PromptContentBlockWire;
 use super::task_session_restart::{restart_session, RestartError};
 use super::test_support::{fake_acp_fixture, has_message, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
@@ -12,6 +13,7 @@ use ajax_core::{
     models::{AgentClient, Task, TaskId},
     registry::{InMemoryRegistry, Registry},
 };
+use base64::Engine;
 use std::path::Path;
 use std::time::Duration;
 
@@ -312,4 +314,185 @@ fn restart_wedged_claude_sdk_replaces_process_resumes_session_and_keeps_queue() 
         });
     });
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_resends_the_wedged_prompt_with_a_new_id() {
+    let dir = scratch_dir("restart-resend");
+    let handle = "web/restart-resend";
+    let context = chat_context("restart-resend", &dir, AgentClient::Claude);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
+
+    with_test_claude_sdk_module(&fixture, || {
+        directory.runtime_handle().block_on(async {
+            tokio::time::timeout(Duration::from_secs(30), async {
+                let session = directory.inner();
+                session
+                    .acquire(handle, &dir, "auto", AgentClient::Claude)
+                    .await
+                    .expect("acquire Claude SDK session");
+                session
+                    .submit_prompt_with_id(
+                        handle,
+                        "active-wedge".into(),
+                        "please WEDGE".into(),
+                        Vec::new(),
+                    )
+                    .await
+                    .expect("submit wedged prompt");
+                loop {
+                    let (events, _) = session.read_from(handle, 0).await;
+                    if has_message(&events, "agent", "wedged") {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    restart_session(session, &context, handle),
+                )
+                .await
+                .expect("restart must not wait for the wedged interrupt")
+                .expect("restart wedged session");
+
+                loop {
+                    let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+                    if ledger.entry("active-wedge-restart").is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+
+                let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+                assert_eq!(
+                    ledger.entry("active-wedge").unwrap().phase,
+                    prompt_ledger::PromptPhase::Interrupted
+                );
+                assert!(ledger.entry("active-wedge-restart").is_some());
+                let (events, _) = session.read_from(handle, 0).await;
+                assert_eq!(
+                    events
+                        .iter()
+                        .filter(|event| matches!(event,
+                            SessionServerEvent::Message { role, text, .. }
+                                if role == "user" && text == "please WEDGE"))
+                        .count(),
+                    2,
+                    "the resubmitted prompt must add a second user row for the same text"
+                );
+                session.drop_session(handle).await;
+            })
+            .await
+            .expect("wedged resend scenario must finish within 30 seconds");
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_with_no_in_flight_prompt_resends_nothing() {
+    let dir = scratch_dir("restart-no-resend");
+    let handle = "web/restart-no-resend";
+    let script = fake_acp_fixture();
+    let context = chat_context("restart-no-resend", &dir, AgentClient::Cursor);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+
+            directory
+                .runtime_handle()
+                .block_on(restart_session(directory.inner(), &context, handle))
+                .expect("restart");
+
+            let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+            assert!(ledger.entries.is_empty());
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_resends_the_wedged_prompt_with_its_image_blocks() {
+    let dir = scratch_dir("restart-image-resend");
+    let handle = "web/restart-image-resend";
+    let context = chat_context("restart-image-resend", &dir, AgentClient::Claude);
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
+
+    with_test_claude_sdk_module(&fixture, || {
+        directory.runtime_handle().block_on(async {
+            tokio::time::timeout(Duration::from_secs(30), async {
+                let session = directory.inner();
+                session
+                    .acquire(handle, &dir, "auto", AgentClient::Claude)
+                    .await
+                    .expect("acquire Claude SDK session");
+                session
+                    .submit_prompt_with_id(
+                        handle,
+                        "active-wedge".into(),
+                        "please WEDGE with an image".into(),
+                        vec![PromptContentBlockWire::Image {
+                            data: tiny_png_base64(),
+                            mime_type: "image/png".to_string(),
+                        }],
+                    )
+                    .await
+                    .expect("submit wedged prompt");
+                loop {
+                    let (events, _) = session.read_from(handle, 0).await;
+                    if has_message(&events, "agent", "wedged") {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    restart_session(session, &context, handle),
+                )
+                .await
+                .expect("restart must not wait for the wedged interrupt")
+                .expect("restart wedged session");
+
+                loop {
+                    let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+                    if ledger.entry("active-wedge-restart").is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+
+                let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+                let original = ledger
+                    .entry("active-wedge")
+                    .expect("original entry present");
+                let restarted = ledger
+                    .entry("active-wedge-restart")
+                    .expect("restarted entry present");
+                assert_eq!(original.phase, prompt_ledger::PromptPhase::Interrupted);
+                assert!(!original.content_blocks.is_empty());
+                assert_eq!(
+                    restarted.content_blocks, original.content_blocks,
+                    "the resubmitted prompt must carry the same content blocks"
+                );
+                session.drop_session(handle).await;
+            })
+            .await
+            .expect("wedged image resend scenario must finish within 30 seconds");
+        });
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn tiny_png_base64() -> String {
+    base64::engine::general_purpose::STANDARD
+        .encode([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 }
