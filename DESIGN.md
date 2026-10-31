@@ -278,7 +278,7 @@ Square-shouldered and calm: 6px corners on every operator control, sparse hairli
 - **Disabled:** transparent fill, Rule border, Ink Faint text, full opacity. A disabled control reads as unavailable, not as faded.
 
 ### Chips / Status
-- **Status dot:** 9px circle filled with `--tone`; running pulses (respects reduced motion). The only round element.
+- **Status dot:** 9px circle filled with `--tone`, 7px in the dashboard list; running pulses (respects reduced motion). The only round element.
 - **Tone classes:** `tone-running|waiting|idle|error|ready|attention|danger|done|success|muted` set `--tone` / `--tone-bg` only.
 - **Filter chips:** 6px radius, transparent with a Rule border. The selected chip takes Soft Charcoal High fill, Ink Bright text and a Rule Strong border.
 - **Needs you:** Section grouping by attention band, plus tone on the status dot and on waiting/error label text — never a thick left stripe on the row.
@@ -294,9 +294,9 @@ Square-shouldered and calm: 6px corners on every operator control, sparse hairli
 
 ### Task identity
 A task looks the same on every screen: the dashboard row, the chat head, the terminal header and the task details sheet all show the same three pieces.
-- **Title:** sans, weight 600: `--text-body` in lists, `--text-heading` as the page title. Never mono, never uppercase.
-- **Waiting rows:** the dashboard row's label uses `#d6b88f`, the one status color outside `--tone`.
-- **Status:** a 9px dot in `--tone` plus a sentence-case label (`Running`, `Needs input`, `Error`, `Done`). The label is neutral (Ink Muted) and takes `--tone` only for waiting and error. No glyph-and-uppercase variant.
+- **Title:** sans. `--text-body` at weight 400 in lists, `--text-heading` at weight 600 as the page title. Never mono, never uppercase.
+- **List tones:** the dashboard list softens `--tone` to pastels, scoped to `.tasks`.
+- **Status:** a dot in `--tone` plus a sentence-case label (`Running`, `Needs input`, `Error`, `Done`). The label is neutral (Ink Muted) and takes `--tone` only for waiting and error. No glyph-and-uppercase variant.
 - **Back:** neutral Ink text, sans, not uppercase. The same treatment on every screen, never blue and never tinted by status.
 
 ### Inputs / Fields
@@ -311,8 +311,9 @@ A task looks the same on every screen: the dashboard row, the chat head, the ter
 - **Mobile:** Safe-area padding mandatory; keyboard-open and terminal-expanded modes collapse chrome so the active pane owns the band.
 
 ### Dashboard task list
-- One bordered panel (`--paper-tint`, 1px Rule, 6px radius) with hairline Rule separators between rows. No shadow, no card per task.
+- One soft panel (`--paper-tint`, no border, 6px radius) with faint hairline separators between rows. No shadow, no card per task.
 - A **Needs you** group heading sits above rows in core's `needs-you` and `review` attention bands. An **Other tasks** heading sits above the rest, and appears only when both groups exist.
+- Group headings stay quiet: `--text-label`, weight 400, below the row titles in the hierarchy.
 - Grouping reads each row's `attention` band, not its status tone. Order inside each group is the task list's own order; the browser adds no ranking policy.
 - Row timestamps use Ink Muted.
 

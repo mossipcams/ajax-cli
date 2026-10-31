@@ -1,9 +1,14 @@
 /* TASK LIST (dashboard) --------------------------------------------------- */
-/* One bordered panel holds the whole list. */
+/* Soft pastel status tones, scoped to the list. */
+.tasks .tone-running { --tone: #9cbbe0; --tone-bg: rgba(156, 187, 224, 0.13); }
+.tasks .tone-waiting { --tone: #d6b88f; --tone-bg: rgba(214, 184, 143, 0.13); }
+.tasks .tone-error   { --tone: #d99a94; --tone-bg: rgba(217, 154, 148, 0.13); }
+.tasks .tone-done    { --tone: #9ec7aa; --tone-bg: rgba(158, 199, 170, 0.12); }
+
+/* One soft panel holds the whole list. */
 .tasks {
   margin-top: 8px;
   background: var(--paper-tint);
-  border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   overflow: hidden;
   padding: 2px 0;
@@ -18,9 +23,9 @@
 .task-group-heading {
   margin: 0;
   padding: var(--space-3) var(--space-4) var(--space-1);
-  font-size: var(--text-body-sm);
-  font-weight: 600;
-  color: var(--ink-muted);
+  font-size: var(--text-label);
+  font-weight: 400;
+  color: #8a8a8e;
 }
 
 /* Rows sit flush in the panel; hairline separators inset from the edges. */
@@ -36,7 +41,7 @@
   top: 0;
   left: 16px;
   right: 16px;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
   z-index: 2;
   pointer-events: none;
 }
@@ -115,7 +120,7 @@
   flex: 1 1 auto;
   min-width: 0;
   font-size: var(--text-body);
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: -0.01em;
   line-height: 1.35;
   color: var(--ink);
@@ -160,10 +165,6 @@
   min-width: 0;
 }
 
-.task-row.tone-waiting {
-  --tone: #d6b88f;
-}
-
 /* Clean status text, no pill box, no uppercase. Neutral by default; only rows
    that need the operator (waiting / error) carry their hue into the text. */
 .task-row-status {
@@ -179,10 +180,24 @@
   color: var(--tone);
 }
 
-/* Idle rows rest as a hollow dot instead of a filled one. */
+/* Tiny round status marker, hollow when idle (see .status-dot.tone-idle). */
+.task-row-marker.status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 1px;
+}
+
+/* Idle rows rest as a hollow dot instead of a filled one. Must follow .task-row-marker. */
 .status-dot.tone-idle {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--ink-faint);
+}
+
+.task-row-meta .task-row-status {
+  font-size: var(--text-body-sm);
+  font-weight: 400;
 }
 
 /* Inline row actions are soft outlined chips; the row body stays the main tap target. */
