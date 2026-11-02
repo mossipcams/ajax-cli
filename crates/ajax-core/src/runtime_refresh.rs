@@ -753,21 +753,41 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                 .unwrap_or_else(|| format!("ajax-{}-{handle}", repo.name));
             let tmux_status = TmuxAdapter::parse_session_status(&tmux_session, sessions_output);
 
-            let mut task = Task::new(
-                task_id.clone(),
-                repo.name.clone(),
-                handle.to_string(),
-                handle.replace('-', " "),
-                branch.to_string(),
-                repo.default_branch.clone(),
-                worktree.path,
-                tmux_session,
-                "task",
-                AgentClient::Codex,
-            );
-            crate::lifecycle::mark_active(&mut task).map_err(|error| {
-                CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
-            })?;
+            let previous_task = registered_runtime_tasks
+                .iter()
+                .find(|(_, existing_repo, _, existing_worktree_path)| {
+                    existing_repo == &repo.name
+                        && existing_worktree_path.to_string_lossy() == worktree.path
+                })
+                .and_then(|(task_id, _, _, _)| context.registry.get_task(task_id).cloned());
+            let mut task = match previous_task {
+                Some(mut previous) => {
+                    previous.id = task_id.clone();
+                    previous.handle = handle.to_string();
+                    previous.branch = branch.to_string();
+                    previous.worktree_path = worktree.path.into();
+                    previous.tmux_session = tmux_session;
+                    previous
+                }
+                None => {
+                    let mut task = Task::new(
+                        task_id.clone(),
+                        repo.name.clone(),
+                        handle.to_string(),
+                        handle.replace('-', " "),
+                        branch.to_string(),
+                        repo.default_branch.clone(),
+                        worktree.path,
+                        tmux_session,
+                        "task",
+                        AgentClient::Codex,
+                    );
+                    crate::lifecycle::mark_active(&mut task).map_err(|error| {
+                        CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
+                    })?;
+                    task
+                }
+            };
             task.git_status = Some(GitStatus {
                 worktree_exists: true,
                 branch_exists: true,
@@ -782,7 +802,7 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                 last_commit: None,
             });
             task.tmux_status = Some(tmux_status.clone());
-            if !tmux_status.exists {
+            if !tmux_status.exists && !task.skip_interactive_agent() {
                 task.task_window_status = Some(TaskWindowStatus {
                     exists: false,
                     window_name: task.task_window.clone(),

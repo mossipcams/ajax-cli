@@ -767,3 +767,93 @@ fn branch_rename_preserves_live_session_for_same_worktree() {
     );
     assert!(!renamed.has_side_flag(SideFlag::TmuxMissing));
 }
+
+#[test]
+fn branch_switch_preserves_chat_task_identity_issue_1544() {
+    struct ChatBranchSwitchRunner;
+
+    impl CommandRunner for ChatBranchSwitchRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "unrelated-session\n",
+                [command, ..] if command == "list-windows" => "",
+                [_, repo, subcommand, action, flag]
+                    if repo == REPO_PATH
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/renamed-task\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == REPO_PATH
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/renamed-task\n"
+                }
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    let config = Config {
+        repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+        ..Config::default()
+    };
+    let mut registry = InMemoryRegistry::default();
+    let mut stale = Task::new(
+        TaskId::new("web/stale-task"),
+        REPO_NAME,
+        "stale-task",
+        "Stale task",
+        "ajax/stale-task",
+        BASE_BRANCH,
+        TASK_WORKTREE,
+        "ajax-web-stale-task",
+        TASK_WINDOW,
+        AgentClient::Claude,
+    );
+    stale.lifecycle_status = LifecycleStatus::Active;
+    stale.metadata.insert(
+        crate::models::SKIP_INTERACTIVE_AGENT_KEY.to_string(),
+        "1".to_string(),
+    );
+    stale.metadata.insert(
+        crate::models::SESSION_MODEL_KEY.to_string(),
+        "opus".to_string(),
+    );
+    registry.create_task(stale).unwrap();
+    let mut context = CommandContext::new(config, registry);
+    let mut runner = ChatBranchSwitchRunner;
+
+    let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+    assert!(changed);
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/stale-task"))
+        .is_none());
+    let switched = context
+        .registry
+        .get_task(&TaskId::new("web/renamed-task"))
+        .unwrap();
+    assert_eq!(switched.selected_agent, AgentClient::Claude);
+    assert!(switched.skip_interactive_agent());
+    assert_eq!(
+        switched
+            .metadata
+            .get(crate::models::SESSION_MODEL_KEY)
+            .map(String::as_str),
+        Some("opus")
+    );
+    assert_eq!(switched.title, "Stale task");
+    assert_eq!(switched.branch, "ajax/renamed-task");
+    assert!(!switched.has_side_flag(SideFlag::TmuxMissing));
+}
