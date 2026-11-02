@@ -87,7 +87,10 @@ const TaskRow = memo(function TaskRow({
   const time = card.last_activity_unix_secs;
   const inlineActions = visibleActions.filter(
     (action) =>
-      !action.destructive && action.action !== "create-pr" && action.action !== "merge-pr",
+      !action.destructive &&
+        action.action !== "create-pr" &&
+        action.action !== "merge-pr" &&
+        action.action !== "restart-agent",
   );
   const revealAction = visibleActions.find((action) => action.action === "drop");
   const [dragging, setDragging] = useState(false);

@@ -460,8 +460,8 @@ append the same authentication error repeatedly.
   session id. When a holder is attached and a prompt was dispatching, the original
   ledger row stays **interrupted** and the host resubmits the same text and content
   blocks once through the normal FIFO under a new `<clientMessageId>-restart` id, so
-  it runs after prompts already queued. With no attached holder, or when stored
-  content blocks cannot be decoded, nothing is resubmitted. This is the only
+  it runs after prompts already queued. The host settles that row before re-acquiring, so a resubmitted prompt gets no not-retried note. With no attached holder, or when stored
+  content blocks cannot be decoded, nothing is resubmitted. The cockpit shows progress while the restart runs and reports whether the prompt was resubmitted. This is the only
   resubmission path; every other interruption keeps the never-resent rule above.
   Task details shows Restart agent only while a turn is in flight or Core offers
   `restart-agent`. **Fresh session** in task details is always available in chat

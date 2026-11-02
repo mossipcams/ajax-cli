@@ -349,13 +349,14 @@ fn restart_resends_the_wedged_prompt_with_a_new_id() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
 
-                tokio::time::timeout(
+                let resent = tokio::time::timeout(
                     Duration::from_secs(10),
                     restart_session(session, &context, handle),
                 )
                 .await
                 .expect("restart must not wait for the wedged interrupt")
                 .expect("restart wedged session");
+                assert!(resent, "restart must report that it re-sent the prompt");
 
                 loop {
                     let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
@@ -372,6 +373,11 @@ fn restart_resends_the_wedged_prompt_with_a_new_id() {
                 );
                 assert!(ledger.entry("active-wedge-restart").is_some());
                 let (events, _) = session.read_from(handle, 0).await;
+                assert!(
+                    !events.iter().any(|event| matches!(event,
+                        SessionServerEvent::Error { message } if message.contains("was not retried"))),
+                    "a re-sent prompt must not be reported as not retried"
+                );
                 assert_eq!(
                     events
                         .iter()
@@ -405,11 +411,12 @@ fn restart_with_no_in_flight_prompt_resends_nothing() {
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire");
 
-            directory
+            let resent = directory
                 .runtime_handle()
                 .block_on(restart_session(directory.inner(), &context, handle))
                 .expect("restart");
 
+            assert!(!resent);
             let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
             assert!(ledger.entries.is_empty());
         });

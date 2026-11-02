@@ -97,6 +97,7 @@ test("restart agent confirm from task details reaches the operation endpoint", a
         { action: "restart-agent", label: "Restart agent", destructive: false, confirmation_required: true },
       ],
     },
+    "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "Agent restarted.", error: null },
   });
   await page.addInitScript(() => {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
@@ -122,4 +123,5 @@ test("restart agent confirm from task details reaches the operation endpoint", a
   await expect
     .poll(() => page.evaluate(() => sessionStorage.getItem("ajax-e2e-operation-body")))
     .toContain('"restart-agent"');
+  await expect(page.getByTestId("result-panel")).toContainText("Agent restarted.");
 });

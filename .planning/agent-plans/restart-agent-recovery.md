@@ -29,6 +29,7 @@ Approval: user requested immediate implementation (2026-10-30, "Do that").
       `docs/architecture/web-session-behavior.md`; `web/dist` rebuilt.
 - [x] Parent review of both deltas and gate rerun.
 - [x] Commit and PR, from `feat/web/restart-agent-recovery`.
+- [x] #1534: report restart progress and outcome, and drop the false not-retried note on resubmission.
 - [ ] Device check of Restart and Fresh session on a wedged live turn.
 
 ## Deviations
