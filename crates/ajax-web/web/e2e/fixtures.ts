@@ -145,7 +145,7 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
         { harness: "pi", installed: true, signedIn: true, detail: null },
       ],
     },
-    "/api/operations": { ok: true, cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
+    "/api/operations": { cockpit: COCKPIT_FIXTURE, output: "ok", error: null },
     "/api/server/restart": {},
     "/api/server/test-in-stable": { ok: true, restarting: true },
     "__detail__":      DETAIL_FIXTURE,
