@@ -151,7 +151,6 @@ test("task detail panels and action buttons are styled", async ({ page }, testIn
 
   const pill = page.locator(".interact-pill").first();
   expect(await pill.evaluate((el) => getComputedStyle(el).color)).toBe(WARN);
-  expect(await pill.evaluate((el) => getComputedStyle(el, "::before").content)).toBe('"◦"');
 
   const title = page.locator(".detail-title");
   expect(await title.evaluate((el) => getComputedStyle(el).fontSize)).toBe("16px");

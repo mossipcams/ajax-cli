@@ -25,7 +25,7 @@
   flex: none;
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--ink);
   font-size: var(--text-body);
   font-weight: 600;
   padding: 4px 2px;
@@ -36,7 +36,7 @@
 
 .session-head-back:hover,
 .session-head-back:focus-visible {
-  color: var(--accent-bright);
+  color: var(--ink-bright);
   outline: none;
 }
 
@@ -48,18 +48,12 @@
 .session-head-label {
   flex: 0 1 auto;
   min-width: 0;
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  font-size: var(--text-label);
   color: var(--tone, var(--ink-muted));
 }
 
 .session-head-offline {
-  font-size: var(--text-micro);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+  font-size: var(--text-label);
   color: var(--warn);
 }
 
@@ -87,7 +81,7 @@
    dense strip. */
 .session-head-stop {
   border: 1px solid var(--rule-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   padding: 4px 12px;
   color: var(--ink);
 }

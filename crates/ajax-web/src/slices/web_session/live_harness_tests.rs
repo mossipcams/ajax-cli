@@ -10,7 +10,8 @@ use ajax_core::models::AgentClient;
 use crate::adapters::program::{global_npm_root, resolve_program};
 use crate::adapters::web_session_acp::{
     with_test_claude_sdk_module, with_test_cursor_sdk_module, with_test_pi_program,
-    NeutralConfigCategory, NeutralConfigKind, SessionClient, SessionConfigValue,
+    with_test_restore_timeout, NeutralConfigCategory, NeutralConfigKind, SessionClient,
+    SessionConfigValue, RESTORE_HANDSHAKE_TIMEOUT,
 };
 
 use super::acp_drain::{drain_acp_events, PromptTerminal, PromptTerminalOutcome};
@@ -338,8 +339,10 @@ fn check_harness(harness: Harness) {
     let session_id = client.session_id().to_string();
     client.shutdown();
     let (mut resumed, _) =
-        SessionClient::spawn_with_operator_pin(agent, &dir, "default", Some(&session_id))
-            .unwrap_or_else(|err| panic!("{label}: resume spawn failed: {err}"));
+        with_test_restore_timeout(RESTORE_HANDSHAKE_TIMEOUT.as_millis() as u64, || {
+            SessionClient::spawn_with_operator_pin(agent, &dir, "default", Some(&session_id))
+        })
+        .unwrap_or_else(|err| panic!("{label}: resume spawn failed: {err}"));
     assert_eq!(
         resumed.session_id(),
         session_id,

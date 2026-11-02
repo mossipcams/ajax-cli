@@ -125,7 +125,7 @@
   padding: 10px 12px;
   list-style: none;
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--paper-tint);
   display: flex;
   flex-direction: column;

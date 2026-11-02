@@ -19,7 +19,7 @@
 .test-in-dev .pill {
   min-height: 24px;
   border: 1px solid var(--rule-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-muted);
   padding: 2px 8px;
@@ -43,7 +43,7 @@
 .test-in-dev .error {
   margin: 8px 0 0;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgba(188, 92, 62, 0.12);
   color: var(--terracotta-bright);
   white-space: pre-wrap;

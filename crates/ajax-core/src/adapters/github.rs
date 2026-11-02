@@ -12,6 +12,13 @@ pub struct GithubChecksAdapter {
     program: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrMergeability {
+    Mergeable,
+    Conflicting,
+    Unknown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CiChecksObservation {
     Failed { summary: String },
@@ -42,15 +49,6 @@ impl GithubChecksAdapter {
         Self {
             program: program.into(),
         }
-    }
-
-    pub fn pr_checks(&self, worktree_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["pr", "checks", branch, "--json", "name,state,link"],
-        )
-        .with_cwd(worktree_path)
-        .with_timeout(GH_PR_CHECKS_TIMEOUT)
     }
 
     pub fn pr_checks_for_pr(&self, worktree_path: &str, number: u64) -> CommandSpec {
@@ -118,6 +116,37 @@ impl GithubChecksAdapter {
             .map_err(|error| format!("unparsable gh pr list output: {error}"))?;
 
         Ok(rows.into_iter().map(map_pr_row).collect())
+    }
+
+    pub fn pr_mergeable(&self, worktree_path: &str, number: u64) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["pr", "view", &number.to_string(), "--json", "mergeable"],
+        )
+        .with_cwd(worktree_path)
+        .with_timeout(GH_PR_CHECKS_TIMEOUT)
+    }
+
+    pub fn parse_pr_mergeable(result: &Result<CommandOutput, CommandRunError>) -> PrMergeability {
+        #[derive(Deserialize)]
+        struct MergeableRow {
+            mergeable: String,
+        }
+
+        let Ok(output) = result else {
+            return PrMergeability::Unknown;
+        };
+        if output.status_code != 0 {
+            return PrMergeability::Unknown;
+        }
+        match serde_json::from_str::<MergeableRow>(&output.stdout)
+            .map(|row| row.mergeable.to_ascii_uppercase())
+            .as_deref()
+        {
+            Ok("MERGEABLE") => PrMergeability::Mergeable,
+            Ok("CONFLICTING") => PrMergeability::Conflicting,
+            _ => PrMergeability::Unknown,
+        }
     }
 
     pub fn pr_diff(&self, worktree_path: &str, number: u64) -> CommandSpec {
@@ -328,9 +357,8 @@ fn is_pending_state(state: &str) -> bool {
 mod tests {
     use super::{
         CiChecksObservation, CommandOutput, CommandRunError, CommandSpec, GithubChecksAdapter,
-        GH_PR_CHECKS_TIMEOUT, GH_PR_MERGE_TIMEOUT,
+        PrMergeability, GH_PR_CHECKS_TIMEOUT, GH_PR_MERGE_TIMEOUT,
     };
-    use std::path::Path;
 
     fn ok_output(status_code: i32, stdout: &str, stderr: &str) -> CommandOutput {
         CommandOutput {
@@ -338,34 +366,6 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
         }
-    }
-
-    #[test]
-    fn pr_checks_plans_gh_json_in_worktree_with_timeout() {
-        let adapter = GithubChecksAdapter::new("gh");
-
-        let spec = adapter.pr_checks("/worktrees/ajax-fix-login", "feature-branch");
-
-        assert_eq!(
-            spec,
-            CommandSpec::new(
-                "gh",
-                [
-                    "pr",
-                    "checks",
-                    "feature-branch",
-                    "--json",
-                    "name,state,link"
-                ]
-            )
-            .with_cwd("/worktrees/ajax-fix-login")
-            .with_timeout(GH_PR_CHECKS_TIMEOUT)
-        );
-        assert_eq!(
-            spec.cwd.as_deref(),
-            Some(Path::new("/worktrees/ajax-fix-login"))
-        );
-        assert_eq!(spec.timeout, Some(GH_PR_CHECKS_TIMEOUT));
     }
 
     fn parse(result: &Result<CommandOutput, CommandRunError>) -> CiChecksObservation {
@@ -644,6 +644,63 @@ mod tests {
         let prs = GithubChecksAdapter::parse_pr_list(&result).expect("empty list should parse");
 
         assert!(prs.is_empty());
+    }
+
+    #[test]
+    fn pr_mergeable_plans_gh_view_in_worktree_with_timeout() {
+        let adapter = GithubChecksAdapter::new("gh");
+
+        let spec = adapter.pr_mergeable("/worktrees/ajax-fix-login", 42);
+
+        assert_eq!(
+            spec,
+            CommandSpec::new("gh", ["pr", "view", "42", "--json", "mergeable"])
+                .with_cwd("/worktrees/ajax-fix-login")
+                .with_timeout(GH_PR_CHECKS_TIMEOUT)
+        );
+    }
+
+    #[test]
+    fn parse_pr_mergeable_maps_github_states() {
+        let parse =
+            |stdout: &str| GithubChecksAdapter::parse_pr_mergeable(&Ok(ok_output(0, stdout, "")));
+
+        assert_eq!(
+            parse(r#"{"mergeable":"MERGEABLE"}"#),
+            PrMergeability::Mergeable
+        );
+        assert_eq!(
+            parse(r#"{"mergeable":"CONFLICTING"}"#),
+            PrMergeability::Conflicting
+        );
+        assert_eq!(parse(r#"{"mergeable":"UNKNOWN"}"#), PrMergeability::Unknown);
+    }
+
+    #[test]
+    fn parse_pr_mergeable_failures_are_unknown() {
+        let parse = |result: Result<CommandOutput, CommandRunError>| {
+            GithubChecksAdapter::parse_pr_mergeable(&result)
+        };
+
+        assert_eq!(
+            parse(Ok(ok_output(1, r#"{"mergeable":"CONFLICTING"}"#, ""))),
+            PrMergeability::Unknown
+        );
+        assert_eq!(
+            parse(Ok(ok_output(0, "not json", ""))),
+            PrMergeability::Unknown
+        );
+        assert_eq!(
+            parse(Ok(ok_output(0, r#"[{"name":"CI","state":"SUCCESS"}]"#, ""))),
+            PrMergeability::Unknown
+        );
+        assert_eq!(
+            parse(Err(CommandRunError::TimedOut {
+                program: "gh".to_string(),
+                timeout: GH_PR_CHECKS_TIMEOUT,
+            })),
+            PrMergeability::Unknown
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 .session-elicitation {
   margin-top: 8px;
   padding: 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: var(--paper-tint);
   border: 1px solid var(--rule);
 }

@@ -59,7 +59,14 @@ fn pi_confirm_dialog_reaches_the_browser_and_answer_finishes_the_turn() {
         });
 
         let store = SqliteRegistryStore::new(state_dir.join("ajax.db"));
-        let ledger = try_load(&store, &state_dir, HANDLE).expect("ledger load");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut ledger = try_load(&store, &state_dir, HANDLE).expect("ledger load");
+        while ledger.entry("p1").map(|entry| entry.phase) != Some(PromptPhase::Completed)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+            ledger = try_load(&store, &state_dir, HANDLE).expect("ledger load");
+        }
         assert_eq!(
             ledger.entry("p1").map(|entry| entry.phase),
             Some(PromptPhase::Completed),

@@ -14,17 +14,12 @@
   background: transparent;
   border: none;
   padding: 4px 10px 4px 0;
-  font-family: var(--mono);
-  font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--ink-muted);
+  color: var(--ink);
 }
 
 .detail-header .back:hover,
 .detail-header .back:focus-visible {
-  color: var(--ink);
+  color: var(--ink-bright);
   outline: none;
 }
 
@@ -35,10 +30,8 @@
 
 .detail-title {
   margin: 0;
-  font-family: var(--mono);
   font-size: var(--text-heading);
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  font-weight: 600;
   line-height: 1.3;
   text-transform: none;
   color: var(--ink);
@@ -59,43 +52,29 @@
   flex: none;
 }
 
-/* STATUS — CLI cockpit glyph + label (▸ ◦ ! ✓ ·), painted with the tone
-   color. Lives in the header row so state is always in view. */
 .interact-pill {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-family: var(--mono);
   font-size: var(--text-label);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--tone, var(--ink-muted));
+  font-weight: 500;
+  color: var(--ink-muted);
+}
+
+.interact-pill.tone-waiting,
+.interact-pill.tone-attention,
+.interact-pill.tone-error,
+.interact-pill.tone-danger {
+  color: var(--tone);
 }
 
 .interact-pill::before {
-  content: "·";
-  line-height: 1;
-}
-
-.interact-pill.tone-running::before {
-  content: "▸";
-}
-
-.interact-pill.tone-waiting::before,
-.interact-pill.tone-attention::before,
-.interact-pill.tone-ready::before {
-  content: "◦";
-}
-
-.interact-pill.tone-error::before,
-.interact-pill.tone-danger::before {
-  content: "!";
-}
-
-.interact-pill.tone-done::before,
-.interact-pill.tone-success::before {
-  content: "✓";
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tone, var(--ink-muted));
+  flex: none;
 }
 
 .interact-summary {

@@ -577,22 +577,6 @@
   line-height: 1.4;
 }
 
-.training-page .pill,
-.training-modal .pill {
-  border-radius: var(--radius-sm);
-}
-
-.training-page .pill:disabled,
-.training-page .pill.is-primary:disabled,
-.training-modal .pill:disabled,
-.training-modal .pill.is-primary:disabled {
-  background: transparent;
-  border: 1px solid var(--rule);
-  color: var(--ink-faint);
-  opacity: 1;
-  cursor: not-allowed;
-}
-
 .training-page .pill.is-danger,
 .training-page .pill.is-danger:hover,
 .training-page .pill.is-danger:focus-visible {

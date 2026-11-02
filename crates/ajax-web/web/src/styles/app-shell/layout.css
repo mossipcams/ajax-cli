@@ -187,7 +187,7 @@
     min-height: 44px;
     padding: 6px 14px;
     border: 1px solid var(--rule-strong);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--paper-raised);
     color: var(--ink);
     pointer-events: auto;
