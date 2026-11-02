@@ -76,8 +76,8 @@ export async function runTaskAction(
       }
       callbacks.onResult?.(presentation.message, result.response.output, true);
     }
-  } catch {
-    const presentation = operatorErrorPresentation({ kind: "network", message: "" });
+  } catch (error) {
+    const presentation = operatorErrorPresentation(error);
     if (interactionId) {
       endTapToOperationComplete(interactionId, {
         ok: false,
