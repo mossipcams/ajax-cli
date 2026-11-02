@@ -526,4 +526,56 @@ describe("App drop shell confirm on session chat (#947)", () => {
     });
     expect(operations.some((op) => (op as { action?: string }).action === "drop")).toBe(false);
   });
+
+  it("shows restart progress and the server result after Confirm", async () => {
+    let resolveOperation: (value: unknown) => void = () => {};
+    const restartDetail = {
+      ...sessionCapableDetail,
+      actions: [
+        {
+          action: "restart-agent",
+          label: "Restart agent",
+          destructive: false,
+          confirmation_required: true,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve(jsonResponse({ models: [{ id: "auto", label: "Auto" }] }));
+        }
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(restartDetail));
+        if (path === "/api/operations") {
+          return new Promise((resolve) => {
+            resolveOperation = resolve;
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/session/web/fix-login");
+    expect(await screen.findByTestId("session-chat")).toBeInTheDocument();
+    fireEvent.click(await screen.findByTestId("session-details"));
+    fireEvent.click(await screen.findByTestId("session-restart-agent"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent("Restarting agent…");
+
+    await act(async () => {
+      resolveOperation(jsonResponse({ ok: true, output: "Agent restarted. Re-sent your last prompt." }));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("result-panel")).toHaveTextContent(
+        "Agent restarted. Re-sent your last prompt.",
+      );
+    });
+  });
 });

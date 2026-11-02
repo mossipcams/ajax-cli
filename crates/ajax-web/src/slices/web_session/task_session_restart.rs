@@ -17,7 +17,7 @@ pub(crate) async fn restart_session(
     directory: &Arc<TaskSessionDirectory>,
     context: &CommandContext<InMemoryRegistry>,
     handle: &str,
-) -> Result<(), RestartError> {
+) -> Result<bool, RestartError> {
     let task = context
         .registry
         .list_tasks()
@@ -45,8 +45,20 @@ pub(crate) async fn restart_session(
                     .cloned()
             })
         })
-        .flatten();
+        .flatten()
+        .and_then(|entry| {
+            let content_blocks = entry
+                .content_blocks
+                .iter()
+                .map(|value| serde_json::from_value(value.clone()))
+                .collect::<Result<Vec<super::prompt_content::PromptContentBlockWire>, _>>()
+                .ok()?;
+            Some((entry, content_blocks))
+        });
     directory.detach_session(handle).await;
+    if let Some((entry, _)) = &in_flight {
+        settle_resent_prompt(directory, handle, &entry.client_message_id);
+    }
     let model = task.session_model().unwrap_or("auto");
     for _ in 0..holders.max(1) {
         directory
@@ -55,7 +67,8 @@ pub(crate) async fn restart_session(
             .map_err(RestartError::Spawn)?;
     }
 
-    if let Some(entry) = in_flight {
+    let mut resent = false;
+    if let Some((entry, content_blocks)) = in_flight {
         let resumed_phase = prompt_ledger::try_load(
             &directory.storage.registry_store(),
             &directory.storage.state_dir,
@@ -68,28 +81,31 @@ pub(crate) async fn restart_session(
                 .map(|entry| entry.phase)
         });
         if resumed_phase == Some(PromptPhase::Interrupted) {
-            let content_blocks: Result<Vec<super::prompt_content::PromptContentBlockWire>, _> =
-                entry
-                    .content_blocks
-                    .iter()
-                    .map(|value| serde_json::from_value(value.clone()))
-                    .collect();
-            if let Ok(content_blocks) = content_blocks {
-                directory
-                    .submit_prompt_with_id(
-                        handle,
-                        format!("{}-restart", entry.client_message_id),
-                        entry.prompt_text,
-                        content_blocks,
-                    )
-                    .await
-                    .map_err(RestartError::Spawn)?;
-            }
+            directory
+                .submit_prompt_with_id(
+                    handle,
+                    format!("{}-restart", entry.client_message_id),
+                    entry.prompt_text,
+                    content_blocks,
+                )
+                .await
+                .map_err(RestartError::Spawn)?;
+            resent = true;
         }
     }
 
     if holders == 0 {
         directory.release(handle).await;
     }
-    Ok(())
+    Ok(resent)
+}
+
+fn settle_resent_prompt(directory: &TaskSessionDirectory, handle: &str, client_message_id: &str) {
+    let store = directory.storage.registry_store();
+    let state_dir = &directory.storage.state_dir;
+    if let Ok(mut ledger) = prompt_ledger::try_load(&store, state_dir, handle) {
+        if ledger.mark_interrupted(client_message_id) {
+            let _ = prompt_ledger::try_persist(&store, state_dir, handle, &ledger);
+        }
+    }
 }

@@ -43,6 +43,7 @@ export async function runTaskAction(
   executeOperation: ExecuteTaskOperation = postOperation,
 ): Promise<void> {
   if (interactionId) endTapToFeedback(interactionId, "busy");
+  if (action.action === RESTART_ACTION) callbacks.onResult?.("Restarting agent…", null, false);
   try {
     const result = await executeOperation({
       task_handle: handle,
@@ -59,6 +60,9 @@ export async function runTaskAction(
         runDropComposerCleanup(handle);
         if (callbacks.isMounted?.() !== false) callbacks.onDismiss?.();
       } else {
+        if (action.action === RESTART_ACTION) {
+          callbacks.onResult?.(result.response.output ?? "Agent restarted.", null, false);
+        }
         callbacks.onMutated?.();
       }
     } else {
@@ -72,8 +76,8 @@ export async function runTaskAction(
       }
       callbacks.onResult?.(presentation.message, result.response.output, true);
     }
-  } catch {
-    const presentation = operatorErrorPresentation({ kind: "network", message: "" });
+  } catch (error) {
+    const presentation = operatorErrorPresentation(error);
     if (interactionId) {
       endTapToOperationComplete(interactionId, {
         ok: false,
@@ -132,6 +136,8 @@ export function armDropUndo(
 }
 
 const DEFERRED_ACTIONS = new Set(["drop", "create-pr", "merge-pr"]);
+
+const RESTART_ACTION = "restart-agent";
 
 export function commitConfirmedAction(
   action: WebAction,

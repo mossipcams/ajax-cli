@@ -532,6 +532,7 @@ describe("TaskList", () => {
             { action: "create-pr", label: "Create PR", destructive: false, confirmation_required: false },
             { action: "merge-pr", label: "Merge PR", destructive: false, confirmation_required: false },
             { action: "review", label: "Review", destructive: false, confirmation_required: false },
+            { action: "restart-agent", label: "Restart agent", destructive: false, confirmation_required: false },
           ],
         },
       ],
@@ -541,6 +542,7 @@ describe("TaskList", () => {
     expect(within(row).getByRole("button", { name: "Review" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create PR" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Merge PR" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restart agent" })).not.toBeInTheDocument();
   });
 
   it("drops the row transform transition only while a touch drag is held", () => {

@@ -594,9 +594,14 @@ async fn restart_chat_agent(
     task_handle: &str,
 ) -> Result<OperateOutcome, OperateError> {
     match restart_session(directory, context, task_handle).await {
-        Ok(()) => Ok(OperateOutcome {
+        Ok(resent) => Ok(OperateOutcome {
             state_changed: false,
-            output: format!("{}: chat agent restarted", remediation::RESTART_AGENT),
+            output: if resent {
+                "Agent restarted. Re-sent your last prompt."
+            } else {
+                "Agent restarted."
+            }
+            .to_string(),
         }),
         Err(RestartError::TaskNotFound) => Err(OperateError::Command(
             CommandError::TaskNotFound(task_handle.to_string()),
