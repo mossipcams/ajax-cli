@@ -490,6 +490,10 @@ fn post_task_cross_harness_swap_resets_context_keeps_live_slot() {
                     crate::slices::web_session::SessionServerEvent::Message { text, .. }
                         if text == "replayed"
                 )));
+                directory
+                    .submit_prompt(handle, "after switch".to_string())
+                    .await
+                    .expect("submit prompt");
                 let session_after = web_session_store::load::<
                     crate::slices::web_session::SessionServerEvent,
                 >(&state.state_dir, handle)

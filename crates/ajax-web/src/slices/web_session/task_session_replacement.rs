@@ -8,6 +8,7 @@ use crate::adapters::web_session_acp::{
     descriptors_from_neutral, persisted_model_id, SessionClient, SessionSpawnReport,
 };
 use crate::adapters::web_session_store;
+use ajax_core::models::AgentClient;
 
 pub(super) fn meta_model_for_persist(report: &SessionSpawnReport, operator_model: &str) -> String {
     meta_model_from_config_options(report.config_options.as_deref(), operator_model)
@@ -55,15 +56,17 @@ pub(super) fn finalize_client_metadata(
     model: &str,
     bump_generation: bool,
 ) -> Result<(), SessionError> {
+    let defer_session_id = !report.resumed && state.agent == AgentClient::Claude;
     web_session_store::try_save_meta(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         agent_client_name(state.agent),
-        Some(session_id),
+        (!defer_session_id).then_some(session_id),
         &meta_model_for_persist(report, model),
     )
     .map_err(|error| SessionError::persist(format!("session id could not be saved: {error}")))?;
+    state.acp.session_id_unsaved = defer_session_id;
     let note = context_reset_note();
     if context_reset_needed(report.resumed, &state.log) && !already_noted(&state.log, &note) {
         let _ = state.append_to_log(vec![note]);

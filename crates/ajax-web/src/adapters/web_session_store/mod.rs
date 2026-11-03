@@ -246,6 +246,31 @@ pub fn clear_acp_session_id(
     Ok(())
 }
 
+pub fn save_acp_session_id(
+    store: &SqliteRegistryStore,
+    state_dir: &Path,
+    handle: &str,
+    harness: &str,
+    id: &str,
+) -> io::Result<()> {
+    #[cfg(test)]
+    if force_meta_write_fail() {
+        return Err(io::Error::other("forced session metadata write failure"));
+    }
+    let run_id = ensure_run(store, state_dir, handle, harness)?;
+    store
+        .commit_execution(&ExecutionCommit {
+            run_id,
+            run_update: Some(RunUpdate {
+                native_session_id: Some(Some(id.to_owned())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .map_err(io::Error::other)?;
+    Ok(())
+}
+
 pub fn try_append_events<T: Serialize + DeserializeOwned>(
     store: &SqliteRegistryStore,
     state_dir: &Path,
