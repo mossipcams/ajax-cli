@@ -1,10 +1,12 @@
 use super::task_session_exit::{ledger_phase, ACP_PROCESS_EXITED};
 use super::test_support::{fake_acp_fixture, pump_until, scratch_dir, BlockingSessionDirectory};
 use super::SessionServerEvent;
-use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
+use crate::adapters::web_session_acp::{
+    with_test_acp_extra_args, with_test_acp_program, with_test_claude_sdk_module,
+};
 use crate::adapters::web_session_store::prompt_ledger::{ForcePersistFailGuard, PromptPhase};
 use ajax_core::models::AgentClient;
-use std::{thread, time::Duration};
+use std::{path::Path, thread, time::Duration};
 
 fn exit_error_count(events: &[SessionServerEvent]) -> usize {
     events
@@ -826,5 +828,44 @@ fn issue_1327_replacement_acquire_fails_when_child_identity_cannot_be_recorded()
         });
     });
     drop(directory);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fresh_session_id_is_saved_only_after_first_prompt() {
+    let dir = scratch_dir("phase2-fresh-session-id");
+    let handle = "web/phase2-fresh-session-id";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
+
+    with_test_claude_sdk_module(&fixture, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Claude)
+            .expect("acquire");
+        let before = crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert_eq!(before.acp_session_id, None);
+        directory
+            .submit_prompt_with_id(handle, "first-1".into(), "hello".into())
+            .expect("first prompt");
+        let after = crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert!(after.acp_session_id.is_some());
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fresh_cursor_session_id_is_saved_at_acquire() {
+    let dir = scratch_dir("phase2-fresh-cursor-session-id");
+    let handle = "web/phase2-fresh-cursor-session-id";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let stored = crate::adapters::web_session_store::load::<SessionServerEvent>(&dir, handle);
+        assert!(stored.acp_session_id.is_some());
+    });
     let _ = std::fs::remove_dir_all(dir);
 }

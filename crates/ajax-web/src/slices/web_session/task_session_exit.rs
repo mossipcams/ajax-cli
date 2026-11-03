@@ -1,11 +1,12 @@
 use super::acp_drain::{PromptTerminal, PromptTerminalOutcome};
 use super::prompt_content::{self, PromptContentBlockWire};
 use super::prompt_queue::{ActivePrompt, PendingExitInterruption};
-use super::task_session::TaskSessionState;
+use super::task_session::{agent_client_name, TaskSessionState};
 use super::{
     apply_cancel_to_queue, QueuedPrompt, SessionError, SessionServerEvent, MAX_QUEUED_PROMPTS,
 };
 use crate::adapters::session_shim;
+use crate::adapters::web_session_store;
 use crate::adapters::web_session_store::prompt_ledger::{
     PromptLedger, PromptLedgerEntry, PromptPhase,
 };
@@ -496,6 +497,7 @@ pub(super) fn submit_prompt(
             return Err(SessionError::protocol(error));
         }
     };
+    persist_fresh_session_id(state);
     state.prompts.active_prompt = Some(ActivePrompt::new(
         request_id,
         (!client_message_id.is_empty()).then_some(client_message_id.clone()),
@@ -506,6 +508,32 @@ pub(super) fn submit_prompt(
         }])?;
     }
     Ok(())
+}
+
+fn persist_fresh_session_id(state: &mut TaskSessionState) {
+    if !state.acp.session_id_unsaved {
+        return;
+    }
+    let Some(session_id) = state
+        .acp
+        .client
+        .as_ref()
+        .map(|client| client.session_id().to_string())
+    else {
+        return;
+    };
+    match web_session_store::save_acp_session_id(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
+        &state.qualified_handle,
+        agent_client_name(state.agent),
+        &session_id,
+    ) {
+        Ok(()) => state.acp.session_id_unsaved = false,
+        Err(error) => {
+            tracing::warn!(%error, "failed to save fresh ACP session id after first prompt")
+        }
+    }
 }
 
 fn dispatch_shim_offset(state: &TaskSessionState) -> Option<u64> {
@@ -543,6 +571,7 @@ pub(super) fn dispatch_queued_prompt(
                 request_id,
                 (!next.client_message_id.is_empty()).then_some(next.client_message_id.clone()),
             ));
+            persist_fresh_session_id(state);
             Ok(())
         }
         Err(error) => {

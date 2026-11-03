@@ -210,6 +210,7 @@ impl TaskSessionState {
                 session_title: None,
                 pending_title_snapshot: false,
                 usage_deduper: super::acp_usage::UsageDeduper::default(),
+                session_id_unsaved: false,
             },
             prompts: PromptQueue {
                 prompt_ledger,

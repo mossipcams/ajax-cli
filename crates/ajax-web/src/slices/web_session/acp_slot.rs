@@ -20,6 +20,7 @@ pub(super) struct AcpSlot {
     pub session_title: Option<String>,
     pub pending_title_snapshot: bool,
     pub usage_deduper: UsageDeduper,
+    pub session_id_unsaved: bool,
 }
 
 impl AcpSlot {

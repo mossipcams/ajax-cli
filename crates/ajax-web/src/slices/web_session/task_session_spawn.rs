@@ -193,7 +193,7 @@ pub(super) async fn apply_config_option(
                 &state.storage.state_dir,
                 &state.qualified_handle,
                 agent_client_name(state.agent),
-                Some(client.session_id()),
+                (!state.acp.session_id_unsaved).then(|| client.session_id()),
                 &meta_model_from_config_options(
                     outcome.config_options.as_deref(),
                     &state.acp.model,
@@ -299,13 +299,14 @@ pub(super) async fn reset_harness_context(
 
     reject_foreign_live_child(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
+    let defer_session_id = agent == AgentClient::Claude;
 
     if let Err(error) = web_session_store::try_save_meta(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         agent_client_name(agent),
-        Some(new_client.session_id()),
+        (!defer_session_id).then(|| new_client.session_id()),
         &meta_model_for_persist(&report, model),
     ) {
         discard_staged_client(new_client);
@@ -313,6 +314,7 @@ pub(super) async fn reset_harness_context(
             "new session id could not be saved: {error}"
         )));
     }
+    state.acp.session_id_unsaved = defer_session_id;
 
     let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
@@ -368,13 +370,14 @@ pub(super) async fn clear_session_context(
 
     reject_foreign_live_child(state)?;
     let (new_client, report) = spawn_acp(agent, worktree_path, &model, None).await?;
+    let defer_session_id = agent == AgentClient::Claude;
 
     if let Err(error) = web_session_store::try_save_meta(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         agent_client_name(agent),
-        Some(new_client.session_id()),
+        (!defer_session_id).then(|| new_client.session_id()),
         &meta_model_for_persist(&report, &model),
     ) {
         discard_staged_client(new_client);
@@ -382,6 +385,7 @@ pub(super) async fn clear_session_context(
             "new session id could not be saved: {error}"
         )));
     }
+    state.acp.session_id_unsaved = defer_session_id;
 
     let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
