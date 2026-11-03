@@ -33,6 +33,7 @@ fn axum_api_access_policy_classifies_public_and_protected_routes() {
         ("POST", "/api/dev-deploy"),
         ("POST", "/api/operations"),
         ("POST", "/api/tasks"),
+        ("POST", "/api/state/query"),
         ("GET", "/api/session/models"),
         ("GET", "/api/tasks/web%2Ffix-login"),
         ("GET", "/api/tasks/web%2Ffix-login/session"),
@@ -624,4 +625,82 @@ fn tls_get_blocking(address: std::net::SocketAddr, path: &str) -> std::io::Resul
     let mut response = Vec::new();
     stream.read_to_end(&mut response)?;
     Ok(String::from_utf8_lossy(&response).into_owned())
+}
+
+#[tokio::test]
+async fn state_query_route_requires_session_and_serves_read_only_selects() {
+    let storage = scratch_dir("state-query-route");
+    std::fs::create_dir_all(&storage).unwrap();
+    let runtime_paths = ajax_core::config::RuntimePaths {
+        profile: "stable".to_string(),
+        config_file: storage.join("config.toml"),
+        state_db: storage.join("ajax.db"),
+        logs_dir: storage.join("logs"),
+        cache_dir: storage.join("cache"),
+        worktree_placement: ajax_core::config::WorktreePlacement::Root(storage.clone()),
+        overrides: Vec::new(),
+    };
+    let connection = rusqlite::Connection::open(&runtime_paths.state_db).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE widgets (id INTEGER PRIMARY KEY, label TEXT); \
+             INSERT INTO widgets (label) VALUES ('blue');",
+        )
+        .unwrap();
+    drop(connection);
+
+    let context = CommandContext::with_runtime_paths(
+        Config::default(),
+        InMemoryRegistry::default(),
+        runtime_paths,
+    );
+    let (_state, cookie, app) = app_with(context, TestBridge::default(), "state-query-route");
+
+    let unauthenticated = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/state/query")
+                .method("POST")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"sql":"SELECT 1"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let select = post_json(
+        &app,
+        &cookie,
+        "/api/state/query",
+        r#"{"sql":"SELECT id, label FROM widgets"}"#,
+    )
+    .await;
+    assert_eq!(select.status(), StatusCode::OK);
+    let body = json_of(select).await;
+    assert_eq!(body["columns"], serde_json::json!(["id", "label"]));
+    assert_eq!(body["rows"], serde_json::json!([[1, "blue"]]));
+    assert_eq!(body["truncated"], serde_json::json!(false));
+
+    let write = post_json(
+        &app,
+        &cookie,
+        "/api/state/query",
+        r#"{"sql":"DELETE FROM widgets"}"#,
+    )
+    .await;
+    assert_eq!(write.status(), StatusCode::BAD_REQUEST);
+
+    let select_after = post_json(
+        &app,
+        &cookie,
+        "/api/state/query",
+        r#"{"sql":"SELECT COUNT(*) AS n FROM widgets"}"#,
+    )
+    .await;
+    assert_eq!(
+        json_of(select_after).await["rows"],
+        serde_json::json!([[1]])
+    );
 }

@@ -21,6 +21,7 @@ getrandom = { workspace = true }
 jsonwebtoken = { workspace = true }
 nix = { workspace = true }
 rcgen = { workspace = true }
+rusqlite = { workspace = true, features = ["limits"] }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
