@@ -37,6 +37,7 @@ mod bridge;
 mod headless;
 mod operation_outcomes;
 mod state;
+mod state_query;
 mod task_routes;
 use task_routes::{
     axum_action, axum_cockpit, axum_presence, axum_start_task, axum_task_get, axum_task_post,
@@ -110,6 +111,10 @@ where
             get(axum_dev_deploy_status::<C, B>).post(axum_dev_deploy_start::<C, B>),
         )
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
+        .route(
+            "/api/state/query",
+            post(state_query::axum_state_query::<C, B>),
+        )
         .route("/api/presence", post(axum_presence::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(

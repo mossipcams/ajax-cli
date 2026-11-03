@@ -1599,6 +1599,20 @@ shutdown, and process-level startup by composing `ajax-web::slices::*` with
 `ajax-web::adapters::*`. If `ajax-cli` starts Web Cockpit, the CLI launcher
 passes resolved runtime context to `ajax-web` explicitly.
 
+`POST /api/state/query` provides host-side, read-only SQLite inspection for
+nono-sandboxed agents, which retain their deny on `ajax.db`, `ajax.db-wal`, and
+`ajax.db-shm`. It requires the same session-cookie authentication as other
+protected `/api` routes. The request is `{"sql":"SELECT ..."}`; the response is
+`{"columns":[...],"rows":[[...]],"truncated":false}`. SQLite values become JSON
+nulls, numbers, or strings, with BLOBs encoded as hexadecimal strings.
+
+Each request opens the server's configured registry database on a fresh
+connection with `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX`, enables
+`PRAGMA query_only=ON`, and sets `SQLITE_LIMIT_ATTACHED` to 0. Extension loading
+stays disabled. Rusqlite preparation rejects multiple statements; statements
+whose `readonly()` is false and SQL errors return HTTP 400 with an error message.
+Results stop at 1000 rows, with `truncated=true` when another row exists.
+
 Post-startup Web Cockpit routes snapshot registry state under a short mutex
 hold, run external tmux/git probes outside the lock, then merge deltas back
 under the lock. `/api/cockpit` refresh follows this pattern so lightweight
