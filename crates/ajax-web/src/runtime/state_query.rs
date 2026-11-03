@@ -206,12 +206,22 @@ mod tests {
     }
 
     #[test]
+    fn vacuum_into_is_rejected_without_creating_a_file() {
+        let db = open_test_db("vacuum-into");
+        seed(&db);
+        let target = db.with_file_name("vacuum-out.db");
+        assert!(query(&db, &format!("VACUUM INTO '{}'", target.display())).is_err());
+        assert!(!target.exists());
+    }
+
+    #[test]
     fn multi_statement_input_is_rejected() {
         let db = open_test_db("multi");
         seed(&db);
         for sql in [
             "SELECT 1; SELECT 2",
             "PRAGMA query_only = OFF; SELECT 1",
+            "SELECT load_extension('x')",
             "SELECT ';' ; PRAGMA query_only = OFF",
         ] {
             assert!(query(&db, sql).is_err(), "{sql}");
