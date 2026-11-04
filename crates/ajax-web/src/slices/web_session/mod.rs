@@ -409,6 +409,8 @@ mod fake_acp_tests;
 mod task_session_adopt_tests;
 #[cfg(test)]
 mod task_session_restore_tests;
+#[cfg(test)]
+mod task_session_unprompted_turn_tests;
 
 #[cfg(test)]
 mod task_session_tests;
