@@ -2,6 +2,7 @@ use crate::util::write_private_file;
 use ajax_core::attention::{take_attention_transition, AttentionTransition};
 use ajax_core::commands::CommandContext;
 use ajax_core::registry::{InMemoryRegistry, Registry};
+use ajax_core::ui_state::{attention_band, derive_operator_status, AttentionBand};
 use axum::http::{header, uri::Authority, HeaderMap, Request, Uri};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -282,6 +283,18 @@ pub(crate) fn deliver_attention_pushes(
         .iter()
         .map(|task| task.id.clone())
         .collect();
+    let attention_count = context
+        .registry
+        .list_tasks()
+        .iter()
+        .filter(|task| {
+            let operator_status = derive_operator_status(task);
+            matches!(
+                attention_band(&operator_status, task.lifecycle_status),
+                AttentionBand::NeedsYou | AttentionBand::Review
+            )
+        })
+        .count();
     let mut fired = false;
     let mut jobs = Vec::new();
     for task_id in task_ids {
@@ -299,7 +312,7 @@ pub(crate) fn deliver_attention_pushes(
                 .unwrap_or("https://localhost/");
             jobs.push(delivery::PushJob {
                 subscription: subscription.clone(),
-                payload: attention_payload(&transition, navigate),
+                payload: attention_payload(attention_count, &transition, navigate),
                 vapid_subject: navigate.trim_end_matches('/').to_string(),
             });
         }
@@ -419,7 +432,11 @@ fn push_endpoint_host_allowed(endpoint: &Uri) -> bool {
         || host.ends_with(".push.services.mozilla.com")
 }
 
-fn attention_payload(transition: &AttentionTransition, navigate: &str) -> Vec<u8> {
+fn attention_payload(
+    attention_count: usize,
+    transition: &AttentionTransition,
+    navigate: &str,
+) -> Vec<u8> {
     let mut body = format!(
         "{}/{}: {} ({})",
         transition.repo,
@@ -433,12 +450,14 @@ fn attention_payload(transition: &AttentionTransition, navigate: &str) -> Vec<u8
     }
     serde_json::to_vec(&json!({
         "web_push": 8030,
+        "app_badge": attention_count,
         "notification": {
             "title": "Ajax Cockpit",
             "lang": "en-US",
             "dir": "ltr",
             "body": body,
             "navigate": navigate,
+            "tag": transition.handle.clone(),
             "silent": false
         }
     }))
@@ -448,12 +467,14 @@ fn attention_payload(transition: &AttentionTransition, navigate: &str) -> Vec<u8
 fn test_payload(navigate: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "web_push": 8030,
+        "app_badge": 1,
         "notification": {
             "title": "Ajax Cockpit",
             "lang": "en-US",
             "dir": "ltr",
             "body": "Push notification test",
             "navigate": navigate,
+            "tag": "ajax-test",
             "silent": false
         }
     }))
@@ -735,10 +756,15 @@ mod tests {
             explanation: Some("Waiting for input".to_string()),
             client: "codex".to_string(),
         };
-        let payload: Value =
-            serde_json::from_slice(&attention_payload(&transition, "https://cockpit.example/"))
-                .unwrap();
+        let payload: Value = serde_json::from_slice(&attention_payload(
+            3,
+            &transition,
+            "https://cockpit.example/",
+        ))
+        .unwrap();
         assert_eq!(payload["web_push"], 8030);
+        assert_eq!(payload["app_badge"], 3);
+        assert_eq!(payload["notification"]["tag"], "fix-login");
         assert_eq!(
             payload["notification"]["body"],
             "web/fix-login: Waiting (codex) — Waiting for input"

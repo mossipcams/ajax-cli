@@ -94,7 +94,8 @@ full trust under Settings, General, About, Certificate Trust Settings.
 
 Primary path on iPhone: a normal Safari tab. Full Cockpit works without Home
 Screen install. Ajax does not ship classic PWA packaging — no
-`manifest.webmanifest`, app icons, or service worker. Optional Add to Home
+`manifest.webmanifest` or service worker. Its one 180x180 apple-touch-icon is
+served at `/icons/apple-touch-icon.png` for Home Screen installs. Optional Add to Home
 Screen (Safari-native; safe `apple-mobile-web-app-*` metadata only) is how you
 enable Declarative Web Push phone pings on a capable browser. A native app is
 only a future option if the browser path stops being sufficient.

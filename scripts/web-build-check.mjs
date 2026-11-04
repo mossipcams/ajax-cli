@@ -86,8 +86,12 @@ if (existsSync(join(distDir, "index.html"))) {
     "built index.html should not advertise a web manifest",
   );
   check(
-    !html.includes('rel="apple-touch-icon"'),
-    "built index.html should not advertise Home Screen icons",
+    html.includes('<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">'),
+    "built index.html must advertise the apple-touch-icon at /icons/apple-touch-icon.png",
+  );
+  check(
+    existsSync(join(distDir, "icons", "apple-touch-icon.png")),
+    "missing dist/icons/apple-touch-icon.png",
   );
   check(
     !html.includes('href="/terminal.js"') && !html.includes('src="/terminal.js"'),

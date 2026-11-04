@@ -649,7 +649,8 @@ second browser-side task model. Git, tmux, SQLite, supervised processes, and
 the Ajax backend remain authoritative for task state and operations. The
 primary iPhone target is normal iOS Safari; full Cockpit works without Home
 Screen install. Web Cockpit does not ship classic PWA packaging — no
-`manifest.webmanifest`, app icons, or service worker. Optional Add to Home
+`manifest.webmanifest` or service worker. Its one install artifact is a
+180x180 apple-touch-icon served at `/icons/apple-touch-icon.png`. Optional Add to Home
 Screen (Safari-native; safe `apple-mobile-web-app-*` metadata only) enables
 Declarative Web Push phone pings on capable browsers.
 
@@ -1007,9 +1008,15 @@ reloads and saves the authoritative SQLite state, and delegates native command
 execution for browser-submitted actions.
 
 Classic PWA packaging surfaces are unsupported: no `manifest.webmanifest`,
-service worker, install icons, or offline cache. Safe standalone metadata
+service worker, or offline cache. Safe standalone metadata
 (`apple-mobile-web-app-*`, theme-color) remains so operators can optionally Add
-to Home Screen for Declarative Web Push. The browser shell must remain a live
+to Home Screen for Declarative Web Push. The one icon, `/icons/apple-touch-icon.png`
+(source `web/public/icons/`, copied by Vite to `dist/icons/`), exists only for
+Home Screen. `/app.js`, `/app.css`, `/terminal.js`, and the icon are served with
+`Cache-Control: no-cache` and weak `ETag: W/"<app_version>"`, returning 304 on
+`If-None-Match`. Their URLs stay bare (no `?v=`, no hashed names, no
+`immutable`) because of the PR #595 duplicate-React regression. The shell `/`
+and `/api/*` stay `no-store`. The browser shell must remain a live
 same-origin client for the host-native backend.
 
 Web Cockpit syncs server-authoritative Cockpit projections, not browser-owned
@@ -1316,7 +1323,8 @@ Web Push–capable browser (for example iOS Safari 18.4+). Settings uses
 `window.pushManager` (no service worker) with browser-session-protected
 `/api/push/vapid`, `/api/push/subscribe`, and `/api/push/test`. The server
 persists VAPID keys and subscriptions under `state_dir` and delivers
-`web_push: 8030` payloads via encrypted curl. Cockpit remains usable without
+`web_push: 8030` payloads via encrypted curl. Payloads carry `app_badge`
+(NeedsYou count) and `notification.tag` (task handle). Cockpit remains usable without
 Home Screen install; without install/subscribe there is no phone ping. This
 does not permit service worker registration, offline mutation, or browser-owned
 task truth.
@@ -1496,7 +1504,7 @@ stylesheet artifact (`dist/app.css`). Source styling lives in
 `web/src/styles.css` (ordered manifest + Tailwind bridge) and owned modules
 under `web/src/styles/`; the install slice embeds and serves only the built
 `app.css`. It must not serve a web manifest,
-service worker, install icon, or offline cache surface.
+service worker, or offline cache surface.
 
 ### `ajax-web::slices::terminal`
 

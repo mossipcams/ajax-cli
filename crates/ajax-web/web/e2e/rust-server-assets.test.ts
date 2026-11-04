@@ -54,7 +54,7 @@ test("release rust server serves bare shell assets on task route", async ({ page
   expect(appCss.some((trace) => trace.search === "")).toBe(true);
 
   for (const trace of traces) {
-    expect(trace.cacheControl).toBe("no-store");
+    expect(trace.cacheControl).toBe("no-cache");
     expect(trace.cacheControl ?? "").not.toContain("immutable");
   }
 

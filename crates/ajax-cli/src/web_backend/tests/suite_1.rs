@@ -65,7 +65,6 @@ fn http_router_does_not_serve_retired_pwa_install_assets() {
         "/icons/icon-192.png",
         "/icons/icon-512.png",
         "/icons/icon-maskable-512.png",
-        "/icons/apple-touch-icon.png",
     ] {
         let response = handle_http_request("GET", path, "", &context).unwrap();
         assert_eq!(response.status_code, 404, "{path}");

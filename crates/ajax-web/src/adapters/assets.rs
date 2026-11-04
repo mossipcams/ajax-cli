@@ -67,6 +67,10 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
             content_type: "text/javascript; charset=utf-8",
             body: include_bytes!("../../web/dist/terminal.js"),
         }),
+        "/icons/apple-touch-icon.png" => Some(StaticAsset {
+            content_type: "image/png",
+            body: include_bytes!("../../web/dist/icons/apple-touch-icon.png"),
+        }),
         _ => None,
     }
 }

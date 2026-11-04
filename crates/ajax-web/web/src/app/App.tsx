@@ -195,14 +195,23 @@ function AppContent() {
     visibleAt: number;
     resumeToVisibleMs: number | null;
   } | null>(null);
-  const statusText = (() => {
-    if (!cockpit.data) return "— loading";
-    const cards = cockpit.data.cards;
-    const parts: string[] = [];
-    const needsYou = cards.filter(
+  const needsYouCount =
+    cockpit.data?.cards.filter(
       (card) => card.attention === "needs-you" || card.attention === "review",
-    ).length;
-    if (needsYou) parts.push(`${needsYou} ${needsYou === 1 ? "needs" : "need"} you`);
+    ).length ?? null;
+  useEffect(() => {
+    if (needsYouCount === null || !("setAppBadge" in navigator)) return;
+    void Promise.resolve()
+      .then(() => (needsYouCount > 0 ? navigator.setAppBadge(needsYouCount) : navigator.clearAppBadge()))
+      .catch(() => undefined);
+  }, [needsYouCount]);
+  const statusText = (() => {
+    if (needsYouCount === null) return "— loading";
+    const cards = cockpit.data?.cards ?? [];
+    const parts: string[] = [];
+    if (needsYouCount) {
+      parts.push(`${needsYouCount} ${needsYouCount === 1 ? "needs" : "need"} you`);
+    }
     const running = cards.filter((card) => card.status === "running").length;
     if (running) parts.push(`${running} running`);
     if (parts.length > 0) return parts.join(" · ");
