@@ -82,7 +82,6 @@ mod tests {
         let shell = browser_shell();
         for retired in [
             "href=\"/manifest.webmanifest\"",
-            "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
             assert!(
@@ -96,10 +95,18 @@ mod tests {
             "/icons/icon-192.png",
             "/icons/icon-512.png",
             "/icons/icon-maskable-512.png",
-            "/icons/apple-touch-icon.png",
         ] {
             assert!(static_asset(path).is_none(), "{path} should be absent");
         }
+    }
+
+    #[test]
+    fn shell_advertises_home_screen_touch_icon() {
+        let shell = browser_shell();
+        assert!(shell.contains("rel=\"apple-touch-icon\" href=\"/icons/apple-touch-icon.png\""));
+
+        let icon = static_asset("/icons/apple-touch-icon.png").expect("touch icon must exist");
+        assert_eq!(icon.content_type, "image/png");
     }
 
     #[test]

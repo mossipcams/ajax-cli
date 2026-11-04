@@ -101,7 +101,6 @@ async fn axum_router_serves_static_shell_and_cockpit_json() {
         "/icons/icon-192.png",
         "/icons/icon-512.png",
         "/icons/icon-maskable-512.png",
-        "/icons/apple-touch-icon.png",
     ] {
         let retired_asset = get_public(&app, path).await;
         assert_eq!(retired_asset.status(), StatusCode::NOT_FOUND, "{path}");
@@ -129,11 +128,12 @@ async fn axum_router_serves_static_shell_and_cockpit_json() {
 }
 
 #[tokio::test]
-async fn static_shell_assets_are_no_store_and_gzipped() {
+async fn static_shell_assets_revalidate_with_etag_and_gzip() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
     let (_state, cookie, app) = app_with(context, TestBridge::default(), "axum-static-cache-gzip");
 
     let version = crate::slices::install::app_version();
+    let etag = format!("W/\"{version}\"");
     for path in ["/app.js", "/app.css", "/terminal.js"] {
         for request_path in [path, &format!("{path}?v={version}")] {
             let response = get_public(&app, request_path).await;
@@ -141,15 +141,12 @@ async fn static_shell_assets_are_no_store_and_gzipped() {
             let cache_control = response.headers()["cache-control"]
                 .to_str()
                 .unwrap_or_default();
-            assert_eq!(cache_control, "no-store", "{request_path} must not cache");
-            assert!(
-                response.headers().get("etag").is_none(),
-                "{request_path} must not carry an ETag"
-            );
+            assert_eq!(cache_control, "no-cache", "{request_path} must revalidate");
             assert!(
                 !cache_control.contains("immutable"),
                 "{request_path} must not claim immutability"
             );
+            assert_eq!(response.headers()["etag"], etag, "{request_path} etag");
         }
     }
 
@@ -174,10 +171,25 @@ async fn static_shell_assets_are_no_store_and_gzipped() {
         .unwrap();
     assert_eq!(app_js_gz.status(), StatusCode::OK);
     assert_eq!(app_js_gz.headers()["content-encoding"], "gzip");
+    assert_eq!(app_js_gz.headers()["cache-control"], "no-cache");
+    assert_eq!(app_js_gz.headers()["etag"], etag);
 }
 
 #[tokio::test]
-async fn static_shell_assets_ignore_if_none_match() {
+async fn apple_touch_icon_is_served_as_png() {
+    let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+    let (_state, _cookie, app) = app_with(context, TestBridge::default(), "axum-apple-touch-icon");
+
+    let response = get_public(&app, "/icons/apple-touch-icon.png").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(response.headers()["cache-control"], "no-cache");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(body.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[tokio::test]
+async fn static_shell_assets_revalidate_with_if_none_match() {
     let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
     let (_state, _cookie, app) = app_with(context, TestBridge::default(), "axum-static-etag");
 
@@ -188,13 +200,10 @@ async fn static_shell_assets_ignore_if_none_match() {
         assert_eq!(baseline.status(), StatusCode::OK, "{path}");
         assert_eq!(
             baseline.headers()["cache-control"],
-            "no-store",
+            "no-cache",
             "{path} cache-control"
         );
-        assert!(
-            baseline.headers().get("etag").is_none(),
-            "{path} must not carry an ETag"
-        );
+        assert_eq!(baseline.headers()["etag"], etag, "{path} etag");
         let baseline_body = to_bytes(baseline.into_body(), usize::MAX).await.unwrap();
 
         let matched = app
@@ -208,18 +217,22 @@ async fn static_shell_assets_ignore_if_none_match() {
             )
             .await
             .unwrap();
-        assert_eq!(matched.status(), StatusCode::OK, "{path} if-none-match");
+        assert_eq!(
+            matched.status(),
+            StatusCode::NOT_MODIFIED,
+            "{path} if-none-match"
+        );
         assert_eq!(
             matched.headers()["cache-control"],
-            "no-store",
+            "no-cache",
             "{path} if-none-match cache-control"
         );
-        assert!(
-            matched.headers().get("etag").is_none(),
-            "{path} if-none-match must not carry an ETag"
-        );
+        assert_eq!(matched.headers()["etag"], etag, "{path} if-none-match etag");
         let matched_body = to_bytes(matched.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(matched_body, baseline_body, "{path} if-none-match body");
+        assert!(
+            matched_body.is_empty(),
+            "{path} if-none-match body must be empty"
+        );
 
         let stale = app
             .clone()
@@ -235,15 +248,45 @@ async fn static_shell_assets_ignore_if_none_match() {
         assert_eq!(stale.status(), StatusCode::OK, "{path} stale");
         assert_eq!(
             stale.headers()["cache-control"],
-            "no-store",
+            "no-cache",
             "{path} stale cache-control"
         );
-        assert!(
-            stale.headers().get("etag").is_none(),
-            "{path} stale must not carry an ETag"
-        );
+        assert_eq!(stale.headers()["etag"], etag, "{path} stale etag");
         let stale_body = to_bytes(stale.into_body(), usize::MAX).await.unwrap();
         assert_eq!(stale_body, baseline_body, "{path} stale body");
+
+        for (label, if_none_match) in [
+            ("star", "*".to_string()),
+            ("list", format!("W/\"stale\", {etag}")),
+        ] {
+            let revalidated = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri(path)
+                        .header("if-none-match", if_none_match)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                revalidated.status(),
+                StatusCode::NOT_MODIFIED,
+                "{path} {label}"
+            );
+            assert_eq!(
+                revalidated.headers()["cache-control"],
+                "no-cache",
+                "{path} {label} cache-control"
+            );
+            assert_eq!(revalidated.headers()["etag"], etag, "{path} {label} etag");
+            let revalidated_body = to_bytes(revalidated.into_body(), usize::MAX).await.unwrap();
+            assert!(
+                revalidated_body.is_empty(),
+                "{path} {label} body must be empty"
+            );
+        }
     }
 
     let gz_matched = app
@@ -260,24 +303,17 @@ async fn static_shell_assets_ignore_if_none_match() {
         .unwrap();
     assert_eq!(
         gz_matched.status(),
-        StatusCode::OK,
+        StatusCode::NOT_MODIFIED,
         "/app.js gzip+if-none-match"
     );
     assert_eq!(
         gz_matched.headers()["cache-control"],
-        "no-store",
+        "no-cache",
         "/app.js gzip+if-none-match cache-control"
     );
-    assert!(
-        gz_matched.headers().get("etag").is_none(),
-        "/app.js gzip+if-none-match must not carry an ETag"
-    );
-    assert_eq!(gz_matched.headers()["content-encoding"], "gzip");
+    assert_eq!(gz_matched.headers()["etag"], etag);
     let gz_matched_body = to_bytes(gz_matched.into_body(), usize::MAX).await.unwrap();
-    assert!(
-        !gz_matched_body.is_empty(),
-        "/app.js gzip+if-none-match body must not be empty"
-    );
+    assert!(gz_matched_body.is_empty());
 
     let gz_ok = app
         .clone()
@@ -291,11 +327,8 @@ async fn static_shell_assets_ignore_if_none_match() {
         .await
         .unwrap();
     assert_eq!(gz_ok.status(), StatusCode::OK, "/app.js gzip 200");
-    assert_eq!(gz_ok.headers()["cache-control"], "no-store");
-    assert!(
-        gz_ok.headers().get("etag").is_none(),
-        "/app.js gzip 200 must not carry an ETag"
-    );
+    assert_eq!(gz_ok.headers()["cache-control"], "no-cache");
+    assert_eq!(gz_ok.headers()["etag"], etag);
 
     let shell = get_public(&app, "/").await;
     assert_eq!(shell.status(), StatusCode::OK);

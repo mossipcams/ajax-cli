@@ -1,6 +1,6 @@
 use crate::WebError;
 use axum::{
-    http::{header, HeaderName, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response as AxumResponse},
 };
 
@@ -131,6 +131,60 @@ pub fn apply_no_store(response: &mut AxumResponse) {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+}
+
+pub fn weak_etag(version: &str) -> String {
+    format!("W/\"{version}\"")
+}
+
+pub fn apply_no_cache(response: &mut AxumResponse) {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+}
+
+fn insert_etag(response: &mut AxumResponse, etag: &str) {
+    if let Ok(value) = HeaderValue::from_str(etag) {
+        response.headers_mut().insert(header::ETAG, value);
+    }
+}
+
+fn normalized_etag_tag(tag: &str) -> &str {
+    let trimmed = tag.trim();
+    trimmed.strip_prefix("W/").unwrap_or(trimmed)
+}
+
+pub fn matches_if_none_match(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(value) = headers.get(header::IF_NONE_MATCH) else {
+        return false;
+    };
+    let Ok(text) = value.to_str() else {
+        return false;
+    };
+    if text.trim() == "*" {
+        return true;
+    }
+    text.split(',')
+        .any(|candidate| normalized_etag_tag(candidate) == normalized_etag_tag(etag))
+}
+
+pub fn revalidating_asset_response(
+    content_type: &'static str,
+    body: Vec<u8>,
+    etag: &str,
+) -> AxumResponse {
+    let mut response = bytes_axum_response(200, content_type, body);
+    insert_etag(&mut response, etag);
+    apply_no_cache(&mut response);
+    response
+}
+
+pub fn not_modified_response(etag: &str) -> AxumResponse {
+    let mut response = (StatusCode::NOT_MODIFIED, Vec::<u8>::new()).into_response();
+    insert_etag(&mut response, etag);
+    apply_no_cache(&mut response);
+    apply_security_headers(&mut response);
+    response
 }
 
 fn apply_security_headers(response: &mut AxumResponse) {

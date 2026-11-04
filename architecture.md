@@ -198,7 +198,7 @@ Subsystem docs are rewritten as the phases that make this true land.
   optional presentation-ready explanation; lifecycle and annotations stay
   separate typed inputs.
 - Web Cockpit targets normal iOS Safari without requiring Home Screen install
-  for core Cockpit use, without classic PWA packaging (manifest, icons, service
+  for core Cockpit use, without classic PWA packaging (manifest, service
   worker), and without a service-worker offline mutation model. Selected tasks
   open in one **Task Workspace** with two peer interaction surfaces — **Ajax
   Chat** and **Ajax Terminal** — plus shared task header/details and Diff

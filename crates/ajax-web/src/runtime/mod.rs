@@ -29,8 +29,9 @@ use tower_http::compression::CompressionLayer;
 pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
-    bytes_axum_response, html_response, json_response, json_value_response,
-    response_from_web_error, text_axum_response,
+    html_response, json_response, json_value_response, matches_if_none_match,
+    not_modified_response, response_from_web_error, revalidating_asset_response,
+    text_axum_response, weak_etag,
 };
 
 mod bridge;
@@ -76,6 +77,7 @@ where
         .route("/app.css", get(axum_app_css))
         .route("/app.js", get(axum_app_js))
         .route("/terminal.js", get(axum_terminal_js))
+        .route("/icons/apple-touch-icon.png", get(axum_apple_touch_icon))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/session/models", get(axum_session_models))
@@ -358,16 +360,20 @@ fn cloudflare_access_error_response(error: CloudflareAccessError) -> AxumRespons
     )
 }
 
-async fn axum_app_css() -> AxumResponse {
-    static_asset_response("/app.css")
+async fn axum_app_css(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/app.css", &headers)
 }
 
-async fn axum_app_js() -> AxumResponse {
-    static_asset_response("/app.js")
+async fn axum_app_js(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/app.js", &headers)
 }
 
-async fn axum_terminal_js() -> AxumResponse {
-    static_asset_response("/terminal.js")
+async fn axum_terminal_js(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/terminal.js", &headers)
+}
+
+async fn axum_apple_touch_icon(headers: HeaderMap) -> AxumResponse {
+    static_asset_response("/icons/apple-touch-icon.png", &headers)
 }
 
 async fn axum_health() -> AxumResponse {
@@ -814,11 +820,15 @@ async fn axum_fallback(uri: Uri) -> AxumResponse {
     text_axum_response(404, "not found")
 }
 
-fn static_asset_response(path: &str) -> AxumResponse {
-    match install::static_asset(path) {
-        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
-        None => text_axum_response(404, "not found"),
+fn static_asset_response(path: &str, headers: &HeaderMap) -> AxumResponse {
+    let Some(asset) = install::static_asset(path) else {
+        return text_axum_response(404, "not found");
+    };
+    let etag = weak_etag(install::app_version());
+    if matches_if_none_match(headers, &etag) {
+        return not_modified_response(&etag);
     }
+    revalidating_asset_response(asset.content_type, asset.body.to_vec(), &etag)
 }
 
 #[cfg(test)]
