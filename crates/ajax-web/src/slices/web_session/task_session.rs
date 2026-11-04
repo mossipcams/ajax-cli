@@ -395,14 +395,20 @@ impl TaskSessionState {
             None => return,
         };
         self.acp.apply_drain_outcome(&outcome);
+        let turn_ended = !outcome.prompt_terminals.is_empty();
+        let mut orphan_events = Vec::new();
         for terminal in outcome.prompt_terminals {
-            if let Some(active) = self.prompts.active_prompt.as_mut() {
-                active.capture_terminal(terminal);
+            match self.prompts.active_prompt.as_mut() {
+                Some(active) => {
+                    active.capture_terminal(terminal);
+                }
+                None => orphan_events.extend(terminal.events),
             }
         }
         let host_exit_from_drain = outcome.host_exited;
         let host_gone = self.acp.host_gone(host_exit_from_drain);
         let mut events = outcome.events;
+        events.extend(orphan_events);
         if self.prompts.suppress_exit_evidence || self.prompts.child_exit_reconciled {
             events.retain(|event| !is_acp_exit_error(event));
         }
@@ -411,6 +417,9 @@ impl TaskSessionState {
             if let Err(error) = self.append_to_log(normalized) {
                 tracing::warn!(%error, handle = %self.qualified_handle, "transcript events retained for retry");
             }
+        }
+        if turn_ended {
+            self.stream_normalizer.close_reply_lanes();
         }
         if host_gone && !self.prompts.child_exit_reconciled {
             reconcile_unexpected_child_exit(self, host_exit_from_drain);

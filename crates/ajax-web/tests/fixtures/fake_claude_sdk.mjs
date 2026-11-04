@@ -1,4 +1,5 @@
 const SLOW_TICK_MS = 40;
+const WAKEUP_DELAY_MS = 200;
 const MODELS = [
   { value: "default", displayName: "Default" },
   { value: "haiku", displayName: "Haiku" },
@@ -245,6 +246,21 @@ export function query({ prompt, options = {} }) {
       streamEvent(reply);
       assistant([{ type: "text", text: reply }], "end_turn");
       result("success", { result: reply });
+      return;
+    }
+    if (text.includes("WAKEUP")) {
+      systemInit();
+      streamEvent("A.");
+      assistant([{ type: "text", text: "A." }], "end_turn");
+      result("success", { result: "A." });
+      await sleep(WAKEUP_DELAY_MS);
+      streamEvent("B.");
+      assistant([{ type: "text", text: "B." }], "end_turn");
+      result("success", { result: "B." });
+      await sleep(WAKEUP_DELAY_MS);
+      streamEvent("C.");
+      assistant([{ type: "text", text: "C." }], "end_turn");
+      result("success", { result: "C." });
       return;
     }
       systemInit();
