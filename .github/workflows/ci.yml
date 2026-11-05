@@ -363,6 +363,52 @@ jobs:
           HOME: /root
         run: npm run web:smoke -- --project=mobile-webkit
 
+  web-e2e-rust:
+    name: Web E2E (Rust server)
+    runs-on: ubuntu-latest
+    needs:
+      - pr-title
+      - changes
+    if: >-
+      ${{ !startsWith(github.head_ref, 'release-please--branches--main') &&
+      (needs.changes.outputs.full == 'true' || needs.changes.outputs.web == 'true') }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      options: --ipc=host
+    timeout-minutes: 40
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Rust server build dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+
+      - name: Rust server WebKit tests
+        env:
+          HOME: /root
+          CI: "true"
+        run: npm run web:smoke:rust
+
   ci:
     name: CI
     runs-on: ubuntu-latest
@@ -379,6 +425,7 @@ jobs:
       - audit
       - web-unit
       - web-e2e
+      - web-e2e-rust
     if: ${{ always() }}
 
     steps:
@@ -446,7 +493,8 @@ jobs:
           if [[ "$FULL" == "true" || "$WEB" == "true" ]]; then
             require_lane_jobs "web" \
               "${{ needs.web-unit.result }}" \
-              "${{ needs.web-e2e.result }}"
+              "${{ needs.web-e2e.result }}" \
+              "${{ needs.web-e2e-rust.result }}"
           fi
 
           if [[ "$FULL" == "true" || "$RUST" == "true" || "$WEB" == "true" ]]; then
