@@ -122,6 +122,12 @@ export default function ChatComposer({
                 aria-selected={index === slashSelection}
                 className={index === slashSelection ? "is-selected" : undefined}
                 onMouseDown={(event) => event.preventDefault()}
+                onPointerDown={(event) => {
+                  // Touch picks on pointerdown, like the model chips; iOS can drop the click.
+                  if (event.pointerType === "mouse") return;
+                  event.preventDefault();
+                  insertSlashMatch(command);
+                }}
                 onClick={() => insertSlashMatch(command)}
               >
                 <span className="session-composer-slash-name">/{command.name}</span>

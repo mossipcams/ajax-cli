@@ -21,9 +21,26 @@ export function navigateHashWithEnter(hash: string, direction: SwipeEnterDirecti
   navigateHash(hash);
 }
 
+let pendingHistoryBack: (() => void)[] | null = null;
+
+export function afterPendingHistoryBack(callback: () => void): void {
+  if (pendingHistoryBack) pendingHistoryBack.push(callback);
+  else callback();
+}
+
 export function navigateHashBack(hash: string): void {
   setSwipeEnterDirection("right");
   if (history.state?.ajaxPrevHash === hash) {
+    const fromHash = location.hash;
+    const callbacks: (() => void)[] = [];
+    pendingHistoryBack = callbacks;
+    const onHashChange = () => {
+      if (location.hash === fromHash) return;
+      window.removeEventListener("hashchange", onHashChange);
+      if (pendingHistoryBack === callbacks) pendingHistoryBack = null;
+      callbacks.forEach((callback) => callback());
+    };
+    window.addEventListener("hashchange", onHashChange);
     history.back();
     return;
   }

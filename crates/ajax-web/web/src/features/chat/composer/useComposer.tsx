@@ -81,6 +81,7 @@ export type ComposerProviderProps = ComposerCommands & {
   agentStarting: boolean;
   conversation: ConversationItem[];
   conversationRevision: number;
+  turnEndRevision?: number;
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
   composerRef: RefObject<HTMLTextAreaElement | null>;
@@ -141,6 +142,7 @@ export function ComposerProvider({
   agentStarting,
   conversation,
   conversationRevision,
+  turnEndRevision = 0,
   availableCommands,
   promptCapabilities,
   composerRef,
@@ -163,10 +165,12 @@ export function ComposerProvider({
   );
   const [composerState, setComposerState] = useState<ComposerState>(initialQueue);
   const [slashSelection, setSlashSelection] = useState(0);
+  const [slashPickedDraft, setSlashPickedDraft] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const holdRestoredQueueRef = useRef(initialQueue.status !== "idle");
+  const lastTurnEndRevisionRef = useRef(turnEndRevision);
   const handledFailedTurnKeyRef = useRef<string | null>(null);
   const [restoreIdleCheck, setRestoreIdleCheck] = useState(0);
   composerStateRef.current = composerState;
@@ -182,11 +186,17 @@ export function ComposerProvider({
     () => filterAdvertisedCommands(slashCommandSource, slashPrefix?.prefix ?? ""),
     [slashCommandSource, slashPrefix],
   );
-  const slashMenuOpen = slashPrefix !== null && slashMatches.length > 0;
+  // Picking a command closes the menu until the draft changes; typing a full name does not.
+  const slashMenuOpen =
+    slashPrefix !== null && slashMatches.length > 0 && draft !== slashPickedDraft;
 
   useEffect(() => {
     setSlashSelection(0);
   }, [draft, availableCommands]);
+
+  useEffect(() => {
+    if (draft !== slashPickedDraft) setSlashPickedDraft(null);
+  }, [draft, slashPickedDraft]);
 
   useLayoutEffect(() => {
     const stored = readComposerDraft(handle);
@@ -443,10 +453,13 @@ export function ComposerProvider({
   ]);
 
   useEffect(() => {
+    const turnEnded = turnEndRevision > lastTurnEndRevisionRef.current;
+    lastTurnEndRevisionRef.current = turnEndRevision;
     const { intents, state } = flushQueuedFollowUp({
       composerState: composerStateRef.current,
       busy,
       connected,
+      turnEnded,
     });
     if (intents.length === 0 && state === composerStateRef.current) return;
 
@@ -475,7 +488,7 @@ export function ComposerProvider({
       if (intent.type === "mark_stopped") markStopped();
     }
     setComposerState(state);
-  }, [busy, connected, everOpened, markStopped, restoreIdleCheck]);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, turnEndRevision]);
 
   const editQueued = useCallback(() => {
     const priorId = composerQueuedClientMessageId(composerState);
@@ -528,7 +541,9 @@ export function ComposerProvider({
 
   const insertSlashMatch = useCallback(
     (command: LiveAvailableCommand) => {
-      applyDraft(insertSlashCommand(command), false);
+      const next = insertSlashCommand(command);
+      setSlashPickedDraft(next);
+      applyDraft(next, false);
       composerRef.current?.focus();
     },
     [applyDraft, composerRef],

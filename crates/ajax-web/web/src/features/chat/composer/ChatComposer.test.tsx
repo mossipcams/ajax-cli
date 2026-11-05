@@ -344,6 +344,54 @@ describe("ChatComposer", () => {
     fireEvent.click(screen.getByRole("option", { name: /\/help/ }));
     expect(transport.sendPrompt).not.toHaveBeenCalled();
     expect(input).toHaveValue("/help");
+    expect(screen.queryByTestId("session-composer-slash-menu")).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(transport.sendPrompt).toHaveBeenCalledOnce();
+  });
+
+  it("closes the slash menu on touch pointerdown without waiting for click", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        availableCommands: [{ name: "help", description: "Show help" }],
+      });
+    });
+    const input = screen.getByLabelText("Message");
+    fireEvent.change(input, { target: { value: "/" } });
+    transport.sendPrompt.mockClear();
+    fireEvent.pointerDown(screen.getByRole("option", { name: /\/help/ }), {
+      pointerType: "touch",
+    });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(input).toHaveValue("/help");
+    expect(screen.queryByTestId("session-composer-slash-menu")).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(transport.sendPrompt).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the slash menu open on an exact name and closes it when the slash is deleted", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        availableCommands: [{ name: "help", description: "Show help" }],
+      });
+    });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "/help" } });
+    expect(screen.getByTestId("session-composer-slash-menu")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "help" } });
+    expect(screen.queryByTestId("session-composer-slash-menu")).not.toBeInTheDocument();
   });
 
   it("places attach, model, mic, and send on the hotbar with message textarea below", () => {

@@ -151,7 +151,7 @@ command / revive-on-submit into separate packets).
 - [x] PR 2: update `e2e/smoke.test.ts` restart case to the WS path
 - [x] PR 2: delete HTTP restart route, `restart_session`/`RestartError`, Core `offers_restart_agent` + `RESTART_AGENT`, TUI filter entry; retarget the Core remediation test to assert no restart offer
 - [x] PR 2: parent review gate + validation (independent Codex review: 5 findings verified and fixed; see Deviations)
-- [ ] Commit, push, open PR (`Fixes #1574`, `Fixes #1557`) — approved 2026-11-05: branch renamed to `fix/web/restart-agent-lifecycle`, one PR
+- [x] Commit, push, open PR (`Fixes #1574`, `Fixes #1557`): #1582 on `fix/web/restart-agent-lifecycle`; merged `origin/main` to resolve the `dist/app.js` conflict (approved 2026-11-05)
 
 ## Approval
 

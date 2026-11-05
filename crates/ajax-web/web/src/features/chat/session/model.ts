@@ -103,6 +103,7 @@ export interface ChatSessionView {
   transcriptError?: string;
   promptsBlocked?: boolean;
   revision: number;
+  turnEndRevision?: number;
 }
 
 export type ChatSessionEvent =

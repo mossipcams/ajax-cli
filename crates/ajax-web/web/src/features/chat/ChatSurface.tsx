@@ -176,6 +176,7 @@ function ChatSessionBody({
           connected={connected}
           promptingEnabled={promptingEnabled}
           busy={view.turn.busy}
+          turnEndRevision={view.turnEndRevision}
           everOpened={everOpened}
           agentStarting={agentStarting}
           conversation={view.conversation}

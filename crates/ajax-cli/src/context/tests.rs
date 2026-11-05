@@ -490,6 +490,60 @@ fn save_context_merges_independent_same_task_fact_updates() {
 }
 
 #[test]
+fn save_context_keeps_memory_lifecycle_advance_when_disk_still_at_baseline() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-lifecycle-baseline-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    let mut provisioning_task = sample_task("web/fix-login", "fix-login", "Fix login");
+    provisioning_task.lifecycle_status = LifecycleStatus::Provisioning;
+    baseline.create_task(provisioning_task).unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("web task")
+        .lifecycle_status = LifecycleStatus::Active;
+
+    let mut other_registry = baseline.clone();
+    other_registry
+        .create_task(sample_task("web/other", "other", "Other"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&other_registry)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    save_tracked_context(&paths, &mut tracked).expect("memory lifecycle advance merges");
+    let reloaded = load_context(&paths).expect("reload");
+    assert_eq!(
+        reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("reloaded task")
+            .lifecycle_status,
+        LifecycleStatus::Active
+    );
+    assert!(reloaded
+        .registry
+        .get_task(&TaskId::new("web/other"))
+        .is_some());
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn save_context_rejects_empty_registry_that_never_loaded_disk_tasks() {
     let root = std::env::temp_dir().join(format!(
         "ajax-context-empty-overwrite-{}-{}",
