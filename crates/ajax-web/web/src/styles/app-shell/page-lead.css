@@ -26,7 +26,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-align: left;
-  transition: background 140ms ease, border-color 140ms ease;
+  transition: background var(--dur-hover) ease, border-color var(--dur-hover) ease;
 }
 
 .update-banner::after {
@@ -36,7 +36,14 @@
   line-height: 1;
 }
 
-.update-banner:hover,
+@media (hover: hover) and (pointer: fine) {
+  .update-banner:hover {
+    background: var(--paper-high);
+    border-color: var(--ink-soft);
+    color: var(--ink);
+  }
+}
+
 .update-banner:focus-visible {
   background: var(--paper-high);
   border-color: var(--ink-soft);

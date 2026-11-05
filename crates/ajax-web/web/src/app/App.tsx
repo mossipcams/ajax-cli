@@ -47,6 +47,7 @@ import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
 import {
   consumeSwipeEnterDirection,
   navigateHashWithEnter,
+  setSwipeEnterDirection,
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
@@ -338,6 +339,11 @@ function AppContent() {
     location.hash = hash;
   }
 
+  function goBack(hash: string) {
+    setSwipeEnterDirection("right");
+    go(hash);
+  }
+
   function openTask(handle: string, latestCockpit?: BrowserCockpitView) {
     const interactionId = beginInteraction("open_task");
     endTapToFeedback(interactionId, "nav_start");
@@ -624,7 +630,7 @@ function AppContent() {
             outletRef={route.kind === "task" ? outletSwipeRef : undefined}
             outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
             onGo={go}
-            onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+            onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
             onOpenDiff={() => go(taskDiffHash(handle))}
             onCockpit={applyCockpit}
             onResult={showResult}
@@ -647,7 +653,7 @@ function AppContent() {
                   route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
                 }
                 onGo={go}
-                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
                 onOpenDiff={() => go(taskDiffHash(handle))}
                 onCockpit={applyCockpit}
                 onResult={showResult}
@@ -717,6 +723,8 @@ function AppContent() {
       return (
         <section
           key={surfaceKey}
+          ref={attachOutletRef ? outletSwipeRef : undefined}
+          className={outletClassName || undefined}
           data-outlet="settings"
           data-testid="outlet-settings"
           aria-live="polite"
@@ -724,7 +732,7 @@ function AppContent() {
           <SettingsView
             detailHandle={null}
             onResult={showResult}
-            onBack={() => go(dashboardHash())}
+            onBack={() => goBack(dashboardHash())}
             onRestarted={() => {
               go(dashboardHash());
               void loadCockpit();
@@ -738,11 +746,13 @@ function AppContent() {
       return (
         <section
           key={surfaceKey}
+          ref={attachOutletRef ? outletSwipeRef : undefined}
+          className={outletClassName || undefined}
           data-outlet="training"
           data-testid="outlet-training"
           aria-live="polite"
         >
-          <TrainingPage onBack={() => go(dashboardHash())} />
+          <TrainingPage onBack={() => goBack(dashboardHash())} />
         </section>
       );
     }
@@ -812,7 +822,7 @@ function AppContent() {
     ? renderWorkspaceStack(taskOpenHandle)
     : renderRouteOutlet(route, {
         attachOutletRef: true,
-        outletClassName: swipeOutletClass || undefined,
+        outletClassName: swipeEnterClassName(swipeEnter) || undefined,
       });
 
   function releaseReloadLatchIfNavigationMissed() {

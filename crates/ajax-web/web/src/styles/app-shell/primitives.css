@@ -30,13 +30,22 @@
   letter-spacing: 0.04em;
   padding: 10px 16px;
   min-height: 44px;
-  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+  transition: border-color var(--dur-hover) ease, color var(--dur-hover) ease, background var(--dur-hover) ease, transform var(--dur-press) var(--ease-spring);
 }
 
-.action:hover,
+@media (hover: hover) and (pointer: fine) {
+  .action:hover {
+    border-color: var(--ink-soft);
+  }
+}
+
 .action:focus-visible {
   border-color: var(--ink-soft);
   outline: none;
+}
+
+.action:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .action.primary {
@@ -45,7 +54,13 @@
   color: var(--paper);
 }
 
-.action.primary:hover,
+@media (hover: hover) and (pointer: fine) {
+  .action.primary:hover {
+    background: var(--ink-bright);
+    border-color: var(--ink-bright);
+  }
+}
+
 .action.primary:focus-visible {
   background: var(--ink-bright);
   border-color: var(--ink-bright);
@@ -75,7 +90,14 @@
   color: var(--danger);
 }
 
-.action[data-destructive="true"]:hover,
+@media (hover: hover) and (pointer: fine) {
+  .action[data-destructive="true"]:hover {
+    background: var(--danger);
+    border-color: var(--danger-bright);
+    color: var(--paper);
+  }
+}
+
 .action[data-destructive="true"]:focus-visible {
   background: var(--danger);
   border-color: var(--danger-bright);
@@ -105,13 +127,22 @@
   letter-spacing: 0.04em;
   padding: 8px 16px;
   min-height: 34px;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition: background var(--dur-hover) ease, border-color var(--dur-hover) ease, color var(--dur-hover) ease, transform var(--dur-press) var(--ease-spring);
 }
 
-.pill:hover,
+@media (hover: hover) and (pointer: fine) {
+  .pill:hover {
+    border-color: var(--ink-soft);
+  }
+}
+
 .pill:focus-visible {
   border-color: var(--ink-soft);
   outline: none;
+}
+
+.pill:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .pill.is-primary {
@@ -120,7 +151,13 @@
   color: var(--paper);
 }
 
-.pill.is-primary:hover,
+@media (hover: hover) and (pointer: fine) {
+  .pill.is-primary:hover {
+    background: var(--ink-bright);
+    border-color: var(--ink-bright);
+  }
+}
+
 .pill.is-primary:focus-visible {
   background: var(--ink-bright);
   border-color: var(--ink-bright);
@@ -132,7 +169,13 @@
   color: var(--paper);
 }
 
-.pill.is-danger:hover,
+@media (hover: hover) and (pointer: fine) {
+  .pill.is-danger:hover {
+    background: var(--danger-bright);
+    border-color: var(--danger-bright);
+  }
+}
+
 .pill.is-danger:focus-visible {
   background: var(--danger-bright);
   border-color: var(--danger-bright);

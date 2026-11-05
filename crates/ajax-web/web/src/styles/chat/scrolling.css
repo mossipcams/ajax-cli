@@ -59,7 +59,13 @@
   cursor: pointer;
 }
 
-.session-load-earlier:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-load-earlier:hover {
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+}
+
 .session-load-earlier:focus-visible {
   color: var(--ink);
   border-color: var(--ink-soft);
@@ -95,7 +101,12 @@
   cursor: pointer;
 }
 
-.session-jump:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-jump:hover {
+    border-color: var(--ink-soft);
+  }
+}
+
 .session-jump:focus-visible {
   border-color: var(--ink-soft);
   outline: none;

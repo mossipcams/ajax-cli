@@ -128,12 +128,30 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   }
 }
 
+@keyframes route-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+[data-outlet] {
+  animation: route-fade-in var(--dur-ui) var(--ease-spring);
+}
+
+.page-cross-slide-entering [data-outlet],
+.page-cross-slide-leaving [data-outlet] {
+  animation: none;
+}
+
 [data-outlet].ajax-swipe-enter-left {
-  animation: swipe-enter-from-right 220ms var(--ease-spring);
+  animation: swipe-enter-from-right var(--dur-sheet) var(--ease-spring);
 }
 
 [data-outlet].ajax-swipe-enter-right {
-  animation: swipe-enter-from-left 220ms var(--ease-spring);
+  animation: swipe-enter-from-left var(--dur-sheet) var(--ease-spring);
 }
 
 .page-cross-slide-host {

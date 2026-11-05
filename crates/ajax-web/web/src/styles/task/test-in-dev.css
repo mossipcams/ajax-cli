@@ -29,7 +29,13 @@
   text-transform: uppercase;
 }
 
-.test-in-dev .pill:hover,
+@media (hover: hover) and (pointer: fine) {
+  .test-in-dev .pill:hover {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+  }
+}
+
 .test-in-dev .pill:focus-visible {
   border-color: var(--ink-soft);
   color: var(--ink);

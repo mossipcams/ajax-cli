@@ -26,7 +26,14 @@
   height: 20px;
 }
 
-.session-composer-model:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-composer-model:hover {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+  }
+}
+
 .session-composer-model:focus-visible {
   border: none;
   background: transparent;
@@ -48,7 +55,7 @@
   border: 1px solid var(--rule-strong);
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
-  animation: sheet-rise 220ms var(--ease-spring);
+  animation: sheet-rise var(--dur-sheet) var(--ease-spring);
 }
 
 .session-model-switch-body {
@@ -150,9 +157,11 @@
   cursor: pointer;
 }
 
-.session-model-change:hover:not(:disabled),
-.session-model-done:hover {
-  border-color: var(--ink-soft);
+@media (hover: hover) and (pointer: fine) {
+  .session-model-change:hover:not(:disabled),
+  .session-model-done:hover {
+    border-color: var(--ink-soft);
+  }
 }
 
 .session-model-change:disabled {

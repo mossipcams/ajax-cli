@@ -50,7 +50,7 @@
   font-size: 18px;
   line-height: 1;
   color: var(--ink-muted);
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-press) var(--ease-spring);
 }
 
 .meta-details[open] summary::after {
@@ -117,7 +117,13 @@
   color: var(--ink-muted);
 }
 
-.meta-copy:hover,
+@media (hover: hover) and (pointer: fine) {
+  .meta-copy:hover {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+  }
+}
+
 .meta-copy:focus-visible {
   border-color: var(--ink-soft);
   color: var(--ink);
