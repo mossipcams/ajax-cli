@@ -395,7 +395,7 @@ jobs:
         run: npm ci
 
       - name: Install Rust server build dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libsqlite3-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.88.0
