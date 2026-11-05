@@ -27,15 +27,18 @@ pub fn sidecar_launch_args(sdk_module: Option<&str>) -> Vec<String> {
     super::rpc_handshake::sidecar_launch_args(SIDECAR_SOURCE, sdk_module)
 }
 fn claude_usage_hook(session: &mut RpcSession) -> Option<AgentEvent> {
-    let data = session
+    let usage = session
         .request("get_context_usage", json!({}), USAGE_TIMEOUT)
-        .ok()?;
-    let used = data.get("totalTokens")?.as_u64()?;
-    let size = data.get("maxTokens")?.as_u64()?;
-    if used == 0 || size == 0 {
-        return None;
-    }
-    Some(AgentEvent::Native(NativeEvent::Usage { used, size }))
+        .ok()
+        .and_then(|data| {
+            let used = data.get("totalTokens")?.as_u64()?;
+            let size = data.get("maxTokens")?.as_u64()?;
+            (used > 0 && size > 0).then_some((used, size))
+        });
+    Some(match usage {
+        Some((used, size)) => AgentEvent::Native(NativeEvent::Usage { used, size }),
+        None => AgentEvent::Native(NativeEvent::UsageUnknown),
+    })
 }
 pub struct ClaudeSdkClient {
     core: RpcClientCore,

@@ -24,6 +24,7 @@ pub enum NativeEvent {
         used: u64,
         size: u64,
     },
+    UsageUnknown,
     TurnFinished {
         request_id: u64,
         result: Result<String, String>,
