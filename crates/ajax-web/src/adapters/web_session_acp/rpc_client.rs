@@ -18,6 +18,7 @@ struct CoreInner {
     active_request_id: Option<u64>,
     next_request_id: u64,
     held_run_error: Option<String>,
+    held_rate_limit: Option<String>,
     host_exited: bool,
     on_run_finished: Option<RunFinishedHook>,
 }
@@ -31,6 +32,7 @@ impl RpcClientCore {
                 active_request_id: None,
                 next_request_id: 1,
                 held_run_error: None,
+                held_rate_limit: None,
                 host_exited: false,
                 on_run_finished,
             }),
@@ -170,10 +172,13 @@ impl RpcClientCore {
                             AgentEvent::Native(NativeEvent::Error(text))
                                 if g.active_request_id.is_some() =>
                             {
-                                g.held_run_error = Some(match g.held_run_error.take() {
-                                    Some(earlier) => format!("{earlier}\n{text}"),
-                                    None => text,
-                                });
+                                g.held_run_error = Some(join_held(g.held_run_error.take(), text));
+                            }
+                            AgentEvent::Native(NativeEvent::RateLimited { message })
+                                if g.active_request_id.is_some() =>
+                            {
+                                g.held_rate_limit =
+                                    Some(join_held(g.held_rate_limit.take(), message));
                             }
                             other => g.event_queue.push_back(other),
                         }
@@ -184,11 +189,38 @@ impl RpcClientCore {
                 }
                 RpcStep::RunFinished { aborted } => {
                     let id = g.active_request_id.take().unwrap_or(0);
-                    let (forwarded, result) = match (aborted, g.held_run_error.take()) {
-                        (false, Some(text)) => (None, Err(text)),
-                        (true, Some(text)) => (Some(text), Ok("cancelled".to_string())),
-                        (false, None) => (None, Ok("end_turn".to_string())),
-                        (true, None) => (None, Ok("cancelled".to_string())),
+                    let held_error = g.held_run_error.take();
+                    let held_limit = g.held_rate_limit.take();
+                    let mut forwarded = Vec::new();
+                    let finished = match (aborted, held_limit) {
+                        (false, Some(message)) => {
+                            AgentEvent::Native(NativeEvent::TurnRateLimited {
+                                request_id: id,
+                                message,
+                            })
+                        }
+                        (false, None) => {
+                            let result = match held_error {
+                                Some(text) => Err(text),
+                                None => Ok("end_turn".to_string()),
+                            };
+                            AgentEvent::Native(NativeEvent::TurnFinished {
+                                request_id: id,
+                                result,
+                            })
+                        }
+                        (true, limit) => {
+                            forwarded.extend(
+                                held_error.map(|text| AgentEvent::Native(NativeEvent::Error(text))),
+                            );
+                            forwarded.extend(limit.map(|message| {
+                                AgentEvent::Native(NativeEvent::RateLimited { message })
+                            }));
+                            AgentEvent::Native(NativeEvent::TurnFinished {
+                                request_id: id,
+                                result: Ok("cancelled".to_string()),
+                            })
+                        }
                     };
 
                     let on_run_finished = g.on_run_finished;
@@ -197,26 +229,27 @@ impl RpcClientCore {
                         _ => None,
                     };
 
-                    let finished = AgentEvent::Native(NativeEvent::TurnFinished {
-                        request_id: id,
-                        result,
-                    });
-
-                    g.event_queue
-                        .extend(forwarded.map(|text| AgentEvent::Native(NativeEvent::Error(text))));
+                    g.event_queue.extend(forwarded);
                     g.event_queue.extend(usage);
                     g.event_queue.push_back(finished);
                     return g.event_queue.pop_front();
                 }
                 RpcStep::PromptRejected(e) => {
-                    let id = g.active_request_id.take();
-                    return forward_held_error(
-                        g,
-                        AgentEvent::Native(NativeEvent::TurnFinished {
-                            request_id: id.unwrap_or(0),
+                    let id = g.active_request_id.take().unwrap_or(0);
+                    let finished = match g.held_rate_limit.take() {
+                        Some(message) => {
+                            g.held_run_error = None;
+                            AgentEvent::Native(NativeEvent::TurnRateLimited {
+                                request_id: id,
+                                message,
+                            })
+                        }
+                        None => AgentEvent::Native(NativeEvent::TurnFinished {
+                            request_id: id,
                             result: Err(e),
                         }),
-                    );
+                    };
+                    return forward_held_error(g, finished);
                 }
                 RpcStep::Error(t) => {
                     return forward_held_error(g, AgentEvent::Native(NativeEvent::Error(t)));
@@ -261,10 +294,22 @@ impl RpcClientCore {
     }
 }
 
+fn join_held(earlier: Option<String>, text: String) -> String {
+    match earlier {
+        Some(earlier) => format!("{earlier}\n{text}"),
+        None => text,
+    }
+}
+
 fn forward_held_error(g: &mut CoreInner, event: AgentEvent) -> Option<AgentEvent> {
-    if let Some(text) = g.held_run_error.take() {
-        g.event_queue
-            .push_back(AgentEvent::Native(NativeEvent::Error(text)));
+    match (g.held_rate_limit.take(), g.held_run_error.take()) {
+        (Some(message), _) => g
+            .event_queue
+            .push_back(AgentEvent::Native(NativeEvent::RateLimited { message })),
+        (None, Some(text)) => g
+            .event_queue
+            .push_back(AgentEvent::Native(NativeEvent::Error(text))),
+        (None, None) => {}
     }
     g.event_queue.push_back(event);
     g.event_queue.pop_front()
@@ -323,7 +368,12 @@ mod tests {
             let Some(event) = core.wait_event(Duration::from_millis(50)) else {
                 continue;
             };
-            let finished = matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }));
+            let finished = matches!(
+                event,
+                AgentEvent::Native(
+                    NativeEvent::TurnFinished { .. } | NativeEvent::TurnRateLimited { .. }
+                )
+            );
             events.push(event);
             if finished {
                 return events;
@@ -369,6 +419,30 @@ mod tests {
             writer.bytes().is_empty(),
             "adopt must never write a prompt or handshake record"
         );
+    }
+
+    #[test]
+    fn rate_limit_during_an_active_run_finishes_as_turn_rate_limited() {
+        let (mut peer, _writer, core) = adopted_claude_client(9);
+        let limit = json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": true,
+            "result": "You've hit your session limit"
+        });
+        peer.write_all(format!("{limit}\n").as_bytes())
+            .expect("write limit result to the adopted shim");
+
+        let events = events_until_turn_finished(&core);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [AgentEvent::Native(NativeEvent::TurnRateLimited { request_id: 9, message })]
+                    if message == "You've hit your session limit"
+            ),
+            "events: {events:?}"
+        );
+        assert!(!core.prompt_in_flight());
     }
 
     #[test]

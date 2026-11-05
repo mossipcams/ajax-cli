@@ -202,6 +202,17 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     &mut prompt_terminals,
                 );
             }
+            AgentEvent::Native(NativeEvent::TurnRateLimited {
+                request_id,
+                message,
+            }) => {
+                rate_limited.push(message);
+                prompt_terminals.push(PromptTerminal {
+                    request_id,
+                    outcome: PromptTerminalOutcome::Failed,
+                    events: Vec::new(),
+                });
+            }
             AgentEvent::Native(NativeEvent::RateLimited { message }) => rate_limited.push(message),
             AgentEvent::Acp(AcpClientEvent::Error(message)) if is_limit_error_text(&message) => {
                 rate_limited.push(message)

@@ -36,7 +36,10 @@ fn drain_turn(client: &CursorSdkClient) -> Vec<NativeEvent> {
     while started.elapsed() < TIMEOUT {
         match client.core().wait_event(Duration::from_millis(50)) {
             Some(AgentEvent::Native(event)) => {
-                let done = matches!(event, NativeEvent::TurnFinished { .. });
+                let done = matches!(
+                    event,
+                    NativeEvent::TurnFinished { .. } | NativeEvent::TurnRateLimited { .. }
+                );
                 events.push(event);
                 if done {
                     break;
@@ -115,15 +118,13 @@ fn failing_prompt_surfaces_the_error() {
         .expect("begin prompt");
     let events = drain_turn(&client);
 
-    let surfaced = events.iter().any(|event| match event {
-        NativeEvent::RateLimited { message } => message.contains("out of usage"),
-        NativeEvent::Error(text) => text.contains("out of usage"),
-        NativeEvent::TurnFinished { result, .. } => {
-            matches!(result, Err(text) if text.contains("out of usage"))
-        }
-        _ => false,
-    });
-    assert!(surfaced, "no out-of-usage error in {events:?}");
+    assert!(
+        matches!(
+            events.last(),
+            Some(NativeEvent::TurnRateLimited { message, .. }) if message.contains("out of usage")
+        ),
+        "no out-of-usage rate limit terminal in {events:?}"
+    );
     assert!(
         !events.iter().any(
             |event| matches!(event, NativeEvent::Error(text) if text.contains("out of usage"))
