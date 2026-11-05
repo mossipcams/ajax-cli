@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { trainingHash } from "@/shared/lib/routes";
 import { markNavigationStart } from "@/shared/lib/telemetry";
+import { navigateHash } from "@/shared/lib/swipeEnter";
 import { Button } from "@/shared/ui/button";
 import Skeleton from "@/shared/ui/Skeleton";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -123,7 +124,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   function openTrainingPage(): void {
     markNavigationStart(undefined, "hash");
     onOpenChange(false);
-    window.location.hash = trainingHash();
+    navigateHash(trainingHash());
   }
 
   if (!open) return null;

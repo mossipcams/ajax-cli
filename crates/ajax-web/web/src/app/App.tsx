@@ -46,8 +46,9 @@ import { useVersionMonitor } from "@/shared/hooks/useVersionMonitor";
 import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
 import {
   consumeSwipeEnterDirection,
+  navigateHash,
+  navigateHashBack,
   navigateHashWithEnter,
-  setSwipeEnterDirection,
   swipeEnterClassName,
   type SwipeEnterDirection,
 } from "@/shared/lib/swipeEnter";
@@ -332,16 +333,15 @@ function AppContent() {
     else clearTimeout(handle);
   }
 
-  function go(hash: string) {
+  function go(hash: string, navigate: (hash: string) => void = navigateHash) {
     if (location.hash !== hash) {
       markNavigationStart(undefined, "hash");
     }
-    location.hash = hash;
+    navigate(hash);
   }
 
   function goBack(hash: string) {
-    setSwipeEnterDirection("right");
-    go(hash);
+    go(hash, navigateHashBack);
   }
 
   function openTask(handle: string, latestCockpit?: BrowserCockpitView) {
@@ -681,7 +681,7 @@ function AppContent() {
                 title={detail.data.title}
                 selectedPr={diffSelectedPr}
                 onBack={() => {
-                  go(
+                  goBack(
                     resolveTaskWorkspaceHash(handle, {
                       orchestrationChat,
                       sessionCapable: detailSessionCapable(
