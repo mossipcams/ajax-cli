@@ -89,6 +89,13 @@ test("destructive action requires two taps to execute", async ({ page }) => {
 
 test("restart agent confirm from task details sends a WS restart", async ({ page }) => {
   const clientFrames: string[] = [];
+  const operationBodies: string[] = [];
+  page.on("request", (request) => {
+    const body = request.postData();
+    if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/api/operations") && body !== null) {
+      operationBodies.push(body);
+    }
+  });
   await mockFetch(page, {
     __detail__: {
       ...DETAIL_FIXTURE,
@@ -98,14 +105,6 @@ test("restart agent confirm from task details sends a WS restart", async ({ page
   });
   await page.addInitScript(() => {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
-    const mockedFetch = globalThis.fetch;
-    globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (new URL(url, location.href).pathname === "/api/operations" && init?.method === "POST") {
-        sessionStorage.setItem("ajax-e2e-operation-body", String(init.body));
-      }
-      return mockedFetch(input, init);
-    };
   });
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
     socket.onMessage((message) => {
@@ -123,5 +122,8 @@ test("restart agent confirm from task details sends a WS restart", async ({ page
   await expect
     .poll(() => clientFrames.map((frame) => (JSON.parse(frame) as { type?: string }).type))
     .toContain("restart");
-  expect(await page.evaluate(() => sessionStorage.getItem("ajax-e2e-operation-body"))).toBeNull();
+  const restartOperations = operationBodies.filter(
+    (body) => (JSON.parse(body) as { action?: string }).action === "restart-agent",
+  );
+  expect(restartOperations).toEqual([]);
 });
