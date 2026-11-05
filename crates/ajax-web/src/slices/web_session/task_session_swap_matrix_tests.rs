@@ -150,11 +150,15 @@ fn assert_failed_swap(
     dir: &Path,
     handle: &str,
     from: AgentClient,
+    to: AgentClient,
     from_id: Option<String>,
     swap: Result<(), String>,
 ) {
     let error = swap.expect_err("a failed spawn must fail the swap");
-    assert!(!error.is_empty(), "swap failure must carry a message");
+    assert!(
+        error.contains(agent_client_name(to)),
+        "swap failure must name the target harness: {error}"
+    );
     let stored = load::<SessionServerEvent>(dir, handle);
     assert_eq!(
         stored.harness,
@@ -177,11 +181,11 @@ fn assert_failed_swap(
         "queued prompt must survive a failed spawn in the ledger"
     );
     assert!(
-        stored
-            .events
-            .iter()
-            .any(|event| matches!(event, SessionServerEvent::Error { .. })),
-        "failed spawn must surface an Error event in the transcript"
+        stored.events.iter().any(|event| matches!(
+            event,
+            SessionServerEvent::Error { message } if message.contains(agent_client_name(to))
+        )),
+        "failed spawn must surface an Error event naming the target harness"
     );
     directory
         .cancel(handle, true)
@@ -243,7 +247,9 @@ fn run_swap_case(from: AgentClient, to: AgentClient, outcome: Outcome) {
     });
     match outcome {
         Outcome::Ok => assert_completed_swap(&directory, &dir, &handle, to, from_id, swap),
-        Outcome::SpawnFails => assert_failed_swap(&directory, &dir, &handle, from, from_id, swap),
+        Outcome::SpawnFails => {
+            assert_failed_swap(&directory, &dir, &handle, from, to, from_id, swap)
+        }
     }
     drop(directory);
     let _ = std::fs::remove_dir_all(dir);
@@ -258,7 +264,6 @@ macro_rules! swap_matrix {
             }
 
             #[test]
-            #[ignore = "#1546"]
             fn $fails() {
                 run_swap_case(AgentClient::$from, AgentClient::$to, Outcome::SpawnFails);
             }

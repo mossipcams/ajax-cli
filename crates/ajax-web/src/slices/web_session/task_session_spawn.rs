@@ -282,42 +282,20 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, SessionError> {
-    state.evidence.transcript_durability_fault = None;
-    state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
-    apply_cancel_to_queue(&mut state.prompts.queued, false);
-    release_live_client(state, true, "harness switch")?;
-
-    web_session_store::clear_acp_session_id(
-        &state.storage.registry_store(),
-        &state.storage.state_dir,
-        &state.qualified_handle,
-        agent_client_name(agent),
-    )
-    .map_err(|error| {
-        SessionError::persist(format!("stored session id could not be cleared: {error}"))
-    })?;
-
     reject_foreign_live_child(state)?;
-    let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
-    let defer_session_id = agent == AgentClient::Claude;
+    let (new_client, report) = match spawn_acp(agent, worktree_path, model, None).await {
+        Ok(spawned) => spawned,
+        Err(error) => return Err(switch_spawn_failed(state, agent, error)),
+    };
 
-    if let Err(error) = web_session_store::try_save_meta(
-        &state.storage.registry_store(),
-        &state.storage.state_dir,
-        &state.qualified_handle,
-        agent_client_name(agent),
-        (!defer_session_id).then(|| new_client.session_id()),
-        &meta_model_for_persist(&report, model),
-    ) {
+    if let Err(error) = retire_previous_client(state) {
         discard_staged_client(new_client);
-        return Err(SessionError::persist(format!(
-            "new session id could not be saved: {error}"
-        )));
+        return Err(error);
     }
-    state.acp.session_id_unsaved = defer_session_id;
-
-    let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
+    if let Err(error) = commit_switched_client(state, &new_client, &report, model, agent) {
+        discard_staged_client(new_client);
+        return Err(error);
+    }
 
     state.acp.client = Some(new_client);
     if let Err(error) = state.record_child_identity() {
@@ -341,6 +319,68 @@ pub(super) async fn reset_harness_context(
         }]);
     }
     Ok(state.generation)
+}
+
+fn switch_spawn_failed(
+    state: &mut TaskSessionState,
+    agent: AgentClient,
+    error: SessionError,
+) -> SessionError {
+    let harness = agent_client_name(agent);
+    let message = format!("Switch to {harness} failed: could not start {harness}: {error}");
+    tracing::warn!(
+        handle = %state.qualified_handle,
+        harness,
+        error = %error,
+        "harness swap failed"
+    );
+    let _ = state.append_to_log(vec![SessionServerEvent::Error {
+        message: message.clone(),
+    }]);
+    SessionError::spawn(message)
+}
+
+fn retire_previous_client(state: &mut TaskSessionState) -> Result<(), SessionError> {
+    state.evidence.transcript_durability_fault = None;
+    state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
+    apply_cancel_to_queue(&mut state.prompts.queued, false);
+    release_live_client(state, true, "harness switch")?;
+
+    web_session_store::clear_acp_session_id(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
+        &state.qualified_handle,
+        agent_client_name(state.agent),
+    )
+    .map_err(|error| {
+        SessionError::persist(format!("stored session id could not be cleared: {error}"))
+    })
+}
+
+fn commit_switched_client(
+    state: &mut TaskSessionState,
+    new_client: &SessionClient,
+    report: &SessionSpawnReport,
+    model: &str,
+    agent: AgentClient,
+) -> Result<(), SessionError> {
+    let defer_session_id = agent == AgentClient::Claude;
+
+    web_session_store::try_save_meta(
+        &state.storage.registry_store(),
+        &state.storage.state_dir,
+        &state.qualified_handle,
+        agent_client_name(agent),
+        (!defer_session_id).then(|| new_client.session_id()),
+        &meta_model_for_persist(report, model),
+    )
+    .map_err(|error| {
+        SessionError::persist(format!("new session id could not be saved: {error}"))
+    })?;
+    state.acp.session_id_unsaved = defer_session_id;
+
+    let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])
 }
 
 pub(super) async fn clear_session_context(
