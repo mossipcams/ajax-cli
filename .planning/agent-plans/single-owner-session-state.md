@@ -64,8 +64,17 @@ step 0a. Step 0a PR opened 2026-11-05.
   pass; 12 spawn_fails cases `#[ignore = "#1546"]`, each failing at the
   old-harness liveness assertion. Registry-level rollback is asserted by a
   route-level test in step 1.
-- [ ] 0b — `scripts/health-check <hours>` chat-signature counter. Size: S.
-  Closes: –
+- [x] 0b — `scripts/health-check <hours>` chat-signature counter. Size: S.
+  Closes: –. Signatures (substring match on ajax.log): `session activity
+  report failed` (activity_report_retry, 168h = 2); `session/close timed out`
+  (agent_stop_timeout, 168h = 0); `transcript events retained for retry`,
+  `failed to prune web session transcript`, `failed to delete legacy web
+  session transcript`, `imported incomplete web session transcript`
+  (transcript, 168h = 0). Harness swap has no log line
+  (`harness swap worker failed` and `apply_cross_harness_reset` errors are
+  returned to the client, not logged), so it is left out. The stop-timeout
+  signature only matches when logged; the `shim_control` close timeout in
+  `client.rs` returns an error without logging.
 - [ ] 0c — File an issue for the rate-limit detection gap. Size: –.
   Closes: –
 - [ ] 1 — Reorder swap to prepare, act, commit; un-ignore failure cases.
@@ -96,6 +105,11 @@ step 0a. Step 0a PR opened 2026-11-05.
   defect, stop patching and rewrite only the failing unit: keep the tests, and
   make the rewrite smaller than what it replaces. Saved to memory as
   `three_strikes_then_rewrite.md`.
+- **Unlogged chat failures (found in 0b).** Harness swap failures and the
+  shim_control close timeout in `client.rs` are returned, not logged, so
+  `scripts/health-check` cannot count them. Step 1 adds a `warn!` on swap
+  failure plus a `harness_swap` signature; step 6 does the same for the stop
+  timeout.
 
 Three-strike definitions:
 

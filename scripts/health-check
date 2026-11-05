@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+const { createReadStream, existsSync } = require("node:fs");
+const { homedir } = require("node:os");
+const { join } = require("node:path");
+const { createInterface } = require("node:readline");
+
+const SIGNATURES = [
+  { name: "activity_report_retry", patterns: ["session activity report failed"] },
+  { name: "agent_stop_timeout", patterns: ["session/close timed out"] },
+  {
+    name: "transcript",
+    patterns: [
+      "transcript events retained for retry",
+      "failed to prune web session transcript",
+      "failed to delete legacy web session transcript",
+      "imported incomplete web session transcript",
+    ],
+  },
+];
+
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}/;
+const TIMESTAMP_LENGTH = 23;
+
+function defaultLogPath(env = process.env) {
+  return env.AJAX_LOG || join(homedir(), ".local", "state", "ajax", "logs", "ajax.log");
+}
+
+function cutoffFor(hours, now = Date.now()) {
+  return new Date(now - hours * 3600_000).toISOString().slice(0, TIMESTAMP_LENGTH);
+}
+
+async function countSignatures(logPath, cutoff) {
+  const counts = new Map(SIGNATURES.map(({ name }) => [name, 0]));
+  const lines = createInterface({ input: createReadStream(logPath), crlfDelay: Infinity });
+  for await (const line of lines) {
+    if (!TIMESTAMP.test(line) || line.slice(0, TIMESTAMP_LENGTH) < cutoff) {
+      continue;
+    }
+    for (const { name, patterns } of SIGNATURES) {
+      if (patterns.some((pattern) => line.includes(pattern))) {
+        counts.set(name, counts.get(name) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
+function parseHours(args) {
+  const [hours] = args;
+  if (args.length !== 1 || !/^\d+(\.\d+)?$/.test(hours) || Number(hours) <= 0) {
+    return null;
+  }
+  return Number(hours);
+}
+
+async function main(args) {
+  const hours = parseHours(args);
+  if (hours === null) {
+    console.error("Usage: scripts/health-check <hours>");
+    return 2;
+  }
+  const logPath = defaultLogPath();
+  if (!existsSync(logPath)) {
+    console.error(`log not found: ${logPath}`);
+    return 2;
+  }
+  const counts = await countSignatures(logPath, cutoffFor(hours));
+  for (const [name, count] of counts) {
+    console.log(`${name} ${count}`);
+  }
+  return [...counts.values()].some((count) => count > 0) ? 1 : 0;
+}
+
+main(process.argv.slice(2)).then((code) => {
+  process.exitCode = code;
+});
