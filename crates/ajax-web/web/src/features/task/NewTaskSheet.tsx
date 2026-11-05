@@ -8,10 +8,6 @@ import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import ModelPicker from "./ModelPicker";
-import {
-  DEFAULT_SESSION_MODEL,
-  readSessionModel,
-} from "./desiredModel";
 import { AGENTS, agentLabel } from "./agents";
 
 interface Props {
@@ -223,9 +219,6 @@ export default function NewTaskSheet({
                     (current) =>
                       current ||
                       readPref(`${LAST_MODEL_KEY_PREFIX}${agent}`) ||
-                      (readSessionModel() !== DEFAULT_SESSION_MODEL
-                        ? readSessionModel()
-                        : "") ||
                       catalog.default,
                   )
                 }
