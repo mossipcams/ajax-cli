@@ -87,17 +87,14 @@ test("destructive action requires two taps to execute", async ({ page }) => {
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 5_000 });
 });
 
-test("restart agent confirm from task details reaches the operation endpoint", async ({ page }) => {
+test("restart agent confirm from task details sends a WS restart", async ({ page }) => {
+  const clientFrames: string[] = [];
   await mockFetch(page, {
     __detail__: {
       ...DETAIL_FIXTURE,
       agent: "Cursor",
       session_capable: true,
-      actions: [
-        { action: "restart-agent", label: "Restart agent", destructive: false, confirmation_required: true },
-      ],
     },
-    "/api/operations": { ok: true, cockpit: COCKPIT_FIXTURE, output: "Agent restarted.", error: null },
   });
   await page.addInitScript(() => {
     localStorage.setItem("ajax.web.session.orchestrationChat", "true");
@@ -111,6 +108,9 @@ test("restart agent confirm from task details reaches the operation endpoint", a
     };
   });
   await page.routeWebSocket(/\/api\/tasks\/.*\/session/, (socket) => {
+    socket.onMessage((message) => {
+      if (typeof message === "string") clientFrames.push(message);
+    });
     socket.send(sessionSnapshotJson({ reset: true, cursor: 0, transcript: [] }));
   });
   await page.goto("/app.html#/session/web%2Ffix-login");
@@ -118,10 +118,10 @@ test("restart agent confirm from task details reaches the operation endpoint", a
 
   await page.getByTestId("session-details").click();
   await page.getByTestId("session-restart-agent").click();
-  await page.getByTestId("result-panel-confirm").getByRole("button", { name: "Confirm" }).click();
+  await page.getByTestId("session-restart-agent").click();
 
   await expect
-    .poll(() => page.evaluate(() => sessionStorage.getItem("ajax-e2e-operation-body")))
-    .toContain('"restart-agent"');
-  await expect(page.getByTestId("result-panel")).toContainText("Agent restarted.");
+    .poll(() => clientFrames.map((frame) => (JSON.parse(frame) as { type?: string }).type))
+    .toContain("restart");
+  expect(await page.evaluate(() => sessionStorage.getItem("ajax-e2e-operation-body"))).toBeNull();
 });

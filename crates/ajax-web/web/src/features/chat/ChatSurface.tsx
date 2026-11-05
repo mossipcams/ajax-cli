@@ -58,6 +58,7 @@ interface Props {
     busy: boolean;
     sessionConfigOptions?: LiveSessionConfigOption[];
     clearSession?: () => boolean;
+    restartAgent?: () => boolean;
   }) => void;
 }
 
@@ -306,6 +307,7 @@ export default function ChatSurface({
     sendClear,
     retryRestore,
     startFresh,
+    restartAgent,
     restoreUnavailable,
     markStopped,
     applyConfigOption,
@@ -319,8 +321,9 @@ export default function ChatSurface({
       busy: view.turn.busy,
       sessionConfigOptions,
       clearSession: () => composerClearRef.current?.() ?? false,
+      restartAgent,
     });
-  }, [sessionModel, sessionConfigOptions, view.turn.busy, onSessionActivity]);
+  }, [sessionModel, sessionConfigOptions, view.turn.busy, restartAgent, onSessionActivity]);
 
   if (!handle) return null;
 
