@@ -555,6 +555,24 @@ describe("NewTaskSheet remembered defaults", () => {
     expect(screen.getByLabelText("Repository")).toHaveValue("api");
   });
 
+  it("does not preselect a model remembered from another harness's chat", async () => {
+    localStorage.setItem("ajax.web.session.model", "claude-opus-5-5");
+    stubCatalog();
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Codex" }));
+    await goToModelStep();
+
+    expect(await screen.findByRole("radio", { name: /GPT-5.6-Sol \(low\)/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(
+      screen.queryByRole("radio", { name: /claude-opus-5-5/, checked: true }),
+    ).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("ignores a remembered repo that is no longer configured", () => {
     localStorage.setItem("ajax.newTask.repo", "gone");
     localStorage.setItem("ajax.newTask.agent", "not-an-agent");
