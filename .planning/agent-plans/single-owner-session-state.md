@@ -85,8 +85,9 @@ step 0a. Step 0a PR opened 2026-11-05.
   signature.
 - [ ] 2 — Classify per-harness limit errors as `RateLimited`. Size: M.
   Closes: 0c
-- [ ] 3 — Refresh usage gauge on model/harness switch; mark stale on query
+- [x] 3 — Refresh usage gauge on model/harness switch; mark stale on query
   failure. Size: S. Closes: #1548, #1549
+  Done: `NativeEvent::UsageUnknown` -> `usage_reset` on a failed/empty Claude usage query; `usage_reset` after a successful model change for all harnesses; no frontend change (`usageProjection.ts` already clears on `usage_reset`).
 - [ ] 4 — `record_activity` + route chat activity through it + exponential
   backoff. Size: M. Closes: #1555
 - [ ] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
