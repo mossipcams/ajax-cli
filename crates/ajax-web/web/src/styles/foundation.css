@@ -116,6 +116,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -183,6 +184,13 @@ body {
 button {
   font: inherit;
   cursor: pointer;
+}
+
+button,
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* Inputs must stay at least 16px so iOS Safari does not zoom on focus. */
