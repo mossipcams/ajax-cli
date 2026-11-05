@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{is_limit_error_text, AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
 
 pub fn map_cursor_message(message: &Value, _session_id: &str) -> RpcMapping {
@@ -182,7 +182,18 @@ fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
             .get("error")
             .and_then(Value::as_str)
             .unwrap_or("cursor run failed");
-        events.push(AgentEvent::Native(NativeEvent::Error(text.to_string())));
+        let limited = ["errorName", "errorCode"]
+            .into_iter()
+            .filter_map(|key| message.get(key).and_then(Value::as_str))
+            .chain([text])
+            .any(is_limit_error_text);
+        events.push(AgentEvent::Native(if limited {
+            NativeEvent::RateLimited {
+                message: text.to_string(),
+            }
+        } else {
+            NativeEvent::Error(text.to_string())
+        }));
     }
     (true, ended_aborted)
 }

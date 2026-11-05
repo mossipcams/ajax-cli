@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
+use super::agent_event::{is_limit_error_text, AgentEvent, NativeEvent, NativeImage};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
 use super::pi_rpc_map::{run_error, PiRunError};
 use super::rpc_handshake::RpcHandshake;
@@ -372,9 +372,12 @@ pub(super) fn fold_pending_error(
     }
     if mapping.finished {
         if let Some(text) = pending.take() {
-            mapping
-                .events
-                .push(AgentEvent::Native(NativeEvent::Error(text)));
+            let event = if is_limit_error_text(&text) {
+                NativeEvent::RateLimited { message: text }
+            } else {
+                NativeEvent::Error(text)
+            };
+            mapping.events.push(AgentEvent::Native(event));
         }
     }
 }
