@@ -147,6 +147,7 @@ mod session_client_tests;
 #[cfg(test)]
 mod spawn_tests;
 
+pub(crate) use agent_event::is_limit_error_text;
 pub use agent_event::{AgentEvent, NativeEvent};
 pub use apply_model::{
     apply_config_option, apply_model_pin, desired_pin_to_apply_steps, operator_pin_satisfied,

@@ -311,6 +311,46 @@ fn result_cancelled_finishes_aborted_without_events() {
 }
 
 #[test]
+fn result_limit_error_is_rate_limited_structured_or_by_text() {
+    let structured = map(&serde_json::json!({
+        "type": "result",
+        "status": "error",
+        "error": "slow down",
+        "errorName": "RateLimitError"
+    }));
+    assert!(structured.finished);
+    match structured.events.as_slice() {
+        [AgentEvent::Native(NativeEvent::RateLimited { message })] => {
+            assert_eq!(message, "slow down");
+        }
+        other => panic!("expected one RateLimited event, got {other:?}"),
+    }
+
+    let by_text = map(&serde_json::json!({
+        "type": "result",
+        "status": "error",
+        "error": "Too many requests: usage limits exceeded"
+    }));
+    match by_text.events.as_slice() {
+        [AgentEvent::Native(NativeEvent::RateLimited { message })] => {
+            assert_eq!(message, "Too many requests: usage limits exceeded");
+        }
+        other => panic!("expected one RateLimited event, got {other:?}"),
+    }
+
+    let overloaded = map(&serde_json::json!({
+        "type": "result",
+        "status": "error",
+        "error": "529 overloaded",
+        "errorName": "Error"
+    }));
+    match overloaded.events.as_slice() {
+        [AgentEvent::Native(NativeEvent::Error(text))] => assert_eq!(text, "529 overloaded"),
+        other => panic!("expected one Error event, got {other:?}"),
+    }
+}
+
+#[test]
 fn result_error_finishes_with_an_error_event() {
     let mapping = map(&serde_json::json!({
         "type": "result",

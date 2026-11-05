@@ -5,8 +5,8 @@ use super::{
     normalize::StreamNormalizer, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::{
-    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpEventSource,
-    AgentEvent, NativeEvent,
+    available_command_descriptors, config_option_descriptors, is_limit_error_text, AcpClientEvent,
+    AcpEventSource, AgentEvent, NativeEvent,
 };
 use serde_json::{json, Value};
 
@@ -15,6 +15,19 @@ pub(crate) enum PromptTerminalOutcome {
     Success,
     Cancelled,
     Failed,
+}
+
+fn prompt_limit_error<'a>(method: &str, result: &'a Result<Value, String>) -> Option<&'a str> {
+    match result {
+        Err(message)
+            if method == "session/prompt"
+                && !is_cancellation_shaped_prompt_error(message)
+                && is_limit_error_text(message) =>
+        {
+            Some(message)
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn classify_prompt_terminal(
@@ -161,6 +174,9 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 }
             }
             AgentEvent::Acp(AcpClientEvent::RequestFinished { result, method, id }) => {
+                if let Some(message) = prompt_limit_error(method, &result) {
+                    rate_limited.push(message.to_string());
+                }
                 apply_request_finished(
                     method,
                     &result,
@@ -172,9 +188,13 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 );
             }
             AgentEvent::Native(NativeEvent::TurnFinished { request_id, result }) => {
+                let result = result.map(|stop_reason| json!({ "stopReason": stop_reason }));
+                if let Some(message) = prompt_limit_error("session/prompt", &result) {
+                    rate_limited.push(message.to_string());
+                }
                 apply_request_finished(
                     "session/prompt",
-                    &result.map(|stop_reason| json!({ "stopReason": stop_reason })),
+                    &result,
                     request_id,
                     prompt_cancel,
                     deduper,
@@ -183,6 +203,9 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 );
             }
             AgentEvent::Native(NativeEvent::RateLimited { message }) => rate_limited.push(message),
+            AgentEvent::Acp(AcpClientEvent::Error(message)) if is_limit_error_text(&message) => {
+                rate_limited.push(message)
+            }
             AgentEvent::Acp(AcpClientEvent::Error(message))
             | AgentEvent::Native(NativeEvent::Error(message)) => {
                 events.push(SessionServerEvent::Error {
@@ -275,6 +298,9 @@ pub(crate) fn map_request_finished(
     deduper: &mut UsageDeduper,
     cancel_requested: bool,
 ) -> Vec<SessionServerEvent> {
+    if prompt_limit_error(method, &result).is_some() {
+        return Vec::new();
+    }
     match result {
         Ok(value) if method == "session/prompt" => {
             let mut events = Vec::new();

@@ -116,6 +116,7 @@ fn failing_prompt_surfaces_the_error() {
     let events = drain_turn(&client);
 
     let surfaced = events.iter().any(|event| match event {
+        NativeEvent::RateLimited { message } => message.contains("out of usage"),
         NativeEvent::Error(text) => text.contains("out of usage"),
         NativeEvent::TurnFinished { result, .. } => {
             matches!(result, Err(text) if text.contains("out of usage"))
@@ -123,6 +124,12 @@ fn failing_prompt_surfaces_the_error() {
         _ => false,
     });
     assert!(surfaced, "no out-of-usage error in {events:?}");
+    assert!(
+        !events.iter().any(
+            |event| matches!(event, NativeEvent::Error(text) if text.contains("out of usage"))
+        ),
+        "an out-of-usage limit must not surface as a chat Error: {events:?}"
+    );
     assert!(!client.core().prompt_in_flight());
     client.core().shutdown();
 }

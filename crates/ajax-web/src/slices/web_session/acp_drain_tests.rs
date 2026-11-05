@@ -540,6 +540,62 @@ fn native_turn_rejection_matches_acp() {
 }
 
 #[test]
+fn codex_limit_prompt_failure_collects_rate_limit_without_error() {
+    let outcome = drain_one(AgentEvent::Acp(AcpClientEvent::RequestFinished {
+        id: 7,
+        method: "session/prompt",
+        result: Err("You've hit your usage limit".to_string()),
+    }));
+
+    assert_eq!(
+        outcome.rate_limited,
+        vec!["You've hit your usage limit".to_string()]
+    );
+    assert!(!outcome
+        .events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Error { .. })));
+    assert_eq!(outcome.prompt_terminals.len(), 1);
+    let terminal = &outcome.prompt_terminals[0];
+    assert_eq!(terminal.outcome, PromptTerminalOutcome::Failed);
+    assert!(!terminal
+        .events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Error { .. })));
+}
+
+#[test]
+fn codex_limit_client_error_collects_rate_limit_without_error() {
+    let outcome = drain_one(AgentEvent::Acp(AcpClientEvent::Error(
+        "429 Too Many Requests".to_string(),
+    )));
+
+    assert_eq!(
+        outcome.rate_limited,
+        vec!["429 Too Many Requests".to_string()]
+    );
+    assert!(outcome.events.is_empty());
+}
+
+#[test]
+fn codex_non_limit_prompt_failure_still_surfaces_an_error() {
+    let outcome = drain_one(AgentEvent::Acp(AcpClientEvent::RequestFinished {
+        id: 7,
+        method: "session/prompt",
+        result: Err("connection refused: 529 overloaded".to_string()),
+    }));
+
+    assert!(outcome.rate_limited.is_empty());
+    assert_eq!(outcome.prompt_terminals.len(), 1);
+    let terminal = &outcome.prompt_terminals[0];
+    assert_eq!(terminal.outcome, PromptTerminalOutcome::Failed);
+    assert!(terminal.events.iter().any(|event| matches!(
+        event,
+        SessionServerEvent::Error { message } if message.contains("overloaded")
+    )));
+}
+
+#[test]
 fn native_error_matches_acp_error() {
     let native = drain_one(AgentEvent::Native(NativeEvent::Error("x".to_string())));
     let acp = drain_one(AgentEvent::Acp(AcpClientEvent::Error("x".to_string())));

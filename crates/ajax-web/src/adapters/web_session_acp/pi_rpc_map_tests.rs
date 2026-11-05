@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::pi_rpc_map::{map_record, run_error};
+use super::rpc_session::fold_pending_error;
 
 const SESSION_ID: &str = "acp-session-1";
 
@@ -462,6 +463,52 @@ fn auto_retry_end_failure_emits_final_error_1335() {
         "529 overloaded after 3 attempts"
     );
     assert!(!mapping.finished);
+}
+
+#[test]
+fn auto_retry_end_limit_failure_emits_rate_limited() {
+    let record = serde_json::json!({
+        "type": "auto_retry_end",
+        "success": false,
+        "attempt": 3,
+        "finalError": "429 Too Many Requests: rate limit exceeded",
+    });
+    let mapping = map_record(&record, SESSION_ID);
+
+    match mapping.events.as_slice() {
+        [AgentEvent::Native(NativeEvent::RateLimited { message })] => {
+            assert_eq!(message, "429 Too Many Requests: rate limit exceeded");
+        }
+        other => panic!("expected one RateLimited event, got {other:?}"),
+    }
+    assert!(!mapping.finished);
+}
+
+#[test]
+fn pending_limit_error_folds_to_rate_limited_when_the_run_settles() {
+    let error = serde_json::json!({
+        "type": "message_end",
+        "message": {
+            "role": "assistant",
+            "stopReason": "error",
+            "errorMessage": "Monthly usage limit reached",
+        },
+    });
+    let settled = serde_json::json!({ "type": "agent_settled" });
+    let mut pending = None;
+    let mut surfaced = Vec::new();
+    for record in [&error, &settled] {
+        let mut mapping = map_record(record, SESSION_ID);
+        fold_pending_error(&mut pending, record, &mut mapping);
+        surfaced.extend(mapping.events);
+    }
+
+    match surfaced.as_slice() {
+        [AgentEvent::Native(NativeEvent::RateLimited { message })] => {
+            assert_eq!(message, "Monthly usage limit reached");
+        }
+        other => panic!("expected one RateLimited event, got {other:?}"),
+    }
 }
 
 #[test]
