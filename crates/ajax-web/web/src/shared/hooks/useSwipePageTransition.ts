@@ -24,7 +24,11 @@ import {
 } from "@/shared/gestures/navigateSwipe";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { parseRoute, type Route } from "@/shared/lib/routes";
-import { type SwipeEnterDirection, setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import {
+  type SwipeEnterDirection,
+  afterPendingHistoryBack,
+  setSwipeEnterDirection,
+} from "@/shared/lib/swipeEnter";
 import { captureSwipe, markNavigationStart } from "@/shared/lib/telemetry";
 import { shouldSuppressPageSwipe } from "@/shared/lib/terminalSelecting";
 
@@ -231,7 +235,8 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
 
     scheduleSettleFallback(commitMs + 40 + CROSS_SLIDE_ARMED_SLACK_MS);
 
-    scheduleCrossSlideAnimatingFlip(() => {
+    const flip = () => scheduleCrossSlideAnimatingFlip(() => {
+      if (activeRef.current !== nextActive) return;
       setActive((current) => {
         if (!current || current.phase !== "armed") return current;
         const animating = {
@@ -245,6 +250,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
       });
       scheduleSettleFallback(commitMs + 40);
     });
+    afterPendingHistoryBack(flip);
     return true;
   }, [finishCrossSlide]);
 
