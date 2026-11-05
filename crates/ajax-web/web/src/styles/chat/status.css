@@ -34,7 +34,12 @@
   line-height: 1;
 }
 
-.session-head-back:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-head-back:hover {
+    color: var(--ink-bright);
+  }
+}
+
 .session-head-back:focus-visible {
   color: var(--ink-bright);
   outline: none;
@@ -86,9 +91,15 @@
   color: var(--ink);
 }
 
-.session-head-details:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-head-details:hover,
+  .session-head-stop:hover {
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+}
+
 .session-head-details:focus-visible,
-.session-head-stop:hover,
 .session-head-stop:focus-visible {
   color: var(--ink);
   border-color: var(--ink-soft);

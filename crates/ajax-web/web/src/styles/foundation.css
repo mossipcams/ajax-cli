@@ -81,6 +81,10 @@
   /* Motion — shared easings so transitions feel like one system. */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-press: 100ms;
+  --dur-hover: 150ms;
+  --dur-ui: 200ms;
+  --dur-sheet: 220ms;
 }
 
 /* Canonical task status tones — set --tone / --tone-bg consumed by status dots,

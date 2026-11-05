@@ -578,11 +578,18 @@
 }
 
 .training-page .pill.is-danger,
-.training-page .pill.is-danger:hover,
 .training-page .pill.is-danger:focus-visible {
   background: transparent;
   color: var(--danger);
   border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--rule));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .training-page .pill.is-danger:hover {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--rule));
+  }
 }
 
 .training-page .training-page-filter {

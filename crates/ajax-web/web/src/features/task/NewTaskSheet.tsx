@@ -3,6 +3,7 @@ import type { BrowserCockpitView, RepoSummary } from "@/shared/lib/types";
 import { startTaskHandle } from "./taskSlug";
 import { useStartTaskMutation } from "./useStartTaskMutation";
 import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
+import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Button } from "@/shared/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -70,7 +71,7 @@ export default function NewTaskSheet({
   const submittingRef = useRef(false);
   const mountedRef = useRef(true);
   const [dragOffset, setDragOffset] = useState(0);
-  const sheetRef = useRef<HTMLDivElement>(null);
+  const { scrimRef, cardRef, requestClose } = useSheetExit<HTMLFormElement>(() => onClose?.());
   const grabRef = useRef<HTMLDivElement>(null);
   const startTaskMutation = useStartTaskMutation();
 
@@ -83,15 +84,15 @@ export default function NewTaskSheet({
   useEffect(() => {
     mountedRef.current = true;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    sheetRef.current?.focus();
+    scrimRef.current?.focus();
     return () => {
       mountedRef.current = false;
       opener?.focus();
     };
-  }, []);
+  }, [scrimRef]);
 
   useSheetDrag(grabRef, {
-    onDismiss: () => onClose?.(),
+    onDismiss: requestClose,
     onOffset: setDragOffset,
   });
 
@@ -155,7 +156,7 @@ export default function NewTaskSheet({
   }
 
   function handleBackdropClick(event: MouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) onClose?.();
+    if (event.target === event.currentTarget) requestClose();
   }
 
   return (
@@ -163,7 +164,7 @@ export default function NewTaskSheet({
       <Sheet
         open
         onOpenChange={(open) => {
-          if (!open) onClose?.();
+          if (!open) requestClose();
         }}
       >
         <SheetContent
@@ -182,11 +183,12 @@ export default function NewTaskSheet({
             role="dialog"
             aria-modal="true"
             tabIndex={-1}
-            ref={sheetRef}
+            ref={scrimRef}
             onClick={handleBackdropClick}
           >
             <form
               className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}${step === "model" ? " is-model-step" : ""}`}
+              ref={cardRef}
               aria-label="New task"
               autoComplete="off"
               onSubmit={submit}
@@ -287,7 +289,7 @@ export default function NewTaskSheet({
             <Button
               type="button"
               variant="secondary"
-              onClick={() => (step === "model" ? setStep("task") : onClose?.())}
+              onClick={() => (step === "model" ? setStep("task") : requestClose())}
             >
               {step === "model" ? "Back" : "Cancel"}
             </Button>

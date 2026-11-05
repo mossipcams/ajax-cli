@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
+import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
@@ -72,6 +73,7 @@ export default function TaskDetailsSheet({
   onCancelPendingConfirm,
 }: TaskDetailsSheetProps) {
   const [freshSessionArmed, setFreshSessionArmed] = useState(false);
+  const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
 
   useEffect(() => {
     if (!open) setFreshSessionArmed(false);
@@ -91,10 +93,6 @@ export default function TaskDetailsSheet({
     taskOffersOrchestrationChat(detail) &&
     Boolean(onOpenChat);
   const showAjaxTerminal = mode === "chat" && Boolean(onOpenTerminal);
-
-  function close() {
-    onOpenChange(false);
-  }
 
   function requestFreshSession() {
     if (!freshSessionArmed) {
@@ -132,12 +130,14 @@ export default function TaskDetailsSheet({
         <SheetContent asChild aria-describedby={undefined}>
           <div
             className="session-sheet-scrim"
+            ref={scrimRef}
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) close();
             }}
           >
             <div
               className="session-details-sheet"
+              ref={cardRef}
               id={panelId}
               data-testid="task-details-sheet"
               role="dialog"

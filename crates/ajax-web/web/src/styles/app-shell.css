@@ -56,10 +56,16 @@ header .bar h1 {
   letter-spacing: normal;
   text-transform: none;
   color: #c9c9cc;
-  transition: background 140ms ease, color 140ms ease;
+  transition: background var(--dur-hover) ease, color var(--dur-hover) ease;
 }
 
-.settings-link:hover,
+@media (hover: hover) and (pointer: fine) {
+  .settings-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #e4e4e6;
+  }
+}
+
 .settings-link:focus-visible {
   background: rgba(255, 255, 255, 0.1);
   color: #e4e4e6;
@@ -135,9 +141,15 @@ header .bar h1 {
   text-decoration: none;
 }
 
-.connection-actions button:hover,
+@media (hover: hover) and (pointer: fine) {
+  .connection-actions button:hover,
+  .connection-actions a:hover {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+  }
+}
+
 .connection-actions button:focus-visible,
-.connection-actions a:hover,
 .connection-actions a:focus-visible {
   border-color: var(--ink-soft);
   color: var(--ink);
@@ -150,7 +162,14 @@ header .bar h1 {
   color: var(--paper);
 }
 
-.connection-actions button.is-primary:hover,
+@media (hover: hover) and (pointer: fine) {
+  .connection-actions button.is-primary:hover {
+    background: var(--ink-bright);
+    border-color: var(--ink-bright);
+    color: var(--paper);
+  }
+}
+
 .connection-actions button.is-primary:focus-visible {
   background: var(--ink-bright);
   border-color: var(--ink-bright);

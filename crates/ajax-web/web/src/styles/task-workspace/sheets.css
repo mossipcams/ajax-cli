@@ -9,6 +9,7 @@
   justify-content: flex-end;
   overflow: hidden;
   background: color-mix(in srgb, var(--soft-charcoal) 62%, transparent);
+  animation: scrim-fade var(--dur-sheet) var(--ease-spring);
 }
 
 .session-details-sheet {
@@ -26,7 +27,7 @@
   border: 1px solid var(--rule-strong);
   border-bottom: none;
   border-radius: var(--radius) var(--radius) 0 0;
-  animation: sheet-rise 220ms var(--ease-spring);
+  animation: sheet-rise var(--dur-sheet) var(--ease-spring);
 }
 
 .session-sheet-header {
@@ -130,7 +131,13 @@
   color: var(--ink);
 }
 
-.session-sheet-actions-muted .action.primary:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-sheet-actions-muted .action.primary:hover {
+    background: transparent;
+    border-color: var(--ink-soft);
+  }
+}
+
 .session-sheet-actions-muted .action.primary:focus-visible {
   background: transparent;
   border-color: var(--ink-soft);

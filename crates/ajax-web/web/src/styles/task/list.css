@@ -84,11 +84,16 @@
   border: none;
   color: var(--ink);
   text-align: left;
-  transition: background 120ms var(--ease), transform 220ms var(--ease);
+  transition: background var(--dur-hover) ease, transform 220ms var(--ease);
   touch-action: pan-y;
 }
 
-.task-row:hover,
+@media (hover: hover) and (pointer: fine) {
+  .task-row:hover {
+    background: var(--paper-raised);
+  }
+}
+
 .task-row:focus-visible {
   background: var(--paper-raised);
   outline: none;
@@ -229,7 +234,14 @@
   inset: -9px -3px;
 }
 
-.task-row-actions .action:hover,
+@media (hover: hover) and (pointer: fine) {
+  .task-row-actions .action:hover {
+    background: var(--paper-raised);
+    color: var(--ink);
+    border-color: var(--rule);
+  }
+}
+
 .task-row-actions .action:focus-visible {
   background: var(--paper-raised);
   color: var(--ink);

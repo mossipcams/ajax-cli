@@ -289,7 +289,12 @@
   text-underline-offset: 2px;
 }
 
-.session-tool-output-expand:hover,
+@media (hover: hover) and (pointer: fine) {
+  .session-tool-output-expand:hover {
+    color: var(--ink-muted);
+  }
+}
+
 .session-tool-output-expand:focus-visible {
   color: var(--ink-muted);
   outline: none;

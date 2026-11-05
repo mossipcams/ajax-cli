@@ -1,3 +1,4 @@
+import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
@@ -231,11 +232,9 @@ export default function SessionModelControls({
   disabled = false,
   onApply,
 }: SessionModelSheetProps) {
-  if (!open) return null;
+  const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
 
-  function close() {
-    onOpenChange(false);
-  }
+  if (!open) return null;
 
   return (
     <FullscreenLayer zIndex={50}>
@@ -249,12 +248,14 @@ export default function SessionModelControls({
         >
           <div
             className="session-sheet-scrim"
+            ref={scrimRef}
             onPointerDown={(event) => {
               if (event.target === event.currentTarget) close();
             }}
           >
             <div
               className="session-model-switch-sheet"
+              ref={cardRef}
               id={panelId}
               data-testid="model-switch-sheet"
               role="dialog"
