@@ -28,6 +28,10 @@ pub enum NativeEvent {
         request_id: u64,
         result: Result<String, String>,
     },
+    TurnRateLimited {
+        request_id: u64,
+        message: String,
+    },
     Error(String),
     RateLimited {
         message: String,

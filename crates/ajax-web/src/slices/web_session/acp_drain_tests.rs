@@ -578,6 +578,28 @@ fn codex_limit_client_error_collects_rate_limit_without_error() {
 }
 
 #[test]
+fn turn_rate_limited_finishes_failed_without_error() {
+    let outcome = drain_one(AgentEvent::Native(NativeEvent::TurnRateLimited {
+        request_id: 7,
+        message: "You've hit your session limit".to_string(),
+    }));
+
+    assert_eq!(
+        outcome.rate_limited,
+        vec!["You've hit your session limit".to_string()]
+    );
+    assert!(!outcome
+        .events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Error { .. })));
+    assert_eq!(outcome.prompt_terminals.len(), 1);
+    let terminal = &outcome.prompt_terminals[0];
+    assert_eq!(terminal.request_id, 7);
+    assert_eq!(terminal.outcome, PromptTerminalOutcome::Failed);
+    assert!(terminal.events.is_empty());
+}
+
+#[test]
 fn codex_non_limit_prompt_failure_still_surfaces_an_error() {
     let outcome = drain_one(AgentEvent::Acp(AcpClientEvent::RequestFinished {
         id: 7,
