@@ -60,6 +60,7 @@ pub(super) struct TestBridge {
     reload_calls: Arc<AtomicUsize>,
     clear_registry_on_operate: bool,
     persist_result: Result<(), crate::WebError>,
+    persisted_snapshot: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
     acknowledge_probe: AcknowledgeProbe,
     drop_task_on_refresh: Option<String>,
     pub(super) notification_calls: Arc<AtomicUsize>,
@@ -107,6 +108,7 @@ impl Default for TestBridge {
             reload_calls: Arc::new(AtomicUsize::new(0)),
             clear_registry_on_operate: false,
             persist_result: Ok(()),
+            persisted_snapshot: Arc::new(Mutex::new(None)),
             acknowledge_probe: Arc::new(Mutex::new(None)),
             drop_task_on_refresh: None,
             notification_calls: Arc::new(AtomicUsize::new(0)),
@@ -312,9 +314,14 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
 
     fn persist_registry_snapshot(
         &mut self,
-        _context: &mut CommandContext<InMemoryRegistry>,
+        context: &mut CommandContext<InMemoryRegistry>,
     ) -> Result<(), crate::WebError> {
-        self.persist_result.clone()
+        self.persist_result.clone()?;
+        *self
+            .persisted_snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(context.clone());
+        Ok(())
     }
 }
 

@@ -22,6 +22,7 @@ use crate::{
 use ajax_core::{
     adapters::{CommandRunError, CommandRunner},
     commands::{CommandContext, CommandError},
+    models::{AgentClient, TaskId},
     registry::{InMemoryRegistry, Registry as _},
     remediation,
 };
@@ -363,6 +364,10 @@ where
     let worktree_for_apply = std::sync::Arc::new(std::sync::Mutex::new(None::<std::path::PathBuf>));
     let worktree_slot = std::sync::Arc::clone(&worktree_for_apply);
     let agent_for_reset = request.agent.clone();
+    let previous_harness =
+        std::sync::Arc::new(std::sync::Mutex::new(None::<(AgentClient, Option<String>)>));
+    let previous_slot = std::sync::Arc::clone(&previous_harness);
+    let rollback_state = state.clone();
     let same_harness = {
         let guard = state.shared();
         guard
@@ -400,6 +405,15 @@ where
             "cockpit state changed while the harness swap was running",
             |context, _runner, bridge| {
                 let before_swap = context.clone();
+                *previous_slot.lock().unwrap() = before_swap
+                    .registry
+                    .get_task(&TaskId::new(handle.clone()))
+                    .map(|task| {
+                        (
+                            task.selected_agent,
+                            task.session_model().map(str::to_string),
+                        )
+                    });
                 let result =
                     crate::slices::operate::swap_task_agent(context, &handle, &request.agent, None);
                 match result {
@@ -460,6 +474,31 @@ where
             )
             .await
             {
+                let previous = previous_harness.lock().unwrap().take();
+                let error = match previous {
+                    Some(previous) => {
+                        let target =
+                            crate::slices::web_session::model_change::agent_client_from_name(
+                                &agent_for_reset,
+                            );
+                        match rollback_harness_swap(
+                            rollback_state,
+                            handle_for_apply,
+                            target,
+                            previous,
+                        )
+                        .await
+                        {
+                            Ok(()) => error,
+                            Err(rollback_error) => {
+                                format!(
+                                    "{error}; registry rollback was not saved: {rollback_error}"
+                                )
+                            }
+                        }
+                    }
+                    None => error,
+                };
                 return match crate::runtime::json_response(
                     409,
                     serde_json::json!({
@@ -475,6 +514,42 @@ where
         }
     }
     response.into_axum_response()
+}
+
+pub(crate) async fn rollback_harness_swap<C, B>(
+    state: WebAppState<C, B>,
+    handle: String,
+    target: AgentClient,
+    previous: (AgentClient, Option<String>),
+) -> Result<(), WebError>
+where
+    C: CommandRunner + Clone + Send + Sync + 'static,
+    B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let _flight = state.refresh_flight.blocking_lock();
+        let _lane = state.control_lane.blocking_lock();
+        let mut guard = state.shared();
+        let shared = &mut *guard;
+        let Some(task) = shared.context.registry.get_task_mut(&TaskId::new(handle)) else {
+            return Ok(());
+        };
+        if task.selected_agent != target {
+            return Ok(());
+        }
+        task.selected_agent = previous.0;
+        task.set_session_model(previous.1.as_deref());
+        let persisted = shared.bridge.persist_registry_snapshot(&mut shared.context);
+        guard.revision = guard.revision.saturating_add(1);
+        guard.cockpit_cache = None;
+        persisted
+    })
+    .await
+    .unwrap_or_else(|error| {
+        Err(WebError::CommandFailed(format!(
+            "harness swap rollback worker failed: {error}"
+        )))
+    })
 }
 
 pub(crate) async fn axum_start_task<C, B>(
