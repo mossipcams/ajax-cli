@@ -29,6 +29,9 @@ pub enum NativeEvent {
         result: Result<String, String>,
     },
     Error(String),
+    RateLimited {
+        message: String,
+    },
     Exited,
     ElicitationRequest {
         request_id: String,

@@ -58,9 +58,10 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             message: message.clone(),
             schema: schema.clone(),
         }],
-        NativeEvent::TurnFinished { .. } | NativeEvent::Error(_) | NativeEvent::Exited => {
-            Vec::new()
-        }
+        NativeEvent::TurnFinished { .. }
+        | NativeEvent::Error(_)
+        | NativeEvent::RateLimited { .. }
+        | NativeEvent::Exited => Vec::new(),
     }
 }
 
