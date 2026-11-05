@@ -7,7 +7,7 @@ use crate::canonical_agent_event::{observations_from_run_snapshot, AgentPhase, R
 impl AcpExecutionState {
     fn root_activity(&self) -> Option<ActivityKind> {
         match self.turn {
-            RootTurnState::Failed => return Some(ActivityKind::Failed),
+            RootTurnState::Failed(_) => return Some(ActivityKind::Failed),
             RootTurnState::Settled | RootTurnState::Cancelled => return Some(ActivityKind::Done),
             RootTurnState::Idle | RootTurnState::Running => {}
         }
@@ -293,10 +293,34 @@ mod tests {
     fn turn_failure_is_terminal_and_cancel_cannot_mask_it() {
         let mut state = running();
         state.apply(AcpExecutionEvent::TurnFailed, now());
-        assert_eq!(state.turn(), RootTurnState::Failed);
+        assert_eq!(state.turn(), RootTurnState::Failed(FailureKind::Failed));
         assert_eq!(kind(&state), Some(ActivityKind::Failed));
         state.apply(AcpExecutionEvent::TurnCancelled, now());
         assert_eq!(kind(&state), Some(ActivityKind::Failed));
+    }
+
+    #[test]
+    fn rate_limit_failure_survives_turn_end_and_failure_events() {
+        let mut state = running();
+        state.apply(AcpExecutionEvent::TurnRateLimited, now());
+        assert_eq!(
+            state.turn(),
+            RootTurnState::Failed(FailureKind::RateLimited)
+        );
+        assert_eq!(kind(&state), Some(ActivityKind::Failed));
+        for event in [
+            AcpExecutionEvent::TurnEnded,
+            AcpExecutionEvent::TurnFailed,
+            AcpExecutionEvent::TurnCancelled,
+        ] {
+            state.apply(event, now());
+            assert_eq!(
+                state.turn(),
+                RootTurnState::Failed(FailureKind::RateLimited)
+            );
+        }
+        state.apply(AcpExecutionEvent::PromptAccepted, now());
+        assert_eq!(state.turn(), RootTurnState::Running);
     }
 
     #[test]

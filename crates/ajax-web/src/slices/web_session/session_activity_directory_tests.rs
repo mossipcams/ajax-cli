@@ -1,9 +1,18 @@
+use super::acp_drain::drain_acp_events;
+use super::acp_usage::UsageDeduper;
+use super::session_activity::SessionActivityReporter;
 use super::test_support::{scratch_dir, BlockingSessionDirectory};
+use super::transcript::{rate_limit_note, TranscriptLog};
 use super::{record_session_activity, SessionActivity, SessionServerEvent};
-use crate::adapters::web_session_acp::with_test_acp_program;
+use crate::adapters::web_session_acp::{
+    with_test_acp_program, AcpEventSource, AgentEvent, NativeEvent,
+};
+use ajax_core::models::LiveStatusKind;
 use ajax_core::registry::Registry;
 use ajax_core::ui_state::{derive_operator_status, TaskStatus};
 use std::{
+    cell::RefCell,
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -661,4 +670,124 @@ fn issue_1439_dropping_a_chat_mid_turn_reports_no_settle() {
         "a chat dropped mid-turn is removed, so its actor must not settle a status"
     );
     let _ = std::fs::remove_dir_all(dir);
+}
+
+struct ScriptedAcpSource {
+    new_result: serde_json::Value,
+    events: RefCell<VecDeque<AgentEvent>>,
+}
+
+impl AcpEventSource for ScriptedAcpSource {
+    fn session_new_result(&self) -> &serde_json::Value {
+        &self.new_result
+    }
+
+    fn poll_event(&self) -> Option<AgentEvent> {
+        self.events.borrow_mut().pop_front()
+    }
+}
+
+#[test]
+fn rate_limited_turn_pushes_no_error_but_still_ends_the_turn() {
+    let source = ScriptedAcpSource {
+        new_result: serde_json::json!({}),
+        events: RefCell::new(VecDeque::from([
+            AgentEvent::Native(NativeEvent::RateLimited {
+                message: "You've hit your session limit".into(),
+            }),
+            AgentEvent::Native(NativeEvent::TurnFinished {
+                request_id: 7,
+                result: Ok("end_turn".into()),
+            }),
+        ])),
+    };
+    let outcome = drain_acp_events(&source, &mut UsageDeduper::default());
+    assert_eq!(
+        outcome.rate_limited,
+        vec!["You've hit your session limit".to_string()]
+    );
+    let terminal = &outcome.prompt_terminals[0];
+    let transcript = outcome.events.iter().chain(terminal.events.iter());
+    assert!(!transcript
+        .clone()
+        .any(|event| matches!(event, SessionServerEvent::Error { .. })));
+    assert!(terminal
+        .events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. })));
+}
+
+#[test]
+fn rate_limit_survives_turn_end_and_clears_on_next_turn() {
+    let mut reporter = SessionActivityReporter::default();
+    let accepted = SessionServerEvent::PromptAccepted {
+        client_message_id: "m1".into(),
+    };
+    assert_eq!(
+        reporter.activity_for_event(&accepted),
+        Some(SessionActivity::TurnStarted)
+    );
+    reporter.commit(SessionActivity::TurnStarted);
+    assert_eq!(
+        reporter.activity_for_rate_limit(),
+        Some(SessionActivity::RateLimited)
+    );
+    reporter.commit(SessionActivity::RateLimited);
+    let turn_end = SessionServerEvent::TurnEnd {
+        stop_reason: Some("end_turn".into()),
+    };
+    assert_eq!(reporter.activity_for_event(&turn_end), None);
+    assert_eq!(
+        SessionActivity::RateLimited.observation().kind,
+        LiveStatusKind::RateLimited
+    );
+    assert_eq!(
+        reporter.activity_for_event(&accepted),
+        Some(SessionActivity::TurnStarted)
+    );
+}
+
+#[test]
+fn rate_limit_note_is_stored_without_error_and_keeps_rate_limited_status() {
+    let mut reporter = SessionActivityReporter::default();
+    let message = "You've hit your session limit · resets 6:30pm (America/Chicago)";
+    let started = reporter
+        .activity_for_event(&SessionServerEvent::PromptAccepted {
+            client_message_id: "m1".into(),
+        })
+        .expect("turn start");
+    reporter.commit(started);
+    let limited = reporter
+        .activity_for_rate_limit()
+        .expect("rate limited activity");
+    reporter.commit(limited);
+    let note = rate_limit_note("i9".into(), "claude", message);
+    assert_eq!(reporter.activity_for_event(&note), None);
+    assert_eq!(
+        reporter.activity_for_event(&SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".into()),
+        }),
+        None
+    );
+    assert_eq!(
+        SessionActivity::RateLimited.observation().kind,
+        LiveStatusKind::RateLimited
+    );
+
+    let mut log = TranscriptLog::default();
+    log.append(vec![note]);
+    assert!(!log
+        .events
+        .iter()
+        .any(|event| matches!(event, SessionServerEvent::Error { .. })));
+    assert_eq!(
+        log.events,
+        vec![SessionServerEvent::Message {
+            role: "note".into(),
+            text: format!("Claude usage limit: {message}"),
+            content_blocks: Vec::new(),
+            item_id: "i9".into(),
+            message_id: None,
+        }]
+    );
 }

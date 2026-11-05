@@ -8,7 +8,7 @@ use super::session_evidence::SessionEvidence;
 use super::startup_recovery::persisted_chat_running_for;
 use super::task_session_commit::BacklogRetryBackoff;
 use super::task_session_spawn;
-use super::transcript::TranscriptLog;
+use super::transcript::{rate_limit_note, TranscriptLog};
 use super::{
     acp_drain::{drain_acp_events_with_prompt_cancel, normalize_session_events},
     SessionError, SessionServerEvent, SessionStorage,
@@ -399,6 +399,23 @@ impl TaskSessionState {
             None => return,
         };
         self.acp.apply_drain_outcome(&outcome);
+        let mut events = outcome.events;
+        for message in &outcome.rate_limited {
+            tracing::warn!(
+                handle = %self.qualified_handle,
+                harness = agent_client_name(self.agent),
+                %message,
+                "harness rate limited"
+            );
+            if let Some(activity) = self.evidence.activity_reporter.activity_for_rate_limit() {
+                self.evidence.report(&self.qualified_handle, activity);
+            }
+            events.push(rate_limit_note(
+                self.stream_normalizer.fresh_item_id(),
+                agent_client_name(self.agent),
+                message,
+            ));
+        }
         let turn_ended = !outcome.prompt_terminals.is_empty();
         let mut orphan_events = Vec::new();
         for terminal in outcome.prompt_terminals {
@@ -411,7 +428,6 @@ impl TaskSessionState {
         }
         let host_exit_from_drain = outcome.host_exited;
         let host_gone = self.acp.host_gone(host_exit_from_drain);
-        let mut events = outcome.events;
         events.extend(orphan_events);
         if self.prompts.suppress_exit_evidence || self.prompts.child_exit_reconciled {
             events.retain(|event| !is_acp_exit_error(event));

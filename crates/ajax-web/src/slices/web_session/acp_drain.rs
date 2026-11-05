@@ -52,6 +52,7 @@ pub(crate) struct AcpDrainOutcome {
     pub session_available_commands:
         Option<Vec<crate::adapters::web_session_acp::AvailableCommandDescriptor>>,
     pub session_title_update: Option<Option<String>>,
+    pub rate_limited: Vec<String>,
 }
 
 #[cfg(test)]
@@ -96,6 +97,7 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
     let mut applied_model = None;
     let mut session_config_options = None;
     let mut session_title_update = None;
+    let mut rate_limited = Vec::new();
     let handshake_commands = client.take_available_commands();
     let mut session_available_commands =
         (!handshake_commands.is_empty()).then_some(handshake_commands);
@@ -180,6 +182,7 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                     &mut prompt_terminals,
                 );
             }
+            AgentEvent::Native(NativeEvent::RateLimited { message }) => rate_limited.push(message),
             AgentEvent::Acp(AcpClientEvent::Error(message))
             | AgentEvent::Native(NativeEvent::Error(message)) => {
                 events.push(SessionServerEvent::Error {
@@ -211,6 +214,7 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
         session_config_options,
         session_available_commands,
         session_title_update,
+        rate_limited,
     }
 }
 

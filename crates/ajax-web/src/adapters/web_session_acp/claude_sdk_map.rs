@@ -296,6 +296,28 @@ fn tool_result_text(block: &Value) -> String {
     }
 }
 
+const USAGE_LIMIT_ERROR_PREFIXES: [&str; 12] = [
+    "You've hit your",
+    "You've reached your",
+    "You're out of usage credits",
+    "Your org is out of usage · add funds to continue",
+    "Your org is out of usage · contact your admin",
+    "Your seat type doesn't include usage credits",
+    "Your seat type doesn't include usage",
+    "Your usage allocation has been disabled by your admin",
+    "Your group's usage limit is set to $0",
+    "Fable 5 requires usage credits",
+    "You're out of extra usage",
+    "Your seat type doesn't include extra usage",
+];
+
+fn is_usage_limit_result(message: &Value, text: &str) -> bool {
+    message.get("api_error_status").and_then(Value::as_u64) == Some(429)
+        || USAGE_LIMIT_ERROR_PREFIXES
+            .iter()
+            .any(|prefix| text.trim_start().starts_with(prefix))
+}
+
 fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
     let subtype = message
         .get("subtype")
@@ -309,14 +331,24 @@ fn map_result(message: &Value, events: &mut Vec<AgentEvent>) -> (bool, bool) {
         .unwrap_or(false)
         && !ended_aborted
     {
-        let detail = message
+        let result = message
             .get("result")
             .and_then(Value::as_str)
-            .filter(|text| !text.trim().is_empty())
-            .unwrap_or(subtype);
-        events.push(AgentEvent::Native(NativeEvent::Error(format!(
-            "Claude run failed: {detail}"
-        ))));
+            .unwrap_or_default();
+        let detail = if result.trim().is_empty() {
+            subtype
+        } else {
+            result
+        };
+        if is_usage_limit_result(message, result) {
+            events.push(AgentEvent::Native(NativeEvent::RateLimited {
+                message: detail.to_string(),
+            }));
+        } else {
+            events.push(AgentEvent::Native(NativeEvent::Error(format!(
+                "Claude run failed: {detail}"
+            ))));
+        }
     }
     (true, ended_aborted)
 }
