@@ -35,7 +35,7 @@ Steps (S = an evening, M = 2–3 evenings, L = a weekend):
 | 0b | `scripts/health-check <hours>`: grep `ajax.log` for chat signatures (activity report retry, agent stop timeout, transcript, harness swap), count each, non-zero exit if any found | S | – |
 | 0c | File an issue for the rate-limit detection gap | – | – |
 | 1 | Reorder swap to prepare, act, commit; un-ignore the failure cases | S | #1546 |
-| 2 | Classify per-harness limit errors as `RateLimited` | M | 0c |
+| 2 | Classify per-harness limit errors as `RateLimited` | M | #1584 |
 | 3 | Refresh the usage gauge on model/harness switch; mark it stale when the usage query fails | S | #1548, #1549 |
 | 4 | `record_activity` + route chat activity through it + exponential backoff | M | #1555 |
 | 5 | Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a match on it | L | – |
@@ -75,16 +75,19 @@ step 0a. Step 0a PR opened 2026-11-05.
   returned to the client, not logged), so it is left out. The stop-timeout
   signature only matches when logged; the `shim_control` close timeout in
   `client.rs` returns an error without logging.
-- [ ] 0c — File an issue for the rate-limit detection gap. Size: –.
-  Closes: –
+- [x] 0c — File an issue for the rate-limit detection gap. Size: –.
+  Closes: –. Filed as #1584.
 - [x] 1 — Reorder swap to prepare, act, commit; un-ignore failure cases.
   Size: S. Closes: #1546
   Done: session reorder (task_session_spawn.rs), route registry rollback
   (live.rs), 24/24 matrix cases pass with none ignored, route tests
   `issue_1546_*` in runtime/tests/suite_6.rs, `harness_swap` health-check
   signature.
-- [ ] 2 — Classify per-harness limit errors as `RateLimited`. Size: M.
-  Closes: 0c
+- [x] 2 — Classify per-harness limit errors as `RateLimited`. Size: M.
+  Closes: 0c. Done: Claude (2a), Pi/Cursor/Codex (2b), failed-turn outcome
+  (2c); one classification test per harness; limits show as a host note, not
+  an Error. `harness rate limited` is logged but deliberately not a health-check
+  signature, since limits are external, not defects.
 - [ ] 3 — Refresh usage gauge on model/harness switch; mark stale on query
   failure. Size: S. Closes: #1548, #1549
 - [ ] 4 — `record_activity` + route chat activity through it + exponential
