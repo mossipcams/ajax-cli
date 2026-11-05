@@ -405,7 +405,11 @@ export function applyTurnEnd(
   stopReason?: string,
 ): ChatSessionReducerState {
   const failed = stopReason?.toLowerCase() === "error";
-  const turnEnded = failed ? clearPendingPrompts(state) : state;
+  const completed = {
+    ...state,
+    view: { ...state.view, turnEndRevision: state.view.revision + 1 },
+  };
+  const turnEnded = failed ? clearPendingPrompts(completed) : completed;
   const settled = settleOpenToolCalls(settleTurn(turnEnded), failed ? "failed" : "cancelled");
   if (failed && !turnAlreadyReported(settled)) {
     const seq = settled.seq + 1;
