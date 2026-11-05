@@ -77,8 +77,12 @@ step 0a. Step 0a PR opened 2026-11-05.
   `client.rs` returns an error without logging.
 - [ ] 0c — File an issue for the rate-limit detection gap. Size: –.
   Closes: –
-- [ ] 1 — Reorder swap to prepare, act, commit; un-ignore failure cases.
+- [x] 1 — Reorder swap to prepare, act, commit; un-ignore failure cases.
   Size: S. Closes: #1546
+  Done: session reorder (task_session_spawn.rs), route registry rollback
+  (live.rs), 24/24 matrix cases pass with none ignored, route tests
+  `issue_1546_*` in runtime/tests/suite_6.rs, `harness_swap` health-check
+  signature.
 - [ ] 2 — Classify per-harness limit errors as `RateLimited`. Size: M.
   Closes: 0c
 - [ ] 3 — Refresh usage gauge on model/harness switch; mark stale on query
@@ -107,9 +111,9 @@ step 0a. Step 0a PR opened 2026-11-05.
   `three_strikes_then_rewrite.md`.
 - **Unlogged chat failures (found in 0b).** Harness swap failures and the
   shim_control close timeout in `client.rs` are returned, not logged, so
-  `scripts/health-check` cannot count them. Step 1 adds a `warn!` on swap
-  failure plus a `harness_swap` signature; step 6 does the same for the stop
-  timeout.
+  `scripts/health-check` cannot count them. The harness swap part is resolved
+  by step 1 (`warn!` on swap failure plus a `harness_swap` signature); step 6
+  does the same for the stop timeout.
 
 Three-strike definitions:
 

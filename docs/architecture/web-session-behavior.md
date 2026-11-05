@@ -229,16 +229,22 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   persists pipe-form `session_model` from the confirmed descriptors. A refused
   pick does not persist. A persistence failure keeps the live change and reports
   that restart may restore the prior pin. Cross-harness
-  Switch resets backend context on the same public Ajax session: cancel any
-  in-flight turn, discard the host queue, shut down the old ACP child, clear the
-  stored resume id, spawn the new harness with `session/new` (no resume/load, no
-  transcript replay), append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot, stored transcript, and WebSocket
-  identity. With no live slot, discard the queue from the persisted ledger and
-  clear the stored resume id (failing closed if the ledger cannot be persisted) so the
-  next attach uses empty context. Switch sends only `{ agent }`; a model field is
-  refused. Persist `None` for Auto/unspecified; never store the literal string
-  `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+  Switch resets backend context on the same public Ajax session. It spawns the
+  new harness first, with `session/new` (no resume/load, no transcript replay).
+  Only after that start succeeds does it cancel any in-flight turn, discard the
+  host queue, shut down the old ACP child, clear the stored resume id, save the
+  new one, append a host note (`Client switched harness. Context reset.`), and
+  keep the TaskSession slot, stored transcript, and WebSocket identity. If the
+  new harness fails to start, the old harness, its in-flight turn, queue, and
+  resume id are untouched. One `error` event, `Switch to <harness> failed: ...`,
+  is appended to the transcript, the server logs `harness swap failed`, and the
+  route returns 409 with the task's registry harness and session model rolled
+  back, only if the task still names the target harness. With no live slot,
+  discard the queue from the persisted ledger and clear the stored resume id
+  (failing closed if the ledger cannot be persisted) so the next attach uses
+  empty context. Switch sends only `{ agent }`; a model field is refused. Persist
+  `None` for Auto/unspecified; never store the literal string `auto` as a harness
+  model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - **Live config-option apply (MVP).** Connected pickers send WebSocket
   `set_config_option` `{ configId, value }` with the exact advertised pair. The
   command loop validates that the id and value are advertised, calls ACP once,
