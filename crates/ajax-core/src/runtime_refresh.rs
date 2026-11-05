@@ -724,21 +724,24 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                 continue;
             }
 
+            if let Some((existing_task_id, _, existing_branch, _)) = registered_runtime_tasks
+                .iter_mut()
+                .find(|(_, existing_repo, _, existing_worktree_path)| {
+                    existing_repo == &repo.name
+                        && existing_worktree_path.to_string_lossy() == worktree.path
+                })
+            {
+                if existing_branch.as_str() != branch {
+                    if let Some(task) = context.registry.get_task_mut(existing_task_id) {
+                        task.branch = branch.to_string();
+                    }
+                    *existing_branch = branch.to_string();
+                    changed = true;
+                }
+                continue;
+            }
+
             let task_id = TaskId::new(format!("{}/{}", repo.name, handle));
-            let existing_session_for_worktree = registered_runtime_tasks
-                .iter()
-                .find(
-                    |(_, existing_repo, existing_branch, existing_worktree_path)| {
-                        existing_repo == &repo.name
-                            && existing_worktree_path.to_string_lossy() == worktree.path
-                            && existing_branch != branch
-                    },
-                )
-                .and_then(|(existing_task_id, _, _, _)| context.registry.get_task(existing_task_id))
-                .map(|task| task.tmux_session.clone())
-                .filter(|session| {
-                    TmuxAdapter::parse_session_status(session, sessions_output).exists
-                });
             let session_for_worktree_window = windows_output.and_then(|output| {
                 output.lines().find_map(|line| {
                     let mut fields = line.splitn(3, '\t');
@@ -748,46 +751,25 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                     (path == worktree.path).then(|| session.to_string())
                 })
             });
-            let tmux_session = existing_session_for_worktree
-                .or(session_for_worktree_window)
+            let tmux_session = session_for_worktree_window
                 .unwrap_or_else(|| format!("ajax-{}-{handle}", repo.name));
             let tmux_status = TmuxAdapter::parse_session_status(&tmux_session, sessions_output);
 
-            let previous_task = registered_runtime_tasks
-                .iter()
-                .find(|(_, existing_repo, _, existing_worktree_path)| {
-                    existing_repo == &repo.name
-                        && existing_worktree_path.to_string_lossy() == worktree.path
-                })
-                .and_then(|(task_id, _, _, _)| context.registry.get_task(task_id).cloned());
-            let mut task = match previous_task {
-                Some(mut previous) => {
-                    previous.id = task_id.clone();
-                    previous.handle = handle.to_string();
-                    previous.branch = branch.to_string();
-                    previous.worktree_path = worktree.path.into();
-                    previous.tmux_session = tmux_session;
-                    previous
-                }
-                None => {
-                    let mut task = Task::new(
-                        task_id.clone(),
-                        repo.name.clone(),
-                        handle.to_string(),
-                        handle.replace('-', " "),
-                        branch.to_string(),
-                        repo.default_branch.clone(),
-                        worktree.path,
-                        tmux_session,
-                        "task",
-                        AgentClient::Codex,
-                    );
-                    crate::lifecycle::mark_active(&mut task).map_err(|error| {
-                        CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
-                    })?;
-                    task
-                }
-            };
+            let mut task = Task::new(
+                task_id.clone(),
+                repo.name.clone(),
+                handle.to_string(),
+                handle.replace('-', " "),
+                branch.to_string(),
+                repo.default_branch.clone(),
+                worktree.path,
+                tmux_session,
+                "task",
+                AgentClient::Codex,
+            );
+            crate::lifecycle::mark_active(&mut task).map_err(|error| {
+                CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
+            })?;
             task.git_status = Some(GitStatus {
                 worktree_exists: true,
                 branch_exists: true,
@@ -816,25 +798,6 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
                 );
                 refresh_cached_annotations(&mut task);
-            }
-            let stale_task_ids = registered_runtime_tasks
-                .iter()
-                .filter(
-                    |(_, existing_repo, existing_branch, existing_worktree_path)| {
-                        existing_repo == &repo.name
-                            && existing_worktree_path == &task.worktree_path
-                            && existing_branch != &task.branch
-                    },
-                )
-                .map(|(task_id, _, _, _)| task_id.clone())
-                .collect::<Vec<_>>();
-            for stale_task_id in stale_task_ids {
-                context
-                    .registry
-                    .delete_task(&stale_task_id)
-                    .map_err(CommandError::Registry)?;
-                registered_runtime_tasks
-                    .retain(|(existing_task_id, _, _, _)| existing_task_id != &stale_task_id);
             }
             registered_runtime_tasks.push((
                 task.id.clone(),

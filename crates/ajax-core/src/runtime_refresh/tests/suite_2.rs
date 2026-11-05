@@ -638,7 +638,7 @@ fn window_probe_failure_preserves_task_window_evidence() {
 }
 
 #[test]
-fn orphan_recovery_deletes_stale_same_worktree_task_before_insert() {
+fn orphan_recovery_keeps_same_worktree_task_id_on_branch_switch_issue_1564() {
     let config = Config {
         repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
         ..Config::default()
@@ -679,12 +679,21 @@ fn orphan_recovery_deletes_stale_same_worktree_task_before_insert() {
     assert!(changed);
     assert!(context
         .registry
-        .get_task(&TaskId::new("web/stale-task"))
-        .is_none());
-    assert!(context
-        .registry
         .get_task(&TaskId::new("web/fix-login"))
-        .is_some());
+        .is_none());
+    let kept = context
+        .registry
+        .get_task(&TaskId::new("web/stale-task"))
+        .unwrap();
+    assert_eq!(kept.branch, "ajax/fix-login");
+    assert_eq!(kept.handle, "stale-task");
+    let tasks_in_worktree = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| task.worktree_path == Path::new(TASK_WORKTREE))
+        .collect::<Vec<_>>();
+    assert_eq!(tasks_in_worktree.len(), 1);
 }
 
 #[test]
@@ -754,12 +763,13 @@ fn branch_rename_preserves_live_session_for_same_worktree() {
     assert!(changed);
     assert!(context
         .registry
-        .get_task(&TaskId::new("web/stale-task"))
+        .get_task(&TaskId::new("web/renamed-task"))
         .is_none());
     let renamed = context
         .registry
-        .get_task(&TaskId::new("web/renamed-task"))
+        .get_task(&TaskId::new("web/stale-task"))
         .unwrap();
+    assert_eq!(renamed.branch, "ajax/renamed-task");
     assert_eq!(renamed.tmux_session, "ajax-web-stale-task");
     assert_eq!(
         renamed.tmux_status.as_ref().map(|status| status.exists),
@@ -838,12 +848,13 @@ fn branch_switch_preserves_chat_task_identity_issue_1544() {
     assert!(changed);
     assert!(context
         .registry
-        .get_task(&TaskId::new("web/stale-task"))
+        .get_task(&TaskId::new("web/renamed-task"))
         .is_none());
     let switched = context
         .registry
-        .get_task(&TaskId::new("web/renamed-task"))
+        .get_task(&TaskId::new("web/stale-task"))
         .unwrap();
+    assert_eq!(switched.handle, "stale-task");
     assert_eq!(switched.selected_agent, AgentClient::Claude);
     assert!(switched.skip_interactive_agent());
     assert_eq!(
@@ -856,4 +867,87 @@ fn branch_switch_preserves_chat_task_identity_issue_1544() {
     assert_eq!(switched.title, "Stale task");
     assert_eq!(switched.branch, "ajax/renamed-task");
     assert!(!switched.has_side_flag(SideFlag::TmuxMissing));
+}
+
+#[test]
+fn branch_switch_keeps_task_id_across_repeated_refreshes_issue_1564() {
+    struct RepeatedBranchSwitchRunner;
+
+    impl CommandRunner for RepeatedBranchSwitchRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "unrelated-session\n",
+                [command, ..] if command == "list-windows" => "",
+                [_, repo, subcommand, action, flag]
+                    if repo == REPO_PATH
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/renamed-task\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == REPO_PATH
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/renamed-task\n"
+                }
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    let config = Config {
+        repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+        ..Config::default()
+    };
+    let mut registry = InMemoryRegistry::default();
+    let mut stale = Task::new(
+        TaskId::new("web/stale-task"),
+        REPO_NAME,
+        "stale-task",
+        "Stale task",
+        "ajax/stale-task",
+        BASE_BRANCH,
+        TASK_WORKTREE,
+        "ajax-web-stale-task",
+        TASK_WINDOW,
+        AgentClient::Claude,
+    );
+    stale.lifecycle_status = LifecycleStatus::Active;
+    stale.metadata.insert(
+        crate::models::SKIP_INTERACTIVE_AGENT_KEY.to_string(),
+        "1".to_string(),
+    );
+    stale.metadata.insert(
+        crate::models::SESSION_MODEL_KEY.to_string(),
+        "opus".to_string(),
+    );
+    registry.create_task(stale).unwrap();
+    let mut context = CommandContext::new(config, registry);
+    let mut runner = RepeatedBranchSwitchRunner;
+
+    refresh_runtime_context(&mut context, &mut runner).unwrap();
+    refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+    let tasks_in_worktree = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| task.worktree_path == Path::new(TASK_WORKTREE))
+        .collect::<Vec<_>>();
+    assert_eq!(tasks_in_worktree.len(), 1);
+    assert_eq!(tasks_in_worktree[0].id, TaskId::new("web/stale-task"));
+    assert_eq!(tasks_in_worktree[0].branch, "ajax/renamed-task");
+    assert!(context
+        .registry
+        .get_task(&TaskId::new("web/renamed-task"))
+        .is_none());
 }
