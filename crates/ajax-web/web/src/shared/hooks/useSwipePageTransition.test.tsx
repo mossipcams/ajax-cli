@@ -4,12 +4,16 @@ import { useRef } from "react";
 import {
   PageCrossSlideProvider,
   useSwipePageTransition,
+  usePageCrossSlide,
   SWIPE_PAGE_COMMIT_MS,
   CROSS_SLIDE_ARMED_SLACK_MS,
 } from "./useSwipePageTransition";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 import { taskHash } from "@/shared/lib/routes";
-import { setSwipeEnterDirection } from "@/shared/lib/swipeEnter";
+import {
+  navigateHashBack,
+  setSwipeEnterDirection,
+} from "@/shared/lib/swipeEnter";
 import {
   setTerminalDoubleTapPending,
   setTerminalSelecting,
@@ -73,6 +77,11 @@ function renderHarness(props: Parameters<typeof Harness>[0] = {}) {
       <Harness {...props} />
     </PageCrossSlideProvider>,
   );
+}
+
+function LeavingPaneProbe() {
+  const crossSlide = usePageCrossSlide();
+  return <div data-testid="leaving-pane" style={crossSlide?.paneStyle("leaving")} />;
 }
 
 describe("useSwipePageTransition", () => {
@@ -338,6 +347,41 @@ describe("useSwipePageTransition", () => {
         configurable: true,
       });
       window.requestAnimationFrame = originalRaf;
+    }
+  });
+
+  it("holds the leaving pane until a swipe-back history traversal lands", async () => {
+    history.replaceState({ ajaxPrevHash: "#/" }, "");
+    const back = vi.spyOn(history, "back").mockImplementation(() => {});
+    try {
+      render(
+        <PageCrossSlideProvider>
+          <Harness onRight={() => navigateHashBack("#/")} />
+          <LeavingPaneProbe />
+        </PageCrossSlideProvider>,
+      );
+      const node = screen.getByTestId("swipe-target");
+      Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+      await act(async () => {
+        node.dispatchEvent(touch("touchstart", 40, 40, node));
+        node.dispatchEvent(touch("touchmove", 160, 42, node));
+        node.dispatchEvent(touch("touchend", 160, 42, node));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(back).toHaveBeenCalledOnce();
+      const pane = screen.getByTestId("leaving-pane");
+      expect(pane.style.transition).toBe("none");
+
+      await act(async () => {
+        history.replaceState(null, "", "#/");
+        window.dispatchEvent(new Event("hashchange"));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(pane.style.transform).toBe("translate3d(390px, 0, 0)");
+      expect(pane.style.transition).toContain("transform");
+    } finally {
+      back.mockRestore();
     }
   });
 });
