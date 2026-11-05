@@ -55,12 +55,15 @@ Deferred (not chat):
 ## Approval status
 
 Approved by user 2026-11-05 (planning session). Implementation starting at
-step 0a.
+step 0a. Step 0a PR opened 2026-11-05.
 
 ## Checklist
 
-- [ ] 0a — Swap matrix test (fake harness, 24 cases; 12 failure cases
-  `#[ignore = "#1546"]`). Size: M. Closes: –
+- [x] 0a — Swap matrix test (fake harness, 24 cases; 12 failure cases
+  `#[ignore = "#1546"]`). Size: M. Closes: –. Done in this PR: 12 ok cases
+  pass; 12 spawn_fails cases `#[ignore = "#1546"]`, each failing at the
+  old-harness liveness assertion. Registry-level rollback is asserted by a
+  route-level test in step 1.
 - [ ] 0b — `scripts/health-check <hours>` chat-signature counter. Size: S.
   Closes: –
 - [ ] 0c — File an issue for the rate-limit detection gap. Size: –.
@@ -134,8 +137,9 @@ Risks and mitigations:
 Gate for every PR:
 
 ```bash
-env -u RUST_LOG cargo clippy --all-targets --all-features --workspace
-env -u RUST_LOG cargo nextest run --workspace
+env -u RUST_LOG cargo fmt --check
+env -u RUST_LOG cargo clippy --workspace --all-targets --all-features -- -D warnings
+env -u RUST_LOG cargo nextest run --workspace --all-features
 ```
 
 Steps 3, 6 and 7 also run:
@@ -166,4 +170,4 @@ Done when:
   `docs/architecture/web-session-behavior.md`).
 - No step was closed on a 4th patch.
 
-Results: not run yet (planning only; no implementation started).
+Results: step 0a gate passed (see PR).
