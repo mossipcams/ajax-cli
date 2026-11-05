@@ -89,6 +89,10 @@ pub(crate) enum TaskSessionCommand {
         take_holder: bool,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
+    Restart {
+        worktree_path: PathBuf,
+        reply: oneshot::Sender<Result<bool, SessionError>>,
+    },
     AttachSnapshot {
         model: String,
         client_cursor: Option<usize>,
@@ -644,6 +648,13 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         } => {
             let result =
                 task_session_spawn::clear_session_context(state, &worktree_path, take_holder).await;
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::Restart {
+            worktree_path,
+            reply,
+        } => {
+            let result = super::task_session_restart::restart_child(state, &worktree_path).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {

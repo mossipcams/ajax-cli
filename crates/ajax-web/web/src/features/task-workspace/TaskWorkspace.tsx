@@ -69,6 +69,7 @@ export default function TaskWorkspace({
   const [sessionBusy, setSessionBusy] = useState(false);
   const lastSessionBusyRef = useRef<boolean | null>(null);
   const clearSessionRef = useRef<(() => boolean) | null>(null);
+  const restartAgentRef = useRef<(() => boolean) | null>(null);
 
   useEffect(() => {
     if (mode !== "chat") return;
@@ -135,7 +136,6 @@ export default function TaskWorkspace({
         detail={taskDetail}
         orchestrationChat={orchestrationChat}
         harnessSwapDisabled={sessionBusy}
-        sessionBusy={sessionBusy}
         onOpenDiff={onOpenDiff}
         onOpenTerminal={
           mode === "chat"
@@ -159,6 +159,7 @@ export default function TaskWorkspace({
         onMutated={onMutated}
         onDismiss={handleDismiss}
         onClearSession={mode === "chat" ? () => clearSessionRef.current?.() ?? false : undefined}
+        onRestartAgent={mode === "chat" ? () => restartAgentRef.current?.() ?? false : undefined}
         pendingConfirmAction={pendingConfirmAction}
         onCancelPendingConfirm={onCancelPendingConfirm}
       />
@@ -201,8 +202,9 @@ export default function TaskWorkspace({
               detailsTestId="session-details"
             />
           }
-          onSessionActivity={({ busy, clearSession }) => {
+          onSessionActivity={({ busy, clearSession, restartAgent }) => {
             clearSessionRef.current = clearSession ?? null;
+            restartAgentRef.current = restartAgent ?? null;
             setSessionBusy(busy);
             const previousBusy = lastSessionBusyRef.current;
             lastSessionBusyRef.current = busy;
