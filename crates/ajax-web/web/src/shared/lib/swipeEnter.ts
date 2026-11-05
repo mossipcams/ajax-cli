@@ -9,9 +9,25 @@ export function setSwipeEnterDirection(direction: SwipeEnterDirection): void {
   }
 }
 
+export function navigateHash(hash: string): void {
+  const previous = location.hash;
+  if (previous === hash) return;
+  location.hash = hash;
+  history.replaceState({ ...(history.state ?? {}), ajaxPrevHash: previous }, "");
+}
+
 export function navigateHashWithEnter(hash: string, direction: SwipeEnterDirection): void {
   setSwipeEnterDirection(direction);
-  location.hash = hash;
+  navigateHash(hash);
+}
+
+export function navigateHashBack(hash: string): void {
+  setSwipeEnterDirection("right");
+  if (history.state?.ajaxPrevHash === hash) {
+    history.back();
+    return;
+  }
+  location.replace(`${location.pathname}${location.search}${hash}`);
 }
 
 export function consumeSwipeEnterDirection(): SwipeEnterDirection | null {
