@@ -434,6 +434,9 @@ mod task_session_child_tests;
 mod task_session_phase2_tests;
 
 #[cfg(test)]
+mod task_session_swap_matrix_tests;
+
+#[cfg(test)]
 mod task_session_idle_eviction_tests;
 
 #[cfg(test)]
