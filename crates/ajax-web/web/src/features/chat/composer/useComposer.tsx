@@ -81,6 +81,7 @@ export type ComposerProviderProps = ComposerCommands & {
   agentStarting: boolean;
   conversation: ConversationItem[];
   conversationRevision: number;
+  turnEndRevision?: number;
   availableCommands?: LiveAvailableCommand[];
   promptCapabilities?: LivePromptCapabilities;
   composerRef: RefObject<HTMLTextAreaElement | null>;
@@ -141,6 +142,7 @@ export function ComposerProvider({
   agentStarting,
   conversation,
   conversationRevision,
+  turnEndRevision = 0,
   availableCommands,
   promptCapabilities,
   composerRef,
@@ -168,6 +170,7 @@ export function ComposerProvider({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
   const holdRestoredQueueRef = useRef(initialQueue.status !== "idle");
+  const lastTurnEndRevisionRef = useRef(turnEndRevision);
   const handledFailedTurnKeyRef = useRef<string | null>(null);
   const [restoreIdleCheck, setRestoreIdleCheck] = useState(0);
   composerStateRef.current = composerState;
@@ -450,10 +453,13 @@ export function ComposerProvider({
   ]);
 
   useEffect(() => {
+    const turnEnded = turnEndRevision > lastTurnEndRevisionRef.current;
+    lastTurnEndRevisionRef.current = turnEndRevision;
     const { intents, state } = flushQueuedFollowUp({
       composerState: composerStateRef.current,
       busy,
       connected,
+      turnEnded,
     });
     if (intents.length === 0 && state === composerStateRef.current) return;
 
@@ -482,7 +488,7 @@ export function ComposerProvider({
       if (intent.type === "mark_stopped") markStopped();
     }
     setComposerState(state);
-  }, [busy, connected, everOpened, markStopped, restoreIdleCheck]);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, turnEndRevision]);
 
   const editQueued = useCallback(() => {
     const priorId = composerQueuedClientMessageId(composerState);

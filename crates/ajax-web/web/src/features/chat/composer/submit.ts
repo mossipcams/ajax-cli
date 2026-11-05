@@ -120,9 +120,10 @@ export function flushQueuedFollowUp(args: {
   composerState: ComposerState;
   busy: boolean;
   connected: boolean;
+  turnEnded?: boolean;
 }): FlushQueuedFollowUpResult {
   const queued = composerQueuedText(args.composerState);
-  if (queued === null || args.busy || !args.connected) {
+  if (queued === null || (args.busy && !args.turnEnded) || !args.connected) {
     return { state: args.composerState, intents: [] };
   }
 
