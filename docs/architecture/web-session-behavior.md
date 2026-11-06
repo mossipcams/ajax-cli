@@ -282,8 +282,12 @@ The per-task host has one `handle_command` dispatcher and one periodic `pump`.
 prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
 fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
 Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
-bounded without sleeping on the session loop; a failed report is exposed on a
-snapshot as `transcriptError`. `transcriptError` is also set for transcript
+bounded without sleeping on the session loop; a failed report is retried with
+backoff (1s doubling to 60s, cleared on success), and identical repeated
+failures do not resend the error snapshot. Non-lifecycle activity reports
+persist per task, so another task's registry conflict cannot block them
+([#1555](https://github.com/mossipcams/ajax-cli/issues/1555)). A failed report
+is exposed on a snapshot as `transcriptError`. `transcriptError` is also set for transcript
 corruption (stored rows that could not be read back). Every source is shown to
 the operator, but only the transcript durability fault sets `promptsBlocked`,
 so only that fault blocks Send, Attach, and Mic. The browser keeps Send enabled
