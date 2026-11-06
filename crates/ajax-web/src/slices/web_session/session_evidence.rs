@@ -4,6 +4,10 @@ use super::{
     ReportSessionActivity, SessionActivity, SessionActivityReporter, SessionError,
     SessionServerEvent,
 };
+use std::time::{Duration, Instant};
+
+const ACTIVITY_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const ACTIVITY_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 pub(super) struct SessionEvidence {
     pub activity_reporter: SessionActivityReporter,
@@ -16,6 +20,7 @@ pub(super) struct SessionEvidence {
     pub pending_transcript_error_snapshot: bool,
     pub transcript_corruption: Option<String>,
     pub live_activity: Option<LiveActivitySlot>,
+    pub activity_retry: Option<(Instant, Duration)>,
 }
 
 impl SessionEvidence {
@@ -67,8 +72,10 @@ impl SessionEvidence {
 
     pub(super) fn note_activity_report_failure(&mut self, error: &SessionError) {
         let message = activity_report_transcript_error(error);
+        if self.activity_report_fault.as_deref() != Some(message.as_str()) {
+            self.pending_activity_report_error_snapshot = true;
+        }
         self.activity_report_fault = Some(message);
-        self.pending_activity_report_error_snapshot = true;
     }
 
     pub(super) fn flush_pending_activity_report(&mut self, qualified_handle: &str) {
@@ -85,8 +92,24 @@ impl SessionEvidence {
         }
     }
 
-    pub(super) fn retry_pending_activity_report(&mut self, qualified_handle: &str) {
+    pub(super) fn retry_pending_activity_report(&mut self, qualified_handle: &str, now: Instant) {
+        if self.pending_activity_report.is_none() {
+            self.activity_retry = None;
+            return;
+        }
+        if self.activity_retry.is_some_and(|(next, _)| now < next) {
+            return;
+        }
         self.flush_pending_activity_report(qualified_handle);
+        if self.pending_activity_report.is_none() {
+            self.activity_retry = None;
+            return;
+        }
+        let delay = match self.activity_retry {
+            Some((_, previous)) => (previous * 2).min(ACTIVITY_RETRY_MAX_DELAY),
+            None => ACTIVITY_RETRY_INITIAL_DELAY,
+        };
+        self.activity_retry = Some((now + delay, delay));
     }
 
     #[cfg(test)]
@@ -135,6 +158,10 @@ impl SessionEvidence {
 mod tests {
     use super::super::session_activity::SessionActivity;
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     #[test]
     fn activity_report_failure_does_not_set_transcript_durability_fault() {
@@ -151,6 +178,7 @@ mod tests {
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
             live_activity: None,
+            activity_retry: None,
         };
         let error = SessionError::persist("task activity report failed");
         evidence.note_activity_report_failure(&error);
@@ -175,6 +203,7 @@ mod tests {
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
             live_activity: None,
+            activity_retry: None,
         };
         evidence.flush_pending_activity_report("web/fix-login");
         assert!(evidence.activity_report_fault.is_none());
@@ -215,6 +244,7 @@ mod tests {
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
             live_activity: None,
+            activity_retry: None,
         };
 
         evidence.report_activity_for_event(
@@ -233,7 +263,7 @@ mod tests {
             "web/fix-login",
             &SessionServerEvent::TurnEnd { stop_reason: None },
         );
-        evidence.retry_pending_activity_report("web/fix-login");
+        evidence.retry_pending_activity_report("web/fix-login", Instant::now());
 
         assert_eq!(
             *reported.lock().unwrap(),
@@ -257,6 +287,7 @@ mod tests {
             pending_transcript_error_snapshot: false,
             transcript_corruption: None,
             live_activity: None,
+            activity_retry: None,
         }
     }
 
@@ -288,5 +319,89 @@ mod tests {
 
         assert!(evidence.transcript_error().is_none());
         assert!(evidence.pending_transcript_error_snapshot);
+    }
+
+    fn counting_failing_evidence(calls: &std::sync::Arc<AtomicUsize>) -> SessionEvidence {
+        let counter = std::sync::Arc::clone(calls);
+        SessionEvidence {
+            report_activity: Some(std::sync::Arc::new(
+                move |_qualified_handle: &str, _activity: SessionActivity| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    false
+                },
+            )),
+            pending_activity_report: Some(SessionActivity::TurnEnded),
+            ..idle_evidence()
+        }
+    }
+
+    #[test]
+    fn persistent_registry_failure_backs_off_and_resends_snapshot_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut evidence = counting_failing_evidence(&calls);
+        let start = Instant::now();
+
+        let mut retry_attempts = 0;
+        for step in 0..100u32 {
+            let now = start + Duration::from_millis(100 * u64::from(step));
+            let before = calls.load(Ordering::SeqCst);
+            evidence.retry_pending_activity_report("web/fix-login", now);
+            if calls.load(Ordering::SeqCst) > before {
+                retry_attempts += 1;
+            }
+            if step == 0 {
+                assert!(evidence.pending_activity_report_error_snapshot);
+                evidence.pending_activity_report_error_snapshot = false;
+            } else {
+                assert!(!evidence.pending_activity_report_error_snapshot);
+            }
+        }
+
+        let report_calls = calls.load(Ordering::SeqCst);
+        assert!(report_calls >= 3, "first retry must attempt the report");
+        assert!(
+            report_calls <= 12,
+            "backoff must bound attempts over 10s, got {report_calls}"
+        );
+        assert_eq!(retry_attempts, 4, "retries at t=0, 1s, 3s and 7s");
+        assert!(evidence.pending_activity_report.is_some());
+    }
+
+    #[test]
+    fn recovered_registry_clears_pending_report_and_backoff() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let healthy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let counter = Arc::clone(&calls);
+        let gate = Arc::clone(&healthy);
+        let mut evidence = SessionEvidence {
+            report_activity: Some(Arc::new(
+                move |_qualified_handle: &str, _activity: SessionActivity| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    gate.load(Ordering::SeqCst)
+                },
+            )),
+            pending_activity_report: Some(SessionActivity::TurnEnded),
+            ..idle_evidence()
+        };
+        let start = Instant::now();
+
+        evidence.retry_pending_activity_report("web/fix-login", start);
+        assert!(evidence.pending_activity_report.is_some());
+        assert!(evidence.activity_retry.is_some());
+
+        healthy.store(true, Ordering::SeqCst);
+        let calls_before_skipped_retry = calls.load(Ordering::SeqCst);
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(500));
+        assert_eq!(calls.load(Ordering::SeqCst), calls_before_skipped_retry);
+        assert!(evidence.pending_activity_report.is_some());
+
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(1));
+        assert!(evidence.pending_activity_report.is_none());
+        assert!(evidence.activity_retry.is_none());
+        assert!(evidence.activity_report_fault.is_none());
+
+        let calls_after_recovery = calls.load(Ordering::SeqCst);
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(2));
+        assert_eq!(calls.load(Ordering::SeqCst), calls_after_recovery);
     }
 }
