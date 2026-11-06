@@ -283,7 +283,7 @@ prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
 fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
 Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
 bounded without sleeping on the session loop; a failed report is retried with
-backoff (1s doubling to 60s, cleared on success), and identical repeated
+backoff (50 ms doubling to 60 s, cleared on success), and identical repeated
 failures do not resend the error snapshot. Non-lifecycle activity reports
 persist per task, so another task's registry conflict cannot block them
 ([#1555](https://github.com/mossipcams/ajax-cli/issues/1555)). A failed report

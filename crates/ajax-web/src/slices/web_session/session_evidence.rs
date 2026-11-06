@@ -6,7 +6,7 @@ use super::{
 };
 use std::time::{Duration, Instant};
 
-const ACTIVITY_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const ACTIVITY_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(50);
 const ACTIVITY_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 pub(super) struct SessionEvidence {
@@ -360,10 +360,13 @@ mod tests {
         let report_calls = calls.load(Ordering::SeqCst);
         assert!(report_calls >= 3, "first retry must attempt the report");
         assert!(
-            report_calls <= 12,
-            "backoff must bound attempts over 10s, got {report_calls}"
+            report_calls <= 24,
+            "backoff must bound report calls to 8 retries of 3 attempts over 10s, got {report_calls}"
         );
-        assert_eq!(retry_attempts, 4, "retries at t=0, 1s, 3s and 7s");
+        assert_eq!(
+            retry_attempts, 8,
+            "retries at t=0, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2 and 6.4s"
+        );
         assert!(evidence.pending_activity_report.is_some());
     }
 
@@ -391,17 +394,17 @@ mod tests {
 
         healthy.store(true, Ordering::SeqCst);
         let calls_before_skipped_retry = calls.load(Ordering::SeqCst);
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(500));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(25));
         assert_eq!(calls.load(Ordering::SeqCst), calls_before_skipped_retry);
         assert!(evidence.pending_activity_report.is_some());
 
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(1));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(50));
         assert!(evidence.pending_activity_report.is_none());
         assert!(evidence.activity_retry.is_none());
         assert!(evidence.activity_report_fault.is_none());
 
         let calls_after_recovery = calls.load(Ordering::SeqCst);
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(2));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(100));
         assert_eq!(calls.load(Ordering::SeqCst), calls_after_recovery);
     }
 }
