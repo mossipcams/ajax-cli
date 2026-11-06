@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{is_limit_error_text, AgentEvent, NativeEvent};
 use super::rpc_session::RpcMapping;
 
 pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
@@ -43,8 +43,16 @@ pub fn map_record(record: &Value, _session_id: &str) -> RpcMapping {
         }
         _ => false,
     };
-    if let Some(PiRunError::Failed(text) | PiRunError::Notice(text)) = run_error(record) {
-        events.push(AgentEvent::Native(NativeEvent::Error(text)));
+    match run_error(record) {
+        Some(PiRunError::Failed(text)) if is_limit_error_text(&text) => {
+            events.push(AgentEvent::Native(NativeEvent::RateLimited {
+                message: text,
+            }));
+        }
+        Some(PiRunError::Failed(text) | PiRunError::Notice(text)) => {
+            events.push(AgentEvent::Native(NativeEvent::Error(text)));
+        }
+        Some(PiRunError::Pending(_) | PiRunError::Clear) | None => {}
     }
     RpcMapping {
         events,

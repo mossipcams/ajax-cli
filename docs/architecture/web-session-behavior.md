@@ -960,6 +960,16 @@ appends nothing.
   `success: false`, a failed non-manual `compaction_end`, and
   `extension_error` each surface one operator-visible error
   ([#1335](https://github.com/mossipcams/ajax-cli/issues/1335)).
+- Harness rate or usage limits are not errors. Claude emits one when a result has
+  `is_error` with `api_error_status` 429 or an SDK usage-limit prefix; Pi, Cursor
+  and Codex use a shared limit-text check, and Cursor also checks the SDK
+  `errorName` and `errorCode`. A limit sets the task's live status to
+  `RateLimited` (it survives turn end and clears on the next prompt), appends one
+  host note `<Harness> usage limit: <message>`, pushes no `error` event, ends the
+  turn as failed so the prompt is interrupted rather than completed, and logs
+  `harness rate limited`. The log is deliberately not a health-check signature,
+  since limits come from outside Ajax. Overload (529) and billing errors are not
+  limits and still surface as errors ([#1584](https://github.com/mossipcams/ajax-cli/issues/1584)).
 - A native harness exit reports "Agent process exited"; ACP exits keep "ACP
   process exited"; both are deduped by the pump and explained in the browser as a
   stopped agent. A new attach, including a WebSocket reconnect, revives the dead child

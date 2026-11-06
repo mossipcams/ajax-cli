@@ -5,8 +5,8 @@ use super::{
     normalize::StreamNormalizer, SessionServerEvent,
 };
 use crate::adapters::web_session_acp::{
-    available_command_descriptors, config_option_descriptors, AcpClientEvent, AcpEventSource,
-    AgentEvent, NativeEvent,
+    available_command_descriptors, config_option_descriptors, is_limit_error_text, AcpClientEvent,
+    AcpEventSource, AgentEvent, NativeEvent,
 };
 use serde_json::{json, Value};
 
@@ -15,6 +15,19 @@ pub(crate) enum PromptTerminalOutcome {
     Success,
     Cancelled,
     Failed,
+}
+
+fn prompt_limit_error<'a>(method: &str, result: &'a Result<Value, String>) -> Option<&'a str> {
+    match result {
+        Err(message)
+            if method == "session/prompt"
+                && !is_cancellation_shaped_prompt_error(message)
+                && is_limit_error_text(message) =>
+        {
+            Some(message)
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn classify_prompt_terminal(
@@ -52,6 +65,7 @@ pub(crate) struct AcpDrainOutcome {
     pub session_available_commands:
         Option<Vec<crate::adapters::web_session_acp::AvailableCommandDescriptor>>,
     pub session_title_update: Option<Option<String>>,
+    pub rate_limited: Vec<String>,
 }
 
 #[cfg(test)]
@@ -96,6 +110,7 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
     let mut applied_model = None;
     let mut session_config_options = None;
     let mut session_title_update = None;
+    let mut rate_limited = Vec::new();
     let handshake_commands = client.take_available_commands();
     let mut session_available_commands =
         (!handshake_commands.is_empty()).then_some(handshake_commands);
@@ -159,6 +174,9 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 }
             }
             AgentEvent::Acp(AcpClientEvent::RequestFinished { result, method, id }) => {
+                if let Some(message) = prompt_limit_error(method, &result) {
+                    rate_limited.push(message.to_string());
+                }
                 apply_request_finished(
                     method,
                     &result,
@@ -170,15 +188,34 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
                 );
             }
             AgentEvent::Native(NativeEvent::TurnFinished { request_id, result }) => {
+                let result = result.map(|stop_reason| json!({ "stopReason": stop_reason }));
+                if let Some(message) = prompt_limit_error("session/prompt", &result) {
+                    rate_limited.push(message.to_string());
+                }
                 apply_request_finished(
                     "session/prompt",
-                    &result.map(|stop_reason| json!({ "stopReason": stop_reason })),
+                    &result,
                     request_id,
                     prompt_cancel,
                     deduper,
                     &mut events,
                     &mut prompt_terminals,
                 );
+            }
+            AgentEvent::Native(NativeEvent::TurnRateLimited {
+                request_id,
+                message,
+            }) => {
+                rate_limited.push(message);
+                prompt_terminals.push(PromptTerminal {
+                    request_id,
+                    outcome: PromptTerminalOutcome::Failed,
+                    events: Vec::new(),
+                });
+            }
+            AgentEvent::Native(NativeEvent::RateLimited { message }) => rate_limited.push(message),
+            AgentEvent::Acp(AcpClientEvent::Error(message)) if is_limit_error_text(&message) => {
+                rate_limited.push(message)
             }
             AgentEvent::Acp(AcpClientEvent::Error(message))
             | AgentEvent::Native(NativeEvent::Error(message)) => {
@@ -211,6 +248,7 @@ pub(crate) fn drain_acp_events_with_prompt_cancel(
         session_config_options,
         session_available_commands,
         session_title_update,
+        rate_limited,
     }
 }
 
@@ -271,6 +309,9 @@ pub(crate) fn map_request_finished(
     deduper: &mut UsageDeduper,
     cancel_requested: bool,
 ) -> Vec<SessionServerEvent> {
+    if prompt_limit_error(method, &result).is_some() {
+        return Vec::new();
+    }
     match result {
         Ok(value) if method == "session/prompt" => {
             let mut events = Vec::new();

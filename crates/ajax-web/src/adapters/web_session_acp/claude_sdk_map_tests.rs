@@ -622,19 +622,55 @@ fn rate_limited_turn_displays_claude_session_limit_text() {
         "expected exactly the error event, no usage event"
     );
     match native_event(&mapping.events[0]) {
-        NativeEvent::Error(text) => {
+        NativeEvent::RateLimited { message } => {
             assert_eq!(
-                text,
-                "Claude run failed: You've hit your session limit · resets 6:30pm (America/Chicago)"
+                message,
+                "You've hit your session limit · resets 6:30pm (America/Chicago)"
             );
             assert!(
-                text.contains("You've hit your session limit"),
-                "the error must display Claude's session-limit text, got: {text}"
+                message.contains("You've hit your session limit"),
+                "the rate limit must carry Claude's session-limit text, got: {message}"
             );
-            assert!(
-                !text.trim_end().ends_with("success"),
-                "the error must not reduce to the subtype, got: {text}"
-            );
+        }
+        other => panic!("expected a RateLimited event, got {other:?}"),
+    }
+}
+
+#[test]
+fn api_error_429_result_maps_to_rate_limited() {
+    let result = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "is_error": true,
+        "api_error_status": 429,
+        "result": "API Error: 429 Too Many Requests"
+    });
+    let mapping = map_sdk_message(&result, SESSION_ID);
+    assert!(mapping.finished);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::RateLimited { message } => {
+            assert_eq!(message, "API Error: 429 Too Many Requests");
+        }
+        other => panic!("expected a RateLimited event, got {other:?}"),
+    }
+}
+
+#[test]
+fn non_limit_error_result_still_maps_to_error() {
+    let result = serde_json::json!({
+        "type": "result",
+        "subtype": "error_during_execution",
+        "is_error": true,
+        "api_error_status": 500,
+        "result": "internal failure"
+    });
+    let mapping = map_sdk_message(&result, SESSION_ID);
+    assert!(mapping.finished);
+    assert_eq!(mapping.events.len(), 1, "events: {:?}", mapping.events);
+    match native_event(&mapping.events[0]) {
+        NativeEvent::Error(text) => {
+            assert_eq!(text, "Claude run failed: internal failure");
         }
         other => panic!("expected an Error event, got {other:?}"),
     }

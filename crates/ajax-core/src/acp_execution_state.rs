@@ -13,8 +13,14 @@ pub enum RootTurnState {
     Idle,
     Running,
     Settled,
-    Failed,
+    Failed(FailureKind),
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FailureKind {
+    Failed,
+    RateLimited,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,6 +83,7 @@ pub enum AcpExecutionEvent {
     StateUpdate(ProviderState),
     TurnEnded,
     TurnFailed,
+    TurnRateLimited,
     TurnCancelled,
     ChildStarted {
         run_id: String,
@@ -170,10 +177,12 @@ impl AcpExecutionState {
                     self.turn = RootTurnState::Running;
                 }
             }
-            TurnEnded | TurnFailed | TurnCancelled => {
+            TurnEnded | TurnFailed | TurnRateLimited | TurnCancelled => {
+                let failed = matches!(self.turn, RootTurnState::Failed(_));
                 self.turn = match event {
-                    TurnFailed => RootTurnState::Failed,
-                    _ if self.turn == RootTurnState::Failed => RootTurnState::Failed,
+                    TurnRateLimited => RootTurnState::Failed(FailureKind::RateLimited),
+                    _ if failed => self.turn,
+                    TurnFailed => RootTurnState::Failed(FailureKind::Failed),
                     TurnCancelled => RootTurnState::Cancelled,
                     _ => RootTurnState::Settled,
                 };

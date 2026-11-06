@@ -227,6 +227,21 @@ pub(crate) fn harness_switch_note(item_id: String) -> SessionServerEvent {
     }
 }
 
+pub(crate) fn rate_limit_note(item_id: String, harness: &str, message: &str) -> SessionServerEvent {
+    let mut letters = harness.chars();
+    let name: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
+    SessionServerEvent::Message {
+        role: "note".to_string(),
+        text: format!("{name} usage limit: {message}"),
+        content_blocks: Vec::new(),
+        item_id,
+        message_id: None,
+    }
+}
+
 pub(crate) fn context_cleared_note(item_id: String) -> SessionServerEvent {
     SessionServerEvent::Message {
         role: "note".to_string(),

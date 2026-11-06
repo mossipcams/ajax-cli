@@ -78,6 +78,13 @@ const state = {
   shuttingDown: false,
 };
 
+function errorDetails(error) {
+  const details = { error: String(error?.message ?? error) };
+  if (typeof error?.name === "string") details.errorName = error.name;
+  if (typeof error?.code === "string") details.errorCode = error.code;
+  return details;
+}
+
 function startPump(run) {
   return (async () => {
     let terminal;
@@ -86,10 +93,11 @@ function startPump(run) {
       const done = await run.wait();
       terminal = { type: "result", status: done?.status ?? "error" };
       if (done?.error?.message) terminal.error = done.error.message;
+      if (typeof done?.error?.code === "string") terminal.errorCode = done.error.code;
       if (done?.usage !== undefined) terminal.usage = done.usage;
     } catch (error) {
       log(`run pump failed: ${error?.stack ?? error}`);
-      terminal = { type: "result", status: "error", error: String(error?.message ?? error) };
+      terminal = { type: "result", status: "error", ...errorDetails(error) };
     }
     writeLine(terminal);
   })();
@@ -218,7 +226,7 @@ function handlePrompt(cmd) {
       ? state.agent.send({ text, images }, options)
       : state.agent.send(text, options));
   } catch (sendError) {
-    writeLine({ type: "result", status: "error", error: String(sendError?.message ?? sendError) });
+    writeLine({ type: "result", status: "error", ...errorDetails(sendError) });
     return fail("prompt", cmd.id, String(sendError?.message ?? sendError));
   }
   state.activeRun = true;
@@ -235,7 +243,7 @@ function handlePrompt(cmd) {
     })
     .catch((sendError) => {
       log(`agent.send failed: ${sendError?.stack ?? sendError}`);
-      writeLine({ type: "result", status: "error", error: String(sendError?.message ?? sendError) });
+      writeLine({ type: "result", status: "error", ...errorDetails(sendError) });
     })
     .finally(() => {
       state.activeRun = false;

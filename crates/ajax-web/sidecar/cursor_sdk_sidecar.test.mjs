@@ -17,11 +17,11 @@ function makeSandbox() {
 }
 
 class Sidecar {
-  constructor({ cwd, home } = {}) {
+  constructor({ cwd, home, sdk = FAKE_SDK } = {}) {
     const { cwd: realCwd, home: realHome } = makeSandbox();
     this.cwd = cwd ?? realCwd;
     this.home = home ?? realHome;
-    this.proc = spawn(process.execPath, [SIDECAR, "--sdk-module", FAKE_SDK], {
+    this.proc = spawn(process.execPath, [SIDECAR, "--sdk-module", sdk], {
       cwd: this.cwd,
       env: { ...process.env, HOME: this.home },
       stdio: ["pipe", "pipe", "pipe"],
@@ -279,6 +279,54 @@ test("abort during a SLOW prompt yields cancelled and the next prompt works", as
     const secondResult = await sidecar.readResult();
     assert.equal(secondResult.status, "finished");
     assert.equal(sidecar.results().length, 2);
+  } finally {
+    sidecar.close();
+  }
+});
+
+test("a thrown SDK rate limit error forwards its name for host classification", async () => {
+  const { cwd } = makeSandbox();
+  const sdk = join(cwd, "rate_limit_sdk.mjs");
+  writeFileSync(
+    sdk,
+    `class RateLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "RateLimitError";
+  }
+}
+const run = {
+  async *stream() {
+    throw new RateLimitError("slow down");
+  },
+  async wait() {
+    return { status: "error" };
+  },
+  async cancel() {},
+};
+export const Agent = {
+  create() {
+    return Promise.resolve({ agentId: "agent-rl-1", send: () => Promise.resolve(run), close() {} });
+  },
+  resume() {
+    return Promise.reject(new Error("unused"));
+  },
+};
+export const Cursor = { models: { async list() { return []; } } };
+`,
+  );
+  const sidecar = new Sidecar({ sdk });
+  try {
+    sidecar.send({ type: "init", cwd: sidecar.cwd, model: { id: "default" } });
+    await sidecar.readResponse("init");
+
+    sidecar.send({ type: "prompt", message: "hit the limit" });
+    await sidecar.readResponse("prompt");
+
+    const result = await sidecar.readResult();
+    assert.equal(result.status, "error");
+    assert.equal(result.error, "slow down");
+    assert.equal(result.errorName, "RateLimitError");
   } finally {
     sidecar.close();
   }

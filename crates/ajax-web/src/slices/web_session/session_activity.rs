@@ -1,6 +1,6 @@
 use super::{acp_execution_map, ReportSessionActivity, SessionError};
 use ajax_core::{
-    acp_execution_state::{AcpExecutionEvent, RootTurnState},
+    acp_execution_state::{AcpExecutionEvent, FailureKind, RootTurnState},
     adapters::acp_launch_for_agent,
     agent_status::{reduce_agent_status, ParentPhase, ReduceInput},
     commands::CommandContext,
@@ -18,6 +18,7 @@ pub enum SessionActivity {
     AwaitingOperator,
     TurnEnded,
     TurnFailed,
+    RateLimited,
     CommandRunning,
     TestsRunning,
     AwaitingInput,
@@ -35,6 +36,7 @@ impl SessionActivity {
             }
             Self::TurnEnded => LiveObservation::new(LiveStatusKind::Done, "Response ready"),
             Self::TurnFailed => LiveObservation::new(LiveStatusKind::Blocked, "Agent stopped"),
+            Self::RateLimited => LiveObservation::new(LiveStatusKind::RateLimited, "Rate limited"),
             Self::CommandRunning => {
                 LiveObservation::new(LiveStatusKind::CommandRunning, "Running command")
             }
@@ -158,8 +160,14 @@ impl SessionActivityReporter {
     pub(crate) fn turn_finished(&self) -> bool {
         matches!(
             self.state.turn(),
-            RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed
+            RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed(_)
         )
+    }
+
+    pub(crate) fn activity_for_rate_limit(&mut self) -> Option<SessionActivity> {
+        let now = SystemTime::now();
+        self.state.apply(AcpExecutionEvent::TurnRateLimited, now);
+        self.reduce_activity(now)
     }
 
     pub(crate) fn background_held(&self) -> bool {
@@ -228,9 +236,11 @@ impl SessionActivityReporter {
             ParentPhase::CompletedLocallyChildrenActive | ParentPhase::WaitingOnDelegated
         );
         let activity = match (held, self.state.turn()) {
-            (true, RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed) => {
-                SessionActivity::BackgroundRunning
-            }
+            (_, RootTurnState::Failed(FailureKind::RateLimited)) => SessionActivity::RateLimited,
+            (
+                true,
+                RootTurnState::Settled | RootTurnState::Cancelled | RootTurnState::Failed(_),
+            ) => SessionActivity::BackgroundRunning,
             _ => match projection.live.kind {
                 LiveStatusKind::AgentRunning => SessionActivity::TurnStarted,
                 LiveStatusKind::CommandRunning => SessionActivity::CommandRunning,
