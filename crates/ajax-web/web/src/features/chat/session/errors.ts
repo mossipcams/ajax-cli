@@ -11,7 +11,7 @@ export function explainAcpError(message: string): string {
     return "The agent rejected that request. Try sending again, or reopen the session.";
   }
   if (/(ACP|Agent) process exited/i.test(message)) {
-    return "The agent stopped. It will restart when you reconnect.";
+    return "Agent stopped. Send a message to restart it.";
   }
   if (/acp request timed out/i.test(message)) {
     return "The agent did not answer in time. Try sending again.";
