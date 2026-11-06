@@ -39,6 +39,7 @@ mod headless;
 mod operation_outcomes;
 mod state;
 mod state_query;
+mod task_activity_write;
 mod task_routes;
 use task_routes::{
     axum_action, axum_cockpit, axum_presence, axum_start_task, axum_task_get, axum_task_post,

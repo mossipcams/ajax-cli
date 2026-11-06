@@ -392,3 +392,93 @@ fn reload_registry_from_disk_loads_tracked_context_after_in_memory_drift() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn record_task_activity_persists_one_task_and_keeps_baseline_mergeable() {
+    use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag};
+
+    fn sample_task(handle: &str) -> Task {
+        Task::new(
+            TaskId::new(format!("web/{handle}")),
+            "web",
+            handle,
+            handle,
+            format!("ajax/{handle}"),
+            "main",
+            format!("/repo/web__worktrees/ajax-{handle}"),
+            format!("ajax-web-{handle}"),
+            "task",
+            AgentClient::Codex,
+        )
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "ajax-record-task-activity-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline.create_task(sample_task("a")).unwrap();
+    baseline.create_task(sample_task("b")).unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut context = crate::context::load_context(&paths).unwrap();
+    let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+    let observed_at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+    {
+        let task_b = context
+            .registry
+            .get_task_mut(&TaskId::new("web/b"))
+            .expect("task b");
+        task_b.live_status = Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+        task_b.live_status_observed_at = Some(observed_at);
+        task_b.add_side_flag(SideFlag::AgentRunning);
+    }
+
+    <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::record_task_activity(
+        &mut bridge,
+        &mut context,
+        &TaskId::new("web/b"),
+    )
+    .expect("activity persists");
+
+    let reloaded = crate::context::load_context(&paths).unwrap();
+    let reloaded_b = reloaded.registry.get_task(&TaskId::new("web/b")).unwrap();
+    assert_eq!(
+        reloaded_b.live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::AgentRunning)
+    );
+    assert_eq!(reloaded_b.live_status_observed_at, Some(observed_at));
+    assert_eq!(
+        bridge.save_state.loaded_revision,
+        SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .unwrap()
+    );
+    let baseline_b = bridge
+        .save_state
+        .loaded_registry
+        .get_task(&TaskId::new("web/b"))
+        .unwrap();
+    assert_eq!(baseline_b.live_status_observed_at, Some(observed_at));
+    assert!(baseline_b
+        .side_flags()
+        .any(|flag| flag == SideFlag::AgentRunning));
+
+    <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::persist_registry_snapshot(
+        &mut bridge,
+        &mut context,
+    )
+    .expect("whole-registry save does not merge");
+
+    let _ = std::fs::remove_dir_all(root);
+}
