@@ -466,6 +466,9 @@ append the same authentication error repeatedly.
 - Queued ledger rows survive unexpected child exit; the host dispatches them only
   after a healthy replacement client is installed and any interrupted active row
   is durable.
+- The Claude SDK sidecar exits after reporting a lost turn when its message pump ends
+  or fails ([#1556](https://github.com/mossipcams/ajax-cli/issues/1556)), so pump death
+  surfaces as a child exit and the slot moves to `Exited`.
 - Operator **Restart agent** replaces the harness process and resumes the stored
   session id. When a holder is attached and a prompt was dispatching, the original
   ledger row stays **interrupted** and the host resubmits the same text and content
