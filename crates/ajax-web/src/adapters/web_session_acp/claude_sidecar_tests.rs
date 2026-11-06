@@ -74,6 +74,31 @@ impl Sidecar {
         }
     }
 
+    fn wait_for_exit(&mut self, label: &str) {
+        let deadline = Instant::now() + STEP_TIMEOUT;
+        loop {
+            match self.process.try_recv() {
+                Ok(JsonlRecord::Exited) => return,
+                Ok(JsonlRecord::Record(value)) => self.records.push(value),
+                Ok(JsonlRecord::Error(text)) => {
+                    panic!("sidecar protocol error while waiting for {label}: {text}");
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => panic!(
+                    "sidecar record stream ended without exit while waiting for {label}; stderr: {}",
+                    self.process.stderr_tail()
+                ),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {label}; records so far: {:?}; stderr: {}",
+                self.records,
+                self.process.stderr_tail()
+            );
+            sleep(POLL_INTERVAL);
+        }
+    }
+
     fn response(&mut self, id: &str) -> Value {
         self.wait_until(&format!("response {id}"), |records| {
             records.iter().any(|record| is_response_for(record, id))
@@ -279,6 +304,33 @@ fn claude_pump_failure_ends_the_turn_and_reports_error_1274() {
         assert_lost_turn(&mut sidecar, "exhausted stream result", "EXHAUST now");
     }
 }
+
+#[test]
+fn claude_pump_failure_exits_the_sidecar_1556() {
+    for (label, message) in [
+        ("pump failure exit", "PUMP_FAIL now"),
+        ("exhausted stream exit", "EXHAUST now"),
+    ] {
+        let mut sidecar = Sidecar::spawn();
+        sidecar.init();
+        let prompt_id = sidecar.command("prompt", json!({ "message": message }));
+        assert_eq!(
+            sidecar.response(&prompt_id).get("success"),
+            Some(&Value::Bool(true)),
+            "prompt accepted: {label}"
+        );
+        sidecar.wait_until(label, |records| {
+            events(records, "result")
+                .any(|record| record.get("is_error").and_then(Value::as_bool) == Some(true))
+        });
+        sidecar.wait_for_exit(label);
+        let result = events(&sidecar.records, "result")
+            .find(|record| record.get("is_error").and_then(Value::as_bool) == Some(true))
+            .expect("error result written before exit");
+        assert_eq!(subtype(result), "error_during_execution", "{label}");
+    }
+}
+
 #[test]
 fn prompt_with_images_completes_turn_with_image_reply() {
     let mut sidecar = Sidecar::spawn();
