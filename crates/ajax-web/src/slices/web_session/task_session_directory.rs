@@ -44,7 +44,7 @@ impl LiveActivitySlot {
     }
 }
 
-async fn send_command<T>(
+pub(super) async fn send_command<T>(
     tx: &TaskSessionSender,
     build: impl FnOnce(tokio::sync::oneshot::Sender<T>) -> TaskSessionCommand,
 ) -> Result<T, SessionError> {
@@ -477,6 +477,7 @@ impl TaskSessionDirectory {
         }
     }
 
+    #[cfg(test)]
     pub async fn detach_session(&self, handle: &str) {
         let removed = {
             let mut sessions = self.sessions.lock().unwrap();
@@ -825,7 +826,7 @@ impl TaskSessionDirectory {
             .map(|entry| entry.last_released.is_some())
     }
 
-    fn command_tx(&self, handle: &str) -> Result<TaskSessionSender, String> {
+    pub(super) fn command_tx(&self, handle: &str) -> Result<TaskSessionSender, String> {
         let sessions = self.sessions.lock().unwrap();
         sessions
             .get(handle)
@@ -835,15 +836,6 @@ impl TaskSessionDirectory {
 
     pub(crate) fn has_live_entry(&self, handle: &str) -> bool {
         self.sessions.lock().unwrap().contains_key(handle)
-    }
-
-    pub(crate) async fn attached_holders(&self, handle: &str) -> usize {
-        let Ok(tx) = self.command_tx(handle) else {
-            return 0;
-        };
-        eviction_snapshot(&tx)
-            .await
-            .map_or(0, |snapshot| snapshot.holders)
     }
 }
 
@@ -885,8 +877,12 @@ pub(crate) async fn apply_client_message(
             directory.cancel(handle, keep_queue).await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
-        SessionClientMessage::Clear => {
+        SessionClientMessage::Clear | SessionClientMessage::StartFresh => {
             *generation = directory.clear_context(handle, worktree_path).await?;
+            Ok(ApplyClientMessageOutcome::Applied)
+        }
+        SessionClientMessage::Restart | SessionClientMessage::RetryRestore => {
+            directory.restart_agent(handle, worktree_path).await?;
             Ok(ApplyClientMessageOutcome::Applied)
         }
         SessionClientMessage::SetConfigOption { config_id, value } => {
@@ -932,9 +928,6 @@ pub(crate) async fn apply_client_message(
                 .answer_elicitation(handle, &request_id, &action, content)
                 .await?;
             Ok(ApplyClientMessageOutcome::Applied)
-        }
-        SessionClientMessage::RetryRestore | SessionClientMessage::StartFresh => {
-            Err("restore recovery is only available before session attach".to_string())
         }
     }
 }

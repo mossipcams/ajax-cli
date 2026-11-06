@@ -564,7 +564,7 @@ describe("reduceChatSession", () => {
     );
     expect(errorNotes).toHaveLength(1);
     expect(errorNotes[0]).toMatchObject({
-      text: "The agent stopped. It will restart when you reconnect.",
+      text: "Agent stopped. Send a message to restart it.",
     });
   });
 
@@ -662,7 +662,7 @@ describe("reduceChatSession", () => {
     expect(state.conversation[1]).toMatchObject({
       kind: "note",
       tone: "error",
-      text: "The agent stopped. It will restart when you reconnect.",
+      text: "Agent stopped. Send a message to restart it.",
     });
   });
 
@@ -679,7 +679,7 @@ describe("reduceChatSession", () => {
     expect(errorNotes).toHaveLength(2);
     expect(errorNotes[0]).toMatchObject({ text: authMsg });
     expect(errorNotes[1]).toMatchObject({
-      text: "The agent stopped. It will restart when you reconnect.",
+      text: "Agent stopped. Send a message to restart it.",
     });
   });
 
@@ -705,13 +705,13 @@ describe("context usage", () => {
 describe("explainAcpError", () => {
   it("maps opaque ACP failures to operator-facing copy", () => {
     expect(explainAcpError("internal error")).toMatch(/rejected that request/i);
-    expect(explainAcpError("ACP process exited")).toMatch(/restart when you reconnect/i);
+    expect(explainAcpError("ACP process exited")).toMatch(/Send a message to restart it/i);
     expect(explainAcpError("acp request timed out")).toMatch(/did not answer in time/i);
   });
 
   it("maps the native agent exit message to the same copy", () => {
     expect(explainAcpError("Agent process exited")).toMatch(
-      /restart when you reconnect/i,
+      /Send a message to restart it/i,
     );
   });
 

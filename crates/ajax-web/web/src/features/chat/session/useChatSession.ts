@@ -178,6 +178,12 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
   const retryRestore = useCallback(() => transportRef.current?.retryRestore(), []);
   const startFresh = useCallback(() => transportRef.current?.startFresh(), []);
 
+  const restartAgent = useCallback(() => {
+    if (!connected) return false;
+    transportRef.current?.restartAgent();
+    return true;
+  }, [connected]);
+
   const markStopped = useCallback(() => {
     dispatch({ type: "event", event: { type: "system_message", text: "Stopped" } });
   }, []);
@@ -233,6 +239,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     sendClear,
     retryRestore,
     startFresh,
+    restartAgent,
     restoreUnavailable,
     markStopped,
     applyConfigOption,
