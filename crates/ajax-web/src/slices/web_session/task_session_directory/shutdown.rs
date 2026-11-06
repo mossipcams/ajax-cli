@@ -1,18 +1,19 @@
-use super::{SessionEntry, TaskSessionCommand, TaskSessionDirectory};
+use super::{send_command, TaskSessionCommand, TaskSessionDirectory};
 
 impl TaskSessionDirectory {
-    pub async fn detach_all(&self) {
-        let entries: Vec<SessionEntry> = {
-            let mut sessions = self.sessions.lock().unwrap();
-            sessions.drain().map(|(_, entry)| entry).collect()
+    pub async fn flush_all(&self) {
+        let senders: Vec<_> = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .values()
+                .map(|entry| entry.command_tx.clone())
+                .collect()
         };
-        futures::future::join_all(entries.into_iter().map(|entry| async move {
-            let _ = entry
-                .command_tx
-                .send(TaskSessionCommand::Shutdown { close: false })
-                .await;
-            let _ = entry.join_handle.await;
-        }))
+        futures::future::join_all(
+            senders
+                .iter()
+                .map(|tx| send_command(tx, |reply| TaskSessionCommand::Flush { reply })),
+        )
         .await;
     }
 }

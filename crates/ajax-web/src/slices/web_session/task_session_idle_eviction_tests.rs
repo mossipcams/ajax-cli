@@ -260,6 +260,12 @@ fn idle_session_with_unsaved_backlog_is_not_evicted_1558() {
                 directory.release(handle);
             }
             restore_registry_files(&dir, saved);
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle_a);
+            assert!(
+                !has_message(&stored.events, "agent", "backlog-a"),
+                "the backlog must still be unsaved when the idle cap runs: {:?}",
+                stored.events
+            );
 
             directory
                 .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
@@ -270,15 +276,19 @@ fn idle_session_with_unsaved_backlog_is_not_evicted_1558() {
                 "idle cap must not evict a session whose transcript backlog is unsaved"
             );
 
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                has_message(events, "agent", "backlog-a")
+            });
             pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
                 directory
                     .eviction_snapshot(handle_a)
                     .is_some_and(|snapshot| snapshot.evictable)
             });
-            let (events, _) = directory.read_from(handle_a, 0);
             assert!(
-                has_message(&events, "agent", "backlog-a"),
-                "backlog must commit once the store recovers: {events:?}"
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| snapshot.evictable),
+                "a session with a committed backlog must become evictable"
             );
         });
     });

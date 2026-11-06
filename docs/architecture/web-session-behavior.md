@@ -523,10 +523,12 @@ append the same authentication error repeatedly.
 - Idle eviction never evicts a session whose transcript backlog is unsaved or
   that has a transcript durability fault
   ([#1558](https://github.com/mossipcams/ajax-cli/issues/1558)).
-- On SIGTERM or Ctrl-C the web server stops serving and sends every task session
-  the normal `Shutdown { close: false }` (backlog flush, ledger, client release),
-  waiting at most 5 s (`runtime/shutdown.rs`, `TaskSessionDirectory::detach_all`).
-  It does not wait for open WebSockets.
+- On SIGTERM or Ctrl-C the web server flushes each session's transcript backlog
+  and pending activity report, waiting at most 5 s (`runtime/shutdown.rs`,
+  `TaskSessionDirectory::flush_all`), then exits the process without touching
+  harnesses. Shims and in-flight turns survive for adoption (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)). It
+  does not wait for open WebSockets.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads stored transcripts and cursors from the registry database. A

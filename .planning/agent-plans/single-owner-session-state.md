@@ -102,7 +102,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   Done: unconfirmed in-session config changes return a refusal (apply_model/mod.rs `apply_config_option`), regressions `unconfirmed_model_change_reports_refusal_1547`, `unconfirmed_model_change_appends_error_and_keeps_persisted_model_1547`, `spawn_pin_refusal_is_not_double_wrapped_1547`.
 - [x] 8 — SIGTERM handler with actor flush; eviction guard. Size: S. Closes:
   #1558
-  Done: SIGTERM/Ctrl-C flush (runtime/shutdown.rs, `detach_all` in task_session_directory/shutdown.rs), eviction guard in task_session.rs, regressions `idle_session_with_unsaved_backlog_is_not_evicted_1558`, `detach_all_flushes_every_sessions_backlog_1558`; live SIGTERM check: logged `web server stopping`, exited in 0.02 s.
+  Done: SIGTERM/Ctrl-C flush (runtime/shutdown.rs, `flush_all` in task_session_directory/shutdown.rs) (review: the first version shut every harness down, which broke restart adoption), eviction guard in task_session.rs, regressions `idle_session_with_unsaved_backlog_is_not_evicted_1558`, `flush_all_persists_backlog_and_keeps_harness_alive_1558`; live SIGTERM check: logged `web server stopping`, exited in 0.02 s.
 
 ## Deviations
 

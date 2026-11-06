@@ -3,7 +3,9 @@ use super::execution_ownership::ExecutionOwnership;
 use super::prompt_queue::ActivePrompt;
 use super::task_session::TaskSessionState;
 use super::task_session_commit::BacklogRetryBackoff;
-use super::test_support::{fake_acp_fixture, note, scratch_dir, BlockingSessionDirectory};
+use super::test_support::{
+    fake_acp_fixture, note, pump_until, scratch_dir, BlockingSessionDirectory,
+};
 use super::{SessionServerEvent, SessionStorage};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use crate::adapters::web_session_store::{
@@ -247,10 +249,10 @@ fn issue_1435_shutdown_flushes_the_backlog_in_order() {
 }
 
 #[test]
-fn detach_all_flushes_every_sessions_backlog_1558() {
-    let dir = scratch_dir("detach-all-flushes-1558");
-    let handle_a = "web/detach-all-1558-a";
-    let handle_b = "web/detach-all-1558-b";
+fn flush_all_persists_backlog_and_keeps_harness_alive_1558() {
+    let dir = scratch_dir("flush-all-1558");
+    let handle_a = "web/flush-all-1558-a";
+    let handle_b = "web/flush-all-1558-b";
 
     with_test_acp_program(&fake_acp_fixture(), || {
         let directory = BlockingSessionDirectory::new(dir.clone());
@@ -259,6 +261,8 @@ fn detach_all_flushes_every_sessions_backlog_1558() {
                 .acquire(handle, &dir, "auto", AgentClient::Cursor)
                 .expect("acquire");
         }
+        let child_a = directory.child_id(handle_a).expect("child a");
+        let child_b = directory.child_id(handle_b).expect("child b");
 
         let saved = snapshot_registry_files(&dir);
         make_transcript_unreadable(&dir);
@@ -266,20 +270,38 @@ fn detach_all_flushes_every_sessions_backlog_1558() {
         directory.record(handle_b, note("backlog-b"));
         restore_registry_files(&dir, saved);
 
-        directory.detach_all();
+        for (handle, text) in [(handle_a, "backlog-a"), (handle_b, "backlog-b")] {
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            assert!(
+                message_index(&stored.events, text).is_none(),
+                "{text} must still be unpersisted before flush_all: {:?}",
+                stored.events
+            );
+        }
+
+        directory.flush_all();
 
         for (handle, text) in [(handle_a, "backlog-a"), (handle_b, "backlog-b")] {
             let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
             assert!(
                 message_index(&stored.events, text).is_some(),
-                "{text} must be committed by detach_all: {:?}",
+                "{text} must be committed by flush_all: {:?}",
                 stored.events
             );
-            assert!(
-                !directory.inner().has_live_entry(handle),
-                "{handle} must leave the directory"
-            );
         }
+        assert!(directory.inner().has_live_entry(handle_a));
+        assert!(directory.inner().has_live_entry(handle_b));
+        assert_eq!(directory.child_id(handle_a), Some(child_a));
+        assert_eq!(directory.child_id(handle_b), Some(child_b));
+
+        directory
+            .submit_prompt_with_id(handle_a, "after-flush".into(), "ping".into())
+            .expect("prompt after flush");
+        pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+        });
     });
 
     let _ = fs::remove_dir_all(dir);

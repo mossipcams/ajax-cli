@@ -1,27 +1,31 @@
 use crate::slices::web_session::TaskSessionDirectory;
 use std::{future::pending, time::Duration};
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 
 const FLUSH_BUDGET: Duration = Duration::from_secs(5);
 
-pub(super) async fn termination_signal() {
-    let terminate = async {
-        match signal(SignalKind::terminate()) {
-            Ok(mut stream) => {
+pub(super) fn terminate_signal() -> Option<Signal> {
+    signal(SignalKind::terminate()).ok()
+}
+
+pub(super) async fn stop_requested(terminate: &mut Option<Signal>) {
+    let terminated = async {
+        match terminate {
+            Some(stream) => {
                 stream.recv().await;
             }
-            Err(_) => pending::<()>().await,
+            None => pending::<()>().await,
         }
     };
     tokio::select! {
-        () = terminate => {}
+        () = terminated => {}
         _ = tokio::signal::ctrl_c() => {}
     }
 }
 
 pub(super) async fn flush_sessions(directory: &TaskSessionDirectory) {
     tracing::info!(target: "ajax_web", "web server stopping");
-    if tokio::time::timeout(FLUSH_BUDGET, directory.detach_all())
+    if tokio::time::timeout(FLUSH_BUDGET, directory.flush_all())
         .await
         .is_err()
     {

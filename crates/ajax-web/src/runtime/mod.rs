@@ -175,6 +175,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     let result = runtime.block_on(async move {
+        let mut terminate = shutdown::terminate_signal();
         spawn_background_loops(&state);
         headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
@@ -193,9 +194,9 @@ where
             served = std::future::IntoFuture::into_future(axum::serve(tls_listener, axum_app(state))) => {
                 served.map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
             }
-            () = shutdown::termination_signal() => {
+            () = shutdown::stop_requested(&mut terminate) => {
                 shutdown::flush_sessions(&directory).await;
-                Ok(())
+                std::process::exit(0);
             }
         }
     });

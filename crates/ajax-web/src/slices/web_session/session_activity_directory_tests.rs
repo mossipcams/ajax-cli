@@ -662,3 +662,55 @@ fn issue_1439_dropping_a_chat_mid_turn_reports_no_settle() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn flush_all_reports_pending_activity_inside_backoff_window_1558() {
+    let (handle, context) = provisioned_handle_context();
+    let directory = BlockingSessionDirectory::new(scratch_dir("flush-all-activity-1558"));
+    let allow_turn_end = Arc::new(AtomicBool::new(false));
+    let ctx = Arc::clone(&context);
+    let allow = Arc::clone(&allow_turn_end);
+    directory
+        .inner()
+        .set_report_session_activity(Arc::new(move |qualified_handle, activity| {
+            if activity == SessionActivity::TurnEnded && !allow.load(Ordering::SeqCst) {
+                return false;
+            }
+            record_session_activity(
+                &mut ctx.lock().expect("context lock"),
+                qualified_handle,
+                activity,
+                SystemTime::now(),
+            )
+            .is_ok()
+        }));
+
+    directory.record(
+        &handle,
+        SessionServerEvent::PromptAccepted {
+            client_message_id: "c1".to_string(),
+        },
+    );
+    directory.record(
+        &handle,
+        SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".to_string()),
+        },
+    );
+    assert_eq!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "failed turn_end report must leave the activity pending inside the backoff window"
+    );
+    let generation = directory.generation(&handle);
+    directory.collect_outbound(&handle, 0, generation);
+
+    allow_turn_end.store(true, Ordering::SeqCst);
+    directory.flush_all();
+
+    assert_ne!(
+        task_status(&context, &handle),
+        TaskStatus::Running,
+        "flush_all must deliver the pending activity report even inside the retry backoff window"
+    );
+}

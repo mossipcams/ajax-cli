@@ -123,6 +123,9 @@ pub(crate) enum TaskSessionCommand {
     EvictionSnapshot {
         reply: oneshot::Sender<EvictionSnapshot>,
     },
+    Flush {
+        reply: oneshot::Sender<()>,
+    },
     Shutdown {
         close: bool,
     },
@@ -521,10 +524,7 @@ pub(crate) fn spawn_task_session(
                 }
             }
         }
-        state
-            .evidence
-            .retry_pending_activity_report(&state.qualified_handle, std::time::Instant::now());
-        state.flush_unpersisted_backlog();
+        flush_pending_persistence(&mut state);
         if close_on_exit {
             state.prompts.queued.clear();
             state.prompts.prompt_ledger.remove_queued();
@@ -714,8 +714,19 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
                 holders: state.holders.0,
             });
         }
+        TaskSessionCommand::Flush { reply } => {
+            flush_pending_persistence(state);
+            let _ = reply.send(());
+        }
         TaskSessionCommand::Shutdown { .. } => {}
     }
+}
+
+fn flush_pending_persistence(state: &mut TaskSessionState) {
+    state
+        .evidence
+        .flush_pending_activity_report(&state.qualified_handle);
+    state.flush_unpersisted_backlog();
 }
 
 pub(crate) type TaskSessionSender = mpsc::Sender<TaskSessionCommand>;
