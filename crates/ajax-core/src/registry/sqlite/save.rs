@@ -306,25 +306,7 @@ pub(crate) fn save_task(
     save_tmux_status(transaction, task_id, task.tmux_status.as_ref())?;
     save_task_window_status(transaction, task_id, task.task_window_status.as_ref())?;
 
-    let mut flag_keys = BTreeSet::new();
-    for flag in task.side_flags() {
-        let flag = side_flag_name(flag);
-        upsert_if_changed(
-            transaction,
-            "registry_task_side_flags",
-            &["task_id", "flag"],
-            &[],
-            params![task_id, flag],
-        )?;
-        flag_keys.insert(vec![flag.to_string()]);
-    }
-    delete_rows_not_in(
-        transaction,
-        "registry_task_side_flags",
-        &["flag"],
-        Some(task_id),
-        &flag_keys,
-    )?;
+    save_side_flags(transaction, task)?;
 
     let mut metadata_keys = BTreeSet::new();
     for (key, value) in &task.metadata {
@@ -345,6 +327,42 @@ pub(crate) fn save_task(
         &metadata_keys,
     )?;
 
+    save_agent_attempts(transaction, task)?;
+
+    Ok(())
+}
+
+pub(crate) fn save_side_flags(
+    transaction: &Transaction<'_>,
+    task: &Task,
+) -> Result<(), RegistrySnapshotError> {
+    let task_id = task.id.as_str();
+    let mut flag_keys = BTreeSet::new();
+    for flag in task.side_flags() {
+        let flag = side_flag_name(flag);
+        upsert_if_changed(
+            transaction,
+            "registry_task_side_flags",
+            &["task_id", "flag"],
+            &[],
+            params![task_id, flag],
+        )?;
+        flag_keys.insert(vec![flag.to_string()]);
+    }
+    delete_rows_not_in(
+        transaction,
+        "registry_task_side_flags",
+        &["flag"],
+        Some(task_id),
+        &flag_keys,
+    )
+}
+
+pub(crate) fn save_agent_attempts(
+    transaction: &Transaction<'_>,
+    task: &Task,
+) -> Result<(), RegistrySnapshotError> {
+    let task_id = task.id.as_str();
     for (sequence, attempt) in task.agent_attempts.iter().enumerate() {
         let (started_at_seconds, started_at_nanos) = system_time_to_unix_parts(attempt.started_at)?;
         let finished_at_parts = attempt
@@ -383,7 +401,6 @@ pub(crate) fn save_task(
             params![task_id, task.agent_attempts.len() as i64],
         )
         .map_err(database_error)?;
-
     Ok(())
 }
 
