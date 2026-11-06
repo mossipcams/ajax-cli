@@ -194,8 +194,7 @@ where
             served = std::future::IntoFuture::into_future(axum::serve(tls_listener, axum_app(state))) => {
                 served.map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
             }
-            () = shutdown::stop_requested(&mut terminate) => {
-                shutdown::flush_sessions(&directory).await;
+            () = shutdown::stop_and_flush(&mut terminate, &directory) => {
                 std::process::exit(0);
             }
         }

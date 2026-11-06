@@ -529,6 +529,7 @@ append the same authentication error repeatedly.
   harnesses. Shims and in-flight turns survive for adoption (see
   [Session shim and restart adoption](#session-shim-and-restart-adoption)). It
   does not wait for open WebSockets.
+  A second Ctrl-C or SIGTERM during the flush exits immediately.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads stored transcripts and cursors from the registry database. A
