@@ -10,7 +10,7 @@ pub(super) fn answer_elicitation(
     action: &str,
     content: Option<&serde_json::Value>,
 ) -> Result<(), SessionError> {
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
     let result = client.respond_elicitation(request_id, action, content);
@@ -38,7 +38,7 @@ pub(super) fn answer_permission(
     approved: bool,
     reason: Option<&str>,
 ) -> Result<(), SessionError> {
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
     let id = parse_json_rpc_id(request_id);

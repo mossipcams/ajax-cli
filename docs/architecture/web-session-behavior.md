@@ -510,6 +510,10 @@ append the same authentication error repeatedly.
   the WebSocket `restart` message. Core no longer offers `restart-agent`.
   **Fresh session** in task details is always available in chat
   mode, needs a second tap, and takes the same path as the built-in `/clear`.
+- The per-task host holds the harness client in an `AgentSlot` (`agent_slot.rs`):
+  `Absent` (never spawned or released), `Spawning` (staged client not yet confirmed),
+  `Live`, and `Exited` (host gone; the dead client stays until replaced).
+  `slot_must_replace` replaces any slot that is not `Live` or whose host has exited.
 
 ## Shutdown and slot retention
 

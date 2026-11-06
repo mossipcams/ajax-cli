@@ -3,6 +3,7 @@ mod acp_execution_map;
 mod acp_map;
 mod acp_slot;
 pub(crate) mod acp_usage;
+mod agent_slot;
 mod background_jobs;
 #[path = "../ci_agent_delivery.rs"]
 mod ci_agent_delivery;

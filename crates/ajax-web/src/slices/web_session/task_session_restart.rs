@@ -38,7 +38,7 @@ pub(super) async fn restart_child(
     worktree_path: &Path,
 ) -> Result<bool, SessionError> {
     let in_flight = in_flight_prompt(state);
-    if state.acp.client.is_some() {
+    if state.acp.agent.client().is_some() {
         let model = state.acp.model.clone();
         task_session_spawn::respawn(state, worktree_path, &model, true).await?;
     } else {

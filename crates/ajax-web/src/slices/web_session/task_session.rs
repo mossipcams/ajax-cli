@@ -1,4 +1,5 @@
 use super::acp_slot::AcpSlot;
+use super::agent_slot::AgentSlot;
 use super::background_jobs::{probe, BackgroundLevel, PROBE_MAX_AGE};
 use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
@@ -199,10 +200,9 @@ impl TaskSessionState {
             qualified_handle,
             storage,
             acp: AcpSlot {
-                client: None,
+                agent: AgentSlot::Absent,
                 model: String::new(),
                 applied_model: String::new(),
-                acp_alive: false,
                 restore_advertised: false,
                 session_config_options: None,
                 pending_config_snapshot: None,
@@ -298,8 +298,8 @@ impl TaskSessionState {
             .flush_pending_activity_report(&self.qualified_handle);
         let root = self
             .acp
-            .client
-            .as_ref()
+            .agent
+            .client()
             .and_then(|client| client.child_pid());
         let mut read_level = || {
             let read = probe(root, PROBE_MAX_AGE);
@@ -376,8 +376,8 @@ impl TaskSessionState {
     pub(super) fn busy(&self) -> bool {
         let client_busy = self
             .acp
-            .client
-            .as_ref()
+            .agent
+            .client()
             .is_some_and(|client| client.prompt_in_flight());
         self.prompts.busy(client_busy)
     }
@@ -391,7 +391,7 @@ impl TaskSessionState {
             .active_prompt
             .as_ref()
             .map(super::prompt_queue::ActivePrompt::drain_cancel_context);
-        let outcome = match self.acp.client.as_mut() {
+        let outcome = match self.acp.agent.client_mut() {
             Some(client) => drain_acp_events_with_prompt_cancel(
                 client,
                 &mut self.acp.usage_deduper,
@@ -431,7 +431,7 @@ impl TaskSessionState {
         } else {
             try_finalize_active_prompt(self);
             if host_gone {
-                self.acp.acp_alive = false;
+                self.acp.agent.mark_exited();
             }
         }
         release_finished_adopted_client(self);
@@ -517,7 +517,7 @@ pub(crate) fn spawn_task_session(
                         std::time::Instant::now(),
                     );
                     state.retry_unpersisted_backlog();
-                    if state.acp.client.is_some() {
+                    if state.acp.agent.client().is_some() {
                         state.pump();
                     }
                     resume_queued_after_release(&mut state).await;
@@ -534,7 +534,7 @@ pub(crate) fn spawn_task_session(
             state.prompts.prompt_ledger.remove_queued();
             let _ = task_session_exit::persist_prompt_ledger(&state);
         }
-        if let Some(mut client) = state.acp.client.take() {
+        if let Some(mut client) = state.acp.agent.take_client() {
             state.prompts.suppress_exit_evidence = true;
             if !client.host_exited() {
                 if let Some(active) = state.prompts.active_prompt.as_mut() {
@@ -552,7 +552,6 @@ pub(crate) fn spawn_task_session(
                 let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
             }
             state.prompts.child_exit_reconciled = true;
-            state.acp.acp_alive = false;
         }
         if !close_on_exit {
             settle_running_activity_on_end(&mut state);
@@ -692,12 +691,12 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         }
         #[cfg(test)]
         TaskSessionCommand::ChildId { reply } => {
-            let id = state.acp.client.as_ref().map(|client| client.child_id());
+            let id = state.acp.agent.client().map(|client| client.child_id());
             let _ = reply.send(id);
         }
         #[cfg(test)]
         TaskSessionCommand::KillHostForTest { reply } => {
-            if let Some(client) = state.acp.client.as_mut() {
+            if let Some(client) = state.acp.agent.client_mut() {
                 client.kill_host_for_test();
             }
             let _ = reply.send(());
