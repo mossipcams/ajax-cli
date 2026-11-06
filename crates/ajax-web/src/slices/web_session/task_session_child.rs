@@ -6,8 +6,8 @@ impl TaskSessionState {
     pub(super) fn record_child_identity(&self) -> Result<(), SessionError> {
         let child = match self
             .acp
-            .client
-            .as_ref()
+            .agent
+            .client()
             .and_then(|client| client.child_pid())
         {
             None => None,

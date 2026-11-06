@@ -102,13 +102,13 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         .collect();
     restore_queued_prompts(state, queued)?;
 
-    state.acp.client = Some(client);
+    state.acp.agent.install(client);
     if let Err(error) = state.record_child_identity() {
-        state.acp.client = None;
+        state.acp.agent.take_client();
         return Err(error);
     }
     if let Err(error) = roll_back_transcript(state, cursor, &kept) {
-        state.acp.client = None;
+        state.acp.agent.take_client();
         return Err(error);
     }
     events.extend(kept);
@@ -123,7 +123,7 @@ fn adopt(state: &mut TaskSessionState, adoptable: &Adoptable) -> Result<(), Sess
         Some(adoptable.client_message_id.clone()),
     ));
     state.stored_loaded = true;
-    state.acp.acp_alive = true;
+    state.acp.agent.mark_live();
     Ok(())
 }
 
@@ -210,16 +210,15 @@ pub(super) fn release_finished_adopted_client(state: &mut TaskSessionState) {
     }
     let finished = state
         .acp
-        .client
-        .as_ref()
+        .agent
+        .client()
         .is_some_and(|client| client.is_adopted() && !client.prompt_in_flight());
     if !finished {
         return;
     }
-    if let Some(mut client) = state.acp.client.take() {
+    if let Some(mut client) = state.acp.agent.take_client() {
         let _ = client.shutdown();
     }
-    state.acp.acp_alive = false;
 }
 
 pub(super) async fn resume_queued_after_release(state: &mut TaskSessionState) {
@@ -240,7 +239,7 @@ pub(super) async fn submit_prompt_after_release(
     text: String,
     content_blocks: Vec<PromptContentBlockWire>,
 ) -> Result<(), SessionError> {
-    if state.acp.client.is_none() {
+    if state.acp.agent.client().is_none() {
         resume_released_client(state).await?;
         try_dispatch_next_if_idle(state);
     }
@@ -248,7 +247,7 @@ pub(super) async fn submit_prompt_after_release(
 }
 
 async fn resume_released_client(state: &mut TaskSessionState) -> Result<(), SessionError> {
-    if state.acp.client.is_some() || state.acp.acp_alive {
+    if state.acp.agent.client().is_some() || state.acp.agent.is_live() {
         return Ok(());
     }
     let Some(worktree) = state.worktree_path.clone() else {

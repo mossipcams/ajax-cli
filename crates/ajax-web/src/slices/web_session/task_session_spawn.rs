@@ -39,16 +39,16 @@ pub(super) async fn acquire(
         return Err(SessionError::operator(message));
     }
     state.worktree_path = Some(worktree_path.to_path_buf());
-    if state.acp.client.is_some() && state.agent != agent {
+    if state.acp.agent.client().is_some() && state.agent != agent {
         reset_harness_context(state, worktree_path, model, agent).await?;
         state.acquire_holder();
         return Ok(());
     }
     state.agent = agent;
 
-    if let Some(client) = state.acp.client.as_mut() {
+    if let Some(client) = state.acp.agent.client_mut() {
         let host_exited = client.host_exited();
-        if !slot_must_replace(state.acp.acp_alive, host_exited) {
+        if !slot_must_replace(state.acp.agent.is_live(), host_exited) {
             state.acquire_holder();
             return Ok(());
         }
@@ -91,12 +91,11 @@ pub(super) async fn acquire(
     reject_foreign_live_child(state)?;
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id).await?;
 
-    state.acp.client = Some(client);
+    state.acp.agent.install(client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
     state.acp.model = model.to_string();
@@ -104,14 +103,12 @@ pub(super) async fn acquire(
     apply_spawn_capabilities(state, &report);
     state.generation = 0;
     state.last_released = None;
-    state.acp.acp_alive = false;
     match adopt_stored_session(state, stored.events, stored.dropped) {
         Ok(()) => finish_first_acquire(state, &report, model),
         Err(error) => {
-            if let Some(client) = state.acp.client.take() {
+            if let Some(client) = state.acp.agent.take_client() {
                 discard_staged_client(client);
             }
-            state.acp.acp_alive = false;
             Err(error)
         }
     }
@@ -161,7 +158,7 @@ pub(super) async fn apply_config_option(
     config_id: &str,
     value: SessionConfigValue,
 ) -> Result<ApplyConfigOptionResult, SessionError> {
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
 
@@ -251,16 +248,16 @@ pub(super) async fn respawn(
     if let Err(message) = state.ownership.check() {
         return Err(SessionError::operator(message));
     }
-    if state.acp.client.is_none() {
+    if state.acp.agent.client().is_none() {
         return Err(SessionError::protocol("session slot missing"));
     }
     let host_exited = state
         .acp
-        .client
-        .as_mut()
+        .agent
+        .client_mut()
         .map(|client| client.host_exited())
         .unwrap_or(true);
-    if !force && !slot_must_replace(state.acp.acp_alive, host_exited) {
+    if !force && !slot_must_replace(state.acp.agent.is_live(), host_exited) {
         return Ok(state.generation);
     }
     let resume_id = replace_resume_id(
@@ -297,12 +294,11 @@ pub(super) async fn reset_harness_context(
         return Err(error);
     }
 
-    state.acp.client = Some(new_client);
+    state.acp.agent.install(new_client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
     state.acp.model = model.to_string();
@@ -310,7 +306,7 @@ pub(super) async fn reset_harness_context(
     apply_spawn_capabilities(state, &report);
     state.agent = agent;
     state.generation = state.generation.saturating_add(1);
-    state.acp.acp_alive = true;
+    state.acp.agent.mark_live();
     state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
@@ -430,18 +426,17 @@ pub(super) async fn clear_session_context(
     let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
-    state.acp.client = Some(new_client);
+    state.acp.agent.install(new_client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
-    state.acp.acp_alive = true;
+    state.acp.agent.mark_live();
     state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
@@ -485,7 +480,7 @@ fn release_live_client(
         if !awaiting_cancel_terminal {
             interrupt_active_prompt(state)?;
         }
-        let Some(client) = state.acp.client.as_mut() else {
+        let Some(client) = state.acp.agent.client_mut() else {
             return Ok(());
         };
         if !client.host_exited() {
@@ -517,7 +512,7 @@ fn release_live_client(
                 }
             }
         }
-        let Some(mut client) = state.acp.client.take() else {
+        let Some(mut client) = state.acp.agent.take_client() else {
             return Ok(());
         };
         let message = if close_session {
@@ -533,7 +528,6 @@ fn release_live_client(
     state.prompts.suppress_exit_evidence = false;
     if result.is_ok() {
         state.prompts.child_exit_reconciled = true;
-        state.acp.acp_alive = false;
     }
     result
 }

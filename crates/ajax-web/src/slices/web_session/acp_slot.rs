@@ -1,14 +1,14 @@
 use super::acp_drain::AcpDrainOutcome;
 use super::acp_usage::UsageDeduper;
+use super::agent_slot::AgentSlot;
 use crate::adapters::web_session_acp::{
-    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor, SessionClient,
+    AvailableCommandDescriptor, ConfigOptionDescriptor, PromptCapabilityDescriptor,
 };
 
 pub(super) struct AcpSlot {
-    pub client: Option<SessionClient>,
+    pub agent: AgentSlot,
     pub model: String,
     pub applied_model: String,
-    pub acp_alive: bool,
     pub restore_advertised: bool,
     pub session_config_options: Option<Vec<ConfigOptionDescriptor>>,
     pub pending_config_snapshot: Option<Vec<ConfigOptionDescriptor>>,
@@ -46,8 +46,8 @@ impl AcpSlot {
     pub(super) fn host_gone(&mut self, host_exit_from_drain: bool) -> bool {
         host_exit_from_drain
             || self
-                .client
-                .as_mut()
+                .agent
+                .client_mut()
                 .is_some_and(|client| client.host_exited())
     }
 

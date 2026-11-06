@@ -245,6 +245,6 @@ pub(crate) fn already_noted(log: &TranscriptLog, note: &SessionServerEvent) -> b
     log.events.last() == Some(note)
 }
 
-pub(crate) fn slot_must_replace(acp_alive: bool, host_exited: bool) -> bool {
-    !acp_alive || host_exited
+pub(crate) fn slot_must_replace(live: bool, host_exited: bool) -> bool {
+    !live || host_exited
 }
