@@ -91,8 +91,9 @@ step 0a. Step 0a PR opened 2026-11-05.
 - [x] 4 — `record_activity` + route chat activity through it + exponential
   backoff. Size: M. Closes: #1555
   Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression.
-- [ ] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
+- [x] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
   match on it. Size: L. Closes: –
+  Done: `AgentSlot` (web_session/agent_slot.rs) replaces `AcpSlot.client` and `acp_alive`; no reads of either remain.
 - [ ] 6 — Health signals: sidecar exits on pump death, slot moves to
   Exited/Faulted, UI offers Restart with resume. Size: M. Closes: #1556, #1557
 - [ ] 7 — Typed error when the harness doesn't confirm a model change. Size:
@@ -117,6 +118,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   by step 1 (`warn!` on swap failure plus a `harness_swap` signature); step 6
   does the same for the stop timeout.
 - **Step 4 design (user decision 2026-11-05).** `record_activity` writes no `registry_events` row (that table is renumbered positionally by every full save), and lifecycle-changing activity reports keep the whole-registry save; only non-lifecycle reports go per task.
+- **Step 5 scope.** `AgentSlot` has `Absent | Spawning | Live | Exited`. `Faulted` and a slot-held `resume_id` are not added: nothing produces a faulted state today, and the resume id stays in the store (`agent_runs.native_session_id`) and is re-read on every spawn, so both would be dead code. Step 6 adds `Faulted` only if a health signal produces it.
 
 Three-strike definitions:
 
