@@ -14,6 +14,7 @@ pub(super) use crate::registry::{
 pub(super) use rstest::rstest;
 pub(super) use std::time::{Duration, SystemTime};
 
+mod activity;
 pub(super) fn task(id: &str, repo: &str, handle: &str) -> Task {
     Task::new(
         TaskId::new(id),

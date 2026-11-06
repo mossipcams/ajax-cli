@@ -1,7 +1,7 @@
 use super::tests::{app_with, get, json_of, TestBridge};
 use crate::slices::web_session::{SessionActivity, SessionServerEvent};
 use ajax_core::{
-    models::{LiveStatusKind, TaskId},
+    models::{LifecycleStatus, LiveStatusKind, TaskId},
     registry::Registry as _,
     ui_state::TaskStatus,
 };
@@ -19,8 +19,8 @@ fn release_gate(release: &Arc<(Mutex<bool>, Condvar)>) {
     cvar.notify_all();
 }
 
-fn live_kind(
-    state: &super::WebAppState<super::tests::OkRunner, TestBridge>,
+fn live_kind<B>(
+    state: &super::WebAppState<super::tests::OkRunner, B>,
     handle: &str,
 ) -> Option<LiveStatusKind> {
     let guard = state.shared();
@@ -305,6 +305,81 @@ async fn activity_report_recovers_when_disk_diverged_from_memory() {
     assert_eq!(live, Some(LiveStatusKind::CommandRunning));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn per_task_activity_error_restores_task_and_falls_back_to_reload() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.lifecycle_status = LifecycleStatus::Active;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut bridge = TestBridge::default();
+    bridge.disk_context = Arc::new(Mutex::new(Some(context.clone())));
+    bridge.record_activity_failures = 1;
+    let reload_calls = Arc::clone(&bridge.reload_calls);
+    let state = super::WebAppState::new(
+        context,
+        super::tests::OkRunner,
+        bridge,
+        super::tests::scratch_dir("conflicting-activity-reload"),
+    );
+
+    let state_for_report = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_report
+            .report_task_session_activity("web/fix-login", SessionActivity::CommandRunning)
+    })
+    .await
+    .expect("report worker should not panic");
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(reload_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        live_kind(&state, "web/fix-login"),
+        Some(LiveStatusKind::CommandRunning)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failed_activity_write_and_reload_leave_the_task_unchanged() {
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.lifecycle_status = LifecycleStatus::Active;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let mut bridge = TestBridge::default();
+    bridge.record_activity_failures = usize::MAX;
+    bridge.reload_fails = true;
+    let state = super::WebAppState::new(
+        context,
+        super::tests::OkRunner,
+        bridge,
+        super::tests::scratch_dir("failed-activity-restore"),
+    );
+    let before = state
+        .shared()
+        .context
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .cloned()
+        .expect("fix-login task");
+
+    let state_for_report = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_report
+            .report_task_session_activity("web/fix-login", SessionActivity::CommandRunning)
+    })
+    .await
+    .expect("report worker should not panic");
+
+    assert!(result.is_err(), "both write paths failed; report must fail");
+    let guard = state.shared();
+    assert_eq!(
+        guard
+            .context
+            .registry
+            .get_task(&TaskId::new("web/fix-login")),
+        Some(&before)
+    );
+}
+
 async fn cockpit_card_status(
     app: &axum::Router,
     cookie: &str,
@@ -419,4 +494,145 @@ async fn live_session_overlay_is_dropped_when_the_session_actor_ends() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[derive(Clone, Default)]
+struct ConflictedWholeRegistryBridge {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl crate::runtime::RuntimeBridge<super::tests::OkRunner> for ConflictedWholeRegistryBridge {
+    fn refresh_cockpit(
+        &mut self,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+        _tier: ajax_core::runtime_refresh::RefreshTier,
+        _deliver_notifications: bool,
+    ) -> Result<bool, crate::WebError> {
+        Ok(false)
+    }
+
+    fn execute_operate(
+        &mut self,
+        _request: crate::slices::operate::OperateRequest,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+    ) -> Result<crate::slices::operate::OperateOutcome, crate::runtime::ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn execute_start_task(
+        &mut self,
+        _request: crate::slices::operate::StartTaskRequest,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        _runner: &mut super::tests::OkRunner,
+    ) -> Result<crate::slices::operate::OperateOutcome, crate::runtime::ActionFailure> {
+        unreachable!("not exercised")
+    }
+
+    fn persist_registry_snapshot(
+        &mut self,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+    ) -> Result<(), crate::WebError> {
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push("persist".to_string());
+        Err(crate::WebError::CommandFailed(
+            "state conflict for web/fix-login: task facts diverged".to_string(),
+        ))
+    }
+
+    fn record_task_activity(
+        &mut self,
+        _context: &mut ajax_core::commands::CommandContext<ajax_core::registry::InMemoryRegistry>,
+        task_id: &TaskId,
+        _previous: &ajax_core::models::Task,
+    ) -> Result<(), crate::WebError> {
+        self.calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(format!("record:{}", task_id.as_str()));
+        Ok(())
+    }
+}
+
+fn two_tasks_with_conflicted_a(
+    b_lifecycle: LifecycleStatus,
+) -> (
+    super::WebAppState<super::tests::OkRunner, ConflictedWholeRegistryBridge>,
+    Arc<Mutex<Vec<String>>>,
+) {
+    let mut task_a = crate::test_support::fix_login_task();
+    task_a.set_skip_interactive_agent(true);
+    let mut task_b = crate::test_support::task_in("web", "other", "Other");
+    task_b.set_skip_interactive_agent(true);
+    task_b.lifecycle_status = b_lifecycle;
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task_a, task_b]);
+    let bridge = ConflictedWholeRegistryBridge::default();
+    let calls = Arc::clone(&bridge.calls);
+    let state = super::WebAppState::new(
+        context,
+        super::tests::OkRunner,
+        bridge,
+        super::tests::scratch_dir("task-activity-write"),
+    );
+    (state, calls)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn non_lifecycle_activity_persists_per_task_past_another_tasks_conflict() {
+    let (state, calls) = two_tasks_with_conflicted_a(LifecycleStatus::Active);
+
+    let state_for_report = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_report.report_task_session_activity("web/other", SessionActivity::TurnEnded)
+    })
+    .await
+    .expect("report worker should not panic");
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(live_kind(&state, "web/other"), Some(LiveStatusKind::Done));
+    assert_eq!(live_kind(&state, "web/fix-login"), None);
+    let guard = state.shared();
+    assert_eq!(guard.revision, 1);
+    assert!(guard.cockpit_cache.is_none());
+    drop(guard);
+    assert_eq!(
+        calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_slice(),
+        ["record:web/other"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lifecycle_changing_activity_keeps_whole_registry_path() {
+    let (state, calls) = two_tasks_with_conflicted_a(LifecycleStatus::Reviewable);
+
+    let state_for_report = state.clone();
+    let result = tokio::spawn(async move {
+        state_for_report.report_task_session_activity("web/other", SessionActivity::CommandRunning)
+    })
+    .await
+    .expect("report worker should not panic");
+
+    assert!(result.is_err());
+    assert_eq!(live_kind(&state, "web/other"), None);
+    let guard = state.shared();
+    assert_eq!(guard.revision, 0);
+    let lifecycle = guard
+        .context
+        .registry
+        .get_task(&TaskId::new("web/other"))
+        .map(|task| task.lifecycle_status);
+    assert_eq!(lifecycle, Some(LifecycleStatus::Reviewable));
+    drop(guard);
+    let calls = calls
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert!(calls.iter().any(|call| call == "persist"));
+    assert!(!calls.iter().any(|call| call.starts_with("record:")));
 }

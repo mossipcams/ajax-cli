@@ -104,8 +104,8 @@ impl TaskSessionState {
     pub(super) async fn poll_background_jobs(&mut self) {
         let root = self
             .acp
-            .client
-            .as_ref()
+            .agent
+            .client()
             .and_then(|client| client.child_pid());
         let now = Instant::now();
         let turn_finished = self.evidence.activity_reporter.turn_finished();

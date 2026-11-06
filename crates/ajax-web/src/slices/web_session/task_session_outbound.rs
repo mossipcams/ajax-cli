@@ -3,6 +3,7 @@ use super::{
     protocol::{SessionChrome, SessionSnapshot},
     replay::{attach_inline_tail, build_attach, pending_elicitation, pending_permission},
 };
+use std::time::Instant;
 
 pub(super) fn attach_snapshot(
     state: &mut TaskSessionState,
@@ -37,7 +38,7 @@ pub(super) fn collect_outbound(
 ) -> OutboundBatch {
     state
         .evidence
-        .retry_pending_activity_report(&state.qualified_handle);
+        .retry_pending_activity_report(&state.qualified_handle, Instant::now());
     let current_generation = state.generation;
     let generation_changed = current_generation != generation;
     let read_from = if generation_changed {

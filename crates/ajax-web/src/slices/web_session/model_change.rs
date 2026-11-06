@@ -29,3 +29,7 @@ pub(crate) async fn apply_cross_harness_reset(
         .reset_harness_context(handle, worktree_path, agent, &model)
         .await
 }
+
+#[cfg(test)]
+#[path = "model_change_tests.rs"]
+mod model_change_tests;

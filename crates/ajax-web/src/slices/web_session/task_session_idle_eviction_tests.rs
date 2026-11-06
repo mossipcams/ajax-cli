@@ -1,9 +1,12 @@
 use super::session_activity_directory_tests::{record_activities, wait_for_last_activity};
 use super::task_session_outbound::disk_read_from;
 use super::test_support::{
-    fake_acp_fixture, has_message, pump_until, scratch_dir, BlockingSessionDirectory,
+    fake_acp_fixture, has_message, note, pump_until, scratch_dir, BlockingSessionDirectory,
 };
 use super::transcript::{with_test_idle_release_grace, MAX_IDLE_SESSIONS};
+use super::transcript_backlog_tests::{
+    make_transcript_unreadable, restore_registry_files, snapshot_registry_files,
+};
 use super::{SessionActivity, SessionServerEvent};
 use crate::adapters::web_session_acp::{with_test_acp_extra_args, with_test_acp_program};
 use crate::adapters::web_session_store;
@@ -209,6 +212,83 @@ fn idle_eviction_reclaims_finished_disconnected_sessions() {
             assert!(
                 has_message(&events, "user", "ping"),
                 "evicted session transcript reloads from disk on re-acquire"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn idle_session_with_unsaved_backlog_is_not_evicted_1558() {
+    let dir = scratch_dir("evict-unsaved-backlog-1558");
+    let handle_a = "web/evict-unsaved-backlog-1558-a";
+    let handle_trigger = "web/evict-unsaved-backlog-1558-trigger";
+    let pool: Vec<String> = (0..MAX_IDLE_SESSIONS)
+        .map(|i| format!("web/evict-unsaved-backlog-1558-idle-{i}"))
+        .collect();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let script = fake_acp_fixture();
+
+    with_test_idle_release_grace(Duration::ZERO, || {
+        with_test_acp_program(&script, || {
+            directory
+                .acquire(handle_a, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire a");
+            directory
+                .submit_prompt(handle_a, "ping".to_string())
+                .expect("prompt");
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, SessionServerEvent::TurnEnd { .. }))
+            });
+            let child_before = directory.child_id(handle_a).expect("child before");
+
+            for handle in &pool {
+                directory
+                    .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                    .expect("acquire idle");
+                directory.release(handle);
+            }
+
+            let saved = snapshot_registry_files(&dir);
+            make_transcript_unreadable(&dir);
+            directory.record(handle_a, note("backlog-a"));
+            directory.release(handle_a);
+            for handle in &pool {
+                directory.release(handle);
+            }
+            restore_registry_files(&dir, saved);
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle_a);
+            assert!(
+                !has_message(&stored.events, "agent", "backlog-a"),
+                "the backlog must still be unsaved when the idle cap runs: {:?}",
+                stored.events
+            );
+
+            directory
+                .acquire(handle_trigger, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire trigger");
+            assert_eq!(
+                directory.child_id(handle_a),
+                Some(child_before),
+                "idle cap must not evict a session whose transcript backlog is unsaved"
+            );
+
+            pump_until(&directory, handle_a, Duration::from_secs(5), |events| {
+                has_message(events, "agent", "backlog-a")
+            });
+            pump_until(&directory, handle_a, Duration::from_secs(5), |_| {
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| snapshot.evictable)
+            });
+            assert!(
+                directory
+                    .eviction_snapshot(handle_a)
+                    .is_some_and(|snapshot| snapshot.evictable),
+                "a session with a committed backlog must become evictable"
             );
         });
     });

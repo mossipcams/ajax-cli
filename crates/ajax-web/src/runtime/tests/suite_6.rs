@@ -119,3 +119,156 @@ fn issue_1232_terminal_input_acknowledgment_runs_without_the_shared_state_lock()
     );
     assert_eq!(state.shared().revision, revision + 1);
 }
+
+struct SwapRun {
+    status: StatusCode,
+    body: serde_json::Value,
+    state: super::WebAppState<super::OkRunner, TestBridge>,
+    persisted: Option<CommandContext<InMemoryRegistry>>,
+}
+
+fn run_cursor_to_claude_swap(tag: &str, claude_program: &std::path::Path) -> SwapRun {
+    use crate::adapters::web_session_acp::{with_test_acp_program, with_test_claude_sdk_module};
+    use ajax_core::models::AgentClient;
+    use std::sync::Arc;
+
+    let worktree = scratch_dir(&format!("{tag}-worktree"));
+    std::fs::create_dir_all(&worktree).unwrap();
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = AgentClient::Cursor;
+    task.worktree_path = worktree.clone();
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let cursor_program =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp.js");
+    let bridge = TestBridge::default();
+    let persisted_slot = Arc::clone(&bridge.persisted_snapshot);
+    let (state, cookie, app) = app_with(context, bridge, tag);
+    let directory = Arc::clone(&state.task_session_directory);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("test runtime");
+
+    let (status, body) = with_test_acp_program(&cursor_program, || {
+        rt.block_on(async {
+            directory
+                .acquire("web/fix-login", &worktree, "auto", AgentClient::Cursor)
+                .await
+                .expect("acquire");
+            assert!(directory.has_live_entry("web/fix-login"));
+        });
+        with_test_claude_sdk_module(claude_program, || {
+            rt.block_on(async {
+                let response = post_json(
+                    &app,
+                    &cookie,
+                    "/api/tasks/web%2Ffix-login",
+                    r#"{"agent":"claude"}"#,
+                )
+                .await;
+                let status = response.status();
+                (status, json_of(response).await)
+            })
+        })
+    });
+    let persisted = persisted_slot.lock().unwrap().clone();
+    SwapRun {
+        status,
+        body,
+        state,
+        persisted,
+    }
+}
+
+fn exit_immediately_program(tag: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_dir(tag);
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("claude-exit-before-handshake.mjs");
+    std::fs::write(&script, "#!/usr/bin/env node\nprocess.exit(1);\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[test]
+fn issue_1546_failed_swap_keeps_registry_on_old_harness() {
+    use ajax_core::models::AgentClient;
+
+    let failing = exit_immediately_program("issue-1546-failing-claude");
+    let run = run_cursor_to_claude_swap("issue-1546-failed-swap", &failing);
+
+    assert_eq!(run.status, StatusCode::CONFLICT);
+    assert_eq!(run.body["ok"], false);
+    assert_eq!(run.body["code"], "command_failed");
+    let error = run.body["error"].as_str().unwrap_or_default();
+    assert!(error.contains("claude"), "{error}");
+    assert_eq!(fix_login(&run.state).selected_agent, AgentClient::Cursor);
+    let saved = run.persisted.expect("registry snapshot must be persisted");
+    assert_eq!(
+        saved
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("task")
+            .selected_agent,
+        AgentClient::Cursor
+    );
+}
+
+#[test]
+fn issue_1546_successful_swap_moves_registry() {
+    use ajax_core::models::AgentClient;
+
+    let healthy = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/fake_claude_sdk.mjs");
+    let run = run_cursor_to_claude_swap("issue-1546-ok-swap", &healthy);
+
+    assert_eq!(run.status, StatusCode::OK);
+    assert_eq!(run.body["ok"], true);
+    assert_eq!(fix_login(&run.state).selected_agent, AgentClient::Claude);
+    let saved = run.persisted.expect("registry snapshot must be persisted");
+    assert_eq!(
+        saved
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("task")
+            .selected_agent,
+        AgentClient::Claude
+    );
+}
+
+#[tokio::test]
+async fn issue_1546_rollback_keeps_unrelated_task_changes() {
+    use ajax_core::models::{AgentClient, LifecycleStatus};
+
+    let mut task = crate::test_support::fix_login_task();
+    task.set_skip_interactive_agent(true);
+    task.selected_agent = AgentClient::Claude;
+    task.set_session_model(Some("sonnet"));
+    let context = crate::test_support::context_with_tasks(&["web"], vec![task]);
+    let (state, _cookie, _app) =
+        app_with(context, TestBridge::default(), "issue-1546-rollback-keeps");
+    state
+        .shared()
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("task")
+        .lifecycle_status = LifecycleStatus::Reviewable;
+
+    crate::runtime::task_routes::rollback_harness_swap(
+        state.clone(),
+        "web/fix-login".to_string(),
+        AgentClient::Claude,
+        (AgentClient::Cursor, None),
+    )
+    .await
+    .expect("rollback");
+
+    let task = fix_login(&state);
+    assert_eq!(task.selected_agent, AgentClient::Cursor);
+    assert_eq!(task.session_model(), None);
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+}

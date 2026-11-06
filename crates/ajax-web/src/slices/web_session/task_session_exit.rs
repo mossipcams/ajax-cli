@@ -61,14 +61,14 @@ pub(super) fn persist_ledger_update(
 }
 
 pub(super) fn has_healthy_client(state: &mut TaskSessionState) -> bool {
-    if !state.acp.acp_alive {
+    if !state.acp.agent.is_live() {
         return false;
     }
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return false;
     };
     if client.host_exited() {
-        state.acp.acp_alive = false;
+        state.acp.agent.mark_exited();
         false
     } else {
         true
@@ -110,7 +110,7 @@ pub(super) fn reconcile_unexpected_child_exit(
         return;
     }
     state.prompts.child_exit_reconciled = true;
-    state.acp.acp_alive = false;
+    state.acp.agent.mark_exited();
 
     if !state.prompts.suppress_exit_evidence && !host_exit_from_drain {
         let _ = state.append_to_log(vec![SessionServerEvent::Error {
@@ -380,7 +380,7 @@ pub(super) fn submit_prompt(
         .unwrap_or_else(prompt_content::default_prompt_capabilities);
     let payload = prompt_content::build_prompt_payload(&text, &content_blocks, &caps)
         .map_err(SessionError::protocol)?;
-    if state.acp.client.is_none() {
+    if state.acp.agent.client().is_none() {
         return Err(SessionError::protocol("session slot missing"));
     }
     if !client_message_id.is_empty() {
@@ -416,8 +416,8 @@ pub(super) fn submit_prompt(
     let in_flight = state.prompts.active_prompt.is_some()
         || state
             .acp
-            .client
-            .as_ref()
+            .agent
+            .client()
             .is_some_and(|client| client.prompt_in_flight());
     let user_event = user_prompt_event(&client_message_id, &payload.transcript_text, state);
     if in_flight {
@@ -477,7 +477,7 @@ pub(super) fn submit_prompt(
     } else {
         state.append_to_log(vec![user_event])?;
     }
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
     let request_id = match client.begin_prompt(&payload.blocks) {
@@ -511,8 +511,8 @@ fn persist_fresh_session_id(state: &mut TaskSessionState) {
     }
     let Some(session_id) = state
         .acp
-        .client
-        .as_ref()
+        .agent
+        .client()
         .map(|client| client.session_id().to_string())
     else {
         return;
@@ -557,7 +557,7 @@ pub(super) fn dispatch_queued_prompt(
         })?;
     }
     state.stream_normalizer.close_reply_lanes();
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
     match client.begin_prompt(&next.blocks) {
@@ -709,7 +709,7 @@ pub(super) fn cancel(state: &mut TaskSessionState, keep_queue: bool) -> Result<(
         persist_ledger_update(state, PromptLedger::remove_queued)?;
     }
     apply_cancel_to_queue(&mut state.prompts.queued, keep_queue);
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
     let cancelled = client.cancel().map_err(SessionError::protocol)?;
@@ -743,7 +743,7 @@ pub(super) fn try_dispatch_next_if_idle(state: &mut TaskSessionState) {
     if !has_healthy_client(state) {
         return;
     }
-    let Some(client) = state.acp.client.as_ref() else {
+    let Some(client) = state.acp.agent.client() else {
         return;
     };
     if client.prompt_in_flight() {

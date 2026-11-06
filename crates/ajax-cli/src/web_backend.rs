@@ -1,8 +1,8 @@
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::{CommandContext, CommandError},
-    models::OperatorAction,
-    registry::{InMemoryRegistry, Registry},
+    models::{OperatorAction, Task, TaskId},
+    registry::{InMemoryRegistry, Registry, SqliteRegistryStore},
     runtime_refresh::RefreshTier,
 };
 #[cfg(test)]
@@ -374,6 +374,30 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             .map_err(web_error_from_cli)
     }
 
+    fn record_task_activity(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        task_id: &TaskId,
+        previous: &Task,
+    ) -> Result<(), WebError> {
+        let Some(paths) = self.paths.as_ref() else {
+            return Ok(());
+        };
+        let task = context.registry.get_task(task_id).ok_or_else(|| {
+            WebError::CommandFailed(format!("activity task missing: {}", task_id.as_str()))
+        })?;
+        let revision = SqliteRegistryStore::new(&paths.state_file)
+            .record_activity(task, previous)
+            .map_err(|error| WebError::CommandFailed(format!("activity save failed: {error}")))?;
+        if revision == self.save_state.loaded_revision.saturating_add(1)
+            && copy_task_activity(&mut self.save_state.loaded_registry, task)
+        {
+            self.save_state.loaded_revision = revision;
+        }
+        self.last_loaded_mtime = state_file_mtime(paths);
+        Ok(())
+    }
+
     fn reload_registry_from_disk(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -468,6 +492,14 @@ impl CliRuntimeBridge {
             }
         }
     }
+}
+
+fn copy_task_activity(baseline: &mut InMemoryRegistry, task: &Task) -> bool {
+    let Some(saved) = baseline.get_task_mut(&task.id) else {
+        return false;
+    };
+    saved.copy_activity_from(task);
+    true
 }
 
 fn action_failure_from_operate(error: OperateError) -> ActionFailure {

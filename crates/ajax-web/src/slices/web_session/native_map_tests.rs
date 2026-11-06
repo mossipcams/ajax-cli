@@ -358,3 +358,11 @@ fn tool_call_update_without_raw_input_produces_only_text() {
         }]
     );
 }
+
+#[test]
+fn unknown_usage_resets_the_gauge() {
+    assert_eq!(
+        map_native_event(&NativeEvent::UsageUnknown),
+        vec![super::SessionServerEvent::UsageReset],
+    );
+}

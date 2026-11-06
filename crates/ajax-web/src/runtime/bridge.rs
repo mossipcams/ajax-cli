@@ -5,7 +5,7 @@ use ajax_core::{
     adapters::CommandRunner,
     agent_notification::{AgentNotification, AgentNotificationDeliveryStatus},
     commands::{CommandContext, CommandError},
-    models::{OperatorAction, Task},
+    models::{OperatorAction, Task, TaskId},
     registry::InMemoryRegistry,
     runtime_refresh::RefreshTier,
 };
@@ -93,6 +93,15 @@ pub trait RuntimeBridge<C: CommandRunner> {
         _context: &mut CommandContext<InMemoryRegistry>,
     ) -> Result<(), WebError> {
         Ok(())
+    }
+
+    fn record_task_activity(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        _task_id: &TaskId,
+        _previous: &Task,
+    ) -> Result<(), WebError> {
+        self.persist_registry_snapshot(context)
     }
 
     fn reload_registry_from_disk(

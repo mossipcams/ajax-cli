@@ -39,16 +39,16 @@ pub(super) async fn acquire(
         return Err(SessionError::operator(message));
     }
     state.worktree_path = Some(worktree_path.to_path_buf());
-    if state.acp.client.is_some() && state.agent != agent {
+    if state.acp.agent.client().is_some() && state.agent != agent {
         reset_harness_context(state, worktree_path, model, agent).await?;
         state.acquire_holder();
         return Ok(());
     }
     state.agent = agent;
 
-    if let Some(client) = state.acp.client.as_mut() {
+    if let Some(client) = state.acp.agent.client_mut() {
         let host_exited = client.host_exited();
-        if !slot_must_replace(state.acp.acp_alive, host_exited) {
+        if !slot_must_replace(state.acp.agent.is_live(), host_exited) {
             state.acquire_holder();
             return Ok(());
         }
@@ -91,12 +91,11 @@ pub(super) async fn acquire(
     reject_foreign_live_child(state)?;
     let (client, report) = spawn_acp(agent, worktree_path, model, resume_id).await?;
 
-    state.acp.client = Some(client);
+    state.acp.agent.install(client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
     state.acp.model = model.to_string();
@@ -104,14 +103,12 @@ pub(super) async fn acquire(
     apply_spawn_capabilities(state, &report);
     state.generation = 0;
     state.last_released = None;
-    state.acp.acp_alive = false;
     match adopt_stored_session(state, stored.events, stored.dropped) {
         Ok(()) => finish_first_acquire(state, &report, model),
         Err(error) => {
-            if let Some(client) = state.acp.client.take() {
+            if let Some(client) = state.acp.agent.take_client() {
                 discard_staged_client(client);
             }
-            state.acp.acp_alive = false;
             Err(error)
         }
     }
@@ -161,7 +158,7 @@ pub(super) async fn apply_config_option(
     config_id: &str,
     value: SessionConfigValue,
 ) -> Result<ApplyConfigOptionResult, SessionError> {
-    let Some(client) = state.acp.client.as_mut() else {
+    let Some(client) = state.acp.agent.client_mut() else {
         return Err(SessionError::protocol("session slot missing"));
     };
 
@@ -251,16 +248,16 @@ pub(super) async fn respawn(
     if let Err(message) = state.ownership.check() {
         return Err(SessionError::operator(message));
     }
-    if state.acp.client.is_none() {
+    if state.acp.agent.client().is_none() {
         return Err(SessionError::protocol("session slot missing"));
     }
     let host_exited = state
         .acp
-        .client
-        .as_mut()
+        .agent
+        .client_mut()
         .map(|client| client.host_exited())
         .unwrap_or(true);
-    if !force && !slot_must_replace(state.acp.acp_alive, host_exited) {
+    if !force && !slot_must_replace(state.acp.agent.is_live(), host_exited) {
         return Ok(state.generation);
     }
     let resume_id = replace_resume_id(
@@ -282,6 +279,64 @@ pub(super) async fn reset_harness_context(
     model: &str,
     agent: AgentClient,
 ) -> Result<u64, SessionError> {
+    reject_foreign_live_child(state)?;
+    let (new_client, report) = match spawn_acp(agent, worktree_path, model, None).await {
+        Ok(spawned) => spawned,
+        Err(error) => return Err(switch_spawn_failed(state, agent, error)),
+    };
+
+    if let Err(error) = retire_previous_client(state) {
+        discard_staged_client(new_client);
+        return Err(error);
+    }
+    if let Err(error) = commit_switched_client(state, &new_client, &report, model, agent) {
+        discard_staged_client(new_client);
+        return Err(error);
+    }
+
+    state.acp.agent.install(new_client);
+    if let Err(error) = state.record_child_identity() {
+        if let Some(client) = state.acp.agent.take_client() {
+            discard_staged_client(client);
+        }
+        return Err(error);
+    }
+    state.acp.model = model.to_string();
+    state.acp.applied_model = report.applied_model.clone();
+    apply_spawn_capabilities(state, &report);
+    state.agent = agent;
+    state.generation = state.generation.saturating_add(1);
+    state.acp.agent.mark_live();
+    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
+    state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
+    if let Some(error) = &report.model_apply_error {
+        let _ = state.append_to_log(vec![SessionServerEvent::Error {
+            message: error.clone(),
+        }]);
+    }
+    Ok(state.generation)
+}
+
+fn switch_spawn_failed(
+    state: &mut TaskSessionState,
+    agent: AgentClient,
+    error: SessionError,
+) -> SessionError {
+    let harness = agent_client_name(agent);
+    let message = format!("Switch to {harness} failed: could not start {harness}: {error}");
+    tracing::warn!(
+        handle = %state.qualified_handle,
+        harness,
+        error = %error,
+        "harness swap failed"
+    );
+    let _ = state.append_to_log(vec![SessionServerEvent::Error {
+        message: message.clone(),
+    }]);
+    SessionError::spawn(message)
+}
+
+fn retire_previous_client(state: &mut TaskSessionState) -> Result<(), SessionError> {
     state.evidence.transcript_durability_fault = None;
     state.commit_ledger_with_events(|ledger| ledger.remove_queued(), vec![])?;
     apply_cancel_to_queue(&mut state.prompts.queued, false);
@@ -291,56 +346,37 @@ pub(super) async fn reset_harness_context(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
-        agent_client_name(agent),
+        agent_client_name(state.agent),
     )
     .map_err(|error| {
         SessionError::persist(format!("stored session id could not be cleared: {error}"))
-    })?;
+    })
+}
 
-    reject_foreign_live_child(state)?;
-    let (new_client, report) = spawn_acp(agent, worktree_path, model, None).await?;
+fn commit_switched_client(
+    state: &mut TaskSessionState,
+    new_client: &SessionClient,
+    report: &SessionSpawnReport,
+    model: &str,
+    agent: AgentClient,
+) -> Result<(), SessionError> {
     let defer_session_id = agent == AgentClient::Claude;
 
-    if let Err(error) = web_session_store::try_save_meta(
+    web_session_store::try_save_meta(
         &state.storage.registry_store(),
         &state.storage.state_dir,
         &state.qualified_handle,
         agent_client_name(agent),
         (!defer_session_id).then(|| new_client.session_id()),
-        &meta_model_for_persist(&report, model),
-    ) {
-        discard_staged_client(new_client);
-        return Err(SessionError::persist(format!(
-            "new session id could not be saved: {error}"
-        )));
-    }
+        &meta_model_for_persist(report, model),
+    )
+    .map_err(|error| {
+        SessionError::persist(format!("new session id could not be saved: {error}"))
+    })?;
     state.acp.session_id_unsaved = defer_session_id;
 
     let note = harness_switch_note(state.stream_normalizer.fresh_item_id());
-    state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
-
-    state.acp.client = Some(new_client);
-    if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
-            discard_staged_client(client);
-        }
-        state.acp.acp_alive = false;
-        return Err(error);
-    }
-    state.acp.model = model.to_string();
-    state.acp.applied_model = report.applied_model.clone();
-    apply_spawn_capabilities(state, &report);
-    state.agent = agent;
-    state.generation = state.generation.saturating_add(1);
-    state.acp.acp_alive = true;
-    state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
-    state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
-    if let Some(error) = &report.model_apply_error {
-        let _ = state.append_to_log(vec![SessionServerEvent::Error {
-            message: error.clone(),
-        }]);
-    }
-    Ok(state.generation)
+    state.append_to_log(vec![note, SessionServerEvent::UsageReset])
 }
 
 pub(super) async fn clear_session_context(
@@ -390,18 +426,17 @@ pub(super) async fn clear_session_context(
     let note = context_cleared_note(state.stream_normalizer.fresh_item_id());
     state.append_to_log(vec![note, SessionServerEvent::UsageReset])?;
 
-    state.acp.client = Some(new_client);
+    state.acp.agent.install(new_client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
     state.acp.applied_model = report.applied_model.clone();
     apply_spawn_capabilities(state, &report);
     state.generation = state.generation.saturating_add(1);
-    state.acp.acp_alive = true;
+    state.acp.agent.mark_live();
     state.stream_normalizer = super::normalize::StreamNormalizer::seeded_from(&state.log.events);
     state.acp.usage_deduper = super::acp_usage::UsageDeduper::default();
     if let Some(error) = &report.model_apply_error {
@@ -456,7 +491,7 @@ fn release_child(
         if !awaiting_cancel_terminal {
             interrupt_active_prompt(state)?;
         }
-        let Some(client) = state.acp.client.as_mut() else {
+        let Some(client) = state.acp.agent.client_mut() else {
             return Ok(());
         };
         if !client.host_exited() {
@@ -494,7 +529,7 @@ fn release_child(
                 }
             }
         }
-        let Some(mut client) = state.acp.client.take() else {
+        let Some(mut client) = state.acp.agent.take_client() else {
             return Ok(());
         };
         let message = if close_session {
@@ -510,7 +545,6 @@ fn release_child(
     state.prompts.suppress_exit_evidence = false;
     if result.is_ok() {
         state.prompts.child_exit_reconciled = true;
-        state.acp.acp_alive = false;
     }
     result
 }

@@ -339,6 +339,7 @@ function startPump(query) {
       log(`message pump failed: ${error?.stack ?? error}`);
       if (!state.shuttingDown) reportLostTurn(`Claude SDK message stream failed: ${error?.message ?? String(error)}`);
     }
+    if (!state.shuttingDown) void shutdown();
   })();
 }
 

@@ -62,6 +62,10 @@ impl BlockingSessionDirectory {
         self.rt.block_on(self.inner.detach_session(handle));
     }
 
+    pub fn flush_all(&self) {
+        self.rt.block_on(self.inner.flush_all());
+    }
+
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
         self.rt.handle().clone()
     }

@@ -19,11 +19,36 @@ fn sidecar_and_fake_sdk() -> (PathBuf, PathBuf) {
 }
 
 fn spawn_client(model: Option<&str>, resume: Option<&str>) -> ClaudeSdkClient {
-    let (sidecar, fake_sdk) = sidecar_and_fake_sdk();
+    let (_, fake_sdk) = sidecar_and_fake_sdk();
+    spawn_client_with_sdk(&fake_sdk, model, resume)
+}
+
+fn spawn_client_with_context_usage(label: &str, usage: &str) -> ClaudeSdkClient {
+    let (_, fake_sdk) = sidecar_and_fake_sdk();
+    let wrapper = std::env::temp_dir().join(format!(
+        "ajax-claude-usage-{label}-{}.mjs",
+        std::process::id()
+    ));
+    let wrapped = format!(
+        "import * as fake from {};\nexport const query = (args) => {{\n  const q = fake.query(args);\n  q.getContextUsage = async () => {usage};\n  return q;\n}};\nexport const getSessionInfo = fake.getSessionInfo;\n",
+        serde_json::to_string(&fake_sdk.to_string_lossy()).unwrap(),
+    );
+    std::fs::write(&wrapper, wrapped).expect("write wrapped sdk module");
+    let client = spawn_client_with_sdk(&wrapper, None, None);
+    let _ = std::fs::remove_file(&wrapper);
+    client
+}
+
+fn spawn_client_with_sdk(
+    sdk_module: &Path,
+    model: Option<&str>,
+    resume: Option<&str>,
+) -> ClaudeSdkClient {
+    let (sidecar, _) = sidecar_and_fake_sdk();
     let args = vec![
         sidecar.to_string_lossy().into_owned(),
         "--sdk-module".to_string(),
-        fake_sdk.to_string_lossy().into_owned(),
+        sdk_module.to_string_lossy().into_owned(),
     ];
     ClaudeSdkClient::spawn(
         Path::new("node"),
@@ -236,6 +261,42 @@ fn finished_turn_emits_context_usage_from_sidecar_1334() {
         .rposition(|event| matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. })))
         .expect("RequestFinished must arrive");
     assert!(usage_index < finish_index);
+}
+
+#[test]
+fn failed_or_empty_context_usage_query_emits_usage_unknown() {
+    for (label, usage) in [
+        (
+            "throws",
+            "(() => { throw new Error(\"usage unavailable\"); })()",
+        ),
+        ("zero", "({ totalTokens: 0, maxTokens: 0 })"),
+        ("missing", "({})"),
+    ] {
+        let client = spawn_client_with_context_usage(label, usage);
+        client
+            .core()
+            .begin_prompt(&text_blocks("hello"))
+            .expect("begin_prompt");
+
+        let events = collect_until_finished(&client);
+
+        assert!(
+            events.iter().all(|event| usage_update(event).is_none()),
+            "{label}: no Usage event may arrive: {events:?}"
+        );
+        let unknown_index = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::Native(NativeEvent::UsageUnknown)))
+            .unwrap_or_else(|| panic!("{label}: a UsageUnknown must arrive: {events:?}"));
+        let finish_index = events
+            .iter()
+            .rposition(|event| {
+                matches!(event, AgentEvent::Native(NativeEvent::TurnFinished { .. }))
+            })
+            .expect("RequestFinished must arrive");
+        assert!(unknown_index < finish_index, "{label}: usage before finish");
+    }
 }
 
 #[test]

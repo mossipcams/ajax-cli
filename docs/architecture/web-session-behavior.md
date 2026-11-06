@@ -229,22 +229,35 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   persists pipe-form `session_model` from the confirmed descriptors. A refused
   pick does not persist. A persistence failure keeps the live change and reports
   that restart may restore the prior pin. Cross-harness
-  Switch resets backend context on the same public Ajax session: cancel any
-  in-flight turn, discard the host queue, shut down the old ACP child, clear the
-  stored resume id, spawn the new harness with `session/new` (no resume/load, no
-  transcript replay), append a host note (`Client switched harness. Context
-  reset.`), and keep the TaskSession slot, stored transcript, and WebSocket
-  identity. With no live slot, discard the queue from the persisted ledger and
-  clear the stored resume id (failing closed if the ledger cannot be persisted) so the
-  next attach uses empty context. Switch sends only `{ agent }`; a model field is
-  refused. Persist `None` for Auto/unspecified; never store the literal string
-  `auto` as a harness model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
+  Switch resets backend context on the same public Ajax session. It spawns the
+  new harness first, with `session/new` (no resume/load, no transcript replay).
+  Only after that start succeeds does it cancel any in-flight turn, discard the
+  host queue, shut down the old ACP child, clear the stored resume id, save the
+  new one, append a host note (`Client switched harness. Context reset.`), and
+  keep the TaskSession slot, stored transcript, and WebSocket identity. If the
+  new harness fails to start, the old harness, its in-flight turn, queue, and
+  resume id are untouched. One `error` event, `Switch to <harness> failed: ...`,
+  is appended to the transcript, the server logs `harness swap failed`, and the
+  route returns 409 with the task's registry harness and session model rolled
+  back, only if the task still names the target harness. With no live slot,
+  discard the queue from the persisted ledger and clear the stored resume id
+  (failing closed if the ledger cannot be persisted) so the next attach uses
+  empty context. Switch sends only `{ agent }`; a model field is refused. Persist
+  `None` for Auto/unspecified; never store the literal string `auto` as a harness
+  model id ([#952](https://github.com/mossipcams/ajax-cli/issues/952)).
 - **Live config-option apply (MVP).** Connected pickers send WebSocket
   `set_config_option` `{ configId, value }` with the exact advertised pair. The
   command loop validates that the id and value are advertised, calls ACP once,
   replaces the complete `configOptions` list from the successful response, publishes
   the replacement snapshot, and persists pipe-form `session_model` only after ACP
   success. Refusal leaves confirmed browser state unchanged and does not persist.
+  An in-session change the harness acknowledges but does not apply (the option
+  still needs sending after the apply rounds) is reported as `session model X was
+  refused — harness is running Y` (or `session model X could not be verified —
+  harness did not report an applied model`, or `config option <id> was not applied
+  by the harness`), like any refusal: Error event, picker reverts, persisted model
+  unchanged ([#1547](https://github.com/mossipcams/ajax-cli/issues/1547)). Claude
+  SDK and Pi still self-report the applied model.
   Post-apply persistence failure keeps the live change and emits a warning.
 - Moving a task to another harness is refused unless it was launched over ACP.
   Cross-harness Switch discards the queue on both paths: it resets backend
@@ -276,8 +289,18 @@ The per-task host has one `handle_command` dispatcher and one periodic `pump`.
 prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
 fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
 Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
-bounded without sleeping on the session loop; a failed report is exposed on a
-snapshot as `transcriptError`. `transcriptError` is also set for transcript
+bounded without sleeping on the session loop; a failed report is retried with
+backoff (50 ms doubling to 60 s, cleared on success), and identical repeated
+failures do not resend the error snapshot. Non-lifecycle activity reports
+persist per task, so another task's registry conflict cannot block them
+([#1555](https://github.com/mossipcams/ajax-cli/issues/1555)). The per-task
+write is a compare-and-swap: `record_activity` checks the task's activity rows on
+disk (agent status, last activity, live status, side flags, agent attempts)
+against the copy the web last saw, and writes nothing when they differ. The
+report then falls back to a reload plus a whole-registry save, so another
+writer's flags and attempts are never deleted. A session exit makes one final
+attempt at a pending report even inside its retry backoff. A failed report
+is exposed on a snapshot as `transcriptError`. `transcriptError` is also set for transcript
 corruption (stored rows that could not be read back). Every source is shown to
 the operator, but only the transcript durability fault sets `promptsBlocked`,
 so only that fault blocks Send, Attach, and Mic. The browser keeps Send enabled
@@ -458,6 +481,13 @@ append the same authentication error repeatedly.
   no eager restart. Queued ledger rows stay queued and do not dispatch while the child
   is dead. A withdrawal or edit of an already-queued prompt after child exit is applied
   without reviving the child; only a submit that adds a new prompt revives.
+- Queued ledger rows survive unexpected child exit; the host dispatches them only
+  after a healthy replacement client is installed and any interrupted active row
+  is durable.
+- The Claude SDK sidecar exits after reporting a lost turn when its message pump ends
+  or fails ([#1556](https://github.com/mossipcams/ajax-cli/issues/1556)), so pump death
+  surfaces as a child exit and the slot moves to `Exited`. After the sidecar exits, the
+  next prompt, attach or model change revives the agent with its stored session.
 - The child is revived on demand through the dead-slot path, which resumes the stored
   session id. The revival triggers are: a new attach, a submitted prompt that adds a
   new prompt, and a model or config change on the dead child (the change respawns it
@@ -482,7 +512,8 @@ append the same authentication error repeatedly.
   `<clientMessageId>-restart` id through the normal FIFO, so it runs after prompts
   already queued. With no attached holder, or when stored content blocks cannot be
   decoded, nothing is resubmitted. The host appends `Agent restarted.` as a note, and
-  also `Re-sent your last prompt.` when a prompt was resubmitted. This is the only
+  also `Re-sent your last prompt.` when a prompt was resubmitted. The cockpit shows
+  progress while the restart runs and reports whether the prompt was resubmitted. This is the only
   resubmission path; every other interruption keeps the never-resent rule above.
 - Activity after a successful replacement: the host reports `TurnStarted` when a
   prompt was resubmitted or is active after the restart. Otherwise, if the last
@@ -494,6 +525,10 @@ append the same authentication error repeatedly.
   the WebSocket `restart` message. Core no longer offers `restart-agent`.
   **Fresh session** in task details is always available in chat
   mode, needs a second tap, and takes the same path as the built-in `/clear`.
+- The per-task host holds the harness client in an `AgentSlot` (`agent_slot.rs`):
+  `Absent` (never spawned or released), `Spawning` (staged client not yet confirmed),
+  `Live`, and `Exited` (host gone; the dead client stays until replaced).
+  `slot_must_replace` replaces any slot that is not `Live` or whose host has exited.
 
 ## Shutdown and slot retention
 
@@ -525,6 +560,16 @@ append the same authentication error repeatedly.
   (oldest released first) and the idle cap can reclaim it. Reattach clears the
   release marker; in-flight turns, queued prompts, held slots, and non-restore
   harnesses are never evicted regardless of grace.
+- Idle eviction never evicts a session whose transcript backlog is unsaved or
+  that has a transcript durability fault
+  ([#1558](https://github.com/mossipcams/ajax-cli/issues/1558)).
+- On SIGTERM or Ctrl-C the web server flushes each session's transcript backlog
+  and pending activity report, waiting at most 5 s (`runtime/shutdown.rs`,
+  `TaskSessionDirectory::flush_all`), then exits the process without touching
+  harnesses. Shims and in-flight turns survive for adoption (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)). It
+  does not wait for open WebSockets.
+  A second Ctrl-C or SIGTERM during the flush exits immediately.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads stored transcripts and cursors from the registry database. A
@@ -824,6 +869,14 @@ maxTokens, 2 second cap) after each finished prompt, mirroring Pi; the result
 message's usage is not used because it sums every API call in the turn
 ([#1334](https://github.com/mossipcams/ajax-cli/issues/1334)). Zero values are skipped
 so a cancelled turn does not reset the meter.
+When Claude's post-turn `get_context_usage` query fails, times out, or returns zero
+or missing totals, the host emits `usage_reset` instead of keeping the previous
+value, so the gauge shows unknown rather than stale
+([#1549](https://github.com/mossipcams/ajax-cli/issues/1549)). A successful model
+change appends `usage_reset` for every harness, so the gauge clears until the next
+turn reports usage; the previous model's window is never shown
+([#1548](https://github.com/mossipcams/ajax-cli/issues/1548)). A refused model change
+appends nothing.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
   `turn_usage` wire event. Cursor's sidecar reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /

@@ -37,8 +37,10 @@ use crate::adapters::http::{
 mod bridge;
 mod headless;
 mod operation_outcomes;
+mod shutdown;
 mod state;
 mod state_query;
+mod task_activity_write;
 mod task_routes;
 use task_routes::{
     axum_action, axum_cockpit, axum_presence, axum_start_task, axum_task_get, axum_task_post,
@@ -172,7 +174,8 @@ where
 
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
-    runtime.block_on(async move {
+    let result = runtime.block_on(async move {
+        let mut terminate = shutdown::terminate_signal();
         spawn_background_loops(&state);
         headless::spawn_startup_dispatch(&state);
         let tls_config = tls::tls_server_config(&identity)?;
@@ -186,10 +189,18 @@ where
             accepted_tls_tx,
             accepted_tls_rx,
         };
-        axum::serve(tls_listener, axum_app(state))
-            .await
-            .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
-    })
+        let directory = Arc::clone(&state.task_session_directory);
+        tokio::select! {
+            served = std::future::IntoFuture::into_future(axum::serve(tls_listener, axum_app(state))) => {
+                served.map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
+            }
+            () = shutdown::stop_and_flush(&mut terminate, &directory) => {
+                std::process::exit(0);
+            }
+        }
+    });
+    runtime.shutdown_timeout(Duration::from_secs(1));
+    result
 }
 
 fn spawn_background_loops<C, B>(state: &WebAppState<C, B>)

@@ -43,10 +43,9 @@ pub(super) fn discard_staged_client(mut client: SessionClient) {
 }
 
 fn discard_unsaved_client(state: &mut TaskSessionState) {
-    if let Some(client) = state.acp.client.take() {
+    if let Some(client) = state.acp.agent.take_client() {
         discard_staged_client(client);
     }
-    state.acp.acp_alive = false;
 }
 
 pub(super) fn finalize_client_metadata(
@@ -82,7 +81,7 @@ pub(super) fn finalize_client_metadata(
     if bump_generation {
         state.generation = state.generation.saturating_add(1);
     }
-    state.acp.acp_alive = true;
+    state.acp.agent.mark_live();
     state.prompts.child_exit_reconciled = false;
     Ok(())
 }
@@ -93,21 +92,19 @@ pub(super) fn install_replaced_client(
     report: &SessionSpawnReport,
     model: &str,
 ) -> Result<(), SessionError> {
-    state.acp.client = Some(new_client);
+    state.acp.agent.install(new_client);
     if let Err(error) = state.record_child_identity() {
-        if let Some(client) = state.acp.client.take() {
+        if let Some(client) = state.acp.agent.take_client() {
             discard_staged_client(client);
         }
-        state.acp.acp_alive = false;
         return Err(error);
     }
-    state.acp.acp_alive = false;
     match recover_prompt_ledger(state) {
         Ok(()) => {
             let session_id = state
                 .acp
-                .client
-                .as_ref()
+                .agent
+                .client()
                 .expect("staged replacement client")
                 .session_id()
                 .to_string();
@@ -119,10 +116,9 @@ pub(super) fn install_replaced_client(
             Ok(())
         }
         Err(error) => {
-            if let Some(client) = state.acp.client.take() {
+            if let Some(client) = state.acp.agent.take_client() {
                 discard_staged_client(client);
             }
-            state.acp.acp_alive = false;
             Err(error)
         }
     }
@@ -135,8 +131,8 @@ pub(super) fn finish_first_acquire(
 ) -> Result<(), SessionError> {
     let session_id = state
         .acp
-        .client
-        .as_ref()
+        .agent
+        .client()
         .expect("acquired client")
         .session_id()
         .to_string();
