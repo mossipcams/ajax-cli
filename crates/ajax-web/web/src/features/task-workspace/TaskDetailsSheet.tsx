@@ -4,7 +4,6 @@ import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { Button } from "@/shared/ui/button";
-import { beginInteraction, endTapToFeedback } from "@/shared/lib/telemetry";
 import {
   ActionBar,
   HarnessSwap,
@@ -12,13 +11,6 @@ import {
   visibleTaskActions,
 } from "@/features/task/public";
 import { taskOffersOrchestrationChat } from "./taskWorkspaceRouting";
-
-const RESTART_ACTION: WebAction = {
-  action: "restart-agent",
-  label: "Restart agent",
-  destructive: false,
-  confirmation_required: true,
-};
 
 export interface TaskDetailsSheetProps {
   open: boolean;
@@ -28,7 +20,6 @@ export interface TaskDetailsSheetProps {
   detail: BrowserTaskDetail;
   orchestrationChat?: boolean;
   harnessSwapDisabled?: boolean;
-  sessionBusy?: boolean;
   onOpenDiff?: () => void;
   onOpenTerminal?: () => void;
   onOpenChat?: () => void;
@@ -47,6 +38,7 @@ export interface TaskDetailsSheetProps {
   onMutated?: () => void;
   onDismiss?: () => void;
   onClearSession?: () => boolean;
+  onRestartAgent?: () => boolean;
   pendingConfirmAction?: string | null;
   onCancelPendingConfirm?: () => void;
 }
@@ -59,7 +51,6 @@ export default function TaskDetailsSheet({
   detail,
   orchestrationChat = false,
   harnessSwapDisabled = false,
-  sessionBusy = false,
   onOpenDiff,
   onOpenTerminal,
   onOpenChat,
@@ -69,24 +60,25 @@ export default function TaskDetailsSheet({
   onMutated,
   onDismiss,
   onClearSession,
+  onRestartAgent,
   pendingConfirmAction = null,
   onCancelPendingConfirm,
 }: TaskDetailsSheetProps) {
   const [freshSessionArmed, setFreshSessionArmed] = useState(false);
+  const [restartAgentArmed, setRestartAgentArmed] = useState(false);
   const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
 
   useEffect(() => {
-    if (!open) setFreshSessionArmed(false);
+    if (!open) {
+      setFreshSessionArmed(false);
+      setRestartAgentArmed(false);
+    }
   }, [open]);
 
   if (!open) return null;
 
   const handle = detail.qualified_handle;
-  const actions = visibleTaskActions(detail.actions).filter(
-    (action) => action.action !== RESTART_ACTION.action,
-  );
-  const showRestartAgent =
-    sessionBusy || detail.actions.some((action) => action.action === RESTART_ACTION.action);
+  const actions = visibleTaskActions(detail.actions);
   const showAjaxChat =
     mode === "terminal" &&
     orchestrationChat &&
@@ -112,16 +104,17 @@ export default function TaskDetailsSheet({
     onMutated?.();
   }
 
-  function requestRestart() {
-    if (pendingConfirmAction !== null) {
-      if (pendingConfirmAction !== RESTART_ACTION.action) onCancelPendingConfirm?.();
+  function requestRestartAgent() {
+    if (!restartAgentArmed) {
+      setRestartAgentArmed(true);
       return;
     }
-    const interactionId = beginInteraction(RESTART_ACTION.action);
-    endTapToFeedback(interactionId, "confirm");
-    onResult?.(`Confirm ${RESTART_ACTION.label} for ${handle}?`, null, false, {
-      pendingConfirm: { action: RESTART_ACTION, handle, interactionId },
-    });
+    setRestartAgentArmed(false);
+    const sent = onRestartAgent?.() ?? false;
+    if (!sent) {
+      onResult?.("Not connected. Try again once the session reconnects.", null, true);
+    }
+    close();
   }
 
   return (
@@ -183,16 +176,14 @@ export default function TaskDetailsSheet({
                       Show diff
                     </Button>
                   ) : null}
-                  {showRestartAgent ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      data-testid="session-restart-agent"
-                      onClick={requestRestart}
-                    >
-                      Restart agent
-                    </Button>
-                  ) : null}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    data-testid="session-restart-agent"
+                    onClick={requestRestartAgent}
+                  >
+                    {restartAgentArmed ? "Confirm restart agent" : "Restart agent"}
+                  </Button>
                   <Button
                     type="button"
                     variant="secondary"

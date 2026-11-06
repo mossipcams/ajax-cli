@@ -172,6 +172,10 @@ differ, chat is the default path and terminal-agent is the special case.
   registry snapshot write for chat activity, the deferred activity queue, and
   the 1 s client convergence remain until Matt signs off on the test contracts
   that pin them.
+- Chat activity persists per task as a compare-and-swap. `record_activity`
+  refuses to write when the task's activity rows on disk differ from what the
+  web last saw, and the report then reloads and saves the whole registry. See
+  [web-session-behavior.md](docs/architecture/web-session-behavior.md).
 - Chat verbs are remediation IDs, not `OperatorAction`s (Phase 4). Create PR is
   a chat prompt through the chat queue and is offered only when the task has no
   open PR, has uncommitted or unpushed work, and the agent is not running. Create

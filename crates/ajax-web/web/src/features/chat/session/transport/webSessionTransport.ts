@@ -227,6 +227,9 @@ export function connectWebSessionTransport(
     startFresh() {
       sendJson({ type: "start_fresh" });
     },
+    restartAgent() {
+      sendJson({ type: "restart" });
+    },
     setModel(nextModel) {
       const trimmed = nextModel.trim() || "auto";
       sendJson({ type: "set_config_option", configId: "model", value: trimmed });

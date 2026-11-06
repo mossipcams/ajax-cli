@@ -56,8 +56,10 @@ pub(super) struct TestBridge {
     refresh_release: Option<Arc<(Mutex<bool>, Condvar)>>,
     acknowledge_calls: Arc<AtomicUsize>,
     acknowledge_result: Result<bool, crate::WebError>,
-    disk_context: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
-    reload_calls: Arc<AtomicUsize>,
+    pub(super) disk_context: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
+    pub(super) reload_calls: Arc<AtomicUsize>,
+    pub(super) reload_fails: bool,
+    pub(super) record_activity_failures: usize,
     clear_registry_on_operate: bool,
     persist_result: Result<(), crate::WebError>,
     persisted_snapshot: Arc<Mutex<Option<CommandContext<InMemoryRegistry>>>>,
@@ -106,6 +108,8 @@ impl Default for TestBridge {
             acknowledge_result: Ok(false),
             disk_context: Arc::new(Mutex::new(None)),
             reload_calls: Arc::new(AtomicUsize::new(0)),
+            reload_fails: false,
+            record_activity_failures: 0,
             clear_registry_on_operate: false,
             persist_result: Ok(()),
             persisted_snapshot: Arc::new(Mutex::new(None)),
@@ -291,6 +295,11 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         context: &mut CommandContext<InMemoryRegistry>,
     ) -> Result<bool, crate::WebError> {
         self.reload_calls.fetch_add(1, Ordering::SeqCst);
+        if self.reload_fails {
+            return Err(crate::WebError::CommandFailed(
+                "disk reload failed".to_string(),
+            ));
+        }
         if let Ok(disk) = self.disk_context.lock() {
             if let Some(snapshot) = disk.as_ref() {
                 *context = snapshot.clone();
@@ -310,6 +319,22 @@ impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
             probe();
         }
         self.acknowledge_result.clone()
+    }
+
+    fn record_task_activity(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        task_id: &ajax_core::models::TaskId,
+        _previous: &ajax_core::models::Task,
+    ) -> Result<(), crate::WebError> {
+        if self.record_activity_failures > 0 {
+            self.record_activity_failures -= 1;
+            return Err(crate::WebError::CommandFailed(format!(
+                "registry task activity changed on disk: {}",
+                task_id.as_str()
+            )));
+        }
+        <Self as RuntimeBridge<R>>::persist_registry_snapshot(self, context)
     }
 
     fn persist_registry_snapshot(

@@ -383,11 +383,6 @@ pub(super) fn submit_prompt(
     if state.acp.agent.client().is_none() {
         return Err(SessionError::protocol("session slot missing"));
     }
-    if !state.acp.agent.is_live() {
-        return Err(SessionError::protocol(
-            "ACP process exited — reconnect to send prompts",
-        ));
-    }
     if !client_message_id.is_empty() {
         if let Some(entry) = state.prompts.prompt_ledger.entry(&client_message_id) {
             match entry.phase {

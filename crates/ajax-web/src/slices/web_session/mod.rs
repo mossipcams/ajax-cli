@@ -64,7 +64,6 @@ pub use session_storage::SessionStorage;
 pub(crate) use task_session_adopt::adoptable_handles;
 pub(crate) use task_session_directory::TaskSessionDirectory;
 pub(crate) use task_session_directory::{apply_client_message, ApplyClientMessageOutcome};
-pub(crate) use task_session_restart::{restart_session, RestartError};
 pub(crate) use ws_bridge::bridge_task_session_socket;
 
 use ajax_core::{adapters::acp_launch_for_agent, models::AgentClient};
@@ -116,6 +115,8 @@ pub enum SessionClientMessage {
     },
     #[serde(rename = "clear")]
     Clear,
+    #[serde(rename = "restart")]
+    Restart,
     #[serde(rename = "retry_restore")]
     RetryRestore,
     #[serde(rename = "start_fresh")]

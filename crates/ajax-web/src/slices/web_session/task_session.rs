@@ -90,6 +90,10 @@ pub(crate) enum TaskSessionCommand {
         take_holder: bool,
         reply: oneshot::Sender<Result<u64, SessionError>>,
     },
+    Restart {
+        worktree_path: PathBuf,
+        reply: oneshot::Sender<Result<bool, SessionError>>,
+    },
     AttachSnapshot {
         model: String,
         client_cursor: Option<usize>,
@@ -523,7 +527,7 @@ pub(crate) fn spawn_task_session(
         }
         state
             .evidence
-            .retry_pending_activity_report(&state.qualified_handle, std::time::Instant::now());
+            .flush_pending_activity_report(&state.qualified_handle);
         state.flush_unpersisted_backlog();
         if close_on_exit {
             state.prompts.queued.clear();
@@ -648,6 +652,13 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
         } => {
             let result =
                 task_session_spawn::clear_session_context(state, &worktree_path, take_holder).await;
+            let _ = reply.send(result);
+        }
+        TaskSessionCommand::Restart {
+            worktree_path,
+            reply,
+        } => {
+            let result = super::task_session_restart::restart_child(state, &worktree_path).await;
             let _ = reply.send(result);
         }
         TaskSessionCommand::AttachSnapshot {
