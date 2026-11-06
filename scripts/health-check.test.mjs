@@ -30,6 +30,7 @@ test("health-check counts signatures inside the window and sets the exit code", 
     assert.match(found.stdout, /^activity_report_retry 1$/m);
     assert.match(found.stdout, /^agent_stop_timeout 0$/m);
     assert.match(found.stdout, /^transcript 0$/m);
+    assert.match(found.stdout, /^harness_swap 0$/m);
 
     const empty = spawnSync(process.execPath, [script, "0.001"], { env, encoding: "utf8" });
     assert.equal(empty.status, 0);

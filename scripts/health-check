@@ -7,6 +7,7 @@ const { createInterface } = require("node:readline");
 const SIGNATURES = [
   { name: "activity_report_retry", patterns: ["session activity report failed"] },
   { name: "agent_stop_timeout", patterns: ["session/close timed out"] },
+  { name: "harness_swap", patterns: ["harness swap failed"] },
   {
     name: "transcript",
     patterns: [
