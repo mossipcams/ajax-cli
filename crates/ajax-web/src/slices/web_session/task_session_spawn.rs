@@ -460,6 +460,17 @@ fn release_live_client(
     close_session: bool,
     reason: &'static str,
 ) -> Result<(), SessionError> {
+    let queued = std::mem::take(&mut state.prompts.queued);
+    let result = release_child(state, close_session, reason);
+    state.prompts.queued = queued;
+    result
+}
+
+fn release_child(
+    state: &mut TaskSessionState,
+    close_session: bool,
+    reason: &'static str,
+) -> Result<(), SessionError> {
     if state.prompts.active_prompt.is_some() {
         tracing::warn!(
             handle = %state.qualified_handle,
@@ -489,21 +500,27 @@ fn release_live_client(
             return Ok(());
         };
         if !client.host_exited() {
-            let cancelled = client.cancel().map_err(SessionError::protocol)?;
-            let mut resolved = Vec::new();
-            for request_id in cancelled.permissions {
-                resolved.push(SessionServerEvent::PermissionResolved {
-                    request_id,
-                    approved: false,
-                });
+            match client.cancel() {
+                Ok(cancelled) => {
+                    let mut resolved = Vec::new();
+                    for request_id in cancelled.permissions {
+                        resolved.push(SessionServerEvent::PermissionResolved {
+                            request_id,
+                            approved: false,
+                        });
+                    }
+                    for request_id in cancelled.elicitations {
+                        resolved.push(SessionServerEvent::ElicitationResolved {
+                            request_id,
+                            action: "cancel".to_string(),
+                        });
+                    }
+                    let _ = state.append_to_log(resolved);
+                }
+                Err(message) => {
+                    let _ = state.append_to_log(vec![SessionServerEvent::Error { message }]);
+                }
             }
-            for request_id in cancelled.elicitations {
-                resolved.push(SessionServerEvent::ElicitationResolved {
-                    request_id,
-                    action: "cancel".to_string(),
-                });
-            }
-            let _ = state.append_to_log(resolved);
         }
         if awaiting_cancel_terminal {
             state.pump();

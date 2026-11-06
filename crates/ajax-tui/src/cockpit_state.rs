@@ -868,7 +868,7 @@ mod tests {
     use ajax_core::{
         models::{LifecycleStatus, OperatorAction, TaskId},
         output::{InboxResponse, ReposResponse, TaskCard},
-        remediation::{RemediationOption, CREATE_PR, FIX_CI, MERGE_PR, RESTART_AGENT},
+        remediation::{RemediationOption, CREATE_PR, FIX_CI, MERGE_PR},
         ui_state::{AttentionBand, TaskStatus},
     };
 
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn drawer_hides_web_only_chat_verb_remediations() {
-        let card = chat_card_with_remediations(&[CREATE_PR, MERGE_PR, RESTART_AGENT, FIX_CI]);
+        let card = chat_card_with_remediations(&[CREATE_PR, MERGE_PR, FIX_CI]);
         let selectables = build_selectables(
             &AppView::Projects,
             &ReposResponse { repos: Vec::new() },

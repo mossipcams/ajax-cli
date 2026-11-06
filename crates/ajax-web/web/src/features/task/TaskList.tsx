@@ -89,8 +89,7 @@ const TaskRow = memo(function TaskRow({
     (action) =>
       !action.destructive &&
         action.action !== "create-pr" &&
-        action.action !== "merge-pr" &&
-        action.action !== "restart-agent",
+        action.action !== "merge-pr",
   );
   const revealAction = visibleActions.find((action) => action.action === "drop");
   const [dragging, setDragging] = useState(false);
