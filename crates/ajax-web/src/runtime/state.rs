@@ -387,7 +387,7 @@ where
         C: Send + 'static,
         B: Send + 'static,
     {
-        if self.record_task_activity_in_place(handle, activity)? {
+        if !reload && self.record_task_activity_in_place(handle, activity)? {
             return Ok(());
         }
         let (mut context, runner, mut bridge, base_revision) = {

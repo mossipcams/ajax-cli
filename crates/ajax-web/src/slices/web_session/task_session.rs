@@ -523,7 +523,7 @@ pub(crate) fn spawn_task_session(
         }
         state
             .evidence
-            .retry_pending_activity_report(&state.qualified_handle, std::time::Instant::now());
+            .flush_pending_activity_report(&state.qualified_handle);
         state.flush_unpersisted_backlog();
         if close_on_exit {
             state.prompts.queued.clear();
