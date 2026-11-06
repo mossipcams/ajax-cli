@@ -374,7 +374,7 @@ describe("ActionBar", () => {
   });
 
   it("styles chat verbs as remediation buttons", () => {
-    const verbs: WebAction[] = ["create-pr", "merge-pr", "restart-agent"].map((action) => ({
+    const verbs: WebAction[] = ["create-pr", "merge-pr"].map((action) => ({
       action,
       label: action,
       destructive: false,

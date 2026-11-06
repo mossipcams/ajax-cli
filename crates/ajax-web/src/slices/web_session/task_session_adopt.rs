@@ -14,7 +14,9 @@ use super::prompt_queue::ActivePrompt;
 use super::shim_adoption::{adoptable, Adoptable};
 use super::startup_recovery::interrupted_by_restart_events;
 use super::task_session::{agent_client_name, TaskSessionState};
-use super::task_session_exit::{restore_queued_prompts, submit_prompt, try_dispatch_next_if_idle};
+use super::task_session_exit::{
+    has_healthy_client, restore_queued_prompts, submit_prompt, try_dispatch_next_if_idle,
+};
 use super::task_session_spawn;
 use super::transcript::TranscriptLog;
 use super::{SessionError, SessionServerEvent};
@@ -240,24 +242,45 @@ pub(super) async fn submit_prompt_after_release(
     text: String,
     content_blocks: Vec<PromptContentBlockWire>,
 ) -> Result<(), SessionError> {
-    if state.acp.client.is_none() {
-        resume_released_client(state).await?;
+    if !has_healthy_client(state)
+        && adds_new_prompt(state, &client_message_id, &text, &content_blocks)
+    {
+        revive_child(state).await?;
         try_dispatch_next_if_idle(state);
     }
     submit_prompt(state, client_message_id, text, content_blocks)
 }
 
+fn adds_new_prompt(
+    state: &TaskSessionState,
+    client_message_id: &str,
+    text: &str,
+    content_blocks: &[PromptContentBlockWire],
+) -> bool {
+    if client_message_id.is_empty() {
+        return true;
+    }
+    let withdrawal = text.trim().is_empty() && content_blocks.is_empty();
+    let queued_edit = state
+        .prompts
+        .prompt_ledger
+        .entry(client_message_id)
+        .is_some_and(|entry| entry.phase == PromptPhase::Queued);
+    !withdrawal && !queued_edit
+}
+
 async fn resume_released_client(state: &mut TaskSessionState) -> Result<(), SessionError> {
-    if state.acp.client.is_some() || state.acp.acp_alive {
+    if state.acp.client.is_some() || state.acp.acp_alive || state.holders.0 == 0 {
         return Ok(());
     }
+    revive_child(state).await
+}
+
+async fn revive_child(state: &mut TaskSessionState) -> Result<(), SessionError> {
     let Some(worktree) = state.worktree_path.clone() else {
         return Ok(());
     };
     let holders = state.holders.0;
-    if holders == 0 {
-        return Ok(());
-    }
     let model = state.acp.model.clone();
     let agent = state.agent;
     let resumed = task_session_spawn::acquire(state, &worktree, &model, agent).await;

@@ -131,6 +131,7 @@ export interface WebSessionTransport {
   sendClear(): void;
   retryRestore(): void;
   startFresh(): void;
+  restartAgent(): void;
   setModel(model: string): void;
   setConfigOption(configId: string, value: string | boolean): void;
   respondPermission(requestId: string, approved: boolean, reason?: string): void;
