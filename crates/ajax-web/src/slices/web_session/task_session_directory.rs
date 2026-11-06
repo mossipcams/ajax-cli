@@ -11,6 +11,8 @@ use super::{
     SessionError, SessionServerEvent, SessionStorage,
 };
 
+mod shutdown;
+
 pub(crate) type DeferredActivityPending = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 type LiveActivityMap = Mutex<HashMap<String, (u64, SessionActivity)>>;

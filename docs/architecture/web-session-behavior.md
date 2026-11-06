@@ -560,6 +560,16 @@ append the same authentication error repeatedly.
   (oldest released first) and the idle cap can reclaim it. Reattach clears the
   release marker; in-flight turns, queued prompts, held slots, and non-restore
   harnesses are never evicted regardless of grace.
+- Idle eviction never evicts a session whose transcript backlog is unsaved or
+  that has a transcript durability fault
+  ([#1558](https://github.com/mossipcams/ajax-cli/issues/1558)).
+- On SIGTERM or Ctrl-C the web server flushes each session's transcript backlog
+  and pending activity report, waiting at most 5 s (`runtime/shutdown.rs`,
+  `TaskSessionDirectory::flush_all`), then exits the process without touching
+  harnesses. Shims and in-flight turns survive for adoption (see
+  [Session shim and restart adoption](#session-shim-and-restart-adoption)). It
+  does not wait for open WebSockets.
+  A second Ctrl-C or SIGTERM during the flush exits immediately.
 - WebSocket detach releases the directory holder count but does not cancel an
   in-flight turn or clear the host queue.
 - `ajax-web` restart reloads stored transcripts and cursors from the registry database. A

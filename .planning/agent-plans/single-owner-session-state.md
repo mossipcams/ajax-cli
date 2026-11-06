@@ -100,8 +100,9 @@ step 0a. Step 0a PR opened 2026-11-05.
 - [x] 7 — Typed error when the harness doesn't confirm a model change. Size:
   S. Closes: #1547
   Done: unconfirmed in-session config changes return a refusal (apply_model/mod.rs `apply_config_option`), regressions `unconfirmed_model_change_reports_refusal_1547`, `unconfirmed_model_change_appends_error_and_keeps_persisted_model_1547`, `spawn_pin_refusal_is_not_double_wrapped_1547`.
-- [ ] 8 — SIGTERM handler with actor flush; eviction guard. Size: S. Closes:
+- [x] 8 — SIGTERM handler with actor flush; eviction guard. Size: S. Closes:
   #1558
+  Done: SIGTERM/Ctrl-C flush (runtime/shutdown.rs, `flush_all` in task_session_directory/shutdown.rs) (review: the first version shut every harness down, which broke restart adoption), eviction guard in task_session.rs, regressions `idle_session_with_unsaved_backlog_is_not_evicted_1558`, `flush_all_persists_backlog_and_keeps_harness_alive_1558`; live SIGTERM check: logged `web server stopping`, exited in 0.02 s.
 
 ## Deviations
 
@@ -123,6 +124,7 @@ step 0a. Step 0a PR opened 2026-11-05.
 - **Step 5 scope.** `AgentSlot` has `Absent | Spawning | Live | Exited`. `Faulted` and a slot-held `resume_id` are not added: nothing produces a faulted state today, and the resume id stays in the store (`agent_runs.native_session_id`) and is re-read on every spawn, so both would be dead code. Step 6 adds `Faulted` only if a health signal produces it.
 - **Step 6 scope.** #1557 (a dead client never respawned on an open socket) was fixed on main by #1582 (lazy revival on the next prompt, attach, or model change, and Restart as an actor command), which this stack predates. Step 6 therefore only fixes #1556. The cursor sidecar (per-run pump) and Pi (EOF already reported) need no change. No producer of a faulted-but-alive state exists, so `Faulted` is not added. With #1582 merged in, a pump death is revived lazily on the next prompt, attach or model change.
 - **Step 7 scope.** The unconfirmed change reuses the existing refusal path (Error event, `SessionError::Protocol`, no persistence) instead of a new `SessionError` variant, because no caller matches on the kind. Only ACP harnesses can be checked: Claude SDK and Pi `set_model` replies are not read, so they still self-report the applied model.
+- **Step 8 scope.** No unrecoverable-loss marker is written to the transcript when the 5 s budget runs out (that write can itself fail); the server logs one warning if the 5 s budget runs out (per-session `warn_if_backlog_dropped` does not run on SIGTERM, because the process exits without running session exit paths).
 
 Three-strike definitions:
 
@@ -135,14 +137,13 @@ Three-strike definitions:
 Facts checked against the code (so they need not be re-checked):
 
 - `merge_registries` is at `crates/ajax-cli/src/context.rs:293`.
-- `acp_alive` is at `crates/ajax-web/src/slices/web_session/acp_slot.rs:11`. It
-  is also used in `task_session.rs:201` and `transcript.rs:248`
-  (`slot_must_replace`).
+- `acp_alive` and `AcpSlot.client` were replaced by `AgentSlot` in step 5
+  (`web_session/agent_slot.rs`).
 - `retry_pending_activity_report` is at
   `crates/ajax-web/src/slices/web_session/session_evidence.rs:88`.
-- The web server has no SIGTERM handler; only
-  `ajax-supervisor/src/runtime.rs` and
-  `ajax-cli/src/tmux_task_session/attach.rs` have one.
+- The web server had no SIGTERM handler before step 8, and neither
+  `ajax-supervisor/src/runtime.rs` nor `ajax-cli/src/tmux_task_session/attach.rs`
+  has one (attach.rs only sends SIGTERM to a child and handles SIGWINCH).
 - A `RateLimited` variant already exists at
   `crates/ajax-core/src/models/observations.rs:35`. Reuse it in step 2.
 - Neither `scripts/health-check` nor a swap matrix test exists yet.
@@ -197,4 +198,4 @@ Done when:
   `docs/architecture/web-session-behavior.md`).
 - No step was closed on a 4th patch.
 
-Results: step 0a gate passed (see PR).
+Results: steps 0a, 0b, 1, 3, 4, 5, 6, 7 and 8 passed the gate (see each PR). Step 0c and step 2 were done in #1587/#1588, outside this stack.
