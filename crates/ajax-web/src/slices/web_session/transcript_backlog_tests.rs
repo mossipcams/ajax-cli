@@ -17,14 +17,14 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn make_transcript_unreadable(dir: &Path) {
+pub(super) fn make_transcript_unreadable(dir: &Path) {
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let _ = fs::remove_file(dir.join(format!("ajax.db{suffix}")));
     }
     fs::create_dir_all(dir.join("ajax.db")).expect("block registry database path");
 }
 
-fn snapshot_registry_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+pub(super) fn snapshot_registry_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
     ["", "-journal", "-wal", "-shm"]
         .into_iter()
         .filter_map(|suffix| {
@@ -34,7 +34,7 @@ fn snapshot_registry_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn restore_registry_files(dir: &Path, files: Vec<(String, Vec<u8>)>) {
+pub(super) fn restore_registry_files(dir: &Path, files: Vec<(String, Vec<u8>)>) {
     fs::remove_dir(dir.join("ajax.db")).expect("restore registry database path");
     for (name, bytes) in files {
         fs::write(dir.join(name), bytes).expect("restore registry file");
@@ -241,6 +241,45 @@ fn issue_1435_shutdown_flushes_the_backlog_in_order() {
             "backlog must persist oldest-first: {:?}",
             stored.events
         );
+    });
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn detach_all_flushes_every_sessions_backlog_1558() {
+    let dir = scratch_dir("detach-all-flushes-1558");
+    let handle_a = "web/detach-all-1558-a";
+    let handle_b = "web/detach-all-1558-b";
+
+    with_test_acp_program(&fake_acp_fixture(), || {
+        let directory = BlockingSessionDirectory::new(dir.clone());
+        for handle in [handle_a, handle_b] {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+        }
+
+        let saved = snapshot_registry_files(&dir);
+        make_transcript_unreadable(&dir);
+        directory.record(handle_a, note("backlog-a"));
+        directory.record(handle_b, note("backlog-b"));
+        restore_registry_files(&dir, saved);
+
+        directory.detach_all();
+
+        for (handle, text) in [(handle_a, "backlog-a"), (handle_b, "backlog-b")] {
+            let stored = web_session_store::load::<SessionServerEvent>(&dir, handle);
+            assert!(
+                message_index(&stored.events, text).is_some(),
+                "{text} must be committed by detach_all: {:?}",
+                stored.events
+            );
+            assert!(
+                !directory.inner().has_live_entry(handle),
+                "{handle} must leave the directory"
+            );
+        }
     });
 
     let _ = fs::remove_dir_all(dir);

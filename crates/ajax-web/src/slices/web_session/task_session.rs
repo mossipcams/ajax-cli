@@ -708,7 +708,9 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
                     && !state.busy()
                     && !state.evidence.activity_reporter.background_held()
                     && state.acp.restore_advertised
-                    && persisted_session_id,
+                    && persisted_session_id
+                    && state.unpersisted.is_empty()
+                    && state.evidence.transcript_durability_fault.is_none(),
                 holders: state.holders.0,
             });
         }
