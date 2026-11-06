@@ -474,6 +474,13 @@ append the same authentication error repeatedly.
   no eager restart. Queued ledger rows stay queued and do not dispatch while the child
   is dead. A withdrawal or edit of an already-queued prompt after child exit is applied
   without reviving the child; only a submit that adds a new prompt revives.
+- Queued ledger rows survive unexpected child exit; the host dispatches them only
+  after a healthy replacement client is installed and any interrupted active row
+  is durable.
+- The Claude SDK sidecar exits after reporting a lost turn when its message pump ends
+  or fails ([#1556](https://github.com/mossipcams/ajax-cli/issues/1556)), so pump death
+  surfaces as a child exit and the slot moves to `Exited`. After the sidecar exits, the
+  next prompt, attach or model change revives the agent with its stored session.
 - The child is revived on demand through the dead-slot path, which resumes the stored
   session id. The revival triggers are: a new attach, a submitted prompt that adds a
   new prompt, and a model or config change on the dead child (the change respawns it
@@ -498,7 +505,8 @@ append the same authentication error repeatedly.
   `<clientMessageId>-restart` id through the normal FIFO, so it runs after prompts
   already queued. With no attached holder, or when stored content blocks cannot be
   decoded, nothing is resubmitted. The host appends `Agent restarted.` as a note, and
-  also `Re-sent your last prompt.` when a prompt was resubmitted. This is the only
+  also `Re-sent your last prompt.` when a prompt was resubmitted. The cockpit shows
+  progress while the restart runs and reports whether the prompt was resubmitted. This is the only
   resubmission path; every other interruption keeps the never-resent rule above.
 - Activity after a successful replacement: the host reports `TurnStarted` when a
   prompt was resubmitted or is active after the restart. Otherwise, if the last
