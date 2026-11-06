@@ -628,6 +628,9 @@ async fn handle_command(state: &mut TaskSessionState, command: TaskSessionComman
             reply,
         } => {
             let result = task_session_spawn::apply_config_option(state, &config_id, value).await;
+            if result.is_ok() && config_id == "model" {
+                let _ = state.append_to_log(vec![SessionServerEvent::UsageReset]);
+            }
             let _ = reply.send(result);
         }
         TaskSessionCommand::ResetHarness {

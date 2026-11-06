@@ -49,6 +49,7 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             })
             .into_iter()
             .collect(),
+        NativeEvent::UsageUnknown => vec![SessionServerEvent::UsageReset],
         NativeEvent::ElicitationRequest {
             request_id,
             message,

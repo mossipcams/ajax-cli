@@ -830,6 +830,14 @@ maxTokens, 2 second cap) after each finished prompt, mirroring Pi; the result
 message's usage is not used because it sums every API call in the turn
 ([#1334](https://github.com/mossipcams/ajax-cli/issues/1334)). Zero values are skipped
 so a cancelled turn does not reset the meter.
+When Claude's post-turn `get_context_usage` query fails, times out, or returns zero
+or missing totals, the host emits `usage_reset` instead of keeping the previous
+value, so the gauge shows unknown rather than stale
+([#1549](https://github.com/mossipcams/ajax-cli/issues/1549)). A successful model
+change appends `usage_reset` for every harness, so the gauge clears until the next
+turn reports usage; the previous model's window is never shown
+([#1548](https://github.com/mossipcams/ajax-cli/issues/1548)). A refused model change
+appends nothing.
 - Per-turn token usage from `session/prompt` result.usage maps to a separate
   `turn_usage` wire event. Cursor's sidecar reports camelCase fields (`inputTokens`,
   `outputTokens`, `cacheReadTokens` / `cachedReadTokens`, `cacheWriteTokens` /
