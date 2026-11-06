@@ -237,6 +237,7 @@ impl TaskSessionState {
                 pending_transcript_error_snapshot: false,
                 transcript_corruption: None,
                 live_activity,
+                activity_retry: None,
             },
             background: BackgroundLevel::default(),
             generation: 0,
@@ -384,7 +385,7 @@ impl TaskSessionState {
     pub(super) fn pump(&mut self) {
         retry_pending_exit_interruption(self);
         self.evidence
-            .retry_pending_activity_report(&self.qualified_handle);
+            .retry_pending_activity_report(&self.qualified_handle, std::time::Instant::now());
         let prompt_cancel = self
             .prompts
             .active_prompt
@@ -511,9 +512,10 @@ pub(crate) fn spawn_task_session(
                 }
                 _ = poll.tick() => {
                     retry_pending_exit_interruption(&mut state);
-                    state
-                        .evidence
-                        .retry_pending_activity_report(&state.qualified_handle);
+                    state.evidence.retry_pending_activity_report(
+                        &state.qualified_handle,
+                        std::time::Instant::now(),
+                    );
                     state.retry_unpersisted_backlog();
                     if state.acp.client.is_some() {
                         state.pump();
@@ -525,7 +527,7 @@ pub(crate) fn spawn_task_session(
         }
         state
             .evidence
-            .retry_pending_activity_report(&state.qualified_handle);
+            .flush_pending_activity_report(&state.qualified_handle);
         state.flush_unpersisted_backlog();
         if close_on_exit {
             state.prompts.queued.clear();

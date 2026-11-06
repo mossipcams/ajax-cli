@@ -145,6 +145,15 @@ impl Task {
         self.side_flags.iter().copied()
     }
 
+    pub fn copy_activity_from(&mut self, other: &Task) {
+        self.live_status = other.live_status.clone();
+        self.live_status_observed_at = other.live_status_observed_at;
+        self.agent_status = other.agent_status;
+        self.last_activity_at = other.last_activity_at;
+        self.agent_attempts = other.agent_attempts.clone();
+        self.side_flags = other.side_flags.clone();
+    }
+
     pub fn skip_interactive_agent(&self) -> bool {
         self.metadata
             .get(SKIP_INTERACTIVE_AGENT_KEY)
@@ -498,5 +507,30 @@ mod tests {
 
         task.set_skip_interactive_agent(false);
         assert_eq!(task.kind(), TaskKind::TerminalAgent);
+    }
+
+    #[test]
+    fn copy_activity_from_copies_only_activity_fields() {
+        let mut target = sample_task();
+        let mut source = sample_task();
+        source.title = "Renamed elsewhere".to_string();
+        source.lifecycle_status = LifecycleStatus::Reviewable;
+        source.agent_status = AgentRuntimeStatus::Running;
+        source.live_status = Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+        source.add_side_flag(SideFlag::AgentRunning);
+
+        target.copy_activity_from(&source);
+
+        assert_eq!(target.agent_status, AgentRuntimeStatus::Running);
+        assert_eq!(
+            target.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(target.has_side_flag(SideFlag::AgentRunning));
+        assert_eq!(target.title, "Kind task");
+        assert_ne!(target.lifecycle_status, LifecycleStatus::Reviewable);
     }
 }

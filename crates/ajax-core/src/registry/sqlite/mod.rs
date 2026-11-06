@@ -5,6 +5,7 @@ use rusqlite::{Connection, Transaction};
 use super::{refresh_task_annotations, InMemoryRegistry, RegistrySnapshotError};
 use crate::ghost_task::is_registry_ghost_task;
 
+mod activity;
 mod enums;
 mod execution_recovery;
 mod execution_store;

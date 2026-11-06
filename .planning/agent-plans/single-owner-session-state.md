@@ -88,8 +88,9 @@ step 0a. Step 0a PR opened 2026-11-05.
 - [x] 3 — Refresh usage gauge on model/harness switch; mark stale on query
   failure. Size: S. Closes: #1548, #1549
   Done: `NativeEvent::UsageUnknown` -> `usage_reset` on a failed/empty Claude usage query; `usage_reset` after a successful model change for all harnesses; no frontend change (`usageProjection.ts` already clears on `usage_reset`).
-- [ ] 4 — `record_activity` + route chat activity through it + exponential
+- [x] 4 — `record_activity` + route chat activity through it + exponential
   backoff. Size: M. Closes: #1555
+  Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression. Review fixes: per-task compare-and-swap in `record_activity`, reload fallback reachable, unconditional final report on session exit.
 - [ ] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
   match on it. Size: L. Closes: –
 - [ ] 6 — Health signals: sidecar exits on pump death, slot moves to
@@ -115,6 +116,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   `scripts/health-check` cannot count them. The harness swap part is resolved
   by step 1 (`warn!` on swap failure plus a `harness_swap` signature); step 6
   does the same for the stop timeout.
+- **Step 4 design (user decision 2026-11-05).** `record_activity` writes no `registry_events` row (that table is renumbered positionally by every full save), and lifecycle-changing activity reports keep the whole-registry save; only non-lifecycle reports go per task.
 
 Three-strike definitions:
 
