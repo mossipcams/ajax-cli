@@ -393,24 +393,24 @@ fn reload_registry_from_disk_loads_tracked_context_after_in_memory_drift() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+fn activity_sample_task(handle: &str) -> Task {
+    Task::new(
+        TaskId::new(format!("web/{handle}")),
+        "web",
+        handle,
+        handle,
+        format!("ajax/{handle}"),
+        "main",
+        format!("/repo/web__worktrees/ajax-{handle}"),
+        format!("ajax-web-{handle}"),
+        "task",
+        AgentClient::Codex,
+    )
+}
+
 #[test]
 fn record_task_activity_persists_one_task_and_keeps_baseline_mergeable() {
     use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag};
-
-    fn sample_task(handle: &str) -> Task {
-        Task::new(
-            TaskId::new(format!("web/{handle}")),
-            "web",
-            handle,
-            handle,
-            format!("ajax/{handle}"),
-            "main",
-            format!("/repo/web__worktrees/ajax-{handle}"),
-            format!("ajax-web-{handle}"),
-            "task",
-            AgentClient::Codex,
-        )
-    }
 
     let root = std::env::temp_dir().join(format!(
         "ajax-record-task-activity-{}-{}",
@@ -422,14 +422,19 @@ fn record_task_activity_persists_one_task_and_keeps_baseline_mergeable() {
     ));
     let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
     let mut baseline = InMemoryRegistry::default();
-    baseline.create_task(sample_task("a")).unwrap();
-    baseline.create_task(sample_task("b")).unwrap();
+    baseline.create_task(activity_sample_task("a")).unwrap();
+    baseline.create_task(activity_sample_task("b")).unwrap();
     SqliteRegistryStore::new(&paths.state_file)
         .save(&baseline)
         .unwrap();
 
     let mut context = crate::context::load_context(&paths).unwrap();
     let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+    let previous_b = context
+        .registry
+        .get_task(&TaskId::new("web/b"))
+        .expect("task b")
+        .clone();
     let observed_at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
     {
         let task_b = context
@@ -448,6 +453,7 @@ fn record_task_activity_persists_one_task_and_keeps_baseline_mergeable() {
         &mut bridge,
         &mut context,
         &TaskId::new("web/b"),
+        &previous_b,
     )
     .expect("activity persists");
 
@@ -474,11 +480,100 @@ fn record_task_activity_persists_one_task_and_keeps_baseline_mergeable() {
         .side_flags()
         .any(|flag| flag == SideFlag::AgentRunning));
 
+    assert_eq!(
+        bridge.save_state.loaded_revision,
+        SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .unwrap(),
+        "per-task activity write must leave the baseline at the disk revision"
+    );
     <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::persist_registry_snapshot(
         &mut bridge,
         &mut context,
     )
     .expect("whole-registry save does not merge");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn record_task_activity_refuses_when_another_writer_changed_the_task_first() {
+    use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag};
+
+    let root = std::env::temp_dir().join(format!(
+        "ajax-record-task-activity-cas-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline.create_task(activity_sample_task("a")).unwrap();
+    baseline.create_task(activity_sample_task("b")).unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut context = crate::context::load_context(&paths).unwrap();
+    let mut bridge = CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+    let previous_b = context
+        .registry
+        .get_task(&TaskId::new("web/b"))
+        .expect("task b")
+        .clone();
+
+    let mut other_writer = crate::context::load_context(&paths).unwrap();
+    other_writer
+        .registry
+        .get_task_mut(&TaskId::new("web/b"))
+        .expect("task b")
+        .add_side_flag(SideFlag::TestsFailed);
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&other_writer.registry)
+        .unwrap();
+    let disk_revision = SqliteRegistryStore::new(&paths.state_file)
+        .current_revision()
+        .unwrap();
+
+    {
+        let task_b = context
+            .registry
+            .get_task_mut(&TaskId::new("web/b"))
+            .expect("task b");
+        task_b.live_status = Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+        task_b.live_status_observed_at = Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10));
+        task_b.add_side_flag(SideFlag::AgentRunning);
+    }
+
+    let error = <CliRuntimeBridge as RuntimeBridge<NoopRunner>>::record_task_activity(
+        &mut bridge,
+        &mut context,
+        &TaskId::new("web/b"),
+        &previous_b,
+    )
+    .expect_err("stale activity must be refused");
+    assert!(
+        error.to_string().contains("changed on disk"),
+        "unexpected error: {error}"
+    );
+
+    assert_eq!(
+        SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .unwrap(),
+        disk_revision
+    );
+    let reloaded = crate::context::load_context(&paths).unwrap();
+    let reloaded_b = reloaded.registry.get_task(&TaskId::new("web/b")).unwrap();
+    assert!(reloaded_b.side_flags().any(|flag| flag == SideFlag::TestsFailed));
+    assert!(!reloaded_b.side_flags().any(|flag| flag == SideFlag::AgentRunning));
+    assert_eq!(reloaded_b.live_status, None);
+    assert_eq!(reloaded_b.live_status_observed_at, None);
 
     let _ = std::fs::remove_dir_all(root);
 }

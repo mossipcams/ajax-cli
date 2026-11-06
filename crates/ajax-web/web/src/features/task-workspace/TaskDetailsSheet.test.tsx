@@ -159,7 +159,6 @@ describe("TaskDetailsSheet restart agent action", () => {
         onOpenChange={vi.fn()}
         panelId="task-panel"
         mode="chat"
-        sessionBusy
         detail={detail({ actions: [] })}
       />,
     );
@@ -172,7 +171,7 @@ describe("TaskDetailsSheet restart agent action", () => {
     expect(screen.queryByTestId("session-quick-actions")).not.toBeInTheDocument();
   });
 
-  it("keeps exactly one Restart agent button and leaves other actions in quick actions", () => {
+  it("shows Restart agent once in primary tools next to other actions in quick actions", () => {
     render(
       <TaskDetailsSheet
         open
@@ -181,12 +180,6 @@ describe("TaskDetailsSheet restart agent action", () => {
         mode="chat"
         detail={detail({
           actions: [
-            {
-              action: "restart-agent",
-              label: "Restart agent",
-              destructive: false,
-              confirmation_required: true,
-            },
             {
               action: "fix-ci",
               label: "Fix CI",
@@ -198,45 +191,97 @@ describe("TaskDetailsSheet restart agent action", () => {
       />,
     );
 
-    expect(screen.getAllByRole("button", { name: "Restart agent" })).toHaveLength(1);
+    const primaryTools = screen.getByTestId("session-primary-tools");
+    expect(within(primaryTools).getAllByRole("button", { name: "Restart agent" })).toHaveLength(1);
     const quickActions = screen.getByTestId("session-quick-actions");
     expect(within(quickActions).getByRole("button", { name: "Fix CI" })).toBeInTheDocument();
-    expect(
-      within(quickActions).queryByRole("button", { name: "Restart agent" }),
-    ).not.toBeInTheDocument();
   });
 
-  it("asks for confirmation through onResult before restarting the agent", () => {
+  it("asks for one confirmation, then sends the WebSocket restart without posting an operation", () => {
+    const postOperation = vi.spyOn(api, "postOperation");
+    const onRestartAgent = vi.fn(() => true);
+    const onOpenChange = vi.fn();
     const onResult = vi.fn();
-    const handle = detail().qualified_handle;
     render(
       <TaskDetailsSheet
         open
-        onOpenChange={vi.fn()}
+        onOpenChange={onOpenChange}
         panelId="task-panel"
         mode="chat"
-        sessionBusy
+        detail={detail({ actions: [] })}
+        onRestartAgent={onRestartAgent}
+        onResult={onResult}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+    expect(onRestartAgent).not.toHaveBeenCalled();
+    expect(screen.getByTestId("session-restart-agent")).toHaveTextContent(
+      "Confirm restart agent",
+    );
+
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+    expect(onRestartAgent).toHaveBeenCalledOnce();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onResult).not.toHaveBeenCalled();
+    expect(postOperation).not.toHaveBeenCalled();
+  });
+
+  it("closes the sheet and reports an error when Restart agent cannot run disconnected", () => {
+    const onRestartAgent = vi.fn(() => false);
+    const onOpenChange = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail({ actions: [] })}
+        onRestartAgent={onRestartAgent}
+        onResult={onResult}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+
+    expect(onRestartAgent).toHaveBeenCalledOnce();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onResult).toHaveBeenCalledWith(
+      "Not connected. Try again once the session reconnects.",
+      null,
+      true,
+    );
+    expect(screen.getByTestId("session-restart-agent")).toHaveTextContent("Restart agent");
+  });
+
+  it("reports not connected and closes when Restart agent has no session to send to", () => {
+    const onOpenChange = vi.fn();
+    const onResult = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
         detail={detail({ actions: [] })}
         onResult={onResult}
       />,
     );
 
     fireEvent.click(screen.getByTestId("session-restart-agent"));
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
 
+    expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onResult).toHaveBeenCalledWith(
-      `Confirm Restart agent for ${handle}?`,
+      "Not connected. Try again once the session reconnects.",
       null,
-      false,
-      expect.objectContaining({
-        pendingConfirm: expect.objectContaining({
-          action: expect.objectContaining({ action: "restart-agent" }),
-          handle,
-        }),
-      }),
+      true,
     );
   });
 
-  it("hides Restart agent in chat mode when idle and Core does not offer it", () => {
+  it("shows Restart agent in chat mode while idle when Core does not offer it", () => {
     render(
       <TaskDetailsSheet
         open
@@ -248,43 +293,17 @@ describe("TaskDetailsSheet restart agent action", () => {
     );
 
     const primaryTools = screen.getByTestId("session-primary-tools");
-    expect(within(primaryTools).queryByTestId("session-restart-agent")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Restart agent" })).not.toBeInTheDocument();
+    expect(within(primaryTools).getByRole("button", { name: "Restart agent" })).toBeInTheDocument();
+    expect(screen.getByTestId("session-fresh-session")).toBeInTheDocument();
   });
 
-  it("shows Restart agent in chat mode when Core offers restart-agent while idle", () => {
+  it("keeps Restart agent in chat mode regardless of session activity", () => {
     render(
       <TaskDetailsSheet
         open
         onOpenChange={vi.fn()}
         panelId="task-panel"
         mode="chat"
-        detail={detail({
-          actions: [
-            {
-              action: "restart-agent",
-              label: "Restart agent",
-              destructive: false,
-              confirmation_required: true,
-            },
-          ],
-        })}
-      />,
-    );
-
-    const primaryTools = screen.getByTestId("session-primary-tools");
-    expect(within(primaryTools).getByTestId("session-restart-agent")).toBeInTheDocument();
-    expect(screen.queryByTestId("session-quick-actions")).not.toBeInTheDocument();
-  });
-
-  it("shows Restart agent in chat mode while the session is busy", () => {
-    render(
-      <TaskDetailsSheet
-        open
-        onOpenChange={vi.fn()}
-        panelId="task-panel"
-        mode="chat"
-        sessionBusy
         detail={detail({ actions: [] })}
       />,
     );

@@ -5,7 +5,7 @@ use ajax_core::registry::Registry;
 use ajax_core::ui_state::{derive_operator_status, TaskStatus};
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -713,4 +713,74 @@ fn flush_all_reports_pending_activity_inside_backoff_window_1558() {
         TaskStatus::Running,
         "flush_all must deliver the pending activity report even inside the retry backoff window"
     );
+}
+
+#[test]
+fn final_pending_turn_end_is_reported_on_exit_inside_retry_backoff() {
+    use super::session_activity::ACTIVITY_REPORT_MAX_ATTEMPTS;
+
+    let (handle, _) = provisioned_handle_context();
+    let dir = scratch_dir("final-report-backoff-exit");
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&reported);
+    let turn_end_attempts = Arc::new(AtomicUsize::new(0));
+    let attempts = Arc::clone(&turn_end_attempts);
+    directory
+        .inner()
+        .set_report_session_activity(Arc::new(move |_qualified_handle, activity| {
+            if activity != SessionActivity::TurnEnded {
+                sink.lock().expect("reported lock").push(activity);
+                return true;
+            }
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+            let delivered = attempt > 2 * ACTIVITY_REPORT_MAX_ATTEMPTS;
+            if delivered {
+                sink.lock().expect("reported lock").push(activity);
+            }
+            delivered
+        }));
+
+    with_test_acp_program(&super::test_support::fake_acp_fixture(), || {
+        directory
+            .acquire(
+                &handle,
+                &dir,
+                "auto",
+                ajax_core::models::AgentClient::Cursor,
+            )
+            .expect("acquire");
+    });
+    directory.record(
+        &handle,
+        SessionServerEvent::PromptAccepted {
+            client_message_id: "c1".to_string(),
+        },
+    );
+    wait_for_last_activity(&reported, SessionActivity::TurnStarted);
+    directory.record(
+        &handle,
+        SessionServerEvent::TurnEnd {
+            stop_reason: Some("end_turn".to_string()),
+        },
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while turn_end_attempts.load(Ordering::SeqCst) < 2 * ACTIVITY_REPORT_MAX_ATTEMPTS {
+        assert!(
+            Instant::now() < deadline,
+            "poll retry never failed the pending turn end"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    directory.detach_session(&handle);
+
+    assert!(
+        reported
+            .lock()
+            .expect("reported lock")
+            .contains(&SessionActivity::TurnEnded),
+        "the final pending turn end must be attempted on exit even inside the retry backoff"
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }

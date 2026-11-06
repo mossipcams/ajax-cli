@@ -532,7 +532,6 @@ describe("TaskList", () => {
             { action: "create-pr", label: "Create PR", destructive: false, confirmation_required: false },
             { action: "merge-pr", label: "Merge PR", destructive: false, confirmation_required: false },
             { action: "review", label: "Review", destructive: false, confirmation_required: false },
-            { action: "restart-agent", label: "Restart agent", destructive: false, confirmation_required: false },
           ],
         },
       ],

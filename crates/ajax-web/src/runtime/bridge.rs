@@ -99,6 +99,7 @@ pub trait RuntimeBridge<C: CommandRunner> {
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         _task_id: &TaskId,
+        _previous: &Task,
     ) -> Result<(), WebError> {
         self.persist_registry_snapshot(context)
     }

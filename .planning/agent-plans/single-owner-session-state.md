@@ -90,7 +90,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   Done: `NativeEvent::UsageUnknown` -> `usage_reset` on a failed/empty Claude usage query; `usage_reset` after a successful model change for all harnesses; no frontend change (`usageProjection.ts` already clears on `usage_reset`).
 - [x] 4 — `record_activity` + route chat activity through it + exponential
   backoff. Size: M. Closes: #1555
-  Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression.
+  Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression. Review fixes: per-task compare-and-swap in `record_activity`, reload fallback reachable, unconditional final report on session exit.
 - [x] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
   match on it. Size: L. Closes: –
   Done: `AgentSlot` (web_session/agent_slot.rs) replaces `AcpSlot.client` and `acp_alive`; no reads of either remain.
@@ -122,7 +122,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   does the same for the stop timeout.
 - **Step 4 design (user decision 2026-11-05).** `record_activity` writes no `registry_events` row (that table is renumbered positionally by every full save), and lifecycle-changing activity reports keep the whole-registry save; only non-lifecycle reports go per task.
 - **Step 5 scope.** `AgentSlot` has `Absent | Spawning | Live | Exited`. `Faulted` and a slot-held `resume_id` are not added: nothing produces a faulted state today, and the resume id stays in the store (`agent_runs.native_session_id`) and is re-read on every spawn, so both would be dead code. Step 6 adds `Faulted` only if a health signal produces it.
-- **Step 6 scope.** #1557 (a dead client never respawned on an open socket) was fixed on main by #1582 (lazy revival on the next prompt, attach, or model change, and Restart as an actor command), which this stack predates. Step 6 therefore only fixes #1556. The cursor sidecar (per-run pump) and Pi (EOF already reported) need no change. No producer of a faulted-but-alive state exists, so `Faulted` is not added. Until the stack is merged with main, a pump death here shows the existing 'ACP process exited' error instead of a silent stall.
+- **Step 6 scope.** #1557 (a dead client never respawned on an open socket) was fixed on main by #1582 (lazy revival on the next prompt, attach, or model change, and Restart as an actor command), which this stack predates. Step 6 therefore only fixes #1556. The cursor sidecar (per-run pump) and Pi (EOF already reported) need no change. No producer of a faulted-but-alive state exists, so `Faulted` is not added. With #1582 merged in, a pump death is revived lazily on the next prompt, attach or model change.
 - **Step 7 scope.** The unconfirmed change reuses the existing refusal path (Error event, `SessionError::Protocol`, no persistence) instead of a new `SessionError` variant, because no caller matches on the kind. Only ACP harnesses can be checked: Claude SDK and Pi `set_model` replies are not read, so they still self-report the applied model.
 - **Step 8 scope.** No unrecoverable-loss marker is written to the transcript when the 5 s budget runs out (that write can itself fail); the server logs one warning if the 5 s budget runs out (per-session `warn_if_backlog_dropped` does not run on SIGTERM, because the process exits without running session exit paths).
 

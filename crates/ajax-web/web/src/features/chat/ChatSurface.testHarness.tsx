@@ -26,6 +26,7 @@ export const transport = {
   sendClear: vi.fn(),
   retryRestore: vi.fn(),
   startFresh: vi.fn(),
+  restartAgent: vi.fn(),
   setModel: vi.fn(),
   setConfigOption: vi.fn(),
   respondPermission: vi.fn(),
