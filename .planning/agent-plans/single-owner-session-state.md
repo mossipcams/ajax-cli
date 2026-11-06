@@ -90,7 +90,7 @@ step 0a. Step 0a PR opened 2026-11-05.
   Done: `NativeEvent::UsageUnknown` -> `usage_reset` on a failed/empty Claude usage query; `usage_reset` after a successful model change for all harnesses; no frontend change (`usageProjection.ts` already clears on `usage_reset`).
 - [x] 4 — `record_activity` + route chat activity through it + exponential
   backoff. Size: M. Closes: #1555
-  Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression.
+  Done: 4a retry backoff (session_evidence.rs), 4b `record_activity` (registry/sqlite/activity.rs), 4c per-task routing (runtime/task_activity_write.rs) with the #1555 two-task regression. Review fixes: per-task compare-and-swap in `record_activity`, reload fallback reachable, unconditional final report on session exit.
 - [x] 5 — Introduce `AgentSlot`; convert every `client`/`acp_alive` read to a
   match on it. Size: L. Closes: –
   Done: `AgentSlot` (web_session/agent_slot.rs) replaces `AcpSlot.client` and `acp_alive`; no reads of either remain.

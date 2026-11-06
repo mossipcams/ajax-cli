@@ -18,7 +18,13 @@ import { commitConfirmedAction } from "@/features/task/taskMutations";
 import { DROP_UNDO_MS } from "@/shared/lib/polling";
 
 const chatSurfaceCapture = vi.hoisted(() => ({
-  latest: null as null | { onSessionActivity?: (activity: { model: string; busy: boolean }) => void },
+  latest: null as null | {
+    onSessionActivity?: (activity: {
+      model: string;
+      busy: boolean;
+      restartAgent?: () => boolean;
+    }) => void;
+  },
   stubSurface: false,
 }));
 
@@ -26,7 +32,9 @@ vi.mock("@/features/chat/public", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/chat/public")>();
   const CapturingChatSurface = (props: ComponentProps<typeof actual.ChatSurface>) => {
     chatSurfaceCapture.latest = props;
-    if (chatSurfaceCapture.stubSurface) return <section data-testid="session-chat" />;
+    if (chatSurfaceCapture.stubSurface) {
+      return <section data-testid="session-chat">{props.workspaceHeader}</section>;
+    }
     return <actual.ChatSurface {...props} />;
   };
   return { ...actual, ChatSurface: CapturingChatSurface };
@@ -235,6 +243,47 @@ describe("TaskWorkspace", () => {
     expect(onMutated).toHaveBeenCalledTimes(baseline + 2);
   });
 
+  it("sends the session restart when Restart agent is confirmed in details", async () => {
+    chatSurfaceCapture.stubSurface = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/session/models")) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () => Promise.resolve(JSON.stringify({ models: [{ id: "auto", label: "Auto" }] })),
+          });
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    render(
+      <TaskWorkspace
+        handle="web/fix-login"
+        mode="chat"
+        detail={readyDetail({ ...taskDetail, session_capable: true })}
+        orchestrationChat
+        onGo={vi.fn()}
+        onBack={vi.fn()}
+        onOpenDiff={vi.fn()}
+      />,
+    );
+    await screen.findByTestId("session-chat");
+    const restartAgent = vi.fn(() => true);
+    act(() => {
+      chatSurfaceCapture.latest?.onSessionActivity?.({ model: "auto", busy: false, restartAgent });
+    });
+
+    fireEvent.click(screen.getByTestId("session-details"));
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+    expect(restartAgent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("session-restart-agent"));
+
+    expect(restartAgent).toHaveBeenCalledOnce();
+  });
+
   it("opens one task details sheet from chat header Details", async () => {
     vi.stubGlobal(
       "fetch",
@@ -302,7 +351,7 @@ describe("TaskWorkspace", () => {
     fireEvent.click(screen.getByTestId("task-details"));
     expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
 
-    rerender(<TaskWorkspace {...props} pendingConfirmAction="restart-agent" />);
+    rerender(<TaskWorkspace {...props} pendingConfirmAction="merge-pr" />);
 
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });

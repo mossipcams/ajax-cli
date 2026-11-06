@@ -166,6 +166,10 @@ impl SessionActivityReporter {
         self.background
     }
 
+    pub(crate) fn last_reported(&self) -> Option<SessionActivity> {
+        self.last
+    }
+
     pub(crate) fn last_reported_running(&self) -> bool {
         matches!(
             self.last,
@@ -244,6 +248,11 @@ impl SessionActivityReporter {
             return None;
         }
         Some(activity)
+    }
+
+    pub(crate) fn reset_turn(&mut self) {
+        self.state = Default::default();
+        self.background = false;
     }
 
     pub(crate) fn commit(&mut self, activity: SessionActivity) {
@@ -779,6 +788,41 @@ mod tests {
             reporter().observe(&SessionServerEvent::Status {
                 state: "idle".to_string(),
                 detail: None,
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn a_restart_settled_turn_does_not_resurrect_a_failure() {
+        let mut reporter = reporter();
+        assert_eq!(
+            reporter.observe(&prompt()),
+            Some(SessionActivity::TurnStarted)
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Error {
+                message: "ACP process exited".to_string(),
+            }),
+            Some(SessionActivity::TurnFailed)
+        );
+
+        reporter.reset_turn();
+        reporter.commit(SessionActivity::TurnEnded);
+
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Error {
+                message: "model not advertised".to_string(),
+            }),
+            None
+        );
+        assert_eq!(
+            reporter.observe(&SessionServerEvent::Message {
+                role: "agent".to_string(),
+                text: "hi".to_string(),
+                content_blocks: Vec::new(),
+                item_id: String::new(),
+                message_id: None,
             }),
             None
         );

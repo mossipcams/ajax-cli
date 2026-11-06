@@ -6,7 +6,7 @@ use super::{
 };
 use std::time::{Duration, Instant};
 
-const ACTIVITY_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const ACTIVITY_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(50);
 const ACTIVITY_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
 pub(super) struct SessionEvidence {
@@ -78,6 +78,11 @@ impl SessionEvidence {
         self.activity_report_fault = Some(message);
     }
 
+    fn clear_pending_activity_report(&mut self) {
+        self.pending_activity_report = None;
+        self.activity_retry = None;
+    }
+
     pub(super) fn flush_pending_activity_report(&mut self, qualified_handle: &str) {
         let Some(pending) = self.pending_activity_report else {
             return;
@@ -85,7 +90,7 @@ impl SessionEvidence {
         match try_report_session_activity(&self.report_activity, qualified_handle, pending) {
             Ok(()) => {
                 self.activity_reporter.commit(pending);
-                self.pending_activity_report = None;
+                self.clear_pending_activity_report();
                 self.clear_activity_report_fault();
             }
             Err(error) => self.note_activity_report_failure(&error),
@@ -143,7 +148,7 @@ impl SessionEvidence {
         match try_report_session_activity(&self.report_activity, qualified_handle, activity) {
             Ok(()) => {
                 self.activity_reporter.commit(activity);
-                self.pending_activity_report = None;
+                self.clear_pending_activity_report();
                 self.clear_activity_report_fault();
             }
             Err(error) => {
@@ -360,10 +365,13 @@ mod tests {
         let report_calls = calls.load(Ordering::SeqCst);
         assert!(report_calls >= 3, "first retry must attempt the report");
         assert!(
-            report_calls <= 12,
-            "backoff must bound attempts over 10s, got {report_calls}"
+            report_calls <= 24,
+            "backoff must bound report calls to 8 retries of 3 attempts over 10s, got {report_calls}"
         );
-        assert_eq!(retry_attempts, 4, "retries at t=0, 1s, 3s and 7s");
+        assert_eq!(
+            retry_attempts, 8,
+            "retries at t=0, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2 and 6.4s"
+        );
         assert!(evidence.pending_activity_report.is_some());
     }
 
@@ -391,17 +399,68 @@ mod tests {
 
         healthy.store(true, Ordering::SeqCst);
         let calls_before_skipped_retry = calls.load(Ordering::SeqCst);
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(500));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(25));
         assert_eq!(calls.load(Ordering::SeqCst), calls_before_skipped_retry);
         assert!(evidence.pending_activity_report.is_some());
 
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(1));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(50));
         assert!(evidence.pending_activity_report.is_none());
         assert!(evidence.activity_retry.is_none());
         assert!(evidence.activity_report_fault.is_none());
 
         let calls_after_recovery = calls.load(Ordering::SeqCst);
-        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_secs(2));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(100));
         assert_eq!(calls.load(Ordering::SeqCst), calls_after_recovery);
+    }
+
+    #[test]
+    fn successful_report_resets_retry_backoff() {
+        let healthy = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = Arc::clone(&healthy);
+        let mut evidence = SessionEvidence {
+            report_activity: Some(Arc::new(
+                move |_qualified_handle: &str, _activity: SessionActivity| {
+                    gate.load(Ordering::SeqCst)
+                },
+            )),
+            pending_activity_report: Some(SessionActivity::TurnEnded),
+            ..idle_evidence()
+        };
+        let start = Instant::now();
+
+        evidence.retry_pending_activity_report("web/fix-login", start);
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(50));
+        evidence.retry_pending_activity_report("web/fix-login", start + Duration::from_millis(150));
+        assert_eq!(
+            evidence.activity_retry,
+            Some((
+                start + Duration::from_millis(350),
+                Duration::from_millis(200)
+            )),
+            "failed retries must have grown the backoff past the initial delay"
+        );
+
+        healthy.store(true, Ordering::SeqCst);
+        evidence.report("web/fix-login", SessionActivity::TurnEnded);
+        assert!(evidence.pending_activity_report.is_none());
+        assert!(evidence.activity_retry.is_none());
+
+        healthy.store(false, Ordering::SeqCst);
+        let failure_at = start + Duration::from_millis(400);
+        evidence.report("web/fix-login", SessionActivity::TurnStarted);
+        assert_eq!(
+            evidence.pending_activity_report,
+            Some(SessionActivity::TurnStarted)
+        );
+
+        evidence.retry_pending_activity_report("web/fix-login", failure_at);
+        assert_eq!(
+            evidence.activity_retry,
+            Some((
+                failure_at + ACTIVITY_RETRY_INITIAL_DELAY,
+                ACTIVITY_RETRY_INITIAL_DELAY
+            )),
+            "the first retry after a new failure must be scheduled 50 ms out, not on the stale doubled deadline"
+        );
     }
 }
