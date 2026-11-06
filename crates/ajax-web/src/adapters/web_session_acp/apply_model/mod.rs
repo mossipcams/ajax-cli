@@ -74,18 +74,10 @@ pub async fn apply_config_option(
     {
         Ok((next, options)) => {
             replace_config_options(&mut stored, options);
-            let unconfirmed = !apply_steps_needing_send(
-                stored.as_deref().unwrap_or(&[]),
-                std::slice::from_ref(&step),
-            )
-            .is_empty();
-            let error = unconfirmed.then(|| {
-                unconfirmed_change_error(config_id, &config_value_text(&step.value), &next)
-            });
             ApplyModelOutcome {
                 applied_model: next,
                 config_options: stored,
-                error,
+                error: None,
             }
         }
         Err(error) => ApplyModelOutcome {
@@ -94,6 +86,36 @@ pub async fn apply_config_option(
             error: Some(format!("config option {config_id} was refused — {error}")),
         },
     }
+}
+
+pub async fn apply_session_config_option(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    config_id: &str,
+    value: SessionConfigOptionValue,
+    config_options: Option<&[SessionConfigOption]>,
+) -> ApplyModelOutcome {
+    let step = ConfigApplyStep {
+        config_id: config_id.to_string(),
+        value: value.clone(),
+    };
+    let mut outcome =
+        apply_config_option(connection, session_id, config_id, value, config_options).await;
+    if outcome.error.is_none() {
+        let unconfirmed = !apply_steps_needing_send(
+            outcome.config_options.as_deref().unwrap_or(&[]),
+            std::slice::from_ref(&step),
+        )
+        .is_empty();
+        if unconfirmed {
+            outcome.error = Some(unconfirmed_change_error(
+                config_id,
+                &config_value_text(&step.value),
+                &outcome.applied_model,
+            ));
+        }
+    }
+    outcome
 }
 
 fn unconfirmed_change_error(config_id: &str, requested: &str, applied: &str) -> String {
@@ -281,16 +303,10 @@ pub async fn apply_model_pin(
                 .await;
                 applied = outcome.applied_model;
                 stored = outcome.config_options;
-                if applied != selection.model {
-                    return ApplyModelOutcome {
-                        applied_model: applied.clone(),
-                        config_options: stored,
-                        error: Some(format!(
-                            "session model {raw} was refused — harness is running {applied}"
-                        )),
-                    };
-                }
-                if let Some(error) = outcome.error {
+                if outcome.error.is_some() || applied != selection.model {
+                    let error = outcome
+                        .error
+                        .unwrap_or_else(|| format!("harness is running {applied}"));
                     return ApplyModelOutcome {
                         applied_model: applied,
                         config_options: stored,

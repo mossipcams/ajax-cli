@@ -1,6 +1,6 @@
 use super::acp_adopted::session_update_event;
 use super::apply_model::{
-    apply_config_option, apply_model_pin, sync_live_model_config, ApplyModelOutcome,
+    apply_model_pin, apply_session_config_option, sync_live_model_config, ApplyModelOutcome,
 };
 use super::client::{
     AcpClientEvent, AcpSpawnError, RestoreFailure, RestoreMethod, HANDSHAKE_TIMEOUT,
@@ -705,7 +705,7 @@ async fn command_loop(
                 else {
                     break;
                 };
-                let outcome = apply_config_option(
+                let outcome = apply_session_config_option(
                     &connection,
                     &session_id,
                     &config_id,
