@@ -4,6 +4,7 @@ const readline = require('node:readline');
 let model = 'gpt-6-astra';
 let effort = 'medium';
 let fast = true;
+const stickyModel = process.argv.includes('--sticky-model');
 const choices = (values) => values.map((value) => ({ value, name: value }));
 function configOptions() {
   const options = [{
@@ -50,7 +51,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (!valid) {
       error = { code: -32602, message: 'option or value not advertised' };
     } else {
-      if (params.configId === 'model') model = params.value;
+      if (params.configId === 'model' && !stickyModel) model = params.value;
       if (params.configId === 'reasoning_effort') effort = params.value;
       if (params.configId === 'fast-mode') fast = params.value;
       result = { configOptions: configOptions() };

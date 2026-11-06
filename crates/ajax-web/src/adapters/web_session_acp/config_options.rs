@@ -137,6 +137,14 @@ pub fn read_boolean_current_value(option: &SessionConfigOption) -> Option<bool> 
     Some(boolean.current_value)
 }
 
+pub fn config_value_text(value: &SessionConfigOptionValue) -> String {
+    match value {
+        SessionConfigOptionValue::ValueId { value } => value.0.to_string(),
+        SessionConfigOptionValue::Boolean { value } => value.to_string(),
+        _ => String::new(),
+    }
+}
+
 pub fn read_model_applied(options: Option<&[SessionConfigOption]>) -> Option<String> {
     read_select_current_value(model_option(options?)?)
 }

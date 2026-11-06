@@ -200,3 +200,64 @@ fn model_dependent_unsupported_setting_reports_confirmed_base_issue_1145() {
         });
     }
 }
+
+#[test]
+fn unconfirmed_model_change_reports_refusal_1547() {
+    use agent_client_protocol::schema::v1::SessionConfigOptionValue;
+    use std::{fs, path::PathBuf};
+
+    let dir = std::env::temp_dir().join(format!("ajax-sticky-model-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/web_session/model_dependent_acp.cjs");
+    let (client, _report) = super::with_test_acp_extra_args(&["--sticky-model"], || {
+        super::with_test_acp_program(&fixture, || {
+            super::AcpStdioClient::spawn(
+                ajax_core::models::AgentClient::Codex,
+                &dir,
+                Some("gpt-6-astra"),
+                None,
+            )
+            .expect("fake ACP spawn")
+        })
+    });
+    let outcome = client
+        .apply_config_option("model", SessionConfigOptionValue::value_id("gpt-5.6-sol"))
+        .expect("apply config option");
+    drop(client);
+    fs::remove_dir_all(dir).unwrap();
+
+    assert_eq!(outcome.applied_model, "gpt-6-astra");
+    assert_eq!(
+        outcome.error.as_deref(),
+        Some("session model gpt-5.6-sol was refused — harness is running gpt-6-astra")
+    );
+}
+
+#[test]
+fn spawn_pin_refusal_is_not_double_wrapped_1547() {
+    use std::{fs, path::PathBuf};
+
+    let dir = std::env::temp_dir().join(format!("ajax-sticky-spawn-pin-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata/web_session/model_dependent_acp.cjs");
+    let (client, report) = super::with_test_acp_extra_args(&["--sticky-model"], || {
+        super::with_test_acp_program(&fixture, || {
+            super::AcpStdioClient::spawn(
+                ajax_core::models::AgentClient::Codex,
+                &dir,
+                Some("gpt-5.6-sol|reasoning_effort=high"),
+                None,
+            )
+            .expect("fake ACP spawn")
+        })
+    });
+    drop(client);
+    fs::remove_dir_all(dir).unwrap();
+
+    assert_eq!(
+        report.model_apply_error.as_deref(),
+        Some("session model gpt-5.6-sol|reasoning_effort=high was refused — harness is running gpt-6-astra")
+    );
+}

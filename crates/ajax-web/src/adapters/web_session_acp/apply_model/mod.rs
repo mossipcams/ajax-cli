@@ -1,6 +1,6 @@
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
-    apply_steps_needing_send, build_set_config_request, is_unspecified_model,
+    apply_steps_needing_send, build_set_config_request, config_value_text, is_unspecified_model,
     model_config_advertised, model_option, pin_satisfied, read_model_applied,
     replace_config_options, step_matches_current, sync_session_result_config_options,
     validate_config_change, ConfigApplyStep,
@@ -74,10 +74,18 @@ pub async fn apply_config_option(
     {
         Ok((next, options)) => {
             replace_config_options(&mut stored, options);
+            let unconfirmed = !apply_steps_needing_send(
+                stored.as_deref().unwrap_or(&[]),
+                std::slice::from_ref(&step),
+            )
+            .is_empty();
+            let error = unconfirmed.then(|| {
+                unconfirmed_change_error(config_id, &config_value_text(&step.value), &next)
+            });
             ApplyModelOutcome {
                 applied_model: next,
                 config_options: stored,
-                error: None,
+                error,
             }
         }
         Err(error) => ApplyModelOutcome {
@@ -85,6 +93,17 @@ pub async fn apply_config_option(
             config_options: stored,
             error: Some(format!("config option {config_id} was refused — {error}")),
         },
+    }
+}
+
+fn unconfirmed_change_error(config_id: &str, requested: &str, applied: &str) -> String {
+    if config_id != "model" {
+        return format!("config option {config_id} was not applied by the harness");
+    }
+    if applied.is_empty() {
+        format!("session model {requested} could not be verified — harness did not report an applied model")
+    } else {
+        format!("session model {requested} was refused — harness is running {applied}")
     }
 }
 
@@ -262,10 +281,16 @@ pub async fn apply_model_pin(
                 .await;
                 applied = outcome.applied_model;
                 stored = outcome.config_options;
-                if outcome.error.is_some() || applied != selection.model {
-                    let error = outcome
-                        .error
-                        .unwrap_or_else(|| format!("harness is running {applied}"));
+                if applied != selection.model {
+                    return ApplyModelOutcome {
+                        applied_model: applied.clone(),
+                        config_options: stored,
+                        error: Some(format!(
+                            "session model {raw} was refused — harness is running {applied}"
+                        )),
+                    };
+                }
+                if let Some(error) = outcome.error {
                     return ApplyModelOutcome {
                         applied_model: applied,
                         config_options: stored,
