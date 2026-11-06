@@ -97,8 +97,9 @@ step 0a. Step 0a PR opened 2026-11-05.
 - [x] 6 — Health signals: sidecar exits on pump death, slot moves to
   Exited/Faulted, UI offers Restart with resume. Size: M. Closes: #1556, #1557
   Done: the Claude sidecar shuts down when its pump dies (claude_sdk_sidecar.mjs), regression `claude_pump_failure_exits_the_sidecar_1556`.
-- [ ] 7 — Typed error when the harness doesn't confirm a model change. Size:
+- [x] 7 — Typed error when the harness doesn't confirm a model change. Size:
   S. Closes: #1547
+  Done: unconfirmed in-session config changes return a refusal (apply_model/mod.rs `apply_config_option`), regressions `unconfirmed_model_change_reports_refusal_1547`, `unconfirmed_model_change_appends_error_and_keeps_persisted_model_1547`, `spawn_pin_refusal_is_not_double_wrapped_1547`.
 - [ ] 8 — SIGTERM handler with actor flush; eviction guard. Size: S. Closes:
   #1558
 
@@ -121,6 +122,7 @@ step 0a. Step 0a PR opened 2026-11-05.
 - **Step 4 design (user decision 2026-11-05).** `record_activity` writes no `registry_events` row (that table is renumbered positionally by every full save), and lifecycle-changing activity reports keep the whole-registry save; only non-lifecycle reports go per task.
 - **Step 5 scope.** `AgentSlot` has `Absent | Spawning | Live | Exited`. `Faulted` and a slot-held `resume_id` are not added: nothing produces a faulted state today, and the resume id stays in the store (`agent_runs.native_session_id`) and is re-read on every spawn, so both would be dead code. Step 6 adds `Faulted` only if a health signal produces it.
 - **Step 6 scope.** #1557 (a dead client never respawned on an open socket) was fixed on main by #1582 (lazy revival on the next prompt, attach, or model change, and Restart as an actor command), which this stack predates. Step 6 therefore only fixes #1556. The cursor sidecar (per-run pump) and Pi (EOF already reported) need no change. No producer of a faulted-but-alive state exists, so `Faulted` is not added. With #1582 merged in, a pump death is revived lazily on the next prompt, attach or model change.
+- **Step 7 scope.** The unconfirmed change reuses the existing refusal path (Error event, `SessionError::Protocol`, no persistence) instead of a new `SessionError` variant, because no caller matches on the kind. Only ACP harnesses can be checked: Claude SDK and Pi `set_model` replies are not read, so they still self-report the applied model.
 
 Three-strike definitions:
 

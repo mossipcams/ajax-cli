@@ -1,6 +1,6 @@
 use super::catalog::parse_session_new_catalog;
 use super::config_options::{
-    apply_steps_needing_send, build_set_config_request, is_unspecified_model,
+    apply_steps_needing_send, build_set_config_request, config_value_text, is_unspecified_model,
     model_config_advertised, model_option, pin_satisfied, read_model_applied,
     replace_config_options, step_matches_current, sync_session_result_config_options,
     validate_config_change, ConfigApplyStep,
@@ -85,6 +85,47 @@ pub async fn apply_config_option(
             config_options: stored,
             error: Some(format!("config option {config_id} was refused — {error}")),
         },
+    }
+}
+
+pub async fn apply_session_config_option(
+    connection: &ConnectionTo<Agent>,
+    session_id: &str,
+    config_id: &str,
+    value: SessionConfigOptionValue,
+    config_options: Option<&[SessionConfigOption]>,
+) -> ApplyModelOutcome {
+    let step = ConfigApplyStep {
+        config_id: config_id.to_string(),
+        value: value.clone(),
+    };
+    let mut outcome =
+        apply_config_option(connection, session_id, config_id, value, config_options).await;
+    if outcome.error.is_none() {
+        let unconfirmed = !apply_steps_needing_send(
+            outcome.config_options.as_deref().unwrap_or(&[]),
+            std::slice::from_ref(&step),
+        )
+        .is_empty();
+        if unconfirmed {
+            outcome.error = Some(unconfirmed_change_error(
+                config_id,
+                &config_value_text(&step.value),
+                &outcome.applied_model,
+            ));
+        }
+    }
+    outcome
+}
+
+fn unconfirmed_change_error(config_id: &str, requested: &str, applied: &str) -> String {
+    if config_id != "model" {
+        return format!("config option {config_id} was not applied by the harness");
+    }
+    if applied.is_empty() {
+        format!("session model {requested} could not be verified — harness did not report an applied model")
+    } else {
+        format!("session model {requested} was refused — harness is running {applied}")
     }
 }
 

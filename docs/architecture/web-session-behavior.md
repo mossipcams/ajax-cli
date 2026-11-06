@@ -251,6 +251,13 @@ model, Cursor runs `CURSOR_DEFAULT_MODEL` and every other harness (Codex's ACP a
   replaces the complete `configOptions` list from the successful response, publishes
   the replacement snapshot, and persists pipe-form `session_model` only after ACP
   success. Refusal leaves confirmed browser state unchanged and does not persist.
+  An in-session change the harness acknowledges but does not apply (the option
+  still needs sending after the apply rounds) is reported as `session model X was
+  refused — harness is running Y` (or `session model X could not be verified —
+  harness did not report an applied model`, or `config option <id> was not applied
+  by the harness`), like any refusal: Error event, picker reverts, persisted model
+  unchanged ([#1547](https://github.com/mossipcams/ajax-cli/issues/1547)). Claude
+  SDK and Pi still self-report the applied model.
   Post-apply persistence failure keeps the live change and emits a warning.
 - Moving a task to another harness is refused unless it was launched over ACP.
   Cross-harness Switch discards the queue on both paths: it resets backend
