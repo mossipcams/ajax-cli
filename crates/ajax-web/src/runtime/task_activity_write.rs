@@ -50,7 +50,7 @@ where
 
         match shared
             .bridge
-            .record_task_activity(&mut shared.context, &task_id)
+            .record_task_activity(&mut shared.context, &task_id, &previous)
         {
             Ok(()) => {
                 shared.revision = shared.revision.saturating_add(1);

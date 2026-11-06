@@ -283,10 +283,16 @@ prompt/ledger state, and `SessionEvidence` owns activity reporting and durable
 fault evidence. Slice-boundary failures use `SessionError::{Spawn, Persist,
 Protocol, Operator, RestoreUnavailable}`. Activity persistence retries are
 bounded without sleeping on the session loop; a failed report is retried with
-backoff (1s doubling to 60s, cleared on success), and identical repeated
+backoff (50 ms doubling to 60 s, cleared on success), and identical repeated
 failures do not resend the error snapshot. Non-lifecycle activity reports
 persist per task, so another task's registry conflict cannot block them
-([#1555](https://github.com/mossipcams/ajax-cli/issues/1555)). A failed report
+([#1555](https://github.com/mossipcams/ajax-cli/issues/1555)). The per-task
+write is a compare-and-swap: `record_activity` checks the task's activity rows on
+disk (agent status, last activity, live status, side flags, agent attempts)
+against the copy the web last saw, and writes nothing when they differ. The
+report then falls back to a reload plus a whole-registry save, so another
+writer's flags and attempts are never deleted. A session exit makes one final
+attempt at a pending report even inside its retry backoff. A failed report
 is exposed on a snapshot as `transcriptError`. `transcriptError` is also set for transcript
 corruption (stored rows that could not be read back). Every source is shown to
 the operator, but only the transcript durability fault sets `promptsBlocked`,
@@ -463,21 +469,54 @@ append the same authentication error repeatedly.
   spawned stdio client, runs prompt-ledger recovery, and marks the slot healthy
   only when recovery succeeds. If recovery fails, the staged client is discarded
   and a later acquire retries recovery ([#1086](https://github.com/mossipcams/ajax-cli/issues/1086)).
+- **Lazy revival:** an unexpected ACP child exit interrupts the active prompt,
+  reports the turn as failed, and leaves the slot dead (`acp_alive` false). There is
+  no eager restart. Queued ledger rows stay queued and do not dispatch while the child
+  is dead. A withdrawal or edit of an already-queued prompt after child exit is applied
+  without reviving the child; only a submit that adds a new prompt revives.
 - Queued ledger rows survive unexpected child exit; the host dispatches them only
   after a healthy replacement client is installed and any interrupted active row
   is durable.
 - The Claude SDK sidecar exits after reporting a lost turn when its message pump ends
   or fails ([#1556](https://github.com/mossipcams/ajax-cli/issues/1556)), so pump death
-  surfaces as a child exit and the slot moves to `Exited`.
-- Operator **Restart agent** replaces the harness process and resumes the stored
-  session id. When a holder is attached and a prompt was dispatching, the original
-  ledger row stays **interrupted** and the host resubmits the same text and content
-  blocks once through the normal FIFO under a new `<clientMessageId>-restart` id, so
-  it runs after prompts already queued. The host settles that row before re-acquiring, so a resubmitted prompt gets no not-retried note. With no attached holder, or when stored
-  content blocks cannot be decoded, nothing is resubmitted. The cockpit shows progress while the restart runs and reports whether the prompt was resubmitted. This is the only
+  surfaces as a child exit and the slot moves to `Exited`. After the sidecar exits, the
+  next prompt, attach or model change revives the agent with its stored session.
+- The child is revived on demand through the dead-slot path, which resumes the stored
+  session id. The revival triggers are: a new attach, a submitted prompt that adds a
+  new prompt, and a model or config change on the dead child (the change respawns it
+  through `apply_config_option`). Poll-driven queued resume (`resume_queued_after_release`)
+  revives only a released slot that has no client (for example after a finished adopted
+  shim client is released); it does not revive a dead child still held in the slot after
+  an unexpected exit, so withdrawals and edits of queued rows never revive it. The
+  interrupted prompt is never resent. Queued rows dispatch in order once the revived
+  child is healthy.
+- Operator **Restart agent** is the `TaskSession` actor command
+  `TaskSessionCommand::Restart`, reachable as the WebSocket client message
+  `{"type":"restart"}` (`SessionClientMessage::Restart`). The actor replaces the
+  harness child with a forced `Resume` replacement of the stored session id. It does
+  not detach the actor, and attached subscribers stay attached. The slot generation
+  bumps, so clients receive a snapshot resync. While the outgoing child is released,
+  queued prompts are held aside so none is dispatched onto it; they dispatch in FIFO
+  order on the replacement. A cancel failure on the outgoing child (for example a
+  closed command channel) is logged as an error and does not abort teardown.
+- When a holder is attached and a prompt was dispatching, the host replaces the
+  child first, then marks the original ledger row **interrupted** without a
+  not-retried note. It resubmits the same text and content blocks once under a new
+  `<clientMessageId>-restart` id through the normal FIFO, so it runs after prompts
+  already queued. With no attached holder, or when stored content blocks cannot be
+  decoded, nothing is resubmitted. The host appends `Agent restarted.` as a note, and
+  also `Re-sent your last prompt.` when a prompt was resubmitted. The cockpit shows
+  progress while the restart runs and reports whether the prompt was resubmitted. This is the only
   resubmission path; every other interruption keeps the never-resent rule above.
-  Task details shows Restart agent only while a turn is in flight or Core offers
-  `restart-agent`. **Fresh session** in task details is always available in chat
+- Activity after a successful replacement: the host reports `TurnStarted` when a
+  prompt was resubmitted or is active after the restart. Otherwise, if the last
+  reported activity was `TurnFailed`, it reports `TurnEnded`, which lets Core return
+  the task from Blocked to Done, and resets the host's turn reducer
+  (`reset_turn`), so later non-turn events do not report the old failure again.
+  Otherwise it reports nothing.
+- Task details always shows Restart agent in chat mode; it needs one confirm and sends
+  the WebSocket `restart` message. Core no longer offers `restart-agent`.
+  **Fresh session** in task details is always available in chat
   mode, needs a second tap, and takes the same path as the built-in `/clear`.
 - The per-task host holds the harness client in an `AgentSlot` (`agent_slot.rs`):
   `Absent` (never spawned or released), `Spawning` (staged client not yet confirmed),
@@ -624,6 +663,12 @@ whole transcript inside `session/load` before responding.
   id and repeats restore; `Start fresh` clears that id, creates a new session,
   and appends the normal `Context cleared.` note. Failed restores never create
   a fresh session or append that note.
+- Before attach, **Retry** repeats restore through the `acquire` dead-slot Resume path
+  that a prompt uses to revive a child after unexpected exit; there is no separate
+  restore primitive. After attach (a restore failure surfaced by lazy revival or
+  Restart), **Retry** runs the same actor `Restart` command, and **Start fresh** runs
+  the same path as `/clear` (Fresh session). A failed revival surfaces the typed
+  restore failure again, so Retry and Start fresh stay available.
 - A prompt that was dispatching when the host died is shown as interrupted
   (`Prompt <id> was interrupted by host restart and was not retried.`) and is
   never resent automatically, unless a live session shim adopts it (see
@@ -899,8 +944,10 @@ appends nothing.
   `extension_error` each surface one operator-visible error
   ([#1335](https://github.com/mossipcams/ajax-cli/issues/1335)).
 - A native harness exit reports "Agent process exited"; ACP exits keep "ACP
-  process exited"; both are deduped by the pump and explained in the browser as
-  'The agent stopped. It will restart when you reconnect.'
+  process exited"; both are deduped by the pump and explained in the browser as a
+  stopped agent. A new attach, including a WebSocket reconnect, revives the dead child
+  through the same dead-slot Resume path, as does the next submitted prompt or model
+  change (see [ACP child health and replacement](#acp-child-health-and-replacement)).
   ([#1336](https://github.com/mossipcams/ajax-cli/issues/1336)).
 - The Claude Agent SDK exposes its task tools (`TaskCreate`, `TaskGet`,
   `TaskList`, `TaskUpdate`) only when `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which

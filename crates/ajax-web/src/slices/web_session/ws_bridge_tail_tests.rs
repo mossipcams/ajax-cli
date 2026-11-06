@@ -1,5 +1,5 @@
 use super::test_support::BlockingSessionDirectory;
-use super::test_support::{fake_acp_fixture, scratch_dir};
+use super::test_support::{fake_acp_fixture, has_message, scratch_dir};
 use super::ws_bridge::{outbound_frames, should_skip_replayed_envelopes};
 use super::{
     apply_client_message, SessionClientMessage, SessionEventEnvelope, SessionServerEvent,
@@ -223,4 +223,121 @@ fn outbound_frames_keeps_envelopes_without_snapshot() {
         out_snapshot.is_none(),
         "snapshot must pass through unchanged"
     );
+}
+
+#[test]
+fn ws_restart_keeps_socket_attached_and_appends_host_note_1574() {
+    let dir = scratch_dir("ws-restart-1574");
+    let handle = "web/ws-restart-1574";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let attach = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "auto".to_string(),
+            None,
+        ));
+        let mut generation = attach.generation;
+        let cursor = attach.snapshot.cursor;
+
+        let restart: SessionClientMessage =
+            serde_json::from_str(r#"{"type":"restart"}"#).expect("restart message");
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            restart,
+            &mut generation,
+            None,
+        ))
+        .expect("restart over the attached socket");
+
+        let batch = directory.collect_outbound(handle, cursor, generation);
+        assert!(
+            !batch.events.is_empty() || batch.snapshot.is_some(),
+            "the attached socket must keep receiving events after restart"
+        );
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(has_message(&events, "note", "Agent restarted."));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ws_retry_restore_after_attach_restarts_agent_instead_of_erroring() {
+    let dir = scratch_dir("ws-retry-restore-attached");
+    let handle = "web/ws-retry-restore-attached";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let attach = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "auto".to_string(),
+            None,
+        ));
+        let mut generation = attach.generation;
+
+        let retry: SessionClientMessage =
+            serde_json::from_str(r#"{"type":"retry_restore"}"#).expect("retry restore message");
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            retry,
+            &mut generation,
+            None,
+        ))
+        .expect("retry restore over an attached socket must not error");
+
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(has_message(&events, "note", "Agent restarted."));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ws_start_fresh_after_attach_clears_context_instead_of_erroring() {
+    let dir = scratch_dir("ws-start-fresh-attached");
+    let handle = "web/ws-start-fresh-attached";
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    with_test_acp_program(&fake_acp_fixture(), || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let attach = rt.block_on(directory.inner().attach_snapshot(
+            handle,
+            "auto".to_string(),
+            None,
+        ));
+        let mut generation = attach.generation;
+
+        let start_fresh: SessionClientMessage =
+            serde_json::from_str(r#"{"type":"start_fresh"}"#).expect("start fresh message");
+        rt.block_on(apply_client_message(
+            directory.inner(),
+            handle,
+            &dir,
+            start_fresh,
+            &mut generation,
+            None,
+        ))
+        .expect("start fresh over an attached socket must not error");
+
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(has_message(&events, "note", "Context cleared."));
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
 }

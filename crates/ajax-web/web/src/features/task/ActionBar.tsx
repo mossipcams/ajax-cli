@@ -39,7 +39,6 @@ const REMEDIATION = new Set([
   "resolve-merge-conflicts",
   "create-pr",
   "merge-pr",
-  "restart-agent",
 ]);
 
 const actionRowStyle: CSSProperties = {

@@ -10,6 +10,20 @@ use super::enums::*;
 use super::row_codec::*;
 
 pub(crate) fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotError> {
+    load_matching_tasks(connection, None)
+}
+
+pub(crate) fn load_task(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<Task>, RegistrySnapshotError> {
+    Ok(load_matching_tasks(connection, Some(task_id))?.pop())
+}
+
+fn load_matching_tasks(
+    connection: &Connection,
+    task_id: Option<&str>,
+) -> Result<Vec<Task>, RegistrySnapshotError> {
     let mut statement = connection
         .prepare(
             "SELECT t.task_id, t.repo, t.handle, t.title, t.branch, t.base_branch, \
@@ -34,10 +48,11 @@ pub(crate) fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistryS
              LEFT JOIN registry_task_git_evidence g ON g.task_id = t.task_id \
              LEFT JOIN registry_task_tmux_evidence tm ON tm.task_id = t.task_id \
              LEFT JOIN registry_task_window_evidence wt ON wt.task_id = t.task_id \
+             WHERE (?1 IS NULL OR t.task_id = ?1) \
              ORDER BY t.task_id",
         )
         .map_err(database_error)?;
-    let mut rows = statement.query([]).map_err(database_error)?;
+    let mut rows = statement.query([task_id]).map_err(database_error)?;
     let mut tasks = Vec::new();
 
     while let Some(row) = rows.next().map_err(database_error)? {

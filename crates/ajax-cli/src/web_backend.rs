@@ -378,6 +378,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         task_id: &TaskId,
+        previous: &Task,
     ) -> Result<(), WebError> {
         let Some(paths) = self.paths.as_ref() else {
             return Ok(());
@@ -386,7 +387,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             WebError::CommandFailed(format!("activity task missing: {}", task_id.as_str()))
         })?;
         let revision = SqliteRegistryStore::new(&paths.state_file)
-            .record_activity(task)
+            .record_activity(task, previous)
             .map_err(|error| WebError::CommandFailed(format!("activity save failed: {error}")))?;
         if revision == self.save_state.loaded_revision.saturating_add(1)
             && copy_task_activity(&mut self.save_state.loaded_registry, task)

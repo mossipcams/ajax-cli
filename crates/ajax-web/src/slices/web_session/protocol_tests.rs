@@ -2,7 +2,14 @@ use super::protocol::{
     parse_client_cursor, parse_tail_snapshot_flag, SessionChrome, SessionEventEnvelope,
     SessionSnapshot, SESSION_PROTOCOL_VERSION,
 };
-use crate::slices::web_session::SessionServerEvent;
+use crate::slices::web_session::{SessionClientMessage, SessionServerEvent};
+
+#[test]
+fn restart_client_message_parses_from_wire_type() {
+    let message: SessionClientMessage =
+        serde_json::from_str(r#"{"type":"restart"}"#).expect("restart message");
+    assert_eq!(message, SessionClientMessage::Restart);
+}
 
 #[test]
 fn snapshot_serializes_protocol_v2_fields() {
