@@ -1,111 +1,138 @@
-use super::TaskSessionDirectory;
-use crate::adapters::web_session_store::prompt_ledger::{self, PromptPhase};
-use ajax_core::{
-    commands::CommandContext,
-    registry::{InMemoryRegistry, Registry as _},
-};
-use std::sync::Arc;
+use super::prompt_content::PromptContentBlockWire;
+use super::task_session::{TaskSessionCommand, TaskSessionState};
+use super::task_session_directory::send_command;
+use super::task_session_exit::{submit_prompt, try_dispatch_next_if_idle};
+use super::task_session_spawn;
+use super::{SessionActivity, SessionError, SessionServerEvent, TaskSessionDirectory};
+use crate::adapters::web_session_store::prompt_ledger::PromptPhase;
+use std::path::Path;
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RestartError {
-    TaskNotFound,
-    WorktreeMissing,
-    Spawn(String),
+impl TaskSessionDirectory {
+    pub(super) async fn restart_agent(
+        &self,
+        handle: &str,
+        worktree_path: &Path,
+    ) -> Result<bool, String> {
+        if !worktree_path.exists() {
+            return Err("worktree missing".to_string());
+        }
+        let tx = self.command_tx(handle)?;
+        let worktree_path = worktree_path.to_path_buf();
+        send_command(&tx, |reply| TaskSessionCommand::Restart {
+            worktree_path,
+            reply,
+        })
+        .await?
+        .map_err(Into::into)
+    }
 }
 
-pub(crate) async fn restart_session(
-    directory: &Arc<TaskSessionDirectory>,
-    context: &CommandContext<InMemoryRegistry>,
-    handle: &str,
-) -> Result<bool, RestartError> {
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == handle)
-        .ok_or(RestartError::TaskNotFound)?;
-    if !task.worktree_path.exists() {
-        return Err(RestartError::WorktreeMissing);
+struct InFlightPrompt {
+    client_message_id: String,
+    prompt_text: String,
+    content_blocks: Vec<PromptContentBlockWire>,
+}
+
+pub(super) async fn restart_child(
+    state: &mut TaskSessionState,
+    worktree_path: &Path,
+) -> Result<bool, SessionError> {
+    let in_flight = in_flight_prompt(state);
+    if state.acp.client.is_some() {
+        let model = state.acp.model.clone();
+        task_session_spawn::respawn(state, worktree_path, &model, true).await?;
+    } else {
+        let model = state.acp.model.clone();
+        let agent = state.agent;
+        let holders = state.holders.0;
+        let acquired = task_session_spawn::acquire(state, worktree_path, &model, agent).await;
+        state.holders.0 = holders;
+        acquired?;
     }
 
-    let holders = directory.attached_holders(handle).await;
-    let in_flight = (holders > 0)
-        .then(|| {
-            prompt_ledger::try_load(
-                &directory.storage.registry_store(),
-                &directory.storage.state_dir,
-                handle,
-            )
-            .ok()
-            .and_then(|ledger| {
-                ledger
-                    .entries
-                    .iter()
-                    .find(|entry| entry.phase == PromptPhase::Dispatching)
-                    .cloned()
-            })
-        })
-        .flatten()
-        .and_then(|entry| {
-            let content_blocks = entry
-                .content_blocks
-                .iter()
-                .map(|value| serde_json::from_value(value.clone()))
-                .collect::<Result<Vec<super::prompt_content::PromptContentBlockWire>, _>>()
-                .ok()?;
-            Some((entry, content_blocks))
-        });
-    directory.detach_session(handle).await;
-    if let Some((entry, _)) = &in_flight {
-        settle_resent_prompt(directory, handle, &entry.client_message_id);
-    }
-    let model = task.session_model().unwrap_or("auto");
-    for _ in 0..holders.max(1) {
-        directory
-            .acquire(handle, &task.worktree_path, model, task.selected_agent)
-            .await
-            .map_err(RestartError::Spawn)?;
-    }
-
-    let mut resent = false;
-    if let Some((entry, content_blocks)) = in_flight {
-        let resumed_phase = prompt_ledger::try_load(
-            &directory.storage.registry_store(),
-            &directory.storage.state_dir,
-            handle,
-        )
-        .ok()
-        .and_then(|ledger| {
-            ledger
-                .entry(&entry.client_message_id)
-                .map(|entry| entry.phase)
-        });
-        if resumed_phase == Some(PromptPhase::Interrupted) {
-            directory
-                .submit_prompt_with_id(
-                    handle,
-                    format!("{}-restart", entry.client_message_id),
-                    entry.prompt_text,
-                    content_blocks,
-                )
-                .await
-                .map_err(RestartError::Spawn)?;
-            resent = true;
+    if let Some(prompt) = &in_flight {
+        if phase(state, &prompt.client_message_id) == Some(PromptPhase::Dispatching) {
+            let client_message_id = prompt.client_message_id.clone();
+            state.commit_ledger_with_events(
+                |ledger| {
+                    ledger.mark_interrupted(&client_message_id);
+                },
+                Vec::new(),
+            )?;
         }
     }
+    let resend = in_flight
+        .filter(|prompt| phase(state, &prompt.client_message_id) == Some(PromptPhase::Interrupted));
+    let resent = resend.is_some();
 
-    if holders == 0 {
-        directory.release(handle).await;
+    let mut notes = vec![host_note("Agent restarted.", state)];
+    if resent {
+        notes.push(host_note("Re-sent your last prompt.", state));
+    }
+    state.append_to_log(notes)?;
+
+    try_dispatch_next_if_idle(state);
+    if let Some(prompt) = resend {
+        submit_prompt(
+            state,
+            format!("{}-restart", prompt.client_message_id),
+            prompt.prompt_text,
+            prompt.content_blocks,
+        )?;
+    }
+
+    let activity = if resent || state.prompts.active_prompt.is_some() {
+        Some(SessionActivity::TurnStarted)
+    } else if state.evidence.activity_reporter.last_reported() == Some(SessionActivity::TurnFailed)
+    {
+        state.evidence.activity_reporter.reset_turn();
+        Some(SessionActivity::TurnEnded)
+    } else {
+        None
+    };
+    if let Some(activity) = activity {
+        state.evidence.report(&state.qualified_handle, activity);
     }
     Ok(resent)
 }
 
-fn settle_resent_prompt(directory: &TaskSessionDirectory, handle: &str, client_message_id: &str) {
-    let store = directory.storage.registry_store();
-    let state_dir = &directory.storage.state_dir;
-    if let Ok(mut ledger) = prompt_ledger::try_load(&store, state_dir, handle) {
-        if ledger.mark_interrupted(client_message_id) {
-            let _ = prompt_ledger::try_persist(&store, state_dir, handle, &ledger);
-        }
+fn in_flight_prompt(state: &TaskSessionState) -> Option<InFlightPrompt> {
+    if state.holders.0 == 0 {
+        return None;
+    }
+    let entry = state
+        .prompts
+        .prompt_ledger
+        .entries
+        .iter()
+        .find(|entry| entry.phase == PromptPhase::Dispatching)?;
+    let content_blocks = entry
+        .content_blocks
+        .iter()
+        .map(|value| serde_json::from_value(value.clone()))
+        .collect::<Result<Vec<PromptContentBlockWire>, _>>()
+        .ok()?;
+    Some(InFlightPrompt {
+        client_message_id: entry.client_message_id.clone(),
+        prompt_text: entry.prompt_text.clone(),
+        content_blocks,
+    })
+}
+
+fn phase(state: &TaskSessionState, client_message_id: &str) -> Option<PromptPhase> {
+    state
+        .prompts
+        .prompt_ledger
+        .entry(client_message_id)
+        .map(|entry| entry.phase)
+}
+
+fn host_note(text: &str, state: &mut TaskSessionState) -> SessionServerEvent {
+    SessionServerEvent::Message {
+        role: "note".to_string(),
+        text: text.to_string(),
+        content_blocks: Vec::new(),
+        item_id: state.stream_normalizer.fresh_item_id(),
+        message_id: None,
     }
 }

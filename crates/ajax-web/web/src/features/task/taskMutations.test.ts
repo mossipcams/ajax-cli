@@ -248,66 +248,8 @@ describe("commitConfirmedAction", () => {
   });
 });
 
-describe("runTaskAction restart-agent", () => {
-  const restartAction = { action: "restart-agent", label: "Restart agent" } as WebAction;
-
-  it("shows progress before the POST and the server output after a successful restart", async () => {
-    let resolveOperation: (value: unknown) => void = () => {};
-    const executeOperation = vi.fn().mockReturnValue(
-      new Promise((resolve) => {
-        resolveOperation = resolve;
-      }),
-    );
-    const onResult = vi.fn();
-    const onMutated = vi.fn();
-
-    const running = runTaskAction(
-      restartAction,
-      "web/x",
-      true,
-      null,
-      { onResult, onMutated },
-      executeOperation,
-    );
-
-    expect(onResult).toHaveBeenCalledExactlyOnceWith("Restarting agent…", null, false);
-    expect(executeOperation).toHaveBeenCalledOnce();
-
-    resolveOperation({
-      ok: true,
-      response: { ok: true, output: "Agent restarted. Re-sent your last prompt." },
-    });
-    await running;
-
-    expect(onResult).toHaveBeenLastCalledWith(
-      "Agent restarted. Re-sent your last prompt.",
-      null,
-      false,
-    );
-    expect(onResult).toHaveBeenCalledTimes(2);
-    expect(onMutated).toHaveBeenCalledOnce();
-  });
-
-  it("falls back to 'Agent restarted.' when the response has no output", async () => {
-    const executeOperation = vi.fn().mockResolvedValue({ ok: true, response: { ok: true } });
-    const onResult = vi.fn();
-
-    await runTaskAction(restartAction, "web/x", true, null, { onResult, onMutated: vi.fn() }, executeOperation);
-
-    expect(onResult).toHaveBeenLastCalledWith("Agent restarted.", null, false);
-  });
-
-  it("shows the error and no success message when the restart fails", async () => {
-    const executeOperation = vi.fn().mockResolvedValue({ ok: false, response: {} });
-    const onResult = vi.fn();
-    const onMutated = vi.fn();
-
-    await runTaskAction(restartAction, "web/x", true, null, { onResult, onMutated }, executeOperation);
-
-    expect(onResult).toHaveBeenLastCalledWith(expect.any(String), undefined, true);
-    expect(onResult).not.toHaveBeenCalledWith("Agent restarted.", null, false);
-    expect(onMutated).not.toHaveBeenCalled();
-  });
+describe("runTaskAction", () => {
+  const fixCiAction = { action: "fix-ci", label: "Fix CI" } as WebAction;
 
   it("reports the server's own message when executeOperation rejects with a non-network error", async () => {
     const executeOperation = vi.fn().mockRejectedValue(
@@ -315,7 +257,7 @@ describe("runTaskAction restart-agent", () => {
     );
     const onResult = vi.fn();
 
-    await runTaskAction(restartAction, "web/x", true, null, { onResult, onMutated: vi.fn() }, executeOperation);
+    await runTaskAction(fixCiAction, "web/x", true, null, { onResult, onMutated: vi.fn() }, executeOperation);
 
     expect(onResult).toHaveBeenLastCalledWith(
       expect.stringContaining("Incompatible server response"),
@@ -329,7 +271,7 @@ describe("runTaskAction restart-agent", () => {
     const executeOperation = vi.fn().mockRejectedValue(new ApiError("network", "Failed to fetch"));
     const onResult = vi.fn();
 
-    await runTaskAction(restartAction, "web/x", true, null, { onResult, onMutated: vi.fn() }, executeOperation);
+    await runTaskAction(fixCiAction, "web/x", true, null, { onResult, onMutated: vi.fn() }, executeOperation);
 
     expect(onResult).toHaveBeenLastCalledWith(
       expect.stringContaining("Action failed — network error"),
@@ -343,14 +285,7 @@ describe("runTaskAction restart-agent", () => {
     const onResult = vi.fn();
     const onMutated = vi.fn();
 
-    await runTaskAction(
-      { action: "fix-ci", label: "Fix CI" } as WebAction,
-      "web/x",
-      true,
-      null,
-      { onResult, onMutated },
-      executeOperation,
-    );
+    await runTaskAction(fixCiAction, "web/x", true, null, { onResult, onMutated }, executeOperation);
 
     expect(onResult).not.toHaveBeenCalled();
     expect(onMutated).toHaveBeenCalledOnce();

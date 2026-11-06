@@ -1,21 +1,17 @@
 use super::prompt_content::PromptContentBlockWire;
-use super::task_session_restart::{restart_session, RestartError};
+use super::session_activity_directory_tests::{record_activities, wait_for_last_activity};
+use super::task_session_exit::ACP_PROCESS_EXITED;
 use super::test_support::{fake_acp_fixture, has_message, scratch_dir, BlockingSessionDirectory};
-use super::SessionServerEvent;
+use super::{SessionActivity, SessionServerEvent};
 use crate::adapters::web_session_acp::{
     with_test_acp_extra_args, with_test_acp_program, with_test_claude_sdk_module,
 };
 use crate::adapters::web_session_store;
 use crate::adapters::web_session_store::prompt_ledger;
-use ajax_core::{
-    commands::CommandContext,
-    config::Config,
-    models::{AgentClient, Task, TaskId},
-    registry::{InMemoryRegistry, Registry},
-};
+use ajax_core::models::AgentClient;
 use base64::Engine;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn session_new_count(dir: &Path) -> usize {
     std::fs::read_to_string(dir.join(".fake-acp-session-new-count"))
@@ -24,35 +20,11 @@ fn session_new_count(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn chat_context(
-    handle: &str,
-    worktree: &Path,
-    agent: AgentClient,
-) -> CommandContext<InMemoryRegistry> {
-    let mut task = Task::new(
-        TaskId::new(format!("task-{handle}")),
-        "web",
-        handle,
-        "Chat",
-        format!("ajax/{handle}"),
-        "main",
-        worktree.to_path_buf(),
-        format!("web-{handle}"),
-        "task",
-        agent,
-    );
-    task.set_skip_interactive_agent(true);
-    let mut registry = InMemoryRegistry::default();
-    registry.create_task(task).unwrap();
-    CommandContext::new(Config::default(), registry)
-}
-
 #[test]
 fn restart_respawns_stored_session_and_keeps_transcript_and_queue() {
     let dir = scratch_dir("restart-resume");
     let handle = "web/restart-resume";
     let script = fake_acp_fixture();
-    let context = chat_context("restart-resume", &dir, AgentClient::Cursor);
     let directory = BlockingSessionDirectory::new(dir.clone());
 
     with_test_acp_program(&script, || {
@@ -72,7 +44,7 @@ fn restart_respawns_stored_session_and_keeps_transcript_and_queue() {
 
             directory
                 .runtime_handle()
-                .block_on(restart_session(directory.inner(), &context, handle))
+                .block_on(directory.inner().restart_agent(handle, &dir))
                 .expect("restart");
 
             assert!(directory.child_id(handle).is_some());
@@ -102,7 +74,6 @@ fn restart_leaves_no_holder_so_respawned_session_is_idle_evictable() {
     let dir = scratch_dir("restart-holder");
     let handle = "web/restart-holder";
     let script = fake_acp_fixture();
-    let context = chat_context("restart-holder", &dir, AgentClient::Cursor);
     let directory = BlockingSessionDirectory::new(dir.clone());
 
     with_test_acp_program(&script, || {
@@ -117,7 +88,7 @@ fn restart_leaves_no_holder_so_respawned_session_is_idle_evictable() {
 
             directory
                 .runtime_handle()
-                .block_on(restart_session(directory.inner(), &context, handle))
+                .block_on(directory.inner().restart_agent(handle, &dir))
                 .expect("restart");
 
             assert!(directory.child_id(handle).is_some());
@@ -138,7 +109,6 @@ fn restart_with_attached_holder_keeps_it_and_prompts_still_succeed() {
     let dir = scratch_dir("restart-attached");
     let handle = "web/restart-attached";
     let script = fake_acp_fixture();
-    let context = chat_context("restart-attached", &dir, AgentClient::Cursor);
     let directory = BlockingSessionDirectory::new(dir.clone());
 
     with_test_acp_program(&script, || {
@@ -152,7 +122,7 @@ fn restart_with_attached_holder_keeps_it_and_prompts_still_succeed() {
 
             directory
                 .runtime_handle()
-                .block_on(restart_session(directory.inner(), &context, handle))
+                .block_on(directory.inner().restart_agent(handle, &dir))
                 .expect("restart");
 
             let snapshot = directory.eviction_snapshot(handle).expect("snapshot");
@@ -175,15 +145,14 @@ fn restart_with_missing_worktree_errors_without_spawning() {
     let dir = scratch_dir("restart-missing");
     let handle = "web/restart-missing";
     let script = fake_acp_fixture();
-    let context = chat_context("restart-missing", &dir.join("gone"), AgentClient::Cursor);
     let directory = BlockingSessionDirectory::new(dir.clone());
 
     with_test_acp_program(&script, || {
         let error = directory
             .runtime_handle()
-            .block_on(restart_session(directory.inner(), &context, handle))
+            .block_on(directory.inner().restart_agent(handle, &dir.join("gone")))
             .expect_err("missing worktree must fail");
-        assert_eq!(error, RestartError::WorktreeMissing);
+        assert_eq!(error, "worktree missing");
         assert_eq!(session_new_count(&dir), 0);
         assert!(directory.child_id(handle).is_none());
     });
@@ -195,7 +164,6 @@ fn restart_with_missing_worktree_errors_without_spawning() {
 fn restart_wedged_claude_sdk_replaces_process_resumes_session_and_keeps_queue() {
     let dir = scratch_dir("restart-wedged-claude");
     let handle = "web/restart-wedged-claude";
-    let context = chat_context("restart-wedged-claude", &dir, AgentClient::Claude);
     let directory = BlockingSessionDirectory::new(dir.clone());
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
 
@@ -246,13 +214,10 @@ fn restart_wedged_claude_sdk_replaces_process_resumes_session_and_keeps_queue() 
                     prompt_ledger::PromptPhase::Queued
                 );
 
-                tokio::time::timeout(
-                    Duration::from_secs(10),
-                    restart_session(session, &context, handle),
-                )
-                .await
-                .expect("restart must not wait for the wedged interrupt")
-                .expect("restart wedged session");
+                tokio::time::timeout(Duration::from_secs(10), session.restart_agent(handle, &dir))
+                    .await
+                    .expect("restart must not wait for the wedged interrupt")
+                    .expect("restart wedged session");
 
                 let new_pid = session
                     .child_id(handle)
@@ -320,7 +285,6 @@ fn restart_wedged_claude_sdk_replaces_process_resumes_session_and_keeps_queue() 
 fn restart_resends_the_wedged_prompt_with_a_new_id() {
     let dir = scratch_dir("restart-resend");
     let handle = "web/restart-resend";
-    let context = chat_context("restart-resend", &dir, AgentClient::Claude);
     let directory = BlockingSessionDirectory::new(dir.clone());
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
 
@@ -351,7 +315,7 @@ fn restart_resends_the_wedged_prompt_with_a_new_id() {
 
                 let resent = tokio::time::timeout(
                     Duration::from_secs(10),
-                    restart_session(session, &context, handle),
+                    session.restart_agent(handle, &dir),
                 )
                 .await
                 .expect("restart must not wait for the wedged interrupt")
@@ -402,7 +366,6 @@ fn restart_with_no_in_flight_prompt_resends_nothing() {
     let dir = scratch_dir("restart-no-resend");
     let handle = "web/restart-no-resend";
     let script = fake_acp_fixture();
-    let context = chat_context("restart-no-resend", &dir, AgentClient::Cursor);
     let directory = BlockingSessionDirectory::new(dir.clone());
 
     with_test_acp_program(&script, || {
@@ -413,7 +376,7 @@ fn restart_with_no_in_flight_prompt_resends_nothing() {
 
             let resent = directory
                 .runtime_handle()
-                .block_on(restart_session(directory.inner(), &context, handle))
+                .block_on(directory.inner().restart_agent(handle, &dir))
                 .expect("restart");
 
             assert!(!resent);
@@ -429,7 +392,6 @@ fn restart_with_no_in_flight_prompt_resends_nothing() {
 fn restart_resends_the_wedged_prompt_with_its_image_blocks() {
     let dir = scratch_dir("restart-image-resend");
     let handle = "web/restart-image-resend";
-    let context = chat_context("restart-image-resend", &dir, AgentClient::Claude);
     let directory = BlockingSessionDirectory::new(dir.clone());
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_claude_sdk.mjs");
 
@@ -461,13 +423,10 @@ fn restart_resends_the_wedged_prompt_with_its_image_blocks() {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
 
-                tokio::time::timeout(
-                    Duration::from_secs(10),
-                    restart_session(session, &context, handle),
-                )
-                .await
-                .expect("restart must not wait for the wedged interrupt")
-                .expect("restart wedged session");
+                tokio::time::timeout(Duration::from_secs(10), session.restart_agent(handle, &dir))
+                    .await
+                    .expect("restart must not wait for the wedged interrupt")
+                    .expect("restart wedged session");
 
                 loop {
                     let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
@@ -496,6 +455,272 @@ fn restart_resends_the_wedged_prompt_with_its_image_blocks() {
             .expect("wedged image resend scenario must finish within 30 seconds");
         });
     });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn prompt_after_child_exit_revives_and_dispatches_1557() {
+    let dir = scratch_dir("prompt-after-exit-1557");
+    let handle = "web/prompt-after-exit-1557";
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let stored_id = web_session_store::load::<SessionServerEvent>(&dir, handle)
+            .acp_session_id
+            .expect("session id persisted");
+        let old_pid = directory.child_id(handle).expect("child before exit");
+
+        directory.kill_host_for_test(handle);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let (events, _) = directory.read_from(handle, 0);
+            if events.iter().any(|event| {
+                matches!(event, SessionServerEvent::Error { message } if message == ACP_PROCESS_EXITED)
+            }) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "child exit must be reconciled");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        directory
+            .submit_prompt_with_id(handle, "after-exit".to_string(), "ping".to_string())
+            .expect("a prompt submitted after child exit must revive the child");
+
+        assert_ne!(directory.child_id(handle), Some(old_pid));
+        assert_eq!(
+            web_session_store::load::<SessionServerEvent>(&dir, handle).acp_session_id,
+            Some(stored_id),
+            "revival must resume the stored session"
+        );
+        assert_eq!(
+            session_new_count(&dir),
+            1,
+            "revival must not create a session"
+        );
+        loop {
+            let (events, _) = directory.read_from(handle, 0);
+            if has_message(&events, "agent", "pong") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline + Duration::from_secs(5),
+                "revived child must dispatch the prompt"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn withdrawing_queued_prompt_after_child_exit_neither_revives_nor_dispatches_it() {
+    let dir = scratch_dir("withdraw-after-exit");
+    let handle = "web/withdraw-after-exit";
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "ping".to_string())
+                .expect("queued");
+
+            directory.kill_host_for_test(handle);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let (events, _) = directory.read_from(handle, 0);
+                if events.iter().any(|event| {
+                    matches!(event, SessionServerEvent::Error { message } if message == ACP_PROCESS_EXITED)
+                }) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "child exit must be reconciled");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let child_after_exit = directory.child_id(handle);
+
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), String::new())
+                .expect("withdrawing a queued prompt after child exit must succeed");
+
+            assert!(
+                prompt_ledger::load(&dir, handle)
+                    .expect("ledger after withdrawal")
+                    .entry("queued-1")
+                    .is_none(),
+                "the withdrawn prompt must leave the ledger"
+            );
+            let settle = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < settle {
+                let (events, _) = directory.read_from(handle, 0);
+                assert!(
+                    !has_message(&events, "agent", "pong"),
+                    "a withdrawn prompt must never be executed"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(
+                directory.child_id(handle),
+                child_after_exit,
+                "withdrawal must not spawn a child"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_with_no_in_flight_prompt_reports_turn_ended_1574() {
+    let dir = scratch_dir("restart-turn-ended-1574");
+    let handle = "web/restart-turn-ended-1574";
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+    let reported = record_activities(&directory);
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1574".to_string(), "first".to_string())
+                .expect("first");
+            directory.release(handle);
+            directory.kill_host_for_test(handle);
+            wait_for_last_activity(&reported, SessionActivity::TurnFailed);
+
+            directory
+                .runtime_handle()
+                .block_on(directory.inner().restart_agent(handle, &dir))
+                .expect("restart");
+
+            assert_eq!(
+                reported.lock().expect("reported lock").last().copied(),
+                Some(SessionActivity::TurnEnded),
+                "a restart that resends nothing must settle a failed task back to idle"
+            );
+        });
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_keeps_subscribers_and_appends_host_note_1574() {
+    let dir = scratch_dir("restart-subscriber-1574");
+    let handle = "web/restart-subscriber-1574";
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        directory
+            .acquire(handle, &dir, "auto", AgentClient::Cursor)
+            .expect("acquire");
+        let before = directory.collect_outbound(handle, 0, directory.generation(handle));
+
+        directory
+            .runtime_handle()
+            .block_on(directory.inner().restart_agent(handle, &dir))
+            .expect("restart");
+
+        let after_restart = directory.collect_outbound(handle, before.cursor, before.generation);
+        assert!(
+            after_restart.snapshot.is_some() || !after_restart.events.is_empty(),
+            "an attached subscriber must receive the restart"
+        );
+        let (events, _) = directory.read_from(handle, 0);
+        assert!(has_message(&events, "note", "Agent restarted."));
+
+        directory
+            .submit_prompt_with_id(handle, "ping-1574".to_string(), "ping".to_string())
+            .expect("prompt after restart");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut cursor = after_restart.cursor;
+        let mut generation = after_restart.generation;
+        let mut delivered = false;
+        while !delivered {
+            let batch = directory.collect_outbound(handle, cursor, generation);
+            cursor = batch.cursor;
+            generation = batch.generation;
+            delivered = batch.events.iter().any(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    SessionServerEvent::Message { role, text, .. }
+                        if role == "agent" && text == "pong"
+                )
+            });
+            assert!(
+                Instant::now() < deadline,
+                "the subscriber must keep receiving events after the restart"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn restart_with_active_and_queued_prompts_keeps_queued_prompt() {
+    let dir = scratch_dir("restart-active-queued");
+    let handle = "web/restart-active-queued";
+    let script = fake_acp_fixture();
+    let directory = BlockingSessionDirectory::new(dir.clone());
+
+    with_test_acp_program(&script, || {
+        with_test_acp_extra_args(&["--hold-prompt"], || {
+            directory
+                .acquire(handle, &dir, "auto", AgentClient::Cursor)
+                .expect("acquire");
+            directory
+                .submit_prompt_with_id(handle, "active-1".to_string(), "first".to_string())
+                .expect("first");
+            directory
+                .submit_prompt_with_id(handle, "queued-1".to_string(), "second".to_string())
+                .expect("queued");
+
+            directory
+                .runtime_handle()
+                .block_on(directory.inner().restart_agent(handle, &dir))
+                .expect("restart");
+
+            let ledger = prompt_ledger::load(&dir, handle).expect("ledger after restart");
+            assert_eq!(
+                ledger.entry("queued-1").expect("queued entry").phase,
+                prompt_ledger::PromptPhase::Dispatching,
+                "the queued prompt must be dispatched on the replacement child"
+            );
+            assert_eq!(
+                ledger
+                    .entry("active-1-restart")
+                    .expect("re-sent active prompt")
+                    .phase,
+                prompt_ledger::PromptPhase::Queued,
+                "the re-sent active prompt must wait behind the queued prompt"
+            );
+
+            let (events, _) = directory.read_from(handle, 0);
+            assert!(
+                !events.iter().any(|event| matches!(event,
+                    SessionServerEvent::Error { message } if message.contains("was interrupted"))),
+                "a queued prompt must not be reported as interrupted"
+            );
+        });
+    });
+
     let _ = std::fs::remove_dir_all(dir);
 }
 
