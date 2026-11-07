@@ -3,3 +3,7 @@ root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp)"
 "$root/scripts/strip-cursor-attribution" < "$file" > "$tmp"
 mv "$tmp" "$file"
+if [ -z "$AJAX_ALLOW_FEAT" ] && head -1 "$1" | grep -qE '^feat(\(|:|!)'; then
+  echo "Stabilization pause: feat commits are blocked. Set AJAX_ALLOW_FEAT=1 to override." >&2
+  exit 1
+fi
