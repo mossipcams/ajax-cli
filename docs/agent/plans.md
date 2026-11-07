@@ -44,3 +44,6 @@ Keep an active plan current. It must include:
 
 The final report must name the plan path, state whether its checklist is
 complete, and report any remaining work or risk.
+
+When the PR that completes a plan merges, that PR deletes the plan file; git
+history keeps it. Finished plans must not accumulate in `.planning/agent-plans/`.

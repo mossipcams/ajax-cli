@@ -559,7 +559,7 @@ before persistence.
 Production sources under `slices::web_session` split orchestration-chat by
 mechanism. Architecture tests in `crates/ajax-web/src/architecture_web_session.rs`
 enforce the forbidden-import table below (production `.rs` only; test modules are
-excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
+excluded).
 
 | Module | Owns |
 | --- | --- |
@@ -584,6 +584,26 @@ excluded). See also `.planning/agent-plans/architecture-granular-rules.md`.
 Each row's production code must not import sibling internals listed in the
 architecture test forbidden table (for example mapping modules must not reach
 into the store, ACP client, command loop, or runtime route layer).
+
+Forbidden-import table (production `.rs` only; `*_tests.rs`, `test_support.rs`,
+and `runtime/tests/**` are excluded; matching is by substring/path):
+
+| Target | Must not mention |
+| --- | --- |
+| `protocol`, `acp_map`, `normalize`, `acp_usage` | `web_session_store`, `AcpStdioClient`, `task_session_directory`, `task_session_spawn`, `acp_drain`, `crate::runtime`, `ajax-web::runtime` |
+| `replay` | `web_session_store`, `AcpStdioClient`, `task_session_spawn`, `acp_drain`, `ws_bridge`, `crate::runtime`, `ajax-web::runtime` |
+| `transcript`, `model_change` | `AcpStdioClient`, `task_session_spawn`, `acp_drain`, `ws_bridge`, `crate::runtime`, `ajax-web::runtime` |
+| `ws_bridge` | `web_session_store`, `AcpStdioClient`, `acp_drain`, `acp_map`, `StreamNormalizer`, `crate::runtime`, `ajax-web::runtime` |
+| `session_cleanup` | `AcpStdioClient`, `task_session_spawn`, `ws_bridge`, `crate::runtime`, `ajax-web::runtime` |
+| `adapters::web_session_acp` | `SessionClientMessage`, `SessionServerEvent`, `TaskSessionDirectory`, `bridge_task_session` |
+| `adapters::web_session_store` | `AcpStdioClient`, `AcpClientEvent`, `SessionClientMessage`, `SessionServerEvent`, `TaskSessionDirectory` |
+| `runtime` production | `web_session_store`, `AcpStdioClient`, `web_session::task_session::`, `web_session::acp_drain`, `web_session::acp_map` |
+
+Still allowed: `protocol` and `replay` may use `ConfigOptionDescriptor`;
+`transcript`, `session_cleanup`, and the command-loop modules may use the store;
+`acp_drain` and `task_session*` may use `AcpStdioClient`; the runtime may call
+`prepare_task_session`, `bridge_task_session_socket`, `TaskSessionDirectory`,
+and `parse_client_cursor`.
 
 ### Task-session wire protocol (v2)
 
