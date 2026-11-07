@@ -1,7 +1,5 @@
 # AGENTS.md
 
-**Stabilization pause in effect. Do not add features. See Plan 3.**
-
 Shared repository contract for coding agents working in Ajax. Keep this file
 concise, durable, Ajax-specific, and independent of any one harness.
 
