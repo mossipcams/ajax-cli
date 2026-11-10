@@ -20,7 +20,7 @@ the Cursor arms of `translate_native_event`, and mark Cursor wait capabilities
 - `crates/ajax-cli/src/agent_event.rs`
 - `crates/ajax-core/src/agent_capability.rs`
 - `architecture.md`
-- `.planning/agent-plans/cursor-notification-wait-hooks.md` (checklist only)
+- `.planning/agent-plans/cursor-notification-wait-hooks.md` (deleted; see git history) (checklist only)
 
 ## Forbidden changes
 

@@ -65,7 +65,7 @@ Concrete outcomes:
 | Desired | Ambient IDE env keeps writing Cursor events after agent exit | Shell had `AJAX_TASK_ID=ajax-cli/history` while runtime snapshot `exited_success`; `history.json` value `working` |
 | Identity | Runtime snapshot lives beside events dir | `agent_runtime.rs`: `events_dir = state_root.parent()/agent-events`; snapshot `{stem}.json` under `agent-runtime` |
 | Identity | Events require env identity today | `agent_event.rs` `read_agent_event_identity` (`AJAX_TASK_ID`, `AJAX_AGENT_EVENTS_DIR`) |
-| Architecture | Cursor/Pi as Other lose ProviderHook; Cursor has no native wait/ask | `architecture.md` status precedence; `.planning/agent-plans/canonical-agent-events.md` |
+| Architecture | Cursor/Pi as Other lose ProviderHook; Cursor has no native wait/ask | `architecture.md` status precedence; `docs/architecture/task-authority.md` (section 'Canonical agent-event envelope and client mapping') |
 | Pattern | SQLite string codec lists enum variants | `registry/sqlite.rs` `string_codec!(..., [Claude, Codex, Other,])` |
 | Pattern | Supervisor maps Other→Cursor today | `execution_dispatch.rs` `supervisor_agent_for_task` |
 

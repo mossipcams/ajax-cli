@@ -1,6 +1,6 @@
 # Plan: Cloud-only Ajax Web exploratory testing
 
-> **Superseded** by `nightly-exploratory-defect-discovery.md` on 2026-08-26.
+> **Superseded** by `nightly-exploratory-defect-discovery.md` (deleted; see git history) on 2026-08-26.
 > Retained for historical reference only.
 
 ## Scope

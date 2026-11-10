@@ -271,7 +271,7 @@ emits `turn_usage`, `projectWireInput` maps it, and the reducer stores it at
 `usage.turn` — the whole path terminates one step short of the screen.
 
 **This was misclassified.** The unrendered formatter is not an oversight. The
-head line was removed on purpose by `session-ux-shortlist-and-turns.md` (T2,
+head line was removed on purpose by `session-ux-shortlist-and-turns.md` (deleted; see git history) (T2,
 operator-approved 2026-08-19): "Hide LiveHead **Turn tokens** line. Keep
 context-pressure meter. Reducer may still store `turnUsage`." That plan's T3
 docs task never updated `web-session-behavior.md`, which still says the head

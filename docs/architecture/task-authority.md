@@ -147,5 +147,44 @@ and child aggregation are unchanged. The ACP host also feeds host-detected
 background jobs as completion-holding children, so a settled turn with live
 background work projects `Background work running`, not done.
 
-See `.planning/agent-plans/canonical-agent-events.md` for the envelope schema,
-client mapping matrix, and migration phases.
+### Canonical agent-event envelope and client mapping
+
+Each fact is appended as one JSON line to the per-task run log under
+`AJAX_AGENT_EVENTS_DIR`. Envelope fields (`schema_version` 1): `schema_version`,
+`event_id`, `task_id`, `run_id`, `parent_run_id` (optional), `client`,
+`native_event`, `kind`, `detail` (optional), `occurred_at_unix_millis`,
+`received_at_unix_millis`, and `source`.
+
+Kinds (`CanonicalEventKind`, snake_case on the wire): `turn_started`,
+`activity_started`, `activity_finished`, `attention_requested`,
+`attention_cleared`, `turn_settled`, `session_opened`, `session_closed`,
+`child_started`, `child_settled`, `heartbeat`. Details: activity (`tool`, the
+only activity kind), attention reason (`permission` | `question`), and turn
+outcome (`completed` | `interrupted` | `failed` | `unknown`).
+
+Native hook → canonical kind (`translate_native_event`; unlisted pairs are
+`Ignored` and write nothing):
+
+| Canonical kind | Claude | Codex | Cursor | Pi |
+| --- | --- | --- | --- | --- |
+| `turn_started` | `UserPromptSubmit` | `UserPromptSubmit` | `beforeSubmitPrompt`, `ElicitationResult` | `before_agent_start` |
+| `activity_started` | `PreToolUse` (not `AskUserQuestion`) | `PreToolUse` | `preToolUse` | — |
+| `activity_finished` | `PostToolUse` (not `AskUserQuestion`) | `PostToolUse` | `postToolUse`, `postToolUseFailure` | — |
+| `attention_requested` (permission) | `Notification:permission_prompt` | `PermissionRequest` | `beforeShellExecution`, `beforeMCPExecution`, `Notification:permission_prompt` | — |
+| `attention_requested` (question) | `PreToolUse` `AskUserQuestion`, `Notification:elicitation_dialog`, `:agent_needs_input`, `:idle_prompt` | — | `Notification:elicitation_dialog` | — |
+| `attention_cleared` | `PostToolUse` `AskUserQuestion` | — | — | — |
+| `turn_settled` | `Stop` (no background tasks), `StopFailure` (interrupted), `Notification:agent_completed` | `Stop` (completed) | `stop` (by payload `status`: failed, interrupted, completed) | `agent_settled` (completed) |
+| `child_started` / `child_settled` | — | — | `subagentStart` / `subagentStop` | — |
+| `session_opened` / `session_closed` | `SessionStart` / `SessionEnd` | `SessionStart` / `SessionEnd` | `sessionStart` / `sessionEnd` | — |
+
+Claude `Stop` emits `turn_started`, not `turn_settled`, when the payload's
+`background_tasks` array is non-empty; otherwise it settles. A plain Claude
+`Notification` (no suffix) requests attention: reason permission when the
+message text contains "permission", otherwise question.
+
+Adapters only identify these facts. `canonical_agent_event.rs` in `ajax-core`
+folds each run's events into an orthogonal `RunSnapshot` (phase `Active`,
+`Blocked`, `Settled`, `Failed`, or `Unknown`, an open-tool set, and pending
+attention) that the existing status reducer projects to the operator status. Pane
+text contributes only where a capability is not covered natively (see
+`pane_fallback.rs`).

@@ -15,7 +15,7 @@ seed sits entirely in scrollback before live PTY bytes arrive.
 ## Allowed files
 
 - `crates/ajax-web/src/adapters/terminal_pty.rs`
-- `.planning/agent-plans/fix-history-seed-viewport-wipe.md`
+- `.planning/agent-plans/fix-history-seed-viewport-wipe.md` (deleted; see git history)
 
 ## Forbidden changes
 
@@ -97,7 +97,7 @@ compile errors in other crates.
 4. Update the existing CRLF unit test to pass `0` for rows.
 5. Add the new pad unit test from Test-first instructions.
 6. Check off tasks in
-   `.planning/agent-plans/fix-history-seed-viewport-wipe.md`.
+   `.planning/agent-plans/fix-history-seed-viewport-wipe.md` (deleted; see git history).
 
 ## Verification commands
 
