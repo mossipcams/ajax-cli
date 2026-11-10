@@ -59,7 +59,7 @@ only and continue in separate tested slices."
   pi/`opencode-go/minimax-m3`, ACCEPTED after the parent relaxed two over-coupled
   test assertions.
 - [ ] **Round 2 — controller extraction.** Planned, not started. See
-  `react-cleanup-s10-round2-plan.md` for the Serena + ast-grep analysis.
+  `react-cleanup-s10-round2-plan.md` (deleted; see git history) for the Serena + ast-grep analysis.
   **Key finding: this plan's own suggested cut (construction/connection/disposal)
   is the worst available cut — 30-symbol interface.** The leaf computations cut
   at 4–5. Proposed order: 2a scroll/follow, 2b geometry/refit, 2c gestures;

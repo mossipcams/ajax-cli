@@ -311,7 +311,7 @@ legacy rows, transcripts, and worktrees are never deleted by a migration.
   clean trial: compile, fmt, clippy, verify:arch, nextest 2746/2747. Security
   review of its Claude path: the sidecar's `canUseTool` always allows and MCP
   elicitation is declined. Accepted, not changed: it matches the operator-
-  approved all-ACP-chats-full-access policy (acp-auto-approve-permissions.md,
+  approved all-ACP-chats-full-access policy (acp-auto-approve-permissions.md (deleted; see git history),
   2026-08-20) and `main` already sets `bypassPermissions` for Claude. Open
   question for Matt: keep, or build operator approval + elicitation forwarding
   (a security-assumption change needing its own plan).

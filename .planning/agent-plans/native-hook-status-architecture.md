@@ -13,7 +13,7 @@ one client-event translation boundary, one agent reducer, and one final
 projector.
 
 This builds on the already-landed canonical-agent-events work
-(`canonical-agent-events.md`, Phases 0–4a). It does **not** re-litigate the
+(`docs/architecture/task-authority.md` (section 'Canonical agent-event envelope and client mapping'), Phases 0–4a). It does **not** re-litigate the
 envelope schema or the JSONL log. It removes the string round-trip and the
 duplicate reducer that were left in place during that migration, plus the legacy
 inputs that migration was supposed to retire.
@@ -183,7 +183,7 @@ hooks. ✅ Matrix is accurate.
 shared `merge_hook_entries`. If the Codex CLI does not read this file with this
 schema and these event names, every Codex status silently degrades to
 wrapper-exit-only. Codex `TurnSettled` completion has always been marked
-"native; wrapper exit backup" in `canonical-agent-events.md` for this reason.
+"native; wrapper exit backup" in `docs/architecture/task-authority.md` (section 'Canonical agent-event envelope and client mapping') for this reason.
 
 ### Cursor — `~/.cursor/hooks.json` (`version: 1`)
 

@@ -13,7 +13,7 @@ Empirical probe in a scratch directory, not inference from peer ranges:
    module load. Declared peer range is `typescript >=4.8.4 <6.1.0`; `canary`
    (8.64.1-alpha.8) has the same cap. **No typescript-eslint release supports TS 7.**
    This is the same failure class that killed `svelte-check` during the TS 7
-   migration (see `typescript-7-migration.md` Deviations: "TS7 no longer exposes
+   migration (see `typescript-7-migration.md` (deleted; see git history) Deviations: "TS7 no longer exposes
    the legacy `typescript.sys` compiler API shape").
 2. **The repo's own proven workaround inverts cleanly.** With
    `typescript@5.9.3` primary and `typescript-7@npm:typescript@7.0.2` aliased,

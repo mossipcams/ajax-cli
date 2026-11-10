@@ -1,6 +1,6 @@
 # Handoff: native harnesses through one shared layer + in-session durability
 
-> **SUPERSEDED 2026-10-14** by `native-harness-parity-durability.md` (open checklist items moved there; keep this file as history only).
+> **SUPERSEDED 2026-10-14** by `native-harness-parity-durability.md` (deleted; see git history) (open checklist items moved there; keep this file as history only).
 
 Written 2026-10-13 from task `ajax-cli/durability-v2`
 (`/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-durability-v2`,
@@ -320,7 +320,7 @@ have to approve.
    Cursor work.**
 4. `.planning/agent-plans/durable-execution-tmux-removal.md` — the durability
    plan (stages 1–12).
-5. `.planning/agent-plans/native-claude-pi-events.md`,
+5. `.planning/agent-plans/native-claude-pi-events.md` (deleted; see git history),
    `claude-agent-sdk-pi-rpc.md` — how Claude/Pi went native.
 
 ## Where each piece stands

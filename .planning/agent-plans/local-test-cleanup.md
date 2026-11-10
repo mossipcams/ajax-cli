@@ -12,7 +12,7 @@ behavior coverage when a stronger sibling already exists.
 - Weakening or skipping remaining high-value suites
 - Deleting `smoke_user_flows.rs`, `terminal-behavior` acceptance rows (except
   project scoping), `legacyTerminalRemoval.test.ts`, architecture isolation
-- Broad soft-assert hardening already completed in `harden-soft-nextests.md`
+- Broad soft-assert hardening already completed in `harden-soft-nextests.md` (deleted; see git history)
 
 ## Delegation decision
 

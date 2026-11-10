@@ -26,7 +26,7 @@ Keep the scrollbar hidden and preserve the existing keyboard-open snap.
   the superseded uncommitted `touchScrollOpenedKeyboard` changes
 - `crates/ajax-web/web/src/components/TerminalRawView.test.ts` only to remove
   the superseded uncommitted no-snap regression test
-- `.planning/agent-plans/fix-inline-terminal-scrollback.md`
+- `.planning/agent-plans/fix-inline-terminal-scrollback.md` (deleted; see git history)
 
 ## 4. Forbidden changes
 
@@ -52,7 +52,7 @@ Keep the scrollbar hidden and preserve the existing keyboard-open snap.
   in-module tests; every `run_tmux_command_blocking` call is in
   `terminal_pty.rs`. No sibling history-seeding implementation exists.
 - Existing project plan evidence:
-  `.planning/agent-plans/web-terminal-scroll-yank-and-opencode.md` records the
+  `.planning/agent-plans/web-terminal-scroll-yank-and-opencode.md` (deleted; see git history) records the
   limitation verbatim: browser scrollback only contains output streamed during
   the current WebSocket, and names `tmux capture-pane -p -e -J -S -<N> -E -1`
   as the follow-up.
