@@ -173,9 +173,14 @@ Native hook → canonical kind (`translate_native_event`; unlisted pairs are
 | `attention_requested` (permission) | `Notification:permission_prompt` | `PermissionRequest` | `beforeShellExecution`, `beforeMCPExecution`, `Notification:permission_prompt` | — |
 | `attention_requested` (question) | `PreToolUse` `AskUserQuestion`, `Notification:elicitation_dialog`, `:agent_needs_input`, `:idle_prompt` | — | `Notification:elicitation_dialog` | — |
 | `attention_cleared` | `PostToolUse` `AskUserQuestion` | — | — | — |
-| `turn_settled` | `Stop`, `StopFailure` (interrupted), `Notification:agent_completed` | `Stop` (completed) | `stop` | `agent_settled` (completed) |
+| `turn_settled` | `Stop` (no background tasks), `StopFailure` (interrupted), `Notification:agent_completed` | `Stop` (completed) | `stop` (by payload `status`: failed, interrupted, completed) | `agent_settled` (completed) |
 | `child_started` / `child_settled` | — | — | `subagentStart` / `subagentStop` | — |
 | `session_opened` / `session_closed` | `SessionStart` / `SessionEnd` | `SessionStart` / `SessionEnd` | `sessionStart` / `sessionEnd` | — |
+
+Claude `Stop` emits `turn_started`, not `turn_settled`, when the payload's
+`background_tasks` array is non-empty; otherwise it settles. A plain Claude
+`Notification` (no suffix) requests attention: reason permission when the
+message text contains "permission", otherwise question.
 
 Adapters only identify these facts. `canonical_agent_event.rs` in `ajax-core`
 folds each run's events into an orthogonal `RunSnapshot` (phase `Active`,

@@ -558,8 +558,7 @@ before persistence.
 
 Production sources under `slices::web_session` split orchestration-chat by
 mechanism. Architecture tests in `crates/ajax-web/src/architecture_web_session.rs`
-enforce the forbidden-import table below (production `.rs` only; test modules are
-excluded).
+enforce the forbidden-import table below.
 
 | Module | Owns |
 | --- | --- |
@@ -585,8 +584,10 @@ Each row's production code must not import sibling internals listed in the
 architecture test forbidden table (for example mapping modules must not reach
 into the store, ACP client, command loop, or runtime route layer).
 
-Forbidden-import table (production `.rs` only; `*_tests.rs`, `test_support.rs`,
-and `runtime/tests/**` are excluded; matching is by substring/path):
+Forbidden-import table (production sources only; path-based exclusion of
+`*_tests.rs`, `test_support.rs`, and files under a `runtime/tests/` directory —
+inline `#[cfg(test)]` modules in the same file are still scanned; matching is by
+substring/path):
 
 | Target | Must not mention |
 | --- | --- |
@@ -598,12 +599,6 @@ and `runtime/tests/**` are excluded; matching is by substring/path):
 | `adapters::web_session_acp` | `SessionClientMessage`, `SessionServerEvent`, `TaskSessionDirectory`, `bridge_task_session` |
 | `adapters::web_session_store` | `AcpStdioClient`, `AcpClientEvent`, `SessionClientMessage`, `SessionServerEvent`, `TaskSessionDirectory` |
 | `runtime` production | `web_session_store`, `AcpStdioClient`, `web_session::task_session::`, `web_session::acp_drain`, `web_session::acp_map` |
-
-Still allowed: `protocol` and `replay` may use `ConfigOptionDescriptor`;
-`transcript`, `session_cleanup`, and the command-loop modules may use the store;
-`acp_drain` and `task_session*` may use `AcpStdioClient`; the runtime may call
-`prepare_task_session`, `bridge_task_session_socket`, `TaskSessionDirectory`,
-and `parse_client_cursor`.
 
 ### Task-session wire protocol (v2)
 
