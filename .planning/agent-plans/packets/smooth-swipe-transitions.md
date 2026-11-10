@@ -34,7 +34,7 @@ Implement finish-the-slide swipe page transitions for Web Cockpit:
 - `crates/ajax-web/web/e2e/diff-review.test.ts`
 - `crates/ajax-web/web/e2e/diff-review-swipe-repro.test.ts`
 - `architecture.md`
-- `.planning/agent-plans/smooth-swipe-transitions.md`
+- `.planning/agent-plans/smooth-swipe-transitions.md` (deleted; see git history)
 
 ## Forbidden changes
 

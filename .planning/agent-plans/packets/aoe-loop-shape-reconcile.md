@@ -19,7 +19,7 @@ from pane. Do not replace the JSONL/reducer pipeline.
 - `crates/ajax-core/src/pane_fallback.rs`
 - `crates/ajax-core/src/runtime_refresh.rs`
 - `architecture.md`
-- `.planning/agent-plans/aoe-loop-shape-reconcile.md`
+- `.planning/agent-plans/aoe-loop-shape-reconcile.md` (deleted; see git history)
 
 ## Forbidden changes
 

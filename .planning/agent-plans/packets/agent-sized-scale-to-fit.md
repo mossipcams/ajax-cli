@@ -30,7 +30,7 @@ agent-sized layout. Do not fit the PTY down to ~43 cols.
 - `crates/ajax-web/web/e2e/terminal-scroll-garble.test.ts`
 - `crates/ajax-web/web/TERMINAL.md`
 - `architecture.md` (Web Cockpit fit-geometry paragraph only)
-- `.planning/agent-plans/agent-sized-scale-to-fit.md`
+- `.planning/agent-plans/agent-sized-scale-to-fit.md` (deleted; see git history)
 
 ## 4. Forbidden changes
 
