@@ -894,12 +894,17 @@ function AppContent() {
   );
 
   // Chat and the Diff that Back returns to Chat are one chrome-less workspace (#1604).
+  // Until the cockpit and this task's detail load, treat the task as session-capable so a cold
+  // Diff load never flashes chrome (#1606).
+  const taskSessionLoaded =
+    detail.data?.qualified_handle === route.handle &&
+    (cockpit.data !== null || detail.data?.session_capable === false);
   const diffReturnsToChat =
     route.kind === "diff" &&
     route.handle != null &&
     resolveTaskWorkspaceHash(route.handle, {
       orchestrationChat,
-      sessionCapable: detailSessionCapable(detail.data, route.handle, cockpitRef.current.data),
+      sessionCapable: !taskSessionLoaded || detailSessionCapable(detail.data, route.handle, cockpit.data),
     }) === sessionHash(route.handle);
   const isChatWorkspace = (route.kind === "session" && orchestrationChat) || diffReturnsToChat;
   const hideBottomNav = isChatWorkspace;

@@ -160,6 +160,41 @@ describe("App chat <-> diff chrome (#1604)", () => {
     expect(screen.getByTestId("app-shell")).not.toHaveClass("app-shell--session");
   });
 
+  it("never mounts cockpit chrome on a cold Diff while the task detail is pending (#1606)", async () => {
+    let releaseDetail!: () => void;
+    const detailReleased = new Promise<void>((resolve) => {
+      releaseDetail = resolve;
+    });
+    const fetchWithCockpit = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).startsWith("/api/tasks/")) {
+          return detailReleased.then(() => jsonResponse(sessionDetail));
+        }
+        return fetchWithCockpit(input);
+      }),
+    );
+    window.location.hash = taskDiffHash("web/fix-login");
+
+    const { watch, stop } = watchCockpitChrome();
+    try {
+      render(<App />);
+      expect(cockpitChromeMounted()).toBe(false);
+
+      await screen.findByTestId("task-skeleton");
+      expect(cockpitChromeMounted()).toBe(false);
+      expect(screen.getByTestId("app-shell")).toHaveClass("app-shell--session");
+
+      releaseDetail();
+      await screen.findByTestId("diff-review");
+      expect(cockpitChromeMounted()).toBe(false);
+      expect(watch.everMounted).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
   it("holds the chat workspace safe-area padding without depending on the mounted session outlet (#1604)", () => {
     const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
     const css = readOrderedStylesSource(join(testDir, ".."));
