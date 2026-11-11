@@ -190,7 +190,17 @@ function shouldRetryRejectedFetch(error: unknown, init: RequestInit): boolean {
   return (init.method ?? "GET").toUpperCase() === "GET";
 }
 
-export async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
+function rejectAuthProxyRedirect(response: Response): void {
+  if (response.type === "opaqueredirect") {
+    throw new ApiError("auth-proxy", "Sign-in expired", response.status);
+  }
+}
+
+export async function fetchProtectedWithSessionRenewal(
+  path: string,
+  requestInit: RequestInit,
+): Promise<Response> {
+  const init: RequestInit = { redirect: "manual", ...requestInit };
   const firstFetch = fetch;
   let response: Response;
   try {
@@ -205,6 +215,7 @@ export async function fetchProtectedWithSessionRenewal(path: string, init: Reque
       throw rejectedProtectedFetch(retryError);
     }
   }
+  rejectAuthProxyRedirect(response);
   if (response.status !== 401 && !response.redirected) {
     if (response.ok) clearSessionRecoveryGuard();
     return response;
@@ -218,6 +229,7 @@ export async function fetchProtectedWithSessionRenewal(path: string, init: Reque
   }
   try {
     const retryResponse = await fetch(path, init);
+    rejectAuthProxyRedirect(retryResponse);
     if (retryResponse.status === 401 || retryResponse.redirected) {
       attemptSessionExpiryNavigation();
       throw new ApiError("stale-session", "HTTP 401", 401);
