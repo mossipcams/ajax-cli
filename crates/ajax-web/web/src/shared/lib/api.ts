@@ -153,11 +153,7 @@ export async function renewBrowserSession(): Promise<void> {
       try {
         response = await fetch("/api/session", sessionRenewOptions());
       } catch (error) {
-        throw new ApiError(
-          "stale-session",
-          error instanceof Error ? error.message : String(error),
-          null,
-        );
+        throw rejectedProtectedFetch(error);
       }
       if (!response.ok) {
         throw new ApiError("stale-session", `HTTP ${response.status}`, response.status);
@@ -183,12 +179,31 @@ function rejectedProtectedFetch(error: unknown): ApiError {
   return new ApiError("network", error instanceof Error ? error.message : String(error));
 }
 
+export function isRenewalNetworkFailure(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === "network";
+}
+
+const RESUME_NETWORK_RETRY_MS = 300;
+
+function shouldRetryRejectedFetch(error: unknown, init: RequestInit): boolean {
+  if (init.signal?.aborted || !(error instanceof TypeError)) return false;
+  return (init.method ?? "GET").toUpperCase() === "GET";
+}
+
 export async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
+  const firstFetch = fetch;
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await firstFetch(path, init);
   } catch (error) {
-    throw rejectedProtectedFetch(error);
+    if (!shouldRetryRejectedFetch(error, init)) throw rejectedProtectedFetch(error);
+    await new Promise((resolve) => setTimeout(resolve, RESUME_NETWORK_RETRY_MS));
+    if (init.signal?.aborted) throw rejectedProtectedFetch(error);
+    try {
+      response = await firstFetch(path, init);
+    } catch (retryError) {
+      throw rejectedProtectedFetch(retryError);
+    }
   }
   if (response.status !== 401 && !response.redirected) {
     if (response.ok) clearSessionRecoveryGuard();
@@ -198,7 +213,7 @@ export async function fetchProtectedWithSessionRenewal(path: string, init: Reque
   try {
     await renewBrowserSession();
   } catch (error) {
-    attemptSessionExpiryNavigation();
+    if (!isRenewalNetworkFailure(error)) attemptSessionExpiryNavigation();
     throw error;
   }
   try {
