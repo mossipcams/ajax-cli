@@ -97,7 +97,9 @@ export function useCockpitResource(): CockpitResource {
           ? "backend unreachable"
           : error.kind === "stale-session"
             ? "stale session"
-            : "disconnected",
+            : error.kind === "auth-proxy"
+              ? "sign-in expired"
+              : "disconnected",
       );
       setConnectionDetail(error.message);
       return;

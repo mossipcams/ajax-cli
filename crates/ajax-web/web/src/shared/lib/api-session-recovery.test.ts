@@ -157,6 +157,17 @@ describe("session-expiry recovery", () => {
     expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
   });
 
+  it("reports an edge auth-proxy redirect as auth-proxy without retrying or navigating", async () => {
+    api = await import("./api");
+    const opaqueRedirect = { type: "opaqueredirect", status: 0, ok: false, redirected: false };
+    mockFetch(() => Promise.resolve(opaqueRedirect as Response));
+
+    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "auth-proxy" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ redirect: "manual" });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("does not retry a rejected POST", async () => {
     api = await import("./api");
     mockFetch(() => Promise.reject(new TypeError("Load failed")));
@@ -270,6 +281,7 @@ describe("session-expiry recovery", () => {
       cache: "no-store",
       credentials: "same-origin",
       headers: { "X-Requested-With": "XMLHttpRequest" },
+      redirect: "manual",
       signal: expect.any(AbortSignal),
     });
     const sessionCalls = vi

@@ -21,6 +21,7 @@ describe("diagnosticFetch", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/version", {
       cache: "no-store",
       credentials: "same-origin",
+      redirect: "manual",
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
     expect(result.ok).toBe(true);

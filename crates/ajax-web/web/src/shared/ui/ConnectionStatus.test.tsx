@@ -24,6 +24,14 @@ describe("ConnectionStatus", () => {
     expect(screen.getByText("backend unreachable: HTTP 503")).toBeInTheDocument();
   });
 
+  it("offers a single sign-in action when the edge sign-in expired", () => {
+    const onSignIn = vi.fn();
+    render(<ConnectionStatus state="sign-in expired" onSignIn={onSignIn} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign-in expired. Tap to sign in." }));
+    expect(onSignIn).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("marks Retry as the sole primary connection action", () => {
     render(<ConnectionStatus state="disconnected" />);
     const retry = screen.getByRole("button", { name: "Retry" });

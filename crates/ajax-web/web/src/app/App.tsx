@@ -883,6 +883,7 @@ function AppContent() {
           onRetry={() => void loadCockpit({ trailing: true })}
           onReload={reloadConnectionOnce}
           onCopyDiagnostics={() => go(settingsHash())}
+          onSignIn={() => window.location.assign("/")}
         />
       </header>
 
