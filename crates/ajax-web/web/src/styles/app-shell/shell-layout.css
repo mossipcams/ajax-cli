@@ -142,7 +142,8 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
 }
 
 .page-cross-slide-entering [data-outlet],
-.page-cross-slide-leaving [data-outlet] {
+.page-cross-slide-leaving [data-outlet],
+[data-outlet].ajax-swipe-enter-none {
   animation: none;
 }
 

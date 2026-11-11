@@ -1,8 +1,9 @@
-import { Activity, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Activity, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   dashboardHash,
   parseRoute,
   projectHash,
+  sessionHash,
   settingsHash,
   taskDiffHash,
   taskHash,
@@ -119,6 +120,10 @@ function workspaceSurfaceKind(surface: "task" | "session" | "diff"): Route["kind
   return "task";
 }
 
+function swipeOutletClassName(entrance: SwipeEnterDirection | "none" | null): string {
+  return entrance === "none" ? "ajax-swipe-enter-none" : swipeEnterClassName(entrance);
+}
+
 function crossSlideSurfaceKey(activeRoute: Route): string {
   if (activeRoute.kind === "task" && activeRoute.handle) {
     return `surface-task-${activeRoute.handle}`;
@@ -185,7 +190,9 @@ function AppContent() {
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
-  const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | null>(null);
+  const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | "none" | null>(null);
+  const crossSlideActiveRef = useRef(crossSlideActive);
+  crossSlideActiveRef.current = crossSlideActive;
   const outletSwipeRef = useRef<HTMLElement | null>(null);
   const cockpitRef = useRef(cockpit);
   cockpitRef.current = cockpit;
@@ -365,6 +372,13 @@ function AppContent() {
     onRefresh: () => loadCockpit(),
     onDistance: setPullDistance,
   });
+  const attachDashboardOutletRef = useCallback(
+    (node: HTMLElement | null) => {
+      pullToRefreshRef(node);
+      outletSwipeRef.current = node;
+    },
+    [pullToRefreshRef],
+  );
 
   const onShellMount = useEffectEvent(() => {
     void loadCockpit();
@@ -549,21 +563,17 @@ function AppContent() {
   }, [route, detail.status, detail.data, cockpit.data]);
 
   useEffect(() => {
-    setSwipeEnter(consumeSwipeEnterDirection());
+    const direction = consumeSwipeEnterDirection();
+    // The page cross-slide already animates the workspace surfaces it enters; replaying the
+    // swipe-enter on their outlet plays the same motion again once the slide finishes (#1601).
+    // "none" stays set after the slide settles so the base fade never starts on that outlet (#1600).
+    const crossSlideOwnsOutlet =
+      crossSlideActiveRef.current &&
+      (route.kind === "task" || route.kind === "session" || route.kind === "diff");
+    setSwipeEnter(crossSlideOwnsOutlet ? "none" : direction);
   }, [route]);
 
-  useEffect(() => {
-    const node = outletSwipeRef.current;
-    if (!node || !swipeEnter) return;
-    const onAnimationEnd = (event: AnimationEvent) => {
-      if (event.target !== node) return;
-      setSwipeEnter(null);
-    };
-    node.addEventListener("animationend", onAnimationEnd);
-    return () => node.removeEventListener("animationend", onAnimationEnd);
-  }, [swipeEnter, route.kind]);
-
-  const swipeOutletClass = crossSlideActive ? "" : swipeEnterClassName(swipeEnter);
+  const swipeOutletClass = crossSlideActive ? "" : swipeOutletClassName(swipeEnter);
 
   function workspacePaneStyle(surface: "task" | "session" | "diff"): CSSProperties | undefined {
     if (!crossSlideActive || !crossSlide || !leavingRoute) return undefined;
@@ -782,12 +792,7 @@ function AppContent() {
     return (
       <section
         key={surfaceKey}
-        ref={(node) => {
-          if (attachOutletRef) {
-            pullToRefreshRef(node);
-            outletSwipeRef.current = node;
-          }
-        }}
+        ref={attachOutletRef ? attachDashboardOutletRef : undefined}
         className={outletClassName || undefined}
         data-outlet={activeRoute.kind === "project" ? "project" : "dashboard"}
         data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
@@ -795,6 +800,7 @@ function AppContent() {
       >
         <div
           className={`pull-indicator${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
+          data-testid="pull-indicator"
           style={{ height: `${pullDistance}px` }}
           aria-hidden="true"
         >
@@ -822,7 +828,7 @@ function AppContent() {
     ? renderWorkspaceStack(taskOpenHandle)
     : renderRouteOutlet(route, {
         attachOutletRef: true,
-        outletClassName: swipeEnterClassName(swipeEnter) || undefined,
+        outletClassName: swipeOutletClassName(swipeEnter) || undefined,
       });
 
   function releaseReloadLatchIfNavigationMissed() {
@@ -901,8 +907,16 @@ function AppContent() {
     </div>
   );
 
-  const isSessionRoute = route.kind === "session" && orchestrationChat;
-  const hideBottomNav = isSessionRoute;
+  // Chat and the Diff that Back returns to Chat are one chrome-less workspace (#1604).
+  const diffReturnsToChat =
+    route.kind === "diff" &&
+    route.handle != null &&
+    resolveTaskWorkspaceHash(route.handle, {
+      orchestrationChat,
+      sessionCapable: detailSessionCapable(detail.data, route.handle, cockpitRef.current.data),
+    }) === sessionHash(route.handle);
+  const isChatWorkspace = (route.kind === "session" && orchestrationChat) || diffReturnsToChat;
+  const hideBottomNav = isChatWorkspace;
 
   const nav = hideBottomNav ? null : (
     <nav className="bottom-nav" aria-label="Mobile navigation">
@@ -926,9 +940,9 @@ function AppContent() {
   return (
     <AppViewport>
       <AppShell
-        chrome={isSessionRoute ? null : chrome}
+        chrome={isChatWorkspace ? null : chrome}
         nav={nav}
-        className={isSessionRoute ? "app-shell--session" : undefined}
+        className={isChatWorkspace ? "app-shell--session" : undefined}
       >
         <RouteScroll>{routeOutlet}</RouteScroll>
       </AppShell>
