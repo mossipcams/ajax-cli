@@ -471,3 +471,43 @@ fn leaked_stderr_on_exit_never_reaches_failed_phase_message() {
         }
     });
 }
+
+#[test]
+fn hung_sidecar_exits_after_parent_closes_stdin() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+
+    let (dir, sdk) = fresh_dir("hang-orphan");
+    std::fs::write(&sdk, FAKE_SDK_HANG).expect("write hanging fake SDK");
+    with_test_cursor_sdk_module(&sdk, || {
+        let store = dir.join("auth.json");
+        let (program, args) =
+            super::cursor_sdk_spawn::cursor_login_launch("login", Some(store.as_path()))
+                .expect("login launch");
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn login sidecar");
+
+        let mut first = String::new();
+        BufReader::new(child.stdout.take().expect("stdout piped"))
+            .read_line(&mut first)
+            .expect("read url line");
+        assert!(first.contains("\"url\""), "expected url line, got: {first}");
+
+        drop(child.stdin.take());
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            if child.try_wait().expect("try_wait").is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("hung login sidecar outlived its closed stdin");
+    });
+}
