@@ -8,6 +8,7 @@ interface Props {
   onRetry?: () => void;
   onReload?: () => void;
   onCopyDiagnostics?: () => void;
+  onSignIn?: () => void;
 }
 
 export default function ConnectionStatus({
@@ -17,10 +18,23 @@ export default function ConnectionStatus({
   onRetry,
   onReload,
   onCopyDiagnostics,
+  onSignIn,
 }: Props) {
   const label = detail ? `${state}: ${detail}` : state;
   const retryLatchRef = useRef(false);
   const reloadLatchRef = useRef(false);
+
+  if (state === "sign-in expired") {
+    return (
+      <div className="connection-status" data-testid="connection-status" data-state={state}>
+        <div className="connection-actions" aria-label="Connection actions">
+          <button type="button" className="is-primary" onClick={() => onSignIn?.()}>
+            Sign-in expired. Tap to sign in.
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="connection-status" data-testid="connection-status" data-state={state}>

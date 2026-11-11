@@ -6,7 +6,8 @@ export type ConnectionState =
   | "reconnecting"
   | "disconnected"
   | "backend unreachable"
-  | "stale session";
+  | "stale session"
+  | "sign-in expired";
 
 export type RouteKind = "dashboard" | "project" | "task" | "diff" | "settings" | "session" | "training";
 
@@ -259,6 +260,7 @@ export type ApiErrorKind =
   | "terminal"
   | "rate-limit"
   | "stale-session"
+  | "auth-proxy"
   | "incompatible";
 
 export class ApiError extends Error {

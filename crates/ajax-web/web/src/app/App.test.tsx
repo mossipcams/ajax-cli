@@ -833,6 +833,28 @@ describe("App shell", () => {
     expect(await screen.findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
   });
 
+  it("shows the sign-in prompt instead of backend unreachable on an auth-proxy redirect", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          return Promise.resolve({ type: "opaqueredirect", status: 0, ok: false } as Response);
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "sign-in expired"),
+    );
+    expect(screen.getByRole("button", { name: "Sign-in expired. Tap to sign in." })).toBeInTheDocument();
+    expect(screen.queryByText(/backend unreachable/)).toBeNull();
+  });
+
   it("recovers from backend unreachable to connected when Retry succeeds", async () => {
     let cockpitCalls = 0;
     vi.stubGlobal(
