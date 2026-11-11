@@ -72,6 +72,24 @@
   padding-bottom: 0;
 }
 
+/* Chat and its Diff are one chrome-less workspace, so the safe-area inset holds
+   for the whole workspace rather than only while the session outlet is mounted.
+   Otherwise the inset flips when the leaving pane unmounts at cross-slide settle (#1604). */
+.app-shell--session .route-scroll {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  padding-bottom: 0;
+}
+
+/* Diff in the chat workspace keeps the 20px route gutter and home-indicator
+   clearance; the header row stays flush so its Back lines up with Chat (#1604). */
+.app-shell--session .diff-review {
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+}
+
+.app-shell--session .diff-review > :not(.detail-header) {
+  margin-inline: 20px;
+}
+
 [data-testid="route-scroll"]:has([data-outlet="session"]) [data-outlet="session"] {
   display: flex;
   flex-direction: column;

@@ -203,7 +203,7 @@ html.terminal-expanded .result-panel,
 }
 
 .result-panel.is-error {
-  background: rgba(235, 130, 123, 0.14);
+  background: linear-gradient(rgba(235, 130, 123, 0.14), rgba(235, 130, 123, 0.14)), var(--paper-raised);
 }
 
 .result-message {
