@@ -19,6 +19,7 @@ for (const level of ["log", "info", "warn", "debug", "error", "trace"]) {
 }
 
 const DRAIN_FALLBACK_MS = 2_000;
+const CANCEL_GRACE_MS = 2_000;
 
 let pendingWrites = 0;
 let pendingExitCode = null;
@@ -84,6 +85,7 @@ function cancel() {
     controller.abort();
   } catch {
   }
+  setTimeout(() => finish(1), CANCEL_GRACE_MS).unref();
 }
 
 stdin.resume();
