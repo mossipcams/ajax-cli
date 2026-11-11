@@ -1,4 +1,3 @@
-import { type RefObject } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
 import type { RemoteResource } from "@/shared/lib/types";
 import { TaskWorkspace } from "@/features/task-workspace/public";
@@ -11,7 +10,6 @@ export interface TaskWorkspaceRouteProps {
   orchestrationChat: boolean;
   detail: RemoteResource<BrowserTaskDetail>;
   reload: () => void;
-  outletRef?: RefObject<HTMLElement | null>;
   outletClassName?: string;
   onGo: (hash: string) => void;
   onBack: () => void;
@@ -38,7 +36,6 @@ export default function TaskWorkspaceRoute({
   orchestrationChat,
   detail,
   reload,
-  outletRef,
   outletClassName,
   onGo,
   onBack,
@@ -55,7 +52,6 @@ export default function TaskWorkspaceRoute({
 
   return (
     <section
-      ref={outletRef}
       className={outletClassName || undefined}
       data-outlet={outlet}
       data-testid={testId}

@@ -1,4 +1,4 @@
-import { Activity, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Activity, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   dashboardHash,
   parseRoute,
@@ -193,7 +193,6 @@ function AppContent() {
   const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | "none" | null>(null);
   const crossSlideActiveRef = useRef(crossSlideActive);
   crossSlideActiveRef.current = crossSlideActive;
-  const outletSwipeRef = useRef<HTMLElement | null>(null);
   const cockpitRef = useRef(cockpit);
   cockpitRef.current = cockpit;
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -372,13 +371,6 @@ function AppContent() {
     onRefresh: () => loadCockpit(),
     onDistance: setPullDistance,
   });
-  const attachDashboardOutletRef = useCallback(
-    (node: HTMLElement | null) => {
-      pullToRefreshRef(node);
-      outletSwipeRef.current = node;
-    },
-    [pullToRefreshRef],
-  );
 
   const onShellMount = useEffectEvent(() => {
     void loadCockpit();
@@ -637,7 +629,6 @@ function AppContent() {
             orchestrationChat={orchestrationChat}
             detail={detail}
             reload={reload}
-            outletRef={route.kind === "task" ? outletSwipeRef : undefined}
             outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
             onGo={go}
             onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
@@ -658,7 +649,6 @@ function AppContent() {
                 orchestrationChat={orchestrationChat}
                 detail={detail}
                 reload={reload}
-                outletRef={route.kind === "session" ? outletSwipeRef : undefined}
                 outletClassName={
                   route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
                 }
@@ -676,7 +666,6 @@ function AppContent() {
         {surfaceShell(
           "diff",
           <section
-            ref={route.kind === "diff" ? outletSwipeRef : undefined}
             className={route.kind === "diff" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
             data-outlet="diff"
             data-testid="outlet-diff"
@@ -733,7 +722,6 @@ function AppContent() {
       return (
         <section
           key={surfaceKey}
-          ref={attachOutletRef ? outletSwipeRef : undefined}
           className={outletClassName || undefined}
           data-outlet="settings"
           data-testid="outlet-settings"
@@ -756,7 +744,6 @@ function AppContent() {
       return (
         <section
           key={surfaceKey}
-          ref={attachOutletRef ? outletSwipeRef : undefined}
           className={outletClassName || undefined}
           data-outlet="training"
           data-testid="outlet-training"
@@ -771,7 +758,6 @@ function AppContent() {
       return (
         <section
           key={surfaceKey}
-          ref={attachOutletRef ? outletSwipeRef : undefined}
           className={outletClassName || undefined}
           data-outlet="session"
           data-testid="outlet-session"
@@ -792,7 +778,7 @@ function AppContent() {
     return (
       <section
         key={surfaceKey}
-        ref={attachOutletRef ? attachDashboardOutletRef : undefined}
+        ref={attachOutletRef ? pullToRefreshRef : undefined}
         className={outletClassName || undefined}
         data-outlet={activeRoute.kind === "project" ? "project" : "dashboard"}
         data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
