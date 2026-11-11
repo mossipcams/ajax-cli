@@ -1,4 +1,4 @@
-import { attemptSessionExpiryNavigation, createTerminalClientId, openTaskTerminalSocket, renewBrowserSession } from "./api";
+import { attemptSessionExpiryNavigation, createTerminalClientId, isRenewalNetworkFailure, openTaskTerminalSocket, renewBrowserSession } from "./api";
 
 export type TerminalConnectionStatus =
   | "connecting"
@@ -226,8 +226,8 @@ export function connectTaskTerminal(
           () => {
             if (!disposed) redialNow(lastDialSeeded);
           },
-          () => {
-            attemptSessionExpiryNavigation();
+          (error: unknown) => {
+            if (!isRenewalNetworkFailure(error)) attemptSessionExpiryNavigation();
             if (!disposed) scheduleReconnect();
           },
         );

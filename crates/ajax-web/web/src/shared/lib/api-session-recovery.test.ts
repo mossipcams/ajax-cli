@@ -127,6 +127,46 @@ describe("session-expiry recovery", () => {
     expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
   });
 
+  it("retries once after a resume-time network failure and resolves", async () => {
+    api = await import("./api");
+    let cockpitCalls = 0;
+    mockFetch(() => {
+      cockpitCalls += 1;
+      return cockpitCalls === 1
+        ? Promise.reject(new TypeError("Load failed"))
+        : Promise.resolve(json(validCockpit));
+    });
+
+    const cockpit = await api.fetchCockpit();
+
+    expect(cockpit.cards).toEqual([]);
+    expect(cockpitCalls).toBe(2);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("reports a network error without navigating when renewal fails on the network", async () => {
+    api = await import("./api");
+    mockFetch((path) =>
+      path === "/api/session"
+        ? Promise.reject(new TypeError("Load failed"))
+        : Promise.resolve(new Response(null, { status: 401 })),
+    );
+
+    await expect(api.fetchCockpit()).rejects.toMatchObject({ kind: "network" });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("ajax.pwa.session-expiry-recovered")).toBeNull();
+  });
+
+  it("does not retry a rejected POST", async () => {
+    api = await import("./api");
+    mockFetch(() => Promise.reject(new TypeError("Load failed")));
+
+    await expect(
+      api.postOperation({ task_handle: "web/x", action: "review", request_id: "r" }),
+    ).rejects.toMatchObject({ kind: "network" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("recovers after a generic network outage without consuming the one-shot navigation", async () => {
     api = await import("./api");
     mockFetch(() => Promise.reject(new TypeError("load failed")));
