@@ -19,7 +19,7 @@ Seatbelt), keychain OAuth revocation (#1417), git config and `packed-refs`
 (#1409, #1403), `/bin/ps` exec (#1429), `launchctl`, loopback router routes,
 and each new deny broke something else (#1423).
 
-## Decisions (all 2026-11-11)
+## Decisions (2026-11-11 unless dated)
 
 1. `docker run` on OrbStack, not `sbx`. `sbx` cannot reach host loopback,
    has undocumented stdio over `exec`, and keeps a VM and image cache per
@@ -28,6 +28,12 @@ and each new deny broke something else (#1423).
 3. Skills and scripts keep their current symlinks and resolve through
    same-path mounts.
 4. Sandboxed agents lose the iOS Simulator. iOS-only repros run outside Ajax.
+5. 2026-11-12: nono parity for harness state. `~/.claude`, `~/.codex` and
+   `~/.cursor` are shared read-write, and `~/.config/gh` read-only. The host's
+   `~/.claude/settings.json` and `~/.codex/config.toml` stay writable from
+   containers, as under nono. Accepted under the accident-prevention threat
+   model: an agent could add a hook that runs on the host the next time Claude
+   or Codex starts there.
 
 ## The constraint that shapes the plan
 
@@ -65,6 +71,9 @@ docker run --rm -i [-t] --init --user <uid>:<gid> --network host
   -v <extra_rw>:<extra_rw>                       (tmux agent-events dir)
   -v ajax-target-<task-key>:<cwd>/target
   -v ajax-node-modules-<task-key>:<cwd>/node_modules
+  -v $HOME/.claude:$HOME/.claude -v $HOME/.codex:$HOME/.codex
+  -v $HOME/.cursor:$HOME/.cursor                 (rw; missing skipped)
+  -v $HOME/.config/gh:$HOME/.config/gh:ro
   <built-in shared tooling mounts>  [-e GH_TOKEN when set]
   ajax-agent:<dockerfile-hash> <bare program> <args>
 ```
@@ -137,16 +146,21 @@ Inventory of symlinks taken 2026-11-11:
 | `~/.claude/skills/no-ai-slop` | `~/.claude/skills-src/no-ai-slop/...` |
 
 - Read-only: `~/Projects/ajax-model-router` (`run-delegate` follows
-  `realpath` to its `libexec/`), the four skill dirs, `~/.claude/skills-src`,
-  `~/Projects/{AGENTS.md,agents.md,CLAUDE.md,.claude,.codex,scripts}`,
-  `~/.claude/{CLAUDE.md,RTK.md}`, and `~/.codex/AGENTS.md`.
-- Read-write: `~/.claude/projects` (memory and transcripts), `~/.ajax-router`
-  (route health), `~/.pi/agent` (Pi auth, models, extensions, context-fold),
-  `~/.local/share/opencode` and `~/.config/opencode`.
-- Container-owned (in the home volume, never shared): Claude
-  `settings.json`/`.claude.json`, `~/.codex/config.toml`, and Cursor state.
-  Their host hooks and MCP servers point at macOS binaries. The iwdp and
-  opensafari MCPs drop out.
+  `realpath` to its `libexec/`), `~/.agents/skills`,
+  `~/Projects/{AGENTS.md,agents.md,CLAUDE.md,.claude,.codex,scripts}`, and
+  `~/.config/gh` (shared with the host, so `gh` works in the container).
+- Read-write, shared with the host: `~/.claude`, `~/.codex` and `~/.cursor`
+  (whole directories, same paths). They hold the per-harness skill symlinks
+  (`skills/*`, which still resolve to the read-only model-router targets),
+  `~/.claude/skills-src`, `~/.claude/{CLAUDE.md,RTK.md}`, `~/.codex/AGENTS.md`,
+  sign-ins, settings, and Claude memory and transcripts (`~/.claude/projects`).
+- Read-write, also: `~/.ajax-router` (route health), `~/.pi/agent` (Pi auth,
+  models, extensions, context-fold), `~/.local/share/opencode`,
+  `~/.config/opencode`, and the ssh agent socket.
+- Not shared: `~/.claude.json` is not mounted, so Claude's copy stays in the
+  home volume. `settings.json` and `~/.codex/config.toml` are the host's files,
+  writable from containers (decision 5). Host hooks and MCP servers that point
+  at macOS binaries fail inside the container.
 
 There is no new config section (cut 2026-11-11). `~/.config/ajax/nono/local.json`
 is replaced by built-in defaults: the scoped ssh agent socket
@@ -239,7 +253,8 @@ uses a releasing title, so no release ships both backends.
 1. Matt taps **Test in dev** on this task. :8788 runs the top of the stack and
    builds the image on startup. Its `PATH` must include `/usr/local/bin`;
    check this first.
-2. Matt signs Claude, Codex, Cursor and Pi in from Settings on :8788.
+2. Matt signs Cursor in from Settings on :8788. Claude, Codex and Pi carry
+   over from the host through the shared mounts.
 3. Matt starts one Chat task on :8788 with the prompt "run the canary
    checklist in `.planning/agent-plans/docker-sandboxes.md` and record
    results". That agent is inside Docker and checks:
@@ -303,6 +318,10 @@ Lost: the iOS Simulator (decision 4); macOS-only `cfg` branches in
 `os_process.rs`, `session_shim/spawn.rs` and `web_service/mod.rs` run only in
 Matt's host gate (CI is Linux too); and editing other host repos (cross-repo
 work stays "start a task in repo B").
+
+Known gap: tmux task agents lose `ajax-cli __agent-event` hook status in the
+container, because the image has no Linux `ajax-cli`. Ajax Chat is unaffected:
+it sets no `AJAX_TASK_ID`, so the hook returns `NoIdentity`.
 
 ## Risks
 
