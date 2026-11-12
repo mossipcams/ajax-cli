@@ -54,6 +54,19 @@ function touch(
   return event;
 }
 
+function controlPerformanceNow(start: number) {
+  let now = start;
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => now);
+  return {
+    set(ms: number) {
+      now = ms;
+    },
+    restore() {
+      spy.mockRestore();
+    },
+  };
+}
+
 function Harness({
   onLeft,
   onRight,
@@ -85,6 +98,8 @@ function LeavingPaneProbe() {
 }
 
 describe("useSwipePageTransition", () => {
+  let clock: ReturnType<typeof controlPerformanceNow> | null = null;
+
   beforeEach(() => {
     vi.useFakeTimers();
     window.location.hash = taskHash("web/fix-login");
@@ -95,6 +110,8 @@ describe("useSwipePageTransition", () => {
   });
 
   afterEach(() => {
+    clock?.restore();
+    clock = null;
     vi.useRealTimers();
     window.location.hash = "";
     delete document.documentElement.dataset.ajaxTerminalSelecting;
@@ -109,8 +126,9 @@ describe("useSwipePageTransition", () => {
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
     node.dispatchEvent(touch("touchmove", 120, 42, node));
+    node.dispatchEvent(touch("touchmove", 80, 42, node));
     await act(async () => {
-      node.dispatchEvent(touch("touchend", 120, 42, node));
+      node.dispatchEvent(touch("touchend", 80, 42, node));
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
@@ -145,13 +163,16 @@ describe("useSwipePageTransition", () => {
   });
 
   it("springs back without navigation when engaged but under commit", async () => {
+    clock = controlPerformanceNow(0);
     const onLeft = vi.fn();
     renderHarness({ onLeft });
     const node = screen.getByTestId("swipe-target");
 
-    node.dispatchEvent(touch("touchstart", 200, 40, node));
-    node.dispatchEvent(touch("touchmove", 150, 42, node));
-    node.dispatchEvent(touch("touchend", 150, 42, node));
+    node.dispatchEvent(touch("touchstart", 300, 40, node));
+    node.dispatchEvent(touch("touchmove", 250, 42, node));
+    clock.set(1000);
+    node.dispatchEvent(touch("touchmove", 100, 42, node));
+    node.dispatchEvent(touch("touchend", 100, 42, node));
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
@@ -166,6 +187,109 @@ describe("useSwipePageTransition", () => {
         settle_ms: expect.any(Number),
       }),
     );
+  });
+
+  it("commits a slow drag past 50% of the page width", async () => {
+    clock = controlPerformanceNow(0);
+    const onLeft = vi.fn();
+    renderHarness({ onLeft });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 300, 40, node));
+    node.dispatchEvent(touch("touchmove", 250, 42, node));
+    clock.set(1000);
+    node.dispatchEvent(touch("touchmove", 50, 42, node));
+    node.dispatchEvent(touch("touchend", 50, 42, node));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).toHaveBeenCalledOnce();
+  });
+
+  it("commits a short fast flick", async () => {
+    clock = controlPerformanceNow(0);
+    const onLeft = vi.fn();
+    renderHarness({ onLeft });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 300, 40, node));
+    node.dispatchEvent(touch("touchmove", 250, 42, node));
+    clock.set(10);
+    node.dispatchEvent(touch("touchmove", 200, 42, node));
+    node.dispatchEvent(touch("touchend", 200, 42, node));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).toHaveBeenCalledOnce();
+  });
+
+  it("commits a swipe whose engaging move is also its last move", async () => {
+    const onLeft = vi.fn();
+    renderHarness({ onLeft });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    node.dispatchEvent(touch("touchmove", 120, 42, node));
+    node.dispatchEvent(touch("touchend", 120, 42, node));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).toHaveBeenCalledOnce();
+  });
+
+  it("springs back a release moving backward past 50% of the page width", async () => {
+    clock = controlPerformanceNow(0);
+    const onLeft = vi.fn();
+    renderHarness({ onLeft });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 300, 40, node));
+    node.dispatchEvent(touch("touchmove", 250, 42, node));
+    clock.set(1000);
+    node.dispatchEvent(touch("touchmove", 40, 42, node));
+    clock.set(1010);
+    node.dispatchEvent(touch("touchmove", 50, 42, node));
+    node.dispatchEvent(touch("touchend", 50, 42, node));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe("");
+  });
+
+  it("engages a left-edge rightward swipe after 10px and tracks the finger 1:1", async () => {
+    const onRight = vi.fn();
+    renderHarness({ onRight });
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 40, 40, node));
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 49, 42, node));
+    });
+    expect(node.style.transform).toBe("");
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 50, 42, node));
+    });
+    expect(node.style.transform).toBe("");
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 70, 42, node));
+    });
+    expect(node.style.transform).toBe("translate3d(20px, 0, 0)");
+  });
+
+  it("keeps the 48px dead-zone for a mid-screen rightward drag", async () => {
+    renderHarness({});
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 240, 42, node));
+    });
+    expect(node.style.transform).toBe("");
   });
 
   it("commits right programmatically after the slide animation", async () => {
@@ -212,7 +336,8 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchstart", 40, 40, node));
       node.dispatchEvent(touch("touchmove", 120, 42, node));
-      node.dispatchEvent(touch("touchend", 120, 42, node));
+      node.dispatchEvent(touch("touchmove", 200, 42, node));
+      node.dispatchEvent(touch("touchend", 200, 42, node));
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
     expect(onRight).not.toHaveBeenCalled();
@@ -244,7 +369,8 @@ describe("useSwipePageTransition", () => {
 
     node.dispatchEvent(touch("touchstart", 200, 40, node));
     node.dispatchEvent(touch("touchmove", 120, 42, node));
-    node.dispatchEvent(touch("touchend", 120, 42, node));
+    node.dispatchEvent(touch("touchmove", 80, 42, node));
+    node.dispatchEvent(touch("touchend", 80, 42, node));
     expect(onLeft).toHaveBeenCalledOnce();
     unmount();
     await act(async () => {
@@ -308,16 +434,19 @@ describe("useSwipePageTransition", () => {
     });
     window.requestAnimationFrame = vi.fn(() => 0) as typeof requestAnimationFrame;
 
+    clock = controlPerformanceNow(0);
     try {
       const onLeft = vi.fn();
       renderHarness({ onLeft });
       const node = screen.getByTestId("swipe-target");
       Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
 
-      node.dispatchEvent(touch("touchstart", 200, 40, node));
-      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      node.dispatchEvent(touch("touchstart", 300, 40, node));
+      node.dispatchEvent(touch("touchmove", 220, 42, node));
+      clock.set(1000);
+      node.dispatchEvent(touch("touchmove", 20, 42, node));
       await act(async () => {
-        node.dispatchEvent(touch("touchend", 120, 42, node));
+        node.dispatchEvent(touch("touchend", 20, 42, node));
       });
       expect(onLeft).toHaveBeenCalledOnce();
       expect(gestureBusyGate.isBusy()).toBe(true);
@@ -332,10 +461,13 @@ describe("useSwipePageTransition", () => {
       });
       expect(gestureBusyGate.isBusy()).toBe(false);
 
-      node.dispatchEvent(touch("touchstart", 200, 40, node));
-      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      clock.set(2000);
+      node.dispatchEvent(touch("touchstart", 300, 40, node));
+      node.dispatchEvent(touch("touchmove", 220, 42, node));
+      clock.set(3000);
+      node.dispatchEvent(touch("touchmove", 20, 42, node));
       await act(async () => {
-        node.dispatchEvent(touch("touchend", 120, 42, node));
+        node.dispatchEvent(touch("touchend", 20, 42, node));
         await vi.advanceTimersByTimeAsync(
           SWIPE_PAGE_COMMIT_MS + 40 + CROSS_SLIDE_ARMED_SLACK_MS,
         );
@@ -366,7 +498,8 @@ describe("useSwipePageTransition", () => {
       await act(async () => {
         node.dispatchEvent(touch("touchstart", 40, 40, node));
         node.dispatchEvent(touch("touchmove", 160, 42, node));
-        node.dispatchEvent(touch("touchend", 160, 42, node));
+        node.dispatchEvent(touch("touchmove", 200, 42, node));
+        node.dispatchEvent(touch("touchend", 200, 42, node));
         await vi.advanceTimersByTimeAsync(0);
       });
       expect(back).toHaveBeenCalledOnce();

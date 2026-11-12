@@ -12,6 +12,7 @@ import {
   type TransitionEvent as ReactTransitionEvent,
 } from "react";
 import {
+  EDGE_ZONE_PX,
   crossSlideEnteringOffset,
   crossSlideLeavingTarget,
   crossSlideRemainingPx,
@@ -20,6 +21,7 @@ import {
   navigateSwipeMove,
   navigateSwipeStart,
   navigateSwipeTranslateX,
+  releaseVelocity,
   type NavigateSwipeState,
 } from "@/shared/gestures/navigateSwipe";
 import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
@@ -37,6 +39,7 @@ export const SERIAL_SWIPE_COMMIT_BUDGET_MS = SWIPE_PAGE_COMMIT_MS * 2;
 export const CROSS_SLIDE_ARMED_SLACK_MS = 80;
 const SWIPE_COMMIT_MIN_MS = 80;
 const SWIPE_COMMIT_VELOCITY_FLOOR = 0.45;
+const SWIPE_SAMPLE_RETAIN_MS = 200;
 
 export function computeSwipeCommitDurationMs(
   remainingPx: number,
@@ -75,6 +78,7 @@ type SwipeOutcome = {
   distance_px: number;
   completed: boolean;
   cancelled: boolean;
+  release_velocity_px_per_ms: number;
   to_route?: string;
 };
 
@@ -205,7 +209,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
     );
     const commitMs = computeSwipeCommitDurationMs(
       remaining,
-      swipeVelocity(params.swipeOutcome.distance_px, params.swipeOutcome.duration_ms),
+      Math.abs(params.swipeOutcome.release_velocity_px_per_ms),
     );
     holdSettleGesture();
     const nextActive: ActiveCrossSlide = {
@@ -309,6 +313,7 @@ export function useSwipePageTransition(
   const swipeRef = useRef<NavigateSwipeState>(navigateSwipeStart());
   const originRef = useRef({ x: 0, y: 0 });
   const touchStartedAtRef = useRef(0);
+  const samplesRef = useRef<Array<{ t: number; x: number }>>([]);
   const touchTargetRef = useRef<EventTarget | null>(null);
   const maxDistanceRef = useRef(0);
   const [dragX, setDragX] = useState(0);
@@ -507,6 +512,7 @@ export function useSwipePageTransition(
         distance_px: width,
         completed: true,
         cancelled: false,
+        release_velocity_px_per_ms: 0,
         to_route:
           direction === "left"
             ? optsRef.current.to_routeLeft
@@ -546,7 +552,8 @@ export function useSwipePageTransition(
       originRef.current = point;
       touchStartedAtRef.current = performance.now();
       maxDistanceRef.current = 0;
-      swipeRef.current = navigateSwipeStart();
+      swipeRef.current = navigateSwipeStart(point.x <= EDGE_ZONE_PX);
+      samplesRef.current = [{ t: performance.now(), x: point.x }];
       setDragging(false);
       setSettling(false);
       setDragX(0);
@@ -564,6 +571,11 @@ export function useSwipePageTransition(
       }
       const point = readTouch(event);
       if (!point) return;
+      const now = performance.now();
+      samplesRef.current = [
+        ...samplesRef.current.filter((sample) => sample.t >= now - SWIPE_SAMPLE_RETAIN_MS),
+        { t: now, x: point.x },
+      ];
       const dx = point.x - originRef.current.x;
       const dy = point.y - originRef.current.y;
       const next = navigateSwipeMove(swipeRef.current, dx, dy, pageWidth(), {
@@ -591,10 +603,13 @@ export function useSwipePageTransition(
         reset();
         return;
       }
+      const width = pageWidth();
+      const v = releaseVelocity(samplesRef.current, performance.now());
       const direction = navigateSwipeEnd(swipeRef.current, {
         capRightCommit: capRightCommit(),
+        pageWidth: width,
+        releaseVelocity: v,
       });
-      const width = pageWidth();
       const duration_ms = Math.round(performance.now() - touchStartedAtRef.current);
       const distance_px = Math.round(maxDistanceRef.current);
       const dragX = swipeRef.current.engaged
@@ -602,7 +617,7 @@ export function useSwipePageTransition(
         : 0;
       const cancelDurationMs = computeSwipeCommitDurationMs(
         Math.abs(dragX),
-        swipeVelocity(distance_px, duration_ms),
+        Math.abs(v),
       );
 
       if (direction === "left" && optsRef.current.onLeft) {
@@ -615,6 +630,7 @@ export function useSwipePageTransition(
             distance_px,
             completed: true,
             cancelled: false,
+            release_velocity_px_per_ms: v,
             to_route: optsRef.current.to_routeLeft,
           },
           () => optsRef.current.onLeft?.(),
@@ -631,6 +647,7 @@ export function useSwipePageTransition(
             distance_px,
             completed: true,
             cancelled: false,
+            release_velocity_px_per_ms: v,
             to_route: optsRef.current.to_routeRight,
           },
           () => optsRef.current.onRight?.(),
@@ -650,6 +667,7 @@ export function useSwipePageTransition(
             distance_px,
             completed: false,
             cancelled: true,
+            release_velocity_px_per_ms: v,
           },
           undefined,
           cancelDurationMs,
