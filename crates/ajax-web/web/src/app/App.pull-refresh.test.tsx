@@ -3,6 +3,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
+import { join } from "node:path";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -88,5 +90,39 @@ describe("App dashboard pull-to-refresh", () => {
     });
 
     await waitFor(() => expect(cockpitLoads()).toBe(loadsBeforePull + 1));
+  });
+
+  it("animates the pull indicator closed on release instead of snapping (#1609)", async () => {
+    render(<App />);
+    await screen.findByText("Fix login");
+    const outlet = screen.getByTestId("outlet-dashboard");
+    const indicator = screen.getByTestId("pull-indicator");
+
+    act(() => {
+      outlet.dispatchEvent(touch("touchstart", 100));
+    });
+    for (const clientY of [130, 160, 190]) {
+      act(() => {
+        outlet.dispatchEvent(touch("touchmove", clientY));
+      });
+    }
+
+    expect(indicator.style.height).toBe("45px");
+    expect(indicator.classList.contains("is-pulling")).toBe(true);
+
+    act(() => {
+      outlet.dispatchEvent(new Event("touchend"));
+    });
+
+    expect(indicator.style.height).toBe("0px");
+    expect(indicator.classList.contains("is-pulling")).toBe(false);
+
+    const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
+    const css = readOrderedStylesSource(join(testDir, ".."));
+    const base = css.match(/\.pull-indicator\s*\{([^}]*)\}/)?.[1] ?? "";
+    const pulling = css.match(/\.pull-indicator\.is-pulling\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(base).toMatch(/transition:\s*height var\(--dur-ui\) var\(--ease-spring\);/);
+    expect(pulling).toMatch(/transition:\s*none;/);
   });
 });

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
+import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import { trainingHash } from "@/shared/lib/routes";
 import { markNavigationStart } from "@/shared/lib/telemetry";
 import { navigateHash } from "@/shared/lib/swipeEnter";
@@ -51,6 +52,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
   const [actionError, setActionError] = useState<string | null>(null);
   const openRef = useRef(open);
   const actionInFlightRef = useRef(false);
+  const { cardRef, requestClose } = useSheetExit(() => onOpenChange(false));
   useEffect(() => {
     openRef.current = open;
   }, [open]);
@@ -117,10 +119,6 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
     }
   }
 
-  function handleClose(): void {
-    onOpenChange(false);
-  }
-
   function openTrainingPage(): void {
     markNavigationStart(undefined, "hash");
     onOpenChange(false);
@@ -137,8 +135,18 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
 
   return (
     <FullscreenLayer zIndex={50}>
-      <Sheet open onOpenChange={onOpenChange}>
-        <SheetContent className="training-modal" aria-describedby={undefined} data-testid="training">
+      <Sheet
+        open
+        onOpenChange={(next) => {
+          if (!next) requestClose();
+        }}
+      >
+        <SheetContent
+          ref={cardRef}
+          className="training-modal"
+          aria-describedby={undefined}
+          data-testid="training"
+        >
           <div className="training-header">
             <SheetTitle asChild>
               <h2>Local</h2>
@@ -147,7 +155,7 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
               type="button"
               className="training-close"
               aria-label="Close"
-              onClick={handleClose}
+              onClick={requestClose}
             >
               ×
             </button>

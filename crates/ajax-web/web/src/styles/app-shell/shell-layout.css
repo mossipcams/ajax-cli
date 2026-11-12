@@ -77,6 +77,11 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   justify-content: center;
   overflow: hidden;
   margin-bottom: 0;
+  transition: height var(--dur-ui) var(--ease-spring);
+}
+
+.pull-indicator.is-pulling {
+  transition: none;
 }
 
 .pull-spinner {

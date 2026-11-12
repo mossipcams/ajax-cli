@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import TrainingModal from "./TrainingModal";
+import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 
 const statusRoute: { body: unknown; status?: number } = { body: {} };
 let postResponse: { body: unknown; status?: number } = { body: {} };
@@ -497,4 +498,47 @@ describe("TrainingModal", () => {
     const mod = await import("./public");
     expect(Object.keys(mod)).toEqual(["TrainingModal"]);
   });
+
+  it("plays the shared sheet exit before the × button closes the Local modal (#1610)", async () => {
+    let resolveFinished: () => void = () => undefined;
+    const finished = new Promise<void>((resolve) => {
+      resolveFinished = resolve;
+    });
+    const animate = vi.fn(() => ({ finished }));
+    Object.defineProperty(Element.prototype, "animate", {
+      configurable: true,
+      writable: true,
+      value: animate,
+    });
+    const onExit = vi.fn();
+    try {
+      render(<TrainingModal open onOpenChange={onExit} />);
+      await screen.findByRole("heading", { name: "llama.cpp & profiles" });
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+      expect(animate).toHaveBeenCalled();
+      expect(screen.getByRole("dialog", { name: "Local" })).toBeTruthy();
+      expect(onExit).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveFinished();
+      });
+      expect(onExit).toHaveBeenCalledTimes(1);
+      expect(onExit).toHaveBeenCalledWith(false);
+    } finally {
+      delete (Element.prototype as { animate?: unknown }).animate;
+    }
+
+    const css = readOrderedStylesSource(join(dirname(fileURLToPath(import.meta.url)), "../.."));
+    const trainingModalBodies = [...css.matchAll(/(^|\n)\.training-modal\s*\{([^}]*)\}/g)].map(
+      (match) => match[2],
+    );
+    expect(
+      trainingModalBodies.some((body) =>
+        /animation:\s*sheet-rise\s+var\(--dur-sheet\)\s+var\(--ease-spring\)/.test(body),
+      ),
+    ).toBe(true);
+  });
 });
+

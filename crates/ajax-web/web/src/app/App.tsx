@@ -785,7 +785,7 @@ function AppContent() {
         aria-live="polite"
       >
         <div
-          className={`pull-indicator${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
+          className={`pull-indicator${pullDistance > 0 ? " is-pulling" : ""}${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
           data-testid="pull-indicator"
           style={{ height: `${pullDistance}px` }}
           aria-hidden="true"
