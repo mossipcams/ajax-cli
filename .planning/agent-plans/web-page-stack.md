@@ -156,7 +156,16 @@ Each slice builds, tests and is reviewed on its own. Delegated through the model
 
 ## Deviations / results
 
-- **Slice 1, deviation.** The commit direction comes from the raw displacement (`state.dx`), not from the travel after engagement. Otherwise a flick that engages within a single touch move has zero travel and never commits. The 50% distance rule still measures visible travel.
+- **Slice 1, deviation (superseded by the PR #1619 review).** The commit direction first came from the raw displacement, so that a single-move flick commits. The review found that a swipe flicked back past its origin then committed the opposite navigation. The direction is now locked when the swipe arms (the sign of `engageDx`). The 50% distance rule measures visible travel toward that direction.
+- **Slice 1, review fixes (#1619).**
+  - Only a backward flick faster than 0.2px/ms cancels, so jitter at lift no longer cancels a swipe that is past 50%.
+  - Velocity samples use `event.timeStamp`.
+  - A second finger resets the swipe.
+  - The edge zone is measured from the swipe root's left edge.
+  - Edge arming is skipped for text fields, `.terminal-keys` and `.interact-panel .action-row`, and expires 300ms after touchstart (the terminal's long-press).
+  - `diff-review-swipe-repro.test.ts` dispatches each gesture in one page call, with its assertions unchanged.
+  - Docs updated in `web-cockpit.md`: pointer policy and swipe navigation.
+  - Not changed: the telemetry still reports average velocity (that is a schema change), and the 50% rule stays on visible travel.
 - **Slice 1, scope.** `swipeCommitTiming.test.ts` imported `NAVIGATE_SWIPE_TRIGGER`. It now uses the literal `-64` (the old 56 + 8), and its assertions are unchanged. `ChatSurface`, `DiffReview`, `TaskTerminalView` and `App.route-entrance` tests pass without edits.
 - **Slice 1, verification.**
   - `web:test` 1988 passed, 9 skipped. `web:check`, `web:lint` and `web:sg` are clean.

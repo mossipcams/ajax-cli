@@ -9,6 +9,7 @@ import {
   crossSlideEnteringOffset,
   releaseVelocity,
   isDiffPanGestureTarget,
+  isEdgeArmingExcludedTarget,
 } from "./navigateSwipe";
 
 const PAGE_WIDTH = 390;
@@ -72,7 +73,7 @@ describe("navigate swipe", () => {
     engaged = navigateSwipeMove(engaged, 76, 0, PAGE_WIDTH, {
       capRightCommit: true,
     });
-    expect(engaged.direction).toBe("none");
+    expect(engaged.direction).toBe("left");
     expect(
       navigateSwipeEnd(engaged, { capRightCommit: true, pageWidth: PAGE_WIDTH, releaseVelocity: 5 }),
     ).toBe("none");
@@ -179,6 +180,46 @@ describe("navigate swipe", () => {
     expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 0.5 })).toBe("none");
   });
 
+  it("locks the direction at engagement", () => {
+    expect(navigateSwipeStart().direction).toBe("none");
+    expect(navigateSwipeMove(navigateSwipeStart(), 40, 0, PAGE_WIDTH).direction).toBe("none");
+    const rightward = navigateSwipeMove(navigateSwipeStart(), 60, 0, PAGE_WIDTH);
+    expect(rightward.direction).toBe("right");
+    expect(navigateSwipeMove(rightward, -100, 0, PAGE_WIDTH).direction).toBe("right");
+    const leftward = navigateSwipeMove(navigateSwipeStart(), -60, 0, PAGE_WIDTH);
+    expect(leftward.direction).toBe("left");
+    expect(navigateSwipeMove(leftward, 100, 0, PAGE_WIDTH).direction).toBe("left");
+  });
+
+  it("cancels a rightward swipe flicked back past its origin", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), 60, 0, PAGE_WIDTH);
+    state = navigateSwipeMove(state, -100, 0, PAGE_WIDTH);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: -1 })).toBe("none");
+
+    let edge = navigateSwipeMove(navigateSwipeStart(true), 20, 0, PAGE_WIDTH);
+    edge = navigateSwipeMove(edge, -30, 0, PAGE_WIDTH);
+    expect(navigateSwipeEnd(edge, { pageWidth: PAGE_WIDTH, releaseVelocity: -1 })).toBe("none");
+  });
+
+  it("cancels a leftward swipe flicked back past its origin", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -60, 0, PAGE_WIDTH);
+    state = navigateSwipeMove(state, 100, 0, PAGE_WIDTH);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 1 })).toBe("none");
+  });
+
+  it("commits 85% of the page width despite a small backward release velocity", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -48, 0, PAGE_WIDTH);
+    state = navigateSwipeMove(state, -(48 + 332), 0, PAGE_WIDTH);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 0.05 })).toBe("left");
+  });
+
+  it("springs back backward drift under 50% of the page width", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -48, 0, PAGE_WIDTH);
+    state = navigateSwipeMove(state, -100, 0, PAGE_WIDTH);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 0.1 })).toBe("none");
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 0.2 })).toBe("none");
+  });
+
   it("exposes cross-slide offsets from the current drag position", () => {
     expect(crossSlideEnteringOffset("left", -100, PAGE_WIDTH)).toBe(290);
     expect(crossSlideRemainingPx("left", -100, PAGE_WIDTH)).toBe(290);
@@ -229,6 +270,19 @@ describe("releaseVelocity", () => {
       { t: 100, x: 5 },
     ];
     expect(releaseVelocity(samples, 100)).toBe(5);
+  });
+});
+
+describe("isEdgeArmingExcludedTarget", () => {
+  it("excludes text fields and the terminal key row from edge arming", () => {
+    const field = document.createElement("textarea");
+    const keys = document.createElement("div");
+    keys.className = "terminal-keys";
+    const plain = document.createElement("div");
+    expect(isEdgeArmingExcludedTarget(field)).toBe(true);
+    expect(isEdgeArmingExcludedTarget(keys)).toBe(true);
+    expect(isEdgeArmingExcludedTarget(plain)).toBe(false);
+    expect(isEdgeArmingExcludedTarget(null)).toBe(false);
   });
 });
 

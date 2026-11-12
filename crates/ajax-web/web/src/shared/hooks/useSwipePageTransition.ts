@@ -13,9 +13,11 @@ import {
 } from "react";
 import {
   EDGE_ZONE_PX,
+  RELEASE_VELOCITY_WINDOW_MS,
   crossSlideEnteringOffset,
   crossSlideLeavingTarget,
   crossSlideRemainingPx,
+  isEdgeArmingExcludedTarget,
   navigateSwipeCommitOffset,
   navigateSwipeEnd,
   navigateSwipeMove,
@@ -39,7 +41,7 @@ export const SERIAL_SWIPE_COMMIT_BUDGET_MS = SWIPE_PAGE_COMMIT_MS * 2;
 export const CROSS_SLIDE_ARMED_SLACK_MS = 80;
 const SWIPE_COMMIT_MIN_MS = 80;
 const SWIPE_COMMIT_VELOCITY_FLOOR = 0.45;
-const SWIPE_SAMPLE_RETAIN_MS = 200;
+const EDGE_ARM_WINDOW_MS = 300;
 
 export function computeSwipeCommitDurationMs(
   remainingPx: number,
@@ -129,6 +131,10 @@ function readTouch(event: TouchEvent): { x: number; y: number } | null {
   const touch = event.changedTouches[0] ?? event.touches[0];
   if (!touch) return null;
   return { x: touch.clientX, y: touch.clientY };
+}
+
+function eventTimeMs(event: Event): number {
+  return event.timeStamp || performance.now();
 }
 
 export function scheduleCrossSlideAnimatingFlip(callback: () => void): void {
@@ -538,6 +544,10 @@ export function useSwipePageTransition(
     };
 
     const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length > 1) {
+        reset();
+        return;
+      }
       if (optsRef.current.shouldIgnoreTarget?.(event.target)) {
         touchTargetRef.current = null;
         return;
@@ -548,12 +558,16 @@ export function useSwipePageTransition(
       }
       const point = readTouch(event);
       if (!point) return;
+      const startedAt = eventTimeMs(event);
+      const rootLeft = root.getBoundingClientRect().left;
       touchTargetRef.current = event.target;
       originRef.current = point;
-      touchStartedAtRef.current = performance.now();
+      touchStartedAtRef.current = startedAt;
       maxDistanceRef.current = 0;
-      swipeRef.current = navigateSwipeStart(point.x <= EDGE_ZONE_PX);
-      samplesRef.current = [{ t: performance.now(), x: point.x }];
+      const edgeStart =
+        point.x - rootLeft <= EDGE_ZONE_PX && !isEdgeArmingExcludedTarget(event.target);
+      swipeRef.current = navigateSwipeStart(edgeStart);
+      samplesRef.current = [{ t: startedAt, x: point.x }];
       setDragging(false);
       setSettling(false);
       setDragX(0);
@@ -561,6 +575,10 @@ export function useSwipePageTransition(
 
     const onTouchMove = (event: TouchEvent) => {
       if (!touchTargetRef.current) return;
+      if (event.touches.length > 1) {
+        reset();
+        return;
+      }
       const target = event.target ?? touchTargetRef.current;
       if (
         shouldSuppressPageSwipe(target) ||
@@ -571,11 +589,15 @@ export function useSwipePageTransition(
       }
       const point = readTouch(event);
       if (!point) return;
-      const now = performance.now();
-      samplesRef.current = [
-        ...samplesRef.current.filter((sample) => sample.t >= now - SWIPE_SAMPLE_RETAIN_MS),
-        { t: now, x: point.x },
-      ];
+      const now = eventTimeMs(event);
+      const samples = samplesRef.current;
+      while (samples.length > 0 && samples[0].t < now - RELEASE_VELOCITY_WINDOW_MS) {
+        samples.shift();
+      }
+      samples.push({ t: now, x: point.x });
+      if (swipeRef.current.edgeStart && now - touchStartedAtRef.current >= EDGE_ARM_WINDOW_MS) {
+        swipeRef.current = { ...swipeRef.current, edgeStart: false };
+      }
       const dx = point.x - originRef.current.x;
       const dy = point.y - originRef.current.y;
       const next = navigateSwipeMove(swipeRef.current, dx, dy, pageWidth(), {
@@ -594,7 +616,7 @@ export function useSwipePageTransition(
       setDragX(navigateSwipeTranslateX(next));
     };
 
-    const onTouchEnd = () => {
+    const onTouchEnd = (event: TouchEvent) => {
       if (!touchTargetRef.current) return;
       if (
         shouldSuppressPageSwipe(touchTargetRef.current) ||
@@ -604,13 +626,14 @@ export function useSwipePageTransition(
         return;
       }
       const width = pageWidth();
-      const v = releaseVelocity(samplesRef.current, performance.now());
+      const endedAt = eventTimeMs(event);
+      const v = releaseVelocity(samplesRef.current, endedAt);
       const direction = navigateSwipeEnd(swipeRef.current, {
         capRightCommit: capRightCommit(),
         pageWidth: width,
         releaseVelocity: v,
       });
-      const duration_ms = Math.round(performance.now() - touchStartedAtRef.current);
+      const duration_ms = Math.round(endedAt - touchStartedAtRef.current);
       const distance_px = Math.round(maxDistanceRef.current);
       const dragX = swipeRef.current.engaged
         ? navigateSwipeTranslateX(swipeRef.current)
