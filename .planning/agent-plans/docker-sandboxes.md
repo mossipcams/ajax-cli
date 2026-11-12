@@ -158,14 +158,23 @@ mounts.
 
 ### Sign-in
 
-Claude, Codex and Cursor credentials live in the home volume. The Settings
-status probes (`slices/agent_auth.rs`), `cursor_login.rs` and
-`session_models.rs` run through the same image and volume, so a Settings
-sign-in lands where agents read it, and Claude rotates its own refresh token
-(the #1417 failure class goes away). Pi and opencode reuse the host's files
-through the read-write mounts. If a harness has no Settings sign-in flow, the
-canary adds one or documents a one-time `docker run -it` login; the canary
-decides which.
+Agents share the host's `~/.claude`, `~/.codex` and `~/.cursor`, mounted
+read-write at the same absolute paths, so sign-ins, settings, plugins and memory
+carry over as they did under nono. `~/.config/gh` is mounted read-only, so `gh`
+works in the container. The mounts are directories, never single files: Claude
+writes `~/.claude/.credentials.json` by temp-file + rename, which a single-file
+bind would break. Claude's live credential store is that plaintext file (the
+keychain item is stale). `~/.claude.json` is not mounted. Because the host and
+every container share one store, an agent's token refresh is the host's refresh
+too. Settings probes (`slices/agent_auth.rs`), `cursor_login.rs` and
+`session_models.rs` run through the same mounts. Pi and opencode reuse the host's
+files through the read-write mounts.
+
+Caveats: hooks and MCP servers that point at macOS binaries (for example `rtk`,
+`codeburn`, the `ajax-cli __agent-event` hooks, or MCP servers configured with
+host paths) fail inside the Linux container. This is non-blocking. Cursor's host
+sign-in lives in the macOS keychain, so Cursor still needs its one-time Settings
+sign-in in the container.
 
 ### Process observation
 
@@ -251,6 +260,11 @@ uses a releasing title, so no release ships both backends.
    - [ ] a Codex chat works through `codex-acp`; if its Linux sandbox fails in
      Docker, set `sandbox_mode = "danger-full-access"` in the container's
      `~/.codex/config.toml` (codex-acp cannot take the `-c` override)
+   - [ ] a Claude chat and a Codex chat answer with no new sign-in
+   - [ ] Claude works without the host `~/.claude.json`
+   - [ ] after an agent's token refresh, the host's `~/.claude/.credentials.json`
+     mtime changes (one shared store)
+   - [ ] `gh auth status` works in the container
 4. Matt checks from the phone: a chat in each harness answers; Cancel stops
    the container; restarting dev web (Test in dev again) leaves no orphan
    containers; dropping a task removes its volumes and is not slowed by a

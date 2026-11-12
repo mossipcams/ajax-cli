@@ -10,25 +10,19 @@ const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
 const CODEX_SANDBOX_OVERRIDE: [&str; 2] = ["-c", "sandbox_mode=\"danger-full-access\""];
 const SSH_AGENT_SOCK: &str = ".config/ajax/ssh/agent.sock";
-const READ_ONLY_TOOLING: [&str; 15] = [
+const SHARED_HARNESS_HOMES: [&str; 3] = [".claude", ".codex", ".cursor"];
+const GH_CONFIG: &str = ".config/gh";
+const READ_ONLY_TOOLING: [&str; 8] = [
     "Projects/ajax-model-router",
-    ".claude/skills",
-    ".codex/skills",
     ".agents/skills",
-    ".cursor/skills",
-    ".claude/skills-src",
     "Projects/AGENTS.md",
     "Projects/agents.md",
     "Projects/CLAUDE.md",
     "Projects/.claude",
     "Projects/.codex",
     "Projects/scripts",
-    ".claude/CLAUDE.md",
-    ".claude/RTK.md",
-    ".codex/AGENTS.md",
 ];
-const READ_WRITE_TOOLING: [&str; 6] = [
-    ".claude/projects",
+const READ_WRITE_TOOLING: [&str; 5] = [
     ".ajax-router",
     ".pi/agent",
     ".local/share/opencode",
@@ -232,6 +226,16 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     let [target, node_modules] = task_volumes(&key);
     argv.extend(pair("-v", format!("{target}:{cwd}/target")));
     argv.extend(pair("-v", format!("{node_modules}:{cwd}/node_modules")));
+    for relative in SHARED_HARNESS_HOMES.iter() {
+        let path = launch.home.join(relative);
+        if exists(&path) {
+            argv.extend(pair("-v", same_path(&path)));
+        }
+    }
+    let gh = launch.home.join(GH_CONFIG);
+    if exists(&gh) {
+        argv.extend(pair("-v", format!("{0}:{0}:ro", text(&gh))));
+    }
     let tooling = READ_ONLY_TOOLING
         .iter()
         .map(|relative| (relative, ":ro"))
@@ -450,22 +454,16 @@ mod tests {
              -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v {COMMON}:{COMMON} \
              -v ajax-target-{KEY}:{CWD}/target -v ajax-node-modules-{KEY}:{CWD}/node_modules \
+             -v {HOME}/.claude:{HOME}/.claude -v {HOME}/.codex:{HOME}/.codex \
+             -v {HOME}/.cursor:{HOME}/.cursor -v {HOME}/.config/gh:{HOME}/.config/gh:ro \
              -v {HOME}/Projects/ajax-model-router:{HOME}/Projects/ajax-model-router:ro \
-             -v {HOME}/.claude/skills:{HOME}/.claude/skills:ro \
-             -v {HOME}/.codex/skills:{HOME}/.codex/skills:ro \
              -v {HOME}/.agents/skills:{HOME}/.agents/skills:ro \
-             -v {HOME}/.cursor/skills:{HOME}/.cursor/skills:ro \
-             -v {HOME}/.claude/skills-src:{HOME}/.claude/skills-src:ro \
              -v {HOME}/Projects/AGENTS.md:{HOME}/Projects/AGENTS.md:ro \
              -v {HOME}/Projects/agents.md:{HOME}/Projects/agents.md:ro \
              -v {HOME}/Projects/CLAUDE.md:{HOME}/Projects/CLAUDE.md:ro \
              -v {HOME}/Projects/.claude:{HOME}/Projects/.claude:ro \
              -v {HOME}/Projects/.codex:{HOME}/Projects/.codex:ro \
              -v {HOME}/Projects/scripts:{HOME}/Projects/scripts:ro \
-             -v {HOME}/.claude/CLAUDE.md:{HOME}/.claude/CLAUDE.md:ro \
-             -v {HOME}/.claude/RTK.md:{HOME}/.claude/RTK.md:ro \
-             -v {HOME}/.codex/AGENTS.md:{HOME}/.codex/AGENTS.md:ro \
-             -v {HOME}/.claude/projects:{HOME}/.claude/projects \
              -v {HOME}/.ajax-router:{HOME}/.ajax-router -v {HOME}/.pi/agent:{HOME}/.pi/agent \
              -v {HOME}/.local/share/opencode:{HOME}/.local/share/opencode \
              -v {HOME}/.config/opencode:{HOME}/.config/opencode \
@@ -538,12 +536,12 @@ mod tests {
         assert!(!argv.iter().any(|a| a.starts_with("SSH_AUTH_SOCK")));
         assert!(!argv.iter().any(|a| a.contains("/.codex/skills")));
 
-        let codex_skills = PathBuf::from(format!("{HOME}/.codex/skills"));
-        let argv = docker_argv(&sample(home, cwd, &args), |p| p == codex_skills);
+        let agents_skills = PathBuf::from(format!("{HOME}/.agents/skills"));
+        let argv = docker_argv(&sample(home, cwd, &args), |p| p == agents_skills);
         assert!(has_pair(
             &argv,
             "-v",
-            &format!("{HOME}/.codex/skills:{HOME}/.codex/skills:ro")
+            &format!("{HOME}/.agents/skills:{HOME}/.agents/skills:ro")
         ));
         assert!(!argv.iter().any(|a| a.contains("ajax-model-router")));
     }
@@ -672,6 +670,33 @@ mod tests {
                     "{source} must not be mounted"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn shared_harness_homes_mount_read_write_and_gh_read_only() {
+        let home = Path::new(HOME);
+        let cwd = Path::new(CWD);
+        let args = strings(&[]);
+        let argv = docker_argv(&sample(home, cwd, &args), |_| true);
+        for harness in [".claude", ".codex", ".cursor"] {
+            assert!(has_pair(
+                &argv,
+                "-v",
+                &format!("{HOME}/{harness}:{HOME}/{harness}")
+            ));
+        }
+        assert!(has_pair(
+            &argv,
+            "-v",
+            &format!("{HOME}/.config/gh:{HOME}/.config/gh:ro")
+        ));
+        for volume in volumes(&argv) {
+            let source = volume.split(':').next().unwrap_or_default();
+            assert!(
+                !source.ends_with(".credentials.json") && !source.ends_with("auth.json"),
+                "{source} must not be mounted"
+            );
         }
     }
 

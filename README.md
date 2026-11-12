@@ -308,22 +308,27 @@ Agents see:
   worktree's `.git` file and absolute symlinks resolve unchanged.
 - Per-task `target/` and `node_modules/` volumes, so Linux builds never touch the
   host's macOS artifacts.
-- The `ajax-agent-home` volume at `$HOME`, which holds agent config and sign-ins.
-  Claude, Codex, and Cursor keep their settings and MCP config there, so host
-  hooks and MCP servers (macOS binaries) do not reach agents. Shared
-  `ajax-rustup`, `ajax-cargo-registry`, and `ajax-cargo-git` volumes hold the Rust
-  toolchain and caches.
+- The `ajax-agent-home` volume at `$HOME` for the rest of the home directory.
+  Shared `ajax-rustup`, `ajax-cargo-registry`, and `ajax-cargo-git` volumes hold
+  the Rust toolchain and caches.
+- The host's `~/.claude`, `~/.codex`, and `~/.cursor`, read-write at the same
+  paths. Agents share the host's sign-ins, settings, plugins, and memory, so they
+  carry over as they did under nono. `~/.config/gh` is mounted read-only, so `gh`
+  works in the container. `~/.claude.json` is not shared.
 - Tooling at the same host paths, skipped when missing. Read-only:
-  `~/Projects/ajax-model-router`, the `skills` dirs under `~/.claude`, `~/.codex`,
-  `~/.agents`, and `~/.cursor`, `~/.claude/skills-src`, the instruction files and
+  `~/Projects/ajax-model-router`, `~/.agents/skills`, and the instruction files and
   `scripts` in `~/Projects` (`AGENTS.md`, `agents.md`, `CLAUDE.md`, `.claude`,
-  `.codex`, `scripts`), `~/.claude/CLAUDE.md`, `~/.claude/RTK.md`, and
-  `~/.codex/AGENTS.md`. Read-write: `~/.claude/projects` (memory and transcripts),
-  `~/.ajax-router`, `~/.pi/agent`, `~/.local/share/opencode`, and
-  `~/.config/opencode`.
+  `.codex`, `scripts`). Read-write: `~/.ajax-router`, `~/.pi/agent`,
+  `~/.local/share/opencode`, and `~/.config/opencode`.
 - The ssh agent socket at `~/.config/ajax/ssh/agent.sock`, with `SSH_AUTH_SOCK`
   pointing at it.
 - `GH_TOKEN`, only when it is set in Ajax's own environment.
+
+Caveats: hooks and MCP servers that point at macOS binaries (for example `rtk`,
+`codeburn`, the `ajax-cli __agent-event` hooks, or MCP servers configured with
+host paths) fail inside the Linux container. This is non-blocking. Cursor's host
+sign-in lives in the macOS keychain, so Cursor still needs its one-time Settings
+sign-in in the container.
 
 Agents do not see `~/.ssh`, `~/.orbstack`, `~/.docker`, the Docker and OrbStack
 sockets, the host tmux socket, the macOS keychain, or Ajax state
