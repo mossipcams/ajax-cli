@@ -3,10 +3,14 @@ use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::thread;
+use std::time::Duration;
 
 use nix::unistd::{getgid, getuid};
 
@@ -104,7 +108,9 @@ const HOME_UNSET: &str =
     "agent sandbox is on but HOME is unset, so the agent home cannot be mounted; set HOME or AJAX_SANDBOX=off";
 const TRUST_STORE_UNSET: &str =
     "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off";
+const SSH_AGENT_SOCK: &str = ".config/ajax/ssh/agent.sock";
 static LAUNCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static SSH_AGENT_RELAY: OnceLock<Option<String>> = OnceLock::new();
 static PARENTS_REPAIRED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 const HOME_REPAIR_FAILED: &str = "agent sandbox could not repair ownership of the ajax-agent-home volume; set AJAX_SANDBOX=off to run unsandboxed";
 
@@ -144,6 +150,64 @@ fn run_docker(docker: &Path, args: &[&str]) -> io::Result<Output> {
         .output()
 }
 
+pub fn ssh_agent_relay(socket: &Path) -> Option<String> {
+    if !socket.exists() {
+        return None;
+    }
+    SSH_AGENT_RELAY
+        .get_or_init(|| start_ssh_agent_relay(socket))
+        .clone()
+}
+
+fn start_ssh_agent_relay(socket: &Path) -> Option<String> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok()?;
+    let addr = listener.local_addr().ok()?;
+    let socket = socket.to_path_buf();
+    thread::Builder::new()
+        .name("ajax-ssh-agent-relay".to_string())
+        .spawn(move || accept_ssh_agent_connections(&listener, &socket))
+        .ok()?;
+    Some(addr.to_string())
+}
+
+fn accept_ssh_agent_connections(listener: &TcpListener, socket: &Path) {
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let socket = socket.to_path_buf();
+                let _ = thread::Builder::new().spawn(move || {
+                    if let Err(err) = relay_ssh_agent_connection(stream, &socket) {
+                        tracing::debug!(error = %err, "ssh agent relay connection failed");
+                    }
+                });
+            }
+            Err(err) => {
+                tracing::debug!(error = %err, "ssh agent relay accept failed");
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+fn relay_ssh_agent_connection(tcp: TcpStream, socket: &Path) -> io::Result<()> {
+    let agent = UnixStream::connect(socket)?;
+    let mut tcp_in = tcp.try_clone()?;
+    let mut agent_out = agent.try_clone()?;
+    let (tcp_hangup, agent_hangup) = (tcp.try_clone()?, agent.try_clone()?);
+    let upstream = thread::Builder::new().spawn(move || {
+        let _ = io::copy(&mut tcp_in, &mut agent_out);
+        let _ = tcp_hangup.shutdown(Shutdown::Both);
+        let _ = agent_hangup.shutdown(Shutdown::Both);
+    })?;
+    let mut agent_in = agent;
+    let mut tcp_out = tcp;
+    let _ = io::copy(&mut agent_in, &mut tcp_out);
+    let _ = tcp_out.shutdown(Shutdown::Both);
+    let _ = agent_in.shutdown(Shutdown::Both);
+    let _ = upstream.join();
+    Ok(())
+}
+
 pub fn docker_command(
     host: &DockerHost,
     program: &str,
@@ -158,6 +222,11 @@ pub fn docker_command(
     check_ready(&image, |docker_args| (host.run)(&docker, docker_args))?;
     let common = trust_linked_worktree(host.store.as_deref(), cwd)?;
     let home = host.home.as_deref().ok_or_else(|| HOME_UNSET.to_string())?;
+    let relay = if cfg!(test) {
+        None
+    } else {
+        ssh_agent_relay(&home.join(SSH_AGENT_SOCK))
+    };
     let env: Vec<(String, String)> = env
         .iter()
         .filter(|(key, _)| key.as_str() != "PATH")
@@ -176,6 +245,7 @@ pub fn docker_command(
         instance: &instance,
         tty,
         pass_gh_token: host.pass_gh_token,
+        ssh_agent_relay: relay.as_deref(),
         image: &image,
         program,
         args,
@@ -291,6 +361,8 @@ fn trust_linked_worktree(store: Option<&Path>, cwd: &Path) -> Result<Option<Path
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -646,5 +718,36 @@ mod tests {
 
         assert!(err.contains("ajax-agent-home"), "{err}");
         assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
+    }
+
+    #[test]
+    fn ssh_agent_relay_copies_bytes_both_ways() {
+        let dir = fs::canonicalize(scratch("relay")).unwrap();
+        let socket = dir.join("a.sock");
+        let agent = UnixListener::bind(&socket).unwrap();
+        thread::spawn(move || {
+            for stream in agent.incoming().flatten() {
+                thread::spawn(move || {
+                    let mut reader = stream.try_clone().unwrap();
+                    let mut writer = stream;
+                    let _ = io::copy(&mut reader, &mut writer);
+                });
+            }
+        });
+
+        let addr = start_ssh_agent_relay(&socket).expect("relay binds");
+        assert!(addr.starts_with("127.0.0.1:"), "{addr}");
+        let mut client = TcpStream::connect(&addr).unwrap();
+        client.write_all(b"agent-bytes").unwrap();
+        let mut echoed = [0u8; 11];
+        client.read_exact(&mut echoed).unwrap();
+        assert_eq!(&echoed, b"agent-bytes");
+    }
+
+    #[test]
+    fn ssh_agent_relay_is_none_without_a_socket() {
+        let dir = scratch("relay-missing");
+
+        assert_eq!(ssh_agent_relay(&dir.join("agent.sock")), None);
     }
 }

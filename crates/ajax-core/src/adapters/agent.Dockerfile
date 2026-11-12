@@ -32,6 +32,19 @@ RUN npm install -g \
 RUN mkdir -p /opt/ajax && ln -s "$(npm root -g)/@anthropic-ai/claude-agent-sdk" /opt/ajax/claude-agent-sdk \
  && ln -s "$(npm root -g)/@cursor/sdk" /opt/ajax/cursor-sdk
 
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'if [ -n "$AJAX_SSH_AGENT_RELAY" ]; then' \
+      '  sock=/tmp/ajax-ssh-agent.sock' \
+      '  rm -f "$sock"' \
+      '  socat UNIX-LISTEN:"$sock",fork,mode=600 TCP:"$AJAX_SSH_AGENT_RELAY" </dev/null >/dev/null 2>&1 &' \
+      '  i=0' \
+      '  while [ ! -S "$sock" ] && [ "$i" -lt 100 ]; do sleep 0.02; i=$((i+1)); done' \
+      '  export SSH_AUTH_SOCK="$sock"' \
+      'fi' \
+      'exec "$@"' > /opt/ajax/agent-entry \
+ && chmod 755 /opt/ajax/agent-entry
+
 COPY . /tmp/ctx
 RUN if [ -d /tmp/ctx/pi-acp ]; then \
       R="$(npm root -g)" \
@@ -55,3 +68,4 @@ RUN (getent passwd "$HOST_UID" >/dev/null || useradd -o -u "$HOST_UID" -g "$HOST
              "$HOST_HOME/.local/state" "$HOST_HOME/.local/share" "$HOST_HOME/.pi" \
  && mkdir -p /opt/cargo/registry /opt/cargo/git \
  && chown -R "$HOST_UID:$HOST_GID" "$HOST_HOME" /opt/rustup /opt/cargo
+ENTRYPOINT ["/opt/ajax/agent-entry"]

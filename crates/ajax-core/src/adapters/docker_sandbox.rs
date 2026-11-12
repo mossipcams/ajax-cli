@@ -9,7 +9,6 @@ pub const DOCKERFILE: &str = include_str!("agent.Dockerfile");
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
 const CODEX_SANDBOX_OVERRIDE: [&str; 2] = ["-c", "sandbox_mode=\"danger-full-access\""];
-const SSH_AGENT_SOCK: &str = ".config/ajax/ssh/agent.sock";
 const SHARED_HARNESS_HOMES: [&str; 3] = [".claude", ".codex", ".cursor"];
 const GH_CONFIG: &str = ".config/gh";
 const READ_ONLY_TOOLING: [&str; 8] = [
@@ -22,12 +21,11 @@ const READ_ONLY_TOOLING: [&str; 8] = [
     "Projects/.codex",
     "Projects/scripts",
 ];
-const READ_WRITE_TOOLING: [&str; 5] = [
+const READ_WRITE_TOOLING: [&str; 4] = [
     ".ajax-router",
     ".pi/agent",
     ".local/share/opencode",
     ".config/opencode",
-    SSH_AGENT_SOCK,
 ];
 const DOCKER_MISSING: &str =
     "agent sandbox is on but docker is not installed; install OrbStack or set AJAX_SANDBOX=off";
@@ -178,6 +176,7 @@ pub struct DockerLaunch<'a> {
     pub instance: &'a str,
     pub tty: bool,
     pub pass_gh_token: bool,
+    pub ssh_agent_relay: Option<&'a str>,
     pub image: &'a str,
     pub program: &'a str,
     pub args: &'a [String],
@@ -188,7 +187,6 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     let key = task_key(launch.cwd);
     let cwd = text(launch.cwd);
     let home = text(launch.home);
-    let sock = launch.home.join(SSH_AGENT_SOCK);
     let mut argv = strings(&["run", "--rm", "-i"]);
     if launch.tty {
         argv.push("-t".to_string());
@@ -202,8 +200,8 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     argv.extend(pair("--label", format!("ajax.server={}", launch.server)));
     argv.extend(pair("--label", format!("ajax.worktree={cwd}")));
     argv.extend(pair("-e", format!("HOME={home}")));
-    if exists(&sock) {
-        argv.extend(pair("-e", format!("SSH_AUTH_SOCK={}", text(&sock))));
+    if let Some(relay) = launch.ssh_agent_relay {
+        argv.extend(pair("-e", format!("AJAX_SSH_AGENT_RELAY={relay}")));
     }
     if launch.pass_gh_token {
         argv.extend(pair("-e", "GH_TOKEN"));
@@ -366,6 +364,7 @@ mod tests {
     const KEY: &str = "ajax-docker-sandboxes-1576734c";
     const IMAGE: &str = "ajax-agent:test";
     const SOCK: &str = "/Users/matt/.config/ajax/ssh/agent.sock";
+    const RELAY: &str = "127.0.0.1:4242";
     const INSTANCE: &str = "1f-2";
     const SERVER: &str = "5a1c0e2f9b3d4e61";
 
@@ -382,6 +381,7 @@ mod tests {
             instance: INSTANCE,
             tty: false,
             pass_gh_token: false,
+            ssh_agent_relay: None,
             image: IMAGE,
             program: "claude",
             args,
@@ -446,11 +446,15 @@ mod tests {
         let home = Path::new(HOME);
         let cwd = Path::new(CWD);
         let args = strings(&["-p", "hi"]);
-        let argv = docker_argv(&sample(home, cwd, &args), |_| true);
+        let launch = DockerLaunch {
+            ssh_agent_relay: Some(RELAY),
+            ..sample(home, cwd, &args)
+        };
+        let argv = docker_argv(&launch, |_| true);
         let expected = words(&format!(
             "run --rm -i --init --user 501:20 --network host --name ajax-{KEY}-{INSTANCE} \
              --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.server={SERVER} --label ajax.worktree={CWD} -e HOME={HOME} \
-             -e SSH_AUTH_SOCK={SOCK} -w {CWD} -v ajax-agent-home:{HOME} \
+             -e AJAX_SSH_AGENT_RELAY={RELAY} -w {CWD} -v ajax-agent-home:{HOME} \
              -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v {COMMON}:{COMMON} \
              -v ajax-target-{KEY}:{CWD}/target -v ajax-node-modules-{KEY}:{CWD}/node_modules \
@@ -466,8 +470,7 @@ mod tests {
              -v {HOME}/Projects/scripts:{HOME}/Projects/scripts:ro \
              -v {HOME}/.ajax-router:{HOME}/.ajax-router -v {HOME}/.pi/agent:{HOME}/.pi/agent \
              -v {HOME}/.local/share/opencode:{HOME}/.local/share/opencode \
-             -v {HOME}/.config/opencode:{HOME}/.config/opencode \
-             -v {SOCK}:{SOCK} {IMAGE} claude -p hi"
+             -v {HOME}/.config/opencode:{HOME}/.config/opencode {IMAGE} claude -p hi"
         ));
         assert_eq!(argv, expected);
     }
@@ -547,21 +550,28 @@ mod tests {
     }
 
     #[test]
-    fn gh_token_and_ssh_socket_only_when_applicable() {
+    fn gh_token_and_ssh_relay_only_when_applicable() {
         let home = Path::new(HOME);
         let cwd = Path::new(CWD);
         let args = strings(&[]);
         let on = DockerLaunch {
             pass_gh_token: true,
+            ssh_agent_relay: Some(RELAY),
             ..sample(home, cwd, &args)
         };
         let argv = docker_argv(&on, |p| p == Path::new(SOCK));
         assert!(has_pair(&argv, "-e", "GH_TOKEN"));
-        assert!(has_pair(&argv, "-e", &format!("SSH_AUTH_SOCK={SOCK}")));
+        assert!(has_pair(
+            &argv,
+            "-e",
+            &format!("AJAX_SSH_AGENT_RELAY={RELAY}")
+        ));
+        assert!(!argv.iter().any(|a| a.starts_with("SSH_AUTH_SOCK=")));
+        assert!(!argv.iter().any(|a| a.contains(".config/ajax")));
 
         let argv = docker_argv(&sample(home, cwd, &args), |_| false);
         assert!(!has_pair(&argv, "-e", "GH_TOKEN"));
-        assert!(!argv.iter().any(|a| a.starts_with("SSH_AUTH_SOCK=")));
+        assert!(!argv.iter().any(|a| a.starts_with("AJAX_SSH_AGENT_RELAY=")));
     }
 
     #[test]
@@ -661,9 +671,6 @@ mod tests {
             .filter(|w| w[0] == "-v")
             .map(|w| w[1].split(':').next().unwrap_or_default());
         for source in sources {
-            if source == SOCK {
-                continue;
-            }
             for prefix in &forbidden {
                 assert!(
                     !source.starts_with(prefix.as_str()),

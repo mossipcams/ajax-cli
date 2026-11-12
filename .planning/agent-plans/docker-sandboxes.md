@@ -156,7 +156,7 @@ Inventory of symlinks taken 2026-11-11:
   sign-ins, settings, and Claude memory and transcripts (`~/.claude/projects`).
 - Read-write, also: `~/.ajax-router` (route health), `~/.pi/agent` (Pi auth,
   models, extensions, context-fold), `~/.local/share/opencode`,
-  `~/.config/opencode`, and the ssh agent socket.
+  `~/.config/opencode`. The ssh agent is relayed over loopback, not mounted.
 - Not shared: `~/.claude.json` is not mounted, so Claude's copy stays in the
   home volume. `settings.json` and `~/.codex/config.toml` are the host's files,
   writable from containers (decision 5). Host hooks and MCP servers that point
@@ -164,8 +164,8 @@ Inventory of symlinks taken 2026-11-11:
 
 There is no new config section (cut 2026-11-11). `~/.config/ajax/nono/local.json`
 is replaced by built-in defaults: the scoped ssh agent socket
-`~/.config/ajax/ssh/agent.sock` is in the mount list (same path, with
-`SSH_AUTH_SOCK`, skipped if missing), and `GH_TOKEN` is passed through when
+`~/.config/ajax/ssh/agent.sock` is relayed over a loopback TCP port and exposed as
+`SSH_AUTH_SOCK` (skipped if missing; see the canary 2026-11-12 results), and `GH_TOKEN` is passed through when
 set in the web server's environment (same exposure as the old `~/.config/gh`
 grant). Add a config section only when a second machine needs different
 mounts.
@@ -259,7 +259,8 @@ uses a releasing title, so no release ships both backends.
    checklist in `.planning/agent-plans/docker-sandboxes.md` and record
    results". That agent is inside Docker and checks:
    - [ ] `curl` to 127.0.0.1:18000, :8788 and :9222 works (host network)
-   - [ ] `ssh -T git@github.com` through the mounted agent socket
+   - [ ] `ssh-add -l` inside the container lists the 3 keys, and
+     `ssh -T git@github.com` authenticates (through the relay)
    - [ ] no dangling links (`find <skill dirs> scripts -xtype l`); one real
      `scripts/run-delegate` round completes
    - [ ] `gh auth status`; commit and push the canary branch
@@ -308,7 +309,21 @@ Fixed on the stack after the first canary run:
   `credential.https://github.com.helper` to `gh auth git-credential`.
 - `opencode-ai` is pinned to 1.19.5, the version the canary built.
 
-Still open: the ssh agent socket issue.
+- Canary finding: ssh agent access failed inside the OrbStack container.
+  `ssh-add -l` got `Connection refused` on the bind-mounted
+  `~/.config/ajax/ssh/agent.sock` (same path, `SSH_AUTH_SOCK` set), and
+  `ssh -T git@github.com` got `Permission denied (publickey)`. On the host the
+  same socket lists 3 keys. OrbStack does not pass the bind-mounted Unix socket
+  through. Host loopback works (the canary reached it), and `socat` is in the
+  image.
+- Fix (relay, not socket passthrough): `sandbox::ssh_agent_relay` binds
+  `127.0.0.1:0` once per process (never `0.0.0.0`) and forwards each connection
+  to the host socket, copying bytes both ways and closing both sides when either
+  ends. `docker_command` passes the address as `AJAX_SSH_AGENT_RELAY`, and
+  `/opt/ajax/agent-entry` (the image ENTRYPOINT) starts `socat` on
+  `/tmp/ajax-ssh-agent.sock` and exports `SSH_AUTH_SOCK` to it before `exec "$@"`.
+  The socket file is no longer mounted. Any local process that finds the port can
+  use the agent, an accepted local exposure like #1413.
 
 ## Cutover and rollback
 

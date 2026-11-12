@@ -320,8 +320,10 @@ Agents see:
   `scripts` in `~/Projects` (`AGENTS.md`, `agents.md`, `CLAUDE.md`, `.claude`,
   `.codex`, `scripts`). Read-write: `~/.ajax-router`, `~/.pi/agent`,
   `~/.local/share/opencode`, and `~/.config/opencode`.
-- The ssh agent socket at `~/.config/ajax/ssh/agent.sock`, with `SSH_AUTH_SOCK`
-  pointing at it.
+- The host ssh agent, relayed. Ajax relays `~/.config/ajax/ssh/agent.sock` into
+  each container over a `127.0.0.1`-only TCP port, and the container wrapper sets
+  `SSH_AUTH_SOCK` to it. The socket file is not mounted, because OrbStack does not
+  pass bind-mounted Unix sockets through.
 - `GH_TOKEN`, only when it is set in Ajax's own environment.
 - HTTPS git: the image sets `credential.https://github.com.helper` to
   `gh auth git-credential`, so `git push` over HTTPS uses the `gh` sign-in.
@@ -334,8 +336,8 @@ sign-in in the container.
 
 Agents do not see `~/.ssh`, `~/.orbstack`, `~/.docker`, the Docker and OrbStack
 sockets, the host tmux socket, the macOS keychain, or Ajax state
-(`~/.local/state/ajax`, `~/.ajax-dev`, and `~/.config/ajax`, apart from the ssh
-agent socket above).
+(`~/.local/state/ajax`, `~/.ajax-dev`, and `~/.config/ajax`, including the ssh
+agent socket, which is relayed instead).
 
 The container uses host networking. Loopback services stay reachable: Postgres on
 `127.0.0.1:5432`, the Ajax web server, and host Chrome on `:9222`. Secure those
@@ -376,8 +378,11 @@ inside the container, set `sandbox_mode = "danger-full-access"` in the container
 Private keys in `~/.ssh` are not mounted. To let agents use your keys, run a
 dedicated `ssh-agent` on a socket outside `~/.ssh` (for example
 `~/.config/ajax/ssh/agent.sock`, kept alive by a launchd job that loads your keys).
-Ajax mounts that socket into agent containers, so agents can log in wherever those
-keys work, but cannot copy the keys. To use the same agent from your shell, point
+Ajax relays that socket into agent containers. The launching Ajax process opens a
+TCP port on `127.0.0.1` that forwards to the socket, and the container's wrapper
+(`/opt/ajax/agent-entry`) exposes it as `SSH_AUTH_SOCK`. Agents can log in wherever
+those keys work, but cannot copy the keys. Any local process that finds the port can
+also use the agent, an accepted local exposure like #1413. To use the same agent from your shell, point
 `~/.ssh/config` at it with `IdentityAgent ~/.config/ajax/ssh/agent.sock` under
 `Host *`. To push workflow files over HTTPS instead of SSH, run
 `gh auth refresh -s workflow` once.
