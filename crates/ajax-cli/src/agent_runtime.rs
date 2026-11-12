@@ -2,16 +2,14 @@ use std::{
     collections::hash_map::DefaultHasher,
     fs::{self, OpenOptions},
     hash::{Hash, Hasher},
-    io::Write,
+    io::{IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ajax_core::adapters::sandbox::{
-    default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled,
-};
+use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, DockerHost};
 use ajax_core::canonical_agent_event::CanonicalEventKind;
 use serde::{Deserialize, Serialize};
 
@@ -101,8 +99,7 @@ fn run_agent_runtime_with_interval(
         heartbeat_interval,
         SandboxInputs {
             enabled: sandbox_enabled(),
-            nono: resolve_nono,
-            profile_dir: default_profile_dir(),
+            host: DockerHost::process(std::process::id().to_string(), "cli".to_string()),
         },
     )
 }
@@ -113,7 +110,7 @@ fn run_agent_runtime_sandboxed(
     program: &str,
     args: &[&str],
     heartbeat_interval: Duration,
-    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+    sandbox: SandboxInputs,
 ) -> Result<i32, CliError> {
     write_runtime_snapshot(
         state_root,
@@ -139,12 +136,13 @@ fn run_agent_runtime_sandboxed(
         CliError::CommandFailed(format!("failed to read current directory: {error}"))
     })?;
     publish_cwd_index(&agent_events_dir, task_id, "primary", &cwd)?;
-    let (program, args) = match agent_command(sandbox, &cwd, &agent_events_dir, program, args) {
-        Ok(command) => command,
-        Err(message) => {
-            return fail_launch(state_root, task_id, &agent_events_dir, &cwd, message);
-        }
-    };
+    let (program, args) =
+        match agent_command(sandbox, task_id, &cwd, &agent_events_dir, program, args) {
+            Ok(command) => command,
+            Err(message) => {
+                return fail_launch(state_root, task_id, &agent_events_dir, &cwd, message);
+            }
+        };
     let child = Command::new(&program)
         .args(&args)
         .env("AJAX_TASK_ID", task_id)
@@ -208,29 +206,41 @@ fn run_agent_runtime_sandboxed(
     }
 }
 
-struct SandboxInputs<N> {
+struct SandboxInputs {
     enabled: bool,
-    nono: N,
-    profile_dir: Option<PathBuf>,
+    host: DockerHost,
 }
 
 fn agent_command(
-    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+    sandbox: SandboxInputs,
+    task_id: &str,
     cwd: &Path,
     agent_events_dir: &Path,
     program: &str,
     args: &[&str],
 ) -> Result<(String, Vec<String>), String> {
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
-    sandbox_command(
-        sandbox.enabled,
-        sandbox.nono,
-        sandbox.profile_dir,
-        cwd,
-        &[agent_events_dir.to_path_buf()],
+    if !sandbox.enabled {
+        return Ok((program.to_string(), args));
+    }
+    let env = [
+        ("AJAX_TASK_ID".to_string(), task_id.to_string()),
+        ("AJAX_RUN_ID".to_string(), "primary".to_string()),
+        (
+            "AJAX_AGENT_EVENTS_DIR".to_string(),
+            agent_events_dir.display().to_string(),
+        ),
+    ];
+    let (docker, argv) = docker_command(
+        &sandbox.host,
         program,
         &args,
-    )
+        cwd,
+        &env,
+        &[agent_events_dir.to_path_buf()],
+        std::io::stdin().is_terminal(),
+    )?;
+    Ok((docker.display().to_string(), argv))
 }
 
 fn fail_launch(
@@ -432,6 +442,7 @@ mod tests {
         run_agent_runtime_sandboxed, run_agent_runtime_with_interval, snapshot_path,
         AgentRuntimeSnapshot, AgentRuntimeState, SandboxInputs,
     };
+    use ajax_core::adapters::sandbox::DockerHost;
 
     fn sandbox_test_base(label: &str) -> PathBuf {
         let base = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -613,8 +624,30 @@ mod tests {
         fs::remove_dir_all(cache_root).unwrap();
     }
 
+    fn docker_host(resolve: fn() -> Result<PathBuf, String>, store: Option<PathBuf>) -> DockerHost {
+        DockerHost {
+            resolve,
+            run: docker_ok,
+            home: Some(PathBuf::from("/ajax-test-home")),
+            store,
+            uid: 501,
+            gid: 20,
+            pass_gh_token: false,
+            boot_id: "boot-test".to_string(),
+            server: "cli-test".to_string(),
+        }
+    }
+
+    fn docker_ok(_: &Path, _: &[&str]) -> std::io::Result<std::process::Output> {
+        Ok(std::process::Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
     #[test]
-    fn enabled_sandbox_wraps_agent_in_nono_with_events_grant() {
+    fn enabled_sandbox_wraps_agent_in_docker_with_events_grant() {
         let base = sandbox_test_base("wraps");
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let events_dir = base.join("agent-events");
@@ -622,9 +655,12 @@ mod tests {
         let (program, argv) = agent_command(
             SandboxInputs {
                 enabled: true,
-                nono: || Ok(PathBuf::from("/opt/nono")),
-                profile_dir: Some(base.join("profiles")),
+                host: docker_host(
+                    || Ok(PathBuf::from("/opt/docker")),
+                    Some(base.join("trusted-git")),
+                ),
             },
+            "web/fix-login",
             cwd,
             &events_dir,
             "claude",
@@ -632,30 +668,32 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(program, "/opt/nono");
-        assert!(base.join("profiles").join("ajax-agent.json").is_file());
+        assert_eq!(program, "/opt/docker");
+        assert!(argv.contains(&"run".to_string()));
+        assert!(argv.windows(2).any(|pair| {
+            pair[0] == "-v" && pair[1] == format!("{0}:{0}", events_dir.display())
+        }));
         assert!(argv
             .windows(2)
-            .any(|pair| pair[0] == "--allow" && pair[1] == events_dir.display().to_string()));
-        assert!(argv.ends_with(&[
-            "--".to_string(),
-            "claude".to_string(),
-            "--resume".to_string()
-        ]));
+            .any(|pair| { pair[0] == "-e" && pair[1] == "AJAX_TASK_ID=web/fix-login" }));
+        assert!(argv.ends_with(&["claude".to_string(), "--resume".to_string()]));
 
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn disabled_sandbox_keeps_agent_program_and_args_without_resolving_nono() {
+    fn disabled_sandbox_keeps_agent_program_and_args_without_resolving_docker() {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
 
         let (program, argv) = agent_command(
             SandboxInputs {
                 enabled: false,
-                nono: || panic!("nono must not be resolved when the sandbox is off"),
-                profile_dir: None,
+                host: docker_host(
+                    || panic!("docker must not be resolved when the sandbox is off"),
+                    None,
+                ),
             },
+            "web/fix-login",
             cwd,
             Path::new("/unused"),
             "claude",
@@ -668,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_nono_fails_closed_without_spawning_agent() {
+    fn missing_docker_fails_closed_without_spawning_agent() {
         let base = sandbox_test_base("fail-closed");
         let root = base.join("agent-runtime");
         let marker = base.join("agent-spawned");
@@ -681,17 +719,27 @@ mod tests {
             Duration::from_millis(5),
             SandboxInputs {
                 enabled: true,
-                nono: || Err("agent sandbox is on but nono is not installed".to_string()),
-                profile_dir: None,
+                host: docker_host(
+                    || {
+                        Err(
+                            "agent sandbox is on but docker is not installed; set AJAX_SANDBOX=off"
+                                .to_string(),
+                        )
+                    },
+                    Some(base.join("trusted-git")),
+                ),
             },
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("nono"));
+        assert!(error.to_string().contains("docker"));
+        assert!(error.to_string().contains("AJAX_SANDBOX=off"));
         assert!(!marker.exists());
         let latest = snapshots(&root).pop().unwrap();
         assert_eq!(latest.state, AgentRuntimeState::ExitedFailure);
-        assert!(latest.message.unwrap().contains("nono"));
+        let message = latest.message.unwrap();
+        assert!(message.contains("docker"));
+        assert!(message.contains("AJAX_SANDBOX=off"));
         let cwd = std::env::current_dir().unwrap();
         assert!(!cwd_index_path(&base.join("agent-events"), &cwd).exists());
 

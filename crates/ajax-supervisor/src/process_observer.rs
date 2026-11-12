@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     process::ExitStatus,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,7 +9,7 @@ use std::{
 };
 
 use ajax_core::{
-    adapters::sandbox::{default_profile_dir, resolve_nono, sandbox_command, sandbox_enabled},
+    adapters::sandbox::{docker_command, sandbox_enabled, DockerHost},
     events::{AgentEvent, MonitorEvent, ProcessEvent},
 };
 use tokio::{
@@ -83,8 +83,7 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
         worktree,
         SandboxInputs {
             enabled: cfg!(not(test)) && sandbox_enabled(),
-            nono: resolve_nono,
-            profile_dir: default_profile_dir(),
+            host: DockerHost::process(std::process::id().to_string(), "supervisor".to_string()),
         },
     )
     .await
@@ -97,7 +96,7 @@ async fn supervise_launch<P: ProcessProtocol>(
     hang_after: Option<Duration>,
     mut cancel: watch::Receiver<bool>,
     worktree: Option<&Path>,
-    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+    sandbox: SandboxInputs,
 ) -> Result<Option<i32>, SupervisorError> {
     let mut command = agent_command(
         protocol.program(),
@@ -215,17 +214,16 @@ async fn supervise_launch<P: ProcessProtocol>(
     Ok(status_code)
 }
 
-struct SandboxInputs<N> {
+struct SandboxInputs {
     enabled: bool,
-    nono: N,
-    profile_dir: Option<PathBuf>,
+    host: DockerHost,
 }
 
 fn agent_command(
     program: &str,
     args: &[String],
     worktree: Option<&Path>,
-    sandbox: SandboxInputs<impl FnOnce() -> Result<PathBuf, String>>,
+    sandbox: SandboxInputs,
 ) -> Result<Command, SupervisorError> {
     let cwd = match worktree {
         Some(worktree) => worktree.to_path_buf(),
@@ -233,16 +231,13 @@ fn agent_command(
             SupervisorError::Process(format!("failed to read the working directory: {error}"))
         })?,
     };
-    let (program, args) = sandbox_command(
-        sandbox.enabled,
-        sandbox.nono,
-        sandbox.profile_dir,
-        &cwd,
-        &[],
-        program,
-        args,
-    )
-    .map_err(SupervisorError::Process)?;
+    let (program, args) = if sandbox.enabled {
+        let (docker, argv) = docker_command(&sandbox.host, program, args, &cwd, &[], &[], false)
+            .map_err(SupervisorError::Process)?;
+        (docker.display().to_string(), argv)
+    } else {
+        (program.to_string(), args.to_vec())
+    };
     let mut command = Command::new(program);
     command.args(args);
     if let Some(worktree) = worktree {
@@ -577,7 +572,10 @@ mod launch_tests {
         time::{Duration, Instant},
     };
 
-    use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
+    use ajax_core::{
+        adapters::sandbox::DockerHost,
+        events::{AgentEvent, MonitorEvent, ProcessEvent},
+    };
     use tokio::sync::{mpsc, watch};
 
     use super::{
@@ -593,6 +591,28 @@ mod launch_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn docker_host(resolve: fn() -> Result<PathBuf, String>, store: Option<PathBuf>) -> DockerHost {
+        DockerHost {
+            resolve,
+            run: docker_ok,
+            home: Some(PathBuf::from("/ajax-test-home")),
+            store,
+            uid: 501,
+            gid: 20,
+            pass_gh_token: false,
+            boot_id: "boot-test".to_string(),
+            server: "supervisor-test".to_string(),
+        }
+    }
+
+    fn docker_ok(_: &Path, _: &[&str]) -> std::io::Result<std::process::Output> {
+        Ok(std::process::Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
     }
 
     struct ShellProtocol(String);
@@ -616,11 +636,10 @@ mod launch_tests {
     }
 
     #[test]
-    fn enabled_sandbox_wraps_agent_in_nono_with_worktree_cwd() {
+    fn enabled_sandbox_wraps_agent_in_docker_with_worktree_cwd() {
         let dir = scratch_dir("enabled-argv");
         let worktree = dir.join("worktree");
         fs::create_dir_all(&worktree).unwrap();
-        let profile_dir = dir.join("profiles");
 
         let command = agent_command(
             "codex",
@@ -628,32 +647,27 @@ mod launch_tests {
             Some(&worktree),
             SandboxInputs {
                 enabled: true,
-                nono: || Ok(PathBuf::from("/opt/nono")),
-                profile_dir: Some(profile_dir.clone()),
+                host: docker_host(
+                    || Ok(PathBuf::from("/opt/docker")),
+                    Some(dir.join("trusted-git")),
+                ),
             },
         )
         .unwrap();
 
         let std_command = command.as_std();
-        assert_eq!(std_command.get_program(), "/opt/nono");
+        assert_eq!(std_command.get_program(), "/opt/docker");
         assert_eq!(std_command.get_current_dir(), Some(worktree.as_path()));
-        assert!(profile_dir.join("ajax-agent.json").is_file());
         let argv: Vec<String> = std_command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
+        assert!(argv.contains(&"run".to_string()));
         assert!(argv
             .windows(2)
-            .any(|pair| pair[0] == "--workdir" && pair[1] == worktree.display().to_string()));
+            .any(|pair| pair[0] == "-w" && pair[1] == worktree.display().to_string()));
         assert!(argv.ends_with(
-            &[
-                "--",
-                "codex",
-                "-c",
-                "sandbox_mode=\"danger-full-access\"",
-                "exec"
-            ]
-            .map(String::from)
+            &["codex", "-c", "sandbox_mode=\"danger-full-access\"", "exec"].map(String::from)
         ));
     }
 
@@ -667,8 +681,10 @@ mod launch_tests {
             Some(&worktree),
             SandboxInputs {
                 enabled: false,
-                nono: || panic!("nono must not be resolved when the sandbox is off"),
-                profile_dir: None,
+                host: docker_host(
+                    || panic!("docker must not be resolved when the sandbox is off"),
+                    None,
+                ),
             },
         )
         .unwrap();
@@ -700,8 +716,10 @@ mod launch_tests {
             None,
             SandboxInputs {
                 enabled: true,
-                nono: || Err("nono is not installed; set AJAX_SANDBOX=off".to_string()),
-                profile_dir: None,
+                host: docker_host(
+                    || Err("docker is not installed; set AJAX_SANDBOX=off".to_string()),
+                    None,
+                ),
             },
         )
         .await
@@ -709,7 +727,7 @@ mod launch_tests {
 
         assert!(
             matches!(&error, SupervisorError::Process(message)
-                if message.contains("nono") && message.contains("AJAX_SANDBOX=off")),
+                if message.contains("docker") && message.contains("AJAX_SANDBOX=off")),
             "{error}"
         );
         assert!(rx.try_recv().is_err());
@@ -762,8 +780,10 @@ mod launch_tests {
             None,
             SandboxInputs {
                 enabled: false,
-                nono: || panic!("nono must not be resolved when the sandbox is off"),
-                profile_dir: None,
+                host: docker_host(
+                    || panic!("docker must not be resolved when the sandbox is off"),
+                    None,
+                ),
             },
         )
         .await
@@ -805,8 +825,10 @@ mod launch_tests {
             None,
             SandboxInputs {
                 enabled: false,
-                nono: || panic!("nono must not be resolved when the sandbox is off"),
-                profile_dir: None,
+                host: docker_host(
+                    || panic!("docker must not be resolved when the sandbox is off"),
+                    None,
+                ),
             },
         )
         .await
