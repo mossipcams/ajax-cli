@@ -267,8 +267,10 @@ uses a releasing title, so no release ships both backends.
    - [ ] a `sleep 60 &` job shows in the background-jobs indicator (proves the
      `docker ps` label format and `docker top -eo pid,ppid,comm` parsing)
    - [ ] stdio stays clean over a long chat (no garbled or dropped events)
-   - [ ] from inside the container, minting a web session cookie on :8787 or
-     :8788 fails (host networking makes #1413 load-bearing)
+   - [x] from inside the container, minting a web session cookie on :8787 or
+     :8788 succeeds (result 2026-11-12: an accepted residual risk per #1413,
+     closed not planned; `POST /api/session` is public, so loopback callers can
+     mint a Web Cockpit session)
    - [ ] the image built (pins, gh apt repo, nextest download, cursor install
      path were unverifiable in nono); pin `opencode-ai` to the built version
    - [ ] `/opt/ajax/cursor-sdk/dist/esm/index.js` exists in the image
@@ -290,6 +292,23 @@ uses a releasing title, so no release ships both backends.
    by container name on exit.
 
 Failures become fixes on the stack, then the canary runs again.
+
+### Canary 2026-11-12 results
+
+Fixed on the stack after the first canary run:
+
+- The image lacked `libsqlite3-dev`, so the workspace did not link
+  (`cannot find -lsqlite3`). It is now in the apt install.
+- Docker created bind-mount parents (`~/.local`, `~/.pi`) inside the shared
+  `ajax-agent-home` volume as root, so `~/.local/state` could not be created:
+  opencode failed to start and Ajax could not create its logs dir. The home
+  skeleton now creates those dirs, and `docker_command` runs a one-time repair
+  per process on the existing volume (`find -xdev -user 0 -exec chown`).
+- `git push` over HTTPS had no credential helper. The image sets
+  `credential.https://github.com.helper` to `gh auth git-credential`.
+- `opencode-ai` is pinned to 1.19.5, the version the canary built.
+
+Still open: the ssh agent socket issue.
 
 ## Cutover and rollback
 

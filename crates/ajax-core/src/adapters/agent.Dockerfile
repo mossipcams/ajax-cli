@@ -10,12 +10,14 @@ ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git openssh-client curl ca-certificates python3 build-essential pkg-config \
-      procps ripgrep jq tmux socat \
+      procps ripgrep jq tmux socat libsqlite3-dev \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
+
+RUN git config --system credential.https://github.com.helper '!gh auth git-credential'
 
 RUN npm install -g \
       @anthropic-ai/claude-code \
@@ -26,7 +28,7 @@ RUN npm install -g \
       acpx@0.21.1 \
       @earendil-works/pi-coding-agent@1.3.0 \
       @cursor/sdk@1.0.37 \
-      opencode-ai
+      opencode-ai@1.19.5
 RUN mkdir -p /opt/ajax && ln -s "$(npm root -g)/@anthropic-ai/claude-agent-sdk" /opt/ajax/claude-agent-sdk \
  && ln -s "$(npm root -g)/@cursor/sdk" /opt/ajax/cursor-sdk
 
@@ -50,5 +52,6 @@ RUN (getent passwd "$HOST_UID" >/dev/null || useradd -o -u "$HOST_UID" -g "$HOST
  && usermod -d "$HOST_HOME" "$(getent passwd "$HOST_UID" | cut -d: -f1)" \
  && mkdir -p "$HOST_HOME/.claude" "$HOST_HOME/.codex" "$HOST_HOME/.agents" "$HOST_HOME/.cursor" \
              "$HOST_HOME/.config" "$HOST_HOME/.ajax-router" "$HOST_HOME/Projects" \
+             "$HOST_HOME/.local/state" "$HOST_HOME/.local/share" "$HOST_HOME/.pi" \
  && mkdir -p /opt/cargo/registry /opt/cargo/git \
  && chown -R "$HOST_UID:$HOST_GID" "$HOST_HOME" /opt/rustup /opt/cargo

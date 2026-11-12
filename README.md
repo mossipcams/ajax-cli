@@ -323,6 +323,8 @@ Agents see:
 - The ssh agent socket at `~/.config/ajax/ssh/agent.sock`, with `SSH_AUTH_SOCK`
   pointing at it.
 - `GH_TOKEN`, only when it is set in Ajax's own environment.
+- HTTPS git: the image sets `credential.https://github.com.helper` to
+  `gh auth git-credential`, so `git push` over HTTPS uses the `gh` sign-in.
 
 Caveats: hooks and MCP servers that point at macOS binaries (for example `rtk`,
 `codeburn`, the `ajax-cli __agent-event` hooks, or MCP servers configured with
@@ -337,8 +339,10 @@ agent socket above).
 
 The container uses host networking. Loopback services stay reachable: Postgres on
 `127.0.0.1:5432`, the Ajax web server, and host Chrome on `:9222`. Secure those
-services with authentication. The web session cookie mint guard (#1413) is what
-stops an agent from minting a Web Cockpit session through the loopback server.
+services with authentication. `POST /api/session` is public, so any process that
+can reach the web server on loopback, agents included, can mint a Web Cockpit
+session. This is an accepted residual risk (#1413 was closed as not planned),
+as it was under nono, under the accident-prevention threat model.
 
 At each launch Ajax verifies the linked worktree and records its git admin dir and
 common dir under `~/.config/ajax/trusted-worktrees`. Host-side git that Ajax runs

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -5,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use nix::unistd::{getgid, getuid};
 
@@ -103,6 +105,8 @@ const HOME_UNSET: &str =
 const TRUST_STORE_UNSET: &str =
     "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off";
 static LAUNCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static PARENTS_REPAIRED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+const HOME_REPAIR_FAILED: &str = "agent sandbox could not repair ownership of the ajax-agent-home volume; set AJAX_SANDBOX=off to run unsandboxed";
 
 #[derive(Clone)]
 pub struct DockerHost {
@@ -152,14 +156,6 @@ pub fn docker_command(
     let docker = (host.resolve)()?;
     let image = image_tag();
     check_ready(&image, |docker_args| (host.run)(&docker, docker_args))?;
-    ensure_task_volumes(
-        &docker,
-        &image,
-        &task_key(cwd),
-        host.uid,
-        host.gid,
-        host.run,
-    )?;
     let common = trust_linked_worktree(host.store.as_deref(), cwd)?;
     let home = host.home.as_deref().ok_or_else(|| HOME_UNSET.to_string())?;
     let env: Vec<(String, String)> = env
@@ -186,7 +182,84 @@ pub fn docker_command(
         env: &env,
     };
     let argv = docker_argv(&launch, Path::exists);
+    repair_home_once(host, &docker, &image, &argv, home)?;
+    ensure_task_volumes(
+        &docker,
+        &image,
+        &task_key(cwd),
+        host.uid,
+        host.gid,
+        host.run,
+    )?;
     Ok((docker, argv))
+}
+
+pub fn home_repair_argv(
+    image: &str,
+    home: &Path,
+    uid: u32,
+    gid: u32,
+    parents: &[PathBuf],
+) -> Vec<String> {
+    let home = home.display();
+    let script = format!(
+        "home=\"$1\"; shift; for dir in \"$@\"; do mkdir -p \"$dir\" || exit 1; done && find \"$home\" -xdev -user 0 -exec chown {uid}:{gid} {{}} +"
+    );
+    let mut argv: Vec<String> = ["run", "--rm", "--user", "0", "-v"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    argv.push(format!("ajax-agent-home:{home}"));
+    argv.extend(
+        ["--entrypoint", "sh", image, "-c"]
+            .into_iter()
+            .map(String::from),
+    );
+    argv.push(script);
+    argv.push("sh".to_string());
+    argv.push(home.to_string());
+    argv.extend(parents.iter().map(|parent| parent.display().to_string()));
+    argv
+}
+
+fn home_parents(argv: &[String], image: &str, home: &Path) -> Vec<PathBuf> {
+    let mounts = argv
+        .iter()
+        .position(|arg| arg == image)
+        .unwrap_or(argv.len());
+    let parents: BTreeSet<PathBuf> = argv[..mounts]
+        .windows(2)
+        .filter(|pair| pair[0] == "-v")
+        .filter_map(|pair| pair[1].split(':').next())
+        .map(Path::new)
+        .filter(|source| source.starts_with(home))
+        .filter_map(Path::parent)
+        .map(Path::to_path_buf)
+        .collect();
+    parents.into_iter().collect()
+}
+
+fn repair_home_once(
+    host: &DockerHost,
+    docker: &Path,
+    image: &str,
+    argv: &[String],
+    home: &Path,
+) -> Result<(), String> {
+    let parents = home_parents(argv, image, home);
+    let mut repaired = PARENTS_REPAIRED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if parents.iter().all(|parent| repaired.contains(parent)) {
+        return Ok(());
+    }
+    let repair = home_repair_argv(image, home, host.uid, host.gid, &parents);
+    let args: Vec<&str> = repair.iter().map(String::as_str).collect();
+    if !(host.run)(docker, &args).is_ok_and(|output| output.status.success()) {
+        return Err(HOME_REPAIR_FAILED.to_string());
+    }
+    repaired.extend(parents);
+    Ok(())
 }
 
 fn launch_instance() -> String {
@@ -217,6 +290,7 @@ fn trust_linked_worktree(store: Option<&Path>, cwd: &Path) -> Result<Option<Path
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -440,6 +514,137 @@ mod tests {
             docker_command(&host, "claude", &[], Path::new("/w"), &[], &[], false).unwrap_err();
 
         assert!(err.contains("HOME"), "{err}");
+        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
+    }
+
+    const REPAIR_SCRIPT: &str = "home=\"$1\"; shift; for dir in \"$@\"; do mkdir -p \"$dir\" || exit 1; done && find \"$home\" -xdev -user 0 -exec chown 501:20 {} +";
+
+    #[test]
+    fn home_repair_argv_is_exact() {
+        let parents = [
+            PathBuf::from("/Users/matt/.local/state"),
+            PathBuf::from("/Users/matt/Projects"),
+        ];
+
+        assert_eq!(
+            home_repair_argv(
+                "ajax-agent:abc",
+                Path::new("/Users/matt"),
+                501,
+                20,
+                &parents
+            ),
+            [
+                "run",
+                "--rm",
+                "--user",
+                "0",
+                "-v",
+                "ajax-agent-home:/Users/matt",
+                "--entrypoint",
+                "sh",
+                "ajax-agent:abc",
+                "-c",
+                REPAIR_SCRIPT,
+                "sh",
+                "/Users/matt",
+                "/Users/matt/.local/state",
+                "/Users/matt/Projects",
+            ]
+        );
+    }
+
+    thread_local! {
+        static DOCKER_CALLS: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn recording_docker(_: &Path, args: &[&str]) -> io::Result<Output> {
+        DOCKER_CALLS.with(|calls| {
+            calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| (*arg).to_string()).collect());
+        });
+        docker_ok(Path::new("/opt/docker"), args)
+    }
+
+    fn docker_fails_repair(docker: &Path, args: &[&str]) -> io::Result<Output> {
+        if args.contains(&"--entrypoint") {
+            return Ok(Output {
+                status: std::os::unix::process::ExitStatusExt::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+        }
+        docker_ok(docker, args)
+    }
+
+    fn is_home_repair(call: &[String]) -> bool {
+        call.starts_with(&["run", "--rm", "--user", "0"].map(String::from))
+    }
+
+    #[test]
+    fn home_repair_runs_only_for_parents_not_yet_repaired() {
+        let home = PathBuf::from("/ajax-repair-parents-home");
+        let host = DockerHost {
+            run: recording_docker,
+            ..fake_docker_host(Some(home.clone()))
+        };
+        let first = home.join("Projects/repo__worktrees/a");
+        let second = home.join("Other/repo__worktrees/b");
+        DOCKER_CALLS.with(|calls| calls.borrow_mut().clear());
+
+        for cwd in [&first, &second, &first] {
+            docker_command(&host, "claude", &[], cwd, &[], &[], false).expect("launch wraps");
+        }
+
+        let repairs = DOCKER_CALLS.with(|calls| {
+            calls
+                .borrow()
+                .iter()
+                .filter(|call| is_home_repair(call))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            repairs,
+            [
+                home_repair_argv(
+                    &image_tag(),
+                    &home,
+                    501,
+                    20,
+                    &[home.join("Projects/repo__worktrees")]
+                ),
+                home_repair_argv(
+                    &image_tag(),
+                    &home,
+                    501,
+                    20,
+                    &[home.join("Other/repo__worktrees")]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_home_repair_refuses_the_launch() {
+        let host = DockerHost {
+            run: docker_fails_repair,
+            ..fake_docker_host(Some(PathBuf::from("/ajax-repair-failed-home")))
+        };
+
+        let err = docker_command(
+            &host,
+            "claude",
+            &[],
+            Path::new("/ajax-repair-failed-home/w"),
+            &[],
+            &[],
+            false,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("ajax-agent-home"), "{err}");
         assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
     }
 }
