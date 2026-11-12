@@ -176,12 +176,17 @@ cargo install --path crates/ajax-cli
 ```
 
 Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
-`PATH`. Ajax also requires [nono](https://github.com/nolabs-ai/nono), the agent
-sandbox, on `PATH`:
+`PATH`. Every agent runs in a Docker container, so Ajax also requires
+[OrbStack](https://orbstack.dev) as the Docker engine, with `docker` on `PATH`:
 
 ```sh
-brew install nono
+brew install --cask orbstack
 ```
+
+The `ajax-agent` image builds in the background when the Ajax web server starts,
+so start `ajax-cli web` once after installing. Agent launches are refused until
+docker is reachable and the image exists. See
+[Agent sandbox (Docker)](#agent-sandbox-docker).
 
 Run `ajax-cli doctor` after installing to check the local operator
 environment.
@@ -282,121 +287,91 @@ most every 5 minutes per task.
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
 
-### Agent sandbox (nono)
+### Agent sandbox (Docker)
 
-Every Ajax-launched agent runs under [nono](https://github.com/nolabs-ai/nono)
-by default: tmux task agents (through `__agent-runtime`), Web Cockpit ACP,
-Claude SDK, Cursor SDK, and Pi RPC sessions, and `ajax-cli supervise`. If `nono`
-is missing, the launch is refused; Ajax never falls back to running unsandboxed.
-Set `AJAX_SANDBOX=off` to disable the sandbox.
+Every Ajax-launched agent runs in a `docker run` container on OrbStack: tmux task
+agents (through `__agent-runtime`), Web Cockpit ACP, Claude SDK, Cursor SDK, and
+Pi RPC sessions, the sign-in and model-listing probes, and `ajax-cli supervise`.
+Launches fail closed. If docker is missing, the daemon is unreachable, or the
+image is not built yet, the launch is refused with a message that names the fix.
+Ajax never falls back to running unsandboxed. `AJAX_SANDBOX=off` is the only
+opt-out. Repo `cargo test`/`cargo run` set it via `.cargo/config.toml`; installed
+binaries are sandboxed.
 
-On macOS, agents can read and write everything under `$HOME` (and
-`/opt/homebrew`), except:
+The web server builds the image `ajax-agent:<hash>` in the background at startup,
+from the Dockerfile embedded in the binary. The tag is a hash of that Dockerfile,
+so upgrading Ajax builds a new image on the next web start.
 
-1. credentials: nono's default deny list (`~/.ssh` private keys, `~/.aws`,
-   `~/.gnupg`, `~/.kube`, `.netrc`, shell history and rc files, browser and
-   password stores), OrbStack's private key (`~/.orbstack/ssh/id_ed25519`),
-   and `~/.pgpass`, `~/.pypirc`, `~/.cargo/credentials` and
-   `~/.cargo/credentials.toml`, which nono's defaults do not cover;
-2. Ajax state: `~/.config/ajax/nono` (the profile and trusted-worktree
-   records), both `config.toml` files, and both registry databases
-   (`~/.local/state/ajax/ajax.db` and `~/.ajax-dev/ajax.db`) with their `-wal`
-   and `-shm` files. These denies cover the default and dev-profile paths only;
-   a custom `AJAX_HOME`/`AJAX_STATE` location is not denied;
-3. the host-control sockets described below.
+Agents see:
 
-On Linux, nono uses Landlock, which cannot deny a path inside an allowed
-directory, so `$HOME` is not granted there. Linux keeps the earlier per-tool
-allowlist (`~/.claude`, `~/.codex`, `~/.pi`, `~/.cursor`, `~/.npm`, the cargo
-registry and git dirs, and the Claude and Cursor state files) and has no
-`$HOME`-wide denylist.
+- The task worktree and the git common dir, each at its own absolute path, so the
+  worktree's `.git` file and absolute symlinks resolve unchanged.
+- Per-task `target/` and `node_modules/` volumes, so Linux builds never touch the
+  host's macOS artifacts.
+- The `ajax-agent-home` volume at `$HOME`, which holds agent config and sign-ins.
+  Claude, Codex, and Cursor keep their settings and MCP config there, so host
+  hooks and MCP servers (macOS binaries) do not reach agents. Shared
+  `ajax-rustup`, `ajax-cargo-registry`, and `ajax-cargo-git` volumes hold the Rust
+  toolchain and caches.
+- Tooling at the same host paths, skipped when missing. Read-only:
+  `~/Projects/ajax-model-router`, the `skills` dirs under `~/.claude`, `~/.codex`,
+  `~/.agents`, and `~/.cursor`, `~/.claude/skills-src`, the instruction files and
+  `scripts` in `~/Projects` (`AGENTS.md`, `agents.md`, `CLAUDE.md`, `.claude`,
+  `.codex`, `scripts`), `~/.claude/CLAUDE.md`, `~/.claude/RTK.md`, and
+  `~/.codex/AGENTS.md`. Read-write: `~/.claude/projects` (memory and transcripts),
+  `~/.ajax-router`, `~/.pi/agent`, `~/.local/share/opencode`, and
+  `~/.config/opencode`.
+- The ssh agent socket at `~/.config/ajax/ssh/agent.sock`, with `SSH_AUTH_SOCK`
+  pointing at it.
+- `GH_TOKEN`, only when it is set in Ajax's own environment.
 
-The denylist prevents accidents, not a hostile agent, so agents can still edit
-other repos, global tool installs, and `.git` (including hooks and config).
+Agents do not see `~/.ssh`, `~/.orbstack`, `~/.docker`, the Docker and OrbStack
+sockets, the host tmux socket, the macOS keychain, or Ajax state
+(`~/.local/state/ajax`, `~/.ajax-dev`, and `~/.config/ajax`, apart from the ssh
+agent socket above).
 
-Network is open. The keychain directory (`~/Library/Keychains`) is
-read-write, so agents can save refreshed OAuth tokens; with only the
-keychain files reachable, Claude Code could not persist a rotated refresh
-token and the login was revoked. Codex's own sandbox is
-turned off under nono (for a binary named `codex`) because Seatbelt cannot
-nest; nono is the boundary. The `codex-acp` and `npx` ACP fallbacks cannot be passed
-that override; they need `sandbox_mode = "danger-full-access"` in
-`~/.codex/config.toml`. Claude auto-update fails inside the sandbox, so
-update Claude outside Ajax.
+The container uses host networking. Loopback services stay reachable: Postgres on
+`127.0.0.1:5432`, the Ajax web server, and host Chrome on `:9222`. Secure those
+services with authentication. The web session cookie mint guard (#1413) is what
+stops an agent from minting a Web Cockpit session through the loopback server.
 
-The host tmux socket directory (`/private/tmp/tmux-$UID` on macOS,
-`/tmp/tmux-$UID` on Linux) is denied: otherwise an agent could run
-`tmux new-window` on Ajax's tmux server and execute commands outside the
-sandbox. Agents therefore cannot run `tmux` commands themselves. A tmux server
-started with a custom `TMUX_TMPDIR` or `-S` socket elsewhere is not covered.
-This is verified on macOS only: on Linux, Landlock may not enforce a deny inside
-the granted `/tmp` or restrict connecting to a Unix socket, so do not rely on
-it there.
+At each launch Ajax verifies the linked worktree and records its git admin dir and
+common dir under `~/.config/ajax/trusted-worktrees`. Host-side git that Ajax runs
+in that worktree is pinned to those paths with `GIT_DIR`, `GIT_COMMON_DIR`, and
+`GIT_WORK_TREE`, and runs with `core.hooksPath=/dev/null` and
+`core.fsmonitor=false`. An agent that rewrites the worktree's `.git` file or its
+hooks cannot make Ajax run its git config.
 
-Ajax also denies container-runtime sockets (OrbStack, Docker, Docker Desktop, Colima,
-Lima, Podman, and Rancher Desktop) and the default local Postgres socket on macOS. Socket connect
-is a network operation in Seatbelt, so a socket in an ungranted directory is
-still reachable unless it is denied. A reachable Docker API or Postgres
-superuser can run commands outside the sandbox. Agents can no longer use local
-Docker. Loopback TCP, such as Postgres on `127.0.0.1:5432`, is not blocked by
-this. Secure those services with authentication.
+Each container is named `ajax-<task key>-<instance>` and labelled with
+`ajax.task_key`, `ajax.boot`, `ajax.worktree`, and `ajax.server`. The server label
+is `cli` or `supervisor` for those processes, and otherwise a hash of the web
+server's state directory, so the stable and dev web servers sharing one engine
+never touch each other's containers. At startup, containers left by a previous
+boot of the same server are removed for sessions that recovery marks interrupted;
+adoptable sessions are never swept. Dropping a task removes its containers and its
+`target/` and `node_modules/` volumes.
 
-The profile source is `crates/ajax-core/src/adapters/nono_agent_profile.json`.
-Ajax writes it to `~/.config/ajax/nono/ajax-agent.json` (denied in the profile) when its content changes. Cursor
-login runs unsandboxed. Repo `cargo test`/`cargo run` set `AJAX_SANDBOX=off` via `.cargo/config.toml`; installed binaries are sandboxed.
+Agents can run `gh` (with `GH_TOKEN`), `CI=1 npm run web:smoke` and Playwright,
+and `ps` and `pgrep` inside their own container. Agents cannot use the iOS
+Simulator (iOS-only repros run outside Ajax), drive the host tmux server, or edit
+other repos on the host; cross-repo work is a separate task in that repo.
 
-At each sandboxed launch Ajax verifies the linked worktree and records its git
-admin dir and common dir under `~/.config/ajax/nono/trusted-worktrees/` (denied
-in the profile). Host-side git that Ajax runs in that worktree is pinned to
-those paths with `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`, so an agent
-that rewrites the worktree's `.git` file cannot make Ajax run its git config.
+The mounts prevent accidents, not a hostile agent. Agents can still edit the task
+worktree, its `.git` (hooks and config included), and the read-write mounts above.
 
-By default agents cannot use `gh` (and so cannot `git push` over HTTPS through
-`gh auth git-credential`), and `pgrep` cannot see other processes. Grant those per
-machine with a nono profile fragment at `~/.config/ajax/nono/local.json`. Ajax
-merges it into the profile at every launch (objects merge, arrays append,
-scalars replace), and an invalid file refuses the launch. Agents cannot edit
-it. For example, to let agents use `gh`, run `pgrep`, and run a local tool
-checkout:
+Codex's own sandbox is turned off for a binary named `codex`, because the container
+is the boundary. `codex-acp` cannot take that override. If its Linux sandbox fails
+inside the container, set `sandbox_mode = "danger-full-access"` in the container's
+`~/.codex/config.toml`.
 
-```json
-{
-  "filesystem": {
-    "read": ["$HOME/.config/gh", "/path/to/tool"],
-    "allow": ["$HOME/.tool-state"]
-  },
-  "platform_overrides": { "macos": { "security": { "process_info_mode": "allow_all" } } }
-}
-```
-
-Granting `~/.config/gh` exposes your GitHub token to agents if `gh` keeps it in
-`hosts.yml` rather than the keychain. `allow_all` lets agents read other
-processes' command lines. On macOS `/bin/ps` is setuid and nono never runs
-setuid binaries, so agents use `pgrep -fl` instead.
-
-Private keys in `~/.ssh` stay unreadable. To let agents SSH (for example to
-your VMs) without exposing keys, run a dedicated `ssh-agent` on a socket outside
-`~/.ssh` (for example `~/.config/ajax/ssh/agent.sock`, kept alive by a launchd
-job that loads your keys), point `~/.ssh/config` at it with
-`IdentityAgent ~/.config/ajax/ssh/agent.sock` under `Host *`, and grant it in
-`local.json`:
-
-```json
-{
-  "filesystem": {
-    "read_file": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"],
-    "bypass_protection": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"],
-    "unix_socket": ["$HOME/.config/ajax/ssh/agent.sock"]
-  }
-}
-```
-
-List every public key your `IdentityFile` entries name: ssh matches agent keys
-to them and refuses to log in if the `.pub` files are unreadable. Agents can
-then log in wherever those keys work for as long as they run, but cannot copy
-the keys. `known_hosts` is read-only, so connections to new hosts fail. To push
-workflow files over HTTPS instead of SSH, run `gh auth refresh -s workflow`
-once.
+Private keys in `~/.ssh` are not mounted. To let agents use your keys, run a
+dedicated `ssh-agent` on a socket outside `~/.ssh` (for example
+`~/.config/ajax/ssh/agent.sock`, kept alive by a launchd job that loads your keys).
+Ajax mounts that socket into agent containers, so agents can log in wherever those
+keys work, but cannot copy the keys. To use the same agent from your shell, point
+`~/.ssh/config` at it with `IdentityAgent ~/.config/ajax/ssh/agent.sock` under
+`Host *`. To push workflow files over HTTPS instead of SSH, run
+`gh auth refresh -s workflow` once.
 
 ## First Run
 

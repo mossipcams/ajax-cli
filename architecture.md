@@ -237,10 +237,11 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   or delivery authority.
 - Do not add a public-internet product path unless the security model is
   explicitly changed.
-- Agent processes launched by Ajax run inside the nono sandbox. Launch fails
-  closed when `nono` is missing; `AJAX_SANDBOX=off` is the only opt-out. Policy
-  lives in `ajax-core` `adapters::sandbox`; spawn sites must route through it
-  rather than spawning agents directly. Host-side git on a task worktree must be
+- Agent processes launched by Ajax run in a `docker run` container on OrbStack.
+  Launch fails closed when docker is unreachable or the `ajax-agent` image is not
+  built; `AJAX_SANDBOX=off` is the only opt-out. Policy lives in `ajax-core`
+  `adapters::sandbox` and `adapters::docker_sandbox`; spawn sites must route through
+  it rather than spawning agents directly. Host-side git on a task worktree must be
   pinned to the trusted record in `ajax-core` `adapters::trusted_git` (the
   process runner does this for direct `git` commands); never trust a worktree's
   `.git` file. Every Ajax-run git also gets `core.hooksPath=/dev/null` and
