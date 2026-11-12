@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod command;
+pub mod docker_sandbox;
 pub mod environment;
 pub mod git;
 pub mod github;
