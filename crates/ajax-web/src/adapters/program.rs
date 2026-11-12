@@ -3,32 +3,16 @@ use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex, OnceLock,
-    },
+    sync::{Mutex, OnceLock},
 };
 
-use ajax_core::adapters::{
-    docker_sandbox::{check_ready, docker_argv, image_tag, resolve_docker, task_key, DockerLaunch},
-    sandbox::{git_grants, sandbox_enabled},
-    trusted_git::{self, TrustedGit},
-};
-use nix::unistd::{getgid, getuid};
-
-use super::sandbox_image::ensure_task_volumes;
-
-const HOME_UNSET: &str =
-    "agent sandbox is on but HOME is unset, so the agent home cannot be mounted; set HOME or AJAX_SANDBOX=off";
-const TRUST_STORE_UNSET: &str =
-    "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off";
+use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, DockerHost};
 
 static SANDBOX_BOOT_ID: OnceLock<String> = OnceLock::new();
 static SANDBOX_SERVER_ID: OnceLock<String> = OnceLock::new();
 
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
 static SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
-static LAUNCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const PROBE_DIR: &str = "ajax-sandbox-probe";
 
 pub fn resolve_program(program: &str) -> Option<PathBuf> {
@@ -187,7 +171,15 @@ fn sandbox_context() -> (bool, DockerHost) {
     if let Some(context) = TEST_SANDBOX.with(|slot| slot.borrow().clone()) {
         return context;
     }
-    (sandbox_enabled(), DockerHost::process())
+    let boot_id = SANDBOX_BOOT_ID
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "unset".to_string());
+    let server = SANDBOX_SERVER_ID
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "unset".to_string());
+    (sandbox_enabled(), DockerHost::process(boot_id, server))
 }
 
 fn harness_launch(
@@ -239,121 +231,15 @@ fn sandbox_launch(
     if !enabled {
         return Ok((program.to_path_buf(), args.to_vec()));
     }
-    docker_launch(host, &program.display().to_string(), args, cwd, env)
-}
-
-#[derive(Clone)]
-struct DockerHost {
-    resolve: fn() -> Result<PathBuf, String>,
-    run: fn(&Path, &[&str]) -> io::Result<Output>,
-    home: Option<PathBuf>,
-    store: Option<PathBuf>,
-    uid: u32,
-    gid: u32,
-    pass_gh_token: bool,
-    boot_id: String,
-    server: String,
-}
-
-impl DockerHost {
-    fn process() -> Self {
-        Self {
-            resolve: resolve_docker,
-            run: run_docker,
-            home: env::var_os("HOME").map(PathBuf::from),
-            store: trusted_git::default_store(),
-            uid: getuid().as_raw(),
-            gid: getgid().as_raw(),
-            pass_gh_token: env::var_os("GH_TOKEN").is_some(),
-            boot_id: SANDBOX_BOOT_ID
-                .get()
-                .cloned()
-                .unwrap_or_else(|| "unset".to_string()),
-            server: SANDBOX_SERVER_ID
-                .get()
-                .cloned()
-                .unwrap_or_else(|| "unset".to_string()),
-        }
-    }
-}
-
-fn run_docker(docker: &Path, args: &[&str]) -> io::Result<Output> {
-    Command::new(docker)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-}
-
-fn docker_launch(
-    host: &DockerHost,
-    program: &str,
-    args: &[String],
-    cwd: &Path,
-    env: &[(String, String)],
-) -> Result<(PathBuf, Vec<String>), String> {
-    let docker = (host.resolve)()?;
-    let image = image_tag();
-    check_ready(&image, |docker_args| (host.run)(&docker, docker_args))?;
-    ensure_task_volumes(
-        &docker,
-        &image,
-        &task_key(cwd),
-        host.uid,
-        host.gid,
-        host.run,
-    )?;
-    let common = trust_linked_worktree(host.store.as_deref(), cwd)?;
-    let home = host.home.as_deref().ok_or_else(|| HOME_UNSET.to_string())?;
-    let env: Vec<(String, String)> = env
-        .iter()
-        .filter(|(key, _)| key.as_str() != "PATH")
-        .cloned()
-        .collect();
-    let instance = launch_instance();
-    let launch = DockerLaunch {
-        home,
-        uid: host.uid,
-        gid: host.gid,
-        cwd,
-        git_common_dir: common.as_deref(),
-        extra_read_write: &[],
-        boot_id: &host.boot_id,
-        server: &host.server,
-        instance: &instance,
-        tty: false,
-        pass_gh_token: host.pass_gh_token,
-        image: &image,
-        program,
+    docker_command(
+        host,
+        &program.display().to_string(),
         args,
-        env: &env,
-    };
-    let argv = docker_argv(&launch, Path::exists);
-    Ok((docker, argv))
-}
-
-fn launch_instance() -> String {
-    let sequence = LAUNCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    format!("{:x}-{sequence:x}", std::process::id())
-}
-
-fn trust_linked_worktree(store: Option<&Path>, cwd: &Path) -> Result<Option<PathBuf>, String> {
-    let grants = git_grants(cwd);
-    let (Some(common), Some(gitdir)) = (grants.read.first(), grants.read_write.first()) else {
-        return Ok(None);
-    };
-    let store = store.ok_or_else(|| TRUST_STORE_UNSET.to_string())?;
-    let trusted = TrustedGit {
-        git_dir: gitdir.clone(),
-        common_dir: common.clone(),
-        work_tree: cwd.to_path_buf(),
-    };
-    trusted_git::record(store, &trusted).map_err(|err| {
-        format!(
-            "agent sandbox could not record trusted git metadata for {}: {err}; set AJAX_SANDBOX=off to run unsandboxed",
-            cwd.display()
-        )
-    })?;
-    Ok(Some(common.clone()))
+        cwd,
+        env,
+        &[],
+        false,
+    )
 }
 
 fn apply_shell_path(command: &mut Command) {
@@ -425,6 +311,10 @@ pub(crate) fn assert_probe_docker_launch(command: &Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ajax_core::adapters::{
+        docker_sandbox::{image_tag, task_key},
+        trusted_git,
+    };
     use std::ffi::OsStr;
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
