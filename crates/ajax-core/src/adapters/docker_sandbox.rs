@@ -82,6 +82,7 @@ pub struct DockerLaunch<'a> {
     pub image: &'a str,
     pub program: &'a str,
     pub args: &'a [String],
+    pub env: &'a [(String, String)],
 }
 
 pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) -> Vec<String> {
@@ -105,6 +106,9 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     }
     if launch.pass_gh_token {
         argv.extend(pair("-e", "GH_TOKEN"));
+    }
+    for (key, value) in launch.env {
+        argv.extend(pair("-e", format!("{key}={value}")));
     }
     argv.extend(pair("-w", cwd.as_str()));
     argv.extend(pair("-v", format!("ajax-agent-home:{home}")));
@@ -236,6 +240,7 @@ mod tests {
             image: IMAGE,
             program: "claude",
             args,
+            env: &[],
         }
     }
 
@@ -387,6 +392,27 @@ mod tests {
         let argv = docker_argv(&sample(home, cwd, &args), |_| false);
         assert!(!has_pair(&argv, "-e", "GH_TOKEN"));
         assert!(!argv.iter().any(|a| a.starts_with("SSH_AUTH_SOCK=")));
+    }
+
+    #[test]
+    fn caller_env_follows_the_github_token_as_ordered_e_flags() {
+        let home = Path::new(HOME);
+        let cwd = Path::new(CWD);
+        let args = strings(&[]);
+        let env = [
+            ("A".to_string(), "1".to_string()),
+            ("B".to_string(), "two words".to_string()),
+        ];
+        let launch = DockerLaunch {
+            pass_gh_token: true,
+            env: &env,
+            ..sample(home, cwd, &args)
+        };
+        let argv = docker_argv(&launch, |_| false);
+        let expected = strings(&["-e", "GH_TOKEN", "-e", "A=1", "-e", "B=two words"]);
+        assert!(argv
+            .windows(expected.len())
+            .any(|window| window == expected));
     }
 
     #[test]

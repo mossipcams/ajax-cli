@@ -27,6 +27,8 @@ RUN npm install -g \
       @earendil-works/pi-coding-agent@1.3.0 \
       @cursor/sdk@1.0.37 \
       opencode-ai
+RUN mkdir -p /opt/ajax && ln -s "$(npm root -g)/@anthropic-ai/claude-agent-sdk" /opt/ajax/claude-agent-sdk \
+ && ln -s "$(npm root -g)/@cursor/sdk" /opt/ajax/cursor-sdk
 
 COPY . /tmp/ctx
 RUN if [ -d /tmp/ctx/pi-acp ]; then \

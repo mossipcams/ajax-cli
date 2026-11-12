@@ -89,8 +89,11 @@ docker run --rm -i [-t] --init --user <uid>:<gid> --network host
 Callers currently resolve host paths, which a Linux container cannot run. In
 the switch PR: bare program names are passed through; `claude_sdk_spawn` uses
 the image's npm root for `--sdk-module` (the sidecar source is already inline
-`node -e`); and the `acp_candidates` fallback treats container exit 127 as
-not installed.
+`node -e`); and ACP takes the image's adapter without probing the host (deviation
+2026-11-12: no exit-127 fallback; with the sandbox on, Codex always uses
+`codex-acp`, never native `codex acp`). The Claude and Cursor SDK sidecars load
+`/opt/ajax/claude-agent-sdk/sdk.mjs` and `/opt/ajax/cursor-sdk/dist/esm/index.js`,
+symlinked in the image.
 
 ### Image: embedded and self-building
 
@@ -199,7 +202,7 @@ uses a releasing title, so no release ships both backends.
   `~/.config/ajax` and the registry DBs are never mounted (keeps #1396 and
   #1415 covered). Also fail-closed tests for missing docker, daemon down, and
   image building.
-- [ ] **Packet 2: web launch sites, sign-in and observation.** `program.rs`,
+- [ ] **Packet 2: web launch sites, sign-in and observation.** Slice 2a (launch sites: `program.rs`, `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `session_client.rs`, `cursor_sdk_spawn.rs`) accepted 2026-11-12. Remaining: 2b sign-in/models (`agent_auth.rs` incl. the host-only pi check, `cursor_login.rs` incl. `cursor_login_launch`, `session_models.rs`), 2c observation + startup (`background_jobs.rs`, `orphan_sweep.rs`, `process_tree_tests.rs`, image build at web startup, wiring `set_sandbox_boot_id`), 2d docs. `program.rs`,
   `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `agent_auth.rs`,
   `cursor_login.rs`, `session_models.rs`, `background_jobs.rs`,
   `orphan_sweep.rs`, `process_tree_tests.rs` fixtures, image ensure at
@@ -235,6 +238,10 @@ uses a releasing title, so no release ships both backends.
      :8788 fails (host networking makes #1413 load-bearing)
    - [ ] the image built (pins, gh apt repo, nextest download, cursor install
      path were unverifiable in nono); pin `opencode-ai` to the built version
+   - [ ] `/opt/ajax/cursor-sdk/dist/esm/index.js` exists in the image
+   - [ ] a Codex chat works through `codex-acp`; if its Linux sandbox fails in
+     Docker, set `sandbox_mode = "danger-full-access"` in the container's
+     `~/.codex/config.toml` (codex-acp cannot take the `-c` override)
 4. Matt checks from the phone: a chat in each harness answers; Cancel stops
    the container; restarting dev web (Test in dev again) leaves no orphan
    containers; dropping a task removes its volumes.
@@ -294,3 +301,7 @@ work stays "start a task in repo B").
   run -p ajax-core` 1174/1174. Packet 2 must build the image from a small
   dedicated context dir (the Dockerfile copies its whole context) and pass
   `git_grants(cwd).read.first()` as `git_common_dir`.
+- 2026-11-12: slice 2a accepted (Haiku, two rounds: the first stopped
+  correctly at out-of-scope Pi and Cursor SDK callers). Orchestrator gate:
+  fmt ok, workspace clippy ok, `env -u RUST_LOG cargo nextest run -p ajax-web
+  -p ajax-core` 2825 passed, 1 skipped.
