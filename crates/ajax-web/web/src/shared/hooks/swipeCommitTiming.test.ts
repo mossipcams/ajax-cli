@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  crossSlideRemainingPx,
-  NAVIGATE_SWIPE_TRIGGER,
-} from "@/shared/gestures/navigateSwipe";
+import { crossSlideRemainingPx } from "@/shared/gestures/navigateSwipe";
 import {
   computeSwipeCommitDurationMs,
   scheduleCrossSlideAnimatingFlip,
@@ -11,7 +8,7 @@ import {
 } from "./useSwipePageTransition";
 
 const PAGE_WIDTH = 390;
-const COMMIT_DRAG_X = -(NAVIGATE_SWIPE_TRIGGER + 8);
+const COMMIT_DRAG_X = -64;
 
 describe("swipe commit timing", () => {
   beforeEach(() => {
@@ -33,7 +30,7 @@ describe("swipe commit timing", () => {
     expect(crossSlideMs).toBeLessThan(SERIAL_SWIPE_COMMIT_BUDGET_MS);
   });
 
-  it("shortens commit duration when average gesture velocity is high", () => {
+  it("shortens commit duration when release velocity is high", () => {
     const remaining = crossSlideRemainingPx("left", COMMIT_DRAG_X, PAGE_WIDTH);
     const baselineMs = computeSwipeCommitDurationMs(remaining, 0);
     const flickMs = computeSwipeCommitDurationMs(remaining, 2.5);
