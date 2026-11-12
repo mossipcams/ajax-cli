@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Command, Output, Stdio};
 
 pub const DOCKERFILE: &str = include_str!("agent.Dockerfile");
 
@@ -103,9 +103,52 @@ pub fn top_argv(container: &str) -> Vec<String> {
 }
 
 pub fn rm_argv(container: &str) -> Vec<String> {
+    rm_containers_argv(&[container.to_string()])
+}
+
+pub fn rm_containers_argv(containers: &[String]) -> Vec<String> {
     let mut argv = strings(&["rm", "-f"]);
-    argv.push(container.to_string());
+    argv.extend(containers.iter().cloned());
     argv
+}
+
+pub fn task_containers_argv(key: &str) -> Vec<String> {
+    let mut argv = strings(&["ps", "-aq"]);
+    argv.extend(pair("--filter", format!("label=ajax.task_key={key}")));
+    argv
+}
+
+pub fn volume_rm_argv(volumes: &[String]) -> Vec<String> {
+    let mut argv = strings(&["volume", "rm", "-f"]);
+    argv.extend(volumes.iter().cloned());
+    argv
+}
+
+pub fn remove_task_resources(key: &str) {
+    if cfg!(test) {
+        return;
+    }
+    let Ok(docker) = resolve_docker() else {
+        return;
+    };
+    let listing = run_quietly(&docker, &task_containers_argv(key)).unwrap_or_default();
+    let containers: Vec<String> = listing.split_whitespace().map(String::from).collect();
+    if !containers.is_empty() {
+        run_quietly(&docker, &rm_containers_argv(&containers));
+    }
+    run_quietly(&docker, &volume_rm_argv(&task_volumes(key)));
+}
+
+fn run_quietly(docker: &Path, argv: &[String]) -> Option<String> {
+    let output = Command::new(docker)
+        .args(argv)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -733,6 +776,28 @@ mod tests {
             strings(&["top", "abc", "-eo", "pid,ppid,comm"])
         );
         assert_eq!(rm_argv("abc"), strings(&["rm", "-f", "abc"]));
+    }
+
+    #[test]
+    fn task_container_and_volume_removal_argv_are_exact() {
+        assert_eq!(
+            task_containers_argv("key"),
+            strings(&["ps", "-aq", "--filter", "label=ajax.task_key=key"])
+        );
+        assert_eq!(
+            rm_containers_argv(&strings(&["c1", "c2"])),
+            strings(&["rm", "-f", "c1", "c2"])
+        );
+        assert_eq!(
+            volume_rm_argv(&task_volumes("key")),
+            strings(&[
+                "volume",
+                "rm",
+                "-f",
+                "ajax-target-key",
+                "ajax-node-modules-key",
+            ])
+        );
     }
 
     #[test]

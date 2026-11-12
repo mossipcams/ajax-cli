@@ -217,7 +217,13 @@ uses a releasing title, so no release ships both backends.
   `.planning/agent-plans/nono-sandboxing.profile.json`; docs: README sandbox
   section and prerequisites, `architecture.md` security bullet,
   `cli-supervisor.md`, `playwright-mcp.md`, `pull-requests.md` (agents can run
-  web:smoke). Done when `grep -rni nono` outside `CHANGELOG.md` is empty.
+  web:smoke). Done when `grep -rni nono` outside `CHANGELOG.md` and the
+  historical `.planning/` records is empty. Slices accepted 2026-11-12: 3a
+  (`DockerHost`/`docker_command` moved into ajax-core, web delegates), 3b (CLI
+  and supervisor launch through it with `cli`/`supervisor` server labels),
+  3c (nono code, profiles and tests deleted; trusted-git store at
+  `~/.config/ajax/trusted-worktrees`), 3d (drop removes the task's containers
+  and volumes, best effort). Remaining: docs.
 
 ## Dev canary (before any merge)
 
@@ -247,7 +253,12 @@ uses a releasing title, so no release ships both backends.
      `~/.codex/config.toml` (codex-acp cannot take the `-c` override)
 4. Matt checks from the phone: a chat in each harness answers; Cancel stops
    the container; restarting dev web (Test in dev again) leaves no orphan
-   containers; dropping a task removes its volumes.
+   containers; dropping a task removes its volumes and is not slowed by a
+   stopped OrbStack.
+5. Matt checks a tmux (CLI) agent: closing its pane, and the supervisor
+   killing a hung agent, leave no running container (`docker ps --filter
+   label=ajax.server=cli` / `supervisor`). If they linger, add a `docker rm -f`
+   by container name on exit.
 
 Failures become fixes on the stack, then the canary runs again.
 
