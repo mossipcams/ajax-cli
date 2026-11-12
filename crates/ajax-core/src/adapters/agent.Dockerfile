@@ -42,6 +42,11 @@ RUN printf '%s\n' \
       '  while [ ! -S "$sock" ] && [ "$i" -lt 100 ]; do sleep 0.02; i=$((i+1)); done' \
       '  export SSH_AUTH_SOCK="$sock"' \
       'fi' \
+      'cursor_auth="$HOME/.cursor/sdk/auth.json"' \
+      'if [ -z "$CURSOR_API_KEY" ] && [ -r "$cursor_auth" ]; then' \
+      '  key=$(jq -r '"'"'.apiKey // empty'"'"' "$cursor_auth" 2>/dev/null)' \
+      '  if [ -n "$key" ]; then export CURSOR_API_KEY="$key"; fi' \
+      'fi' \
       'exec "$@"' > /opt/ajax/agent-entry \
  && chmod 755 /opt/ajax/agent-entry
 

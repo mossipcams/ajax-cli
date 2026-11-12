@@ -187,8 +187,11 @@ files through the read-write mounts.
 Caveats: hooks and MCP servers that point at macOS binaries (for example `rtk`,
 `codeburn`, the `ajax-cli __agent-event` hooks, or MCP servers configured with
 host paths) fail inside the Linux container. This is non-blocking. Cursor's host
-sign-in lives in the macOS keychain, so Cursor still needs its one-time Settings
-sign-in in the container.
+sign-in lives in the macOS keychain, which the container cannot read. The
+entrypoint exports `CURSOR_API_KEY` from `~/.cursor/sdk/auth.json` (the key
+Settings > Cursor mints and saves) when it is absent from the environment, so
+Cursor needs no separate container sign-in when Ajax already holds that key. If
+there is none, sign in from Settings once.
 
 ### Process observation
 
@@ -253,8 +256,9 @@ uses a releasing title, so no release ships both backends.
 1. Matt taps **Test in dev** on this task. :8788 runs the top of the stack and
    builds the image on startup. Its `PATH` must include `/usr/local/bin`;
    check this first.
-2. Matt signs Cursor in from Settings on :8788. Claude, Codex and Pi carry
-   over from the host through the shared mounts.
+2. Cursor carries over when `~/.cursor/sdk/auth.json` exists (the key Settings >
+   Cursor mints); otherwise Matt signs Cursor in from Settings on :8788. Claude,
+   Codex and Pi carry over from the host through the shared mounts.
 3. Matt starts one Chat task on :8788 with the prompt "run the canary
    checklist in `.planning/agent-plans/docker-sandboxes.md` and record
    results". That agent is inside Docker and checks:
@@ -279,6 +283,8 @@ uses a releasing title, so no release ships both backends.
      Docker, set `sandbox_mode = "danger-full-access"` in the container's
      `~/.codex/config.toml` (codex-acp cannot take the `-c` override)
    - [ ] a Claude chat and a Codex chat answer with no new sign-in
+   - [ ] inside a container `test -n "$CURSOR_API_KEY"` succeeds, and a
+     cursor-agent ACP chat answers without a sign-in
    - [ ] Claude works without the host `~/.claude.json`
    - [ ] after an agent's token refresh, the host's `~/.claude/.credentials.json`
      mtime changes (one shared store)

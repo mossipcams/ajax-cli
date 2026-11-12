@@ -331,8 +331,10 @@ Agents see:
 Caveats: hooks and MCP servers that point at macOS binaries (for example `rtk`,
 `codeburn`, the `ajax-cli __agent-event` hooks, or MCP servers configured with
 host paths) fail inside the Linux container. This is non-blocking. Cursor's host
-sign-in lives in the macOS keychain, so Cursor still needs its one-time Settings
-sign-in in the container.
+sign-in lives in the macOS keychain, which the container cannot read. Instead, the
+entrypoint exports `CURSOR_API_KEY` from `~/.cursor/sdk/auth.json`, the key that
+Settings > Cursor mints and saves, so Cursor needs no separate container sign-in
+when Ajax already holds that key. If there is none, sign in from Settings once.
 
 Agents do not see `~/.ssh`, `~/.orbstack`, `~/.docker`, the Docker and OrbStack
 sockets, the host tmux socket, the macOS keychain, or Ajax state
