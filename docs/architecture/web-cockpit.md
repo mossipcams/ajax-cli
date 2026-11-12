@@ -111,7 +111,10 @@ the dashboard; Chat keeps transcript-selection ignore only
 (`ChatSurface.tsx`). Touches started in overflowing `.session-tool-output`,
 `.session-diff-body`, `.md-block`, and `.md-table-wrap` blocks belong to those
 inner scrollers and never arm the workspace page swipe; markdown blocks retain
-native horizontal scrolling.
+native horizontal scrolling. The 10px edge arming never applies to touches that
+start in text fields (`input`, `textarea`, `select`, `[contenteditable]`) or in
+the horizontal `.terminal-keys` and `.interact-panel .action-row` scrollers;
+those keep the 48px threshold. A second finger cancels the page swipe.
 
 An optional flag-gated **Cursor SDK orchestration chat** session mode is
 specified in [`web-session-behavior.md`](web-session-behavior.md). The
@@ -649,7 +652,15 @@ orientation, judgment flags, and reading-order guide chips, fed by
 navigation finger-follows; on commit the shell keeps the outgoing workspace
 surface mounted (React `Activity`) while the destination slides in beside it as
 one continuous transform over roughly `SWIPE_PAGE_COMMIT_MS` (≈220ms),
-shortened on fast flicks when average gesture velocity is high. Button Back
+shortened by the release velocity. The swipe rule lives in
+`shared/gestures/navigateSwipe.ts`. A swipe arms after 48px of horizontal
+travel, except a back swipe that starts within 50px of the swipe root's left
+edge and moves within 300ms of touchstart, which arms after 10px. The
+direction is locked when the swipe arms. On release it commits when the
+release velocity (the last 100ms of touch samples, by event time) is above
+0.2px/ms toward that direction, or the page has travelled more than half its
+width; a backward flick faster than 0.2px/ms cancels, and anything else
+springs back. Button Back
 uses the same cross-slide commit path; list-to-task opens still use the
 one-shot CSS enter class when no swipe gesture is in flight; other chrome
 navigations may stay instant.
