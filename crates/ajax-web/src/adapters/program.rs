@@ -10,11 +10,13 @@ use std::{
 };
 
 use ajax_core::adapters::{
-    docker_sandbox::{check_ready, docker_argv, image_tag, resolve_docker, DockerLaunch},
+    docker_sandbox::{check_ready, docker_argv, image_tag, resolve_docker, task_key, DockerLaunch},
     sandbox::{git_grants, sandbox_enabled},
     trusted_git::{self, TrustedGit},
 };
 use nix::unistd::{getgid, getuid};
+
+use super::sandbox_image::ensure_task_volumes;
 
 const HOME_UNSET: &str =
     "agent sandbox is on but HOME is unset, so the agent home cannot be mounted; set HOME or AJAX_SANDBOX=off";
@@ -292,6 +294,14 @@ fn docker_launch(
     let docker = (host.resolve)()?;
     let image = image_tag();
     check_ready(&image, |docker_args| (host.run)(&docker, docker_args))?;
+    ensure_task_volumes(
+        &docker,
+        &image,
+        &task_key(cwd),
+        host.uid,
+        host.gid,
+        host.run,
+    )?;
     let common = trust_linked_worktree(host.store.as_deref(), cwd)?;
     let home = host.home.as_deref().ok_or_else(|| HOME_UNSET.to_string())?;
     let env: Vec<(String, String)> = env
@@ -572,6 +582,19 @@ mod tests {
         }
     }
 
+    thread_local! {
+        static DOCKER_CALLS: std::cell::RefCell<Vec<Vec<String>>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn recording_docker(_: &Path, args: &[&str]) -> io::Result<Output> {
+        DOCKER_CALLS.with(|calls| {
+            calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| arg.to_string()).collect());
+        });
+        Ok(output(0))
+    }
+
     fn has_pair(argv: &[String], flag: &str, value: &str) -> bool {
         argv.windows(2)
             .any(|pair| pair[0] == flag && pair[1] == value)
@@ -606,6 +629,30 @@ mod tests {
         ]
         .map(String::from);
         assert!(argv.ends_with(&tail));
+    }
+
+    #[test]
+    fn an_enabled_launch_ensures_its_task_volumes_after_the_image_is_ready() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let launch_host = DockerHost {
+            run: recording_docker,
+            ..host(&scratch_dir("home-volumes"), None)
+        };
+
+        sandbox_launch(true, &launch_host, Path::new("codex"), &[], cwd, &[])
+            .expect("enabled launch wraps");
+
+        let calls = DOCKER_CALLS.with(|calls| calls.take());
+        let target = format!("ajax-target-{}", task_key(cwd));
+        let ready = calls
+            .iter()
+            .position(|call| call[0] == "image")
+            .expect("image is checked");
+        let inspected = calls
+            .iter()
+            .position(|call| call == &["volume", "inspect", target.as_str()])
+            .expect("target volume is inspected");
+        assert!(ready < inspected, "{calls:?}");
     }
 
     #[test]

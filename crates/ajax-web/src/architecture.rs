@@ -133,12 +133,13 @@ mod tests {
         "training",
         "web_session",
     ];
-    const ADAPTERS: [&str; 13] = [
+    const ADAPTERS: [&str; 14] = [
         "assets",
         "browser_session",
         "cloudflare_access",
         "http",
         "program",
+        "sandbox_image",
         "server",
         "session_shim",
         "skills",

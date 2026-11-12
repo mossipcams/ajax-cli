@@ -3,6 +3,7 @@ pub mod browser_session;
 pub(crate) mod cloudflare_access;
 pub mod http;
 pub mod program;
+pub mod sandbox_image;
 pub mod server;
 pub mod session_shim;
 pub mod skills;

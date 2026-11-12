@@ -50,4 +50,5 @@ RUN (getent passwd "$HOST_UID" >/dev/null || useradd -o -u "$HOST_UID" -g "$HOST
  && usermod -d "$HOST_HOME" "$(getent passwd "$HOST_UID" | cut -d: -f1)" \
  && mkdir -p "$HOST_HOME/.claude" "$HOST_HOME/.codex" "$HOST_HOME/.agents" "$HOST_HOME/.cursor" \
              "$HOST_HOME/.config" "$HOST_HOME/.ajax-router" "$HOST_HOME/Projects" \
+ && mkdir -p /opt/cargo/registry /opt/cargo/git \
  && chown -R "$HOST_UID:$HOST_GID" "$HOST_HOME" /opt/rustup /opt/cargo

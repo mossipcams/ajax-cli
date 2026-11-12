@@ -69,6 +69,13 @@ pub fn task_key(cwd: &Path) -> String {
     format!("{slug}-{digest:08x}")
 }
 
+pub fn task_volumes(key: &str) -> [String; 2] {
+    [
+        format!("ajax-target-{key}"),
+        format!("ajax-node-modules-{key}"),
+    ]
+}
+
 pub fn server_id(state_dir: &Path) -> String {
     format!(
         "{:016x}",
@@ -178,11 +185,9 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     for path in launch.extra_read_write {
         argv.extend(pair("-v", same_path(path)));
     }
-    argv.extend(pair("-v", format!("ajax-target-{key}:{cwd}/target")));
-    argv.extend(pair(
-        "-v",
-        format!("ajax-node-modules-{key}:{cwd}/node_modules"),
-    ));
+    let [target, node_modules] = task_volumes(&key);
+    argv.extend(pair("-v", format!("{target}:{cwd}/target")));
+    argv.extend(pair("-v", format!("{node_modules}:{cwd}/node_modules")));
     let tooling = READ_ONLY_TOOLING
         .iter()
         .map(|relative| (relative, ":ro"))
