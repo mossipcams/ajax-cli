@@ -12,7 +12,7 @@ use super::PromptCapabilityDescriptor;
 const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
 const LOGIN_HINT: &str = "Cursor rejected the SDK credential - sign in again from Settings > Cursor in Ajax Web, or set CURSOR_API_KEY for the ajax-web host";
 const MIN_NODE: (u32, u32) = (22, 13);
-const CONTAINER_SDK_MODULE: &str = "/opt/ajax/cursor-sdk/dist/esm/index.js";
+pub(super) const CONTAINER_SDK_MODULE: &str = "/opt/ajax/cursor-sdk/dist/esm/index.js";
 
 pub(super) fn node_version_ok(text: &str) -> bool {
     let mut parts = text.trim().trim_start_matches('v').split('.');
@@ -125,7 +125,7 @@ pub(super) fn spawn_error(text: String, resume_session_id: Option<&str>) -> AcpS
     }
     AcpSpawnError::Message(text)
 }
-const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
+pub(super) const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
 
 pub(super) fn cursor_login_launch(
     mode: &str,

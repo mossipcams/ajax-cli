@@ -1,9 +1,12 @@
 use std::{
     collections::HashMap,
-    env, io,
+    env, fs, io,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 use ajax_core::adapters::{
@@ -22,6 +25,8 @@ static SANDBOX_BOOT_ID: OnceLock<String> = OnceLock::new();
 
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
 static SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
+static LAUNCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const PROBE_DIR: &str = "ajax-sandbox-probe";
 
 pub fn resolve_program(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
@@ -130,14 +135,37 @@ pub(crate) fn sandboxed_harness_command(
     cwd: &Path,
     env: &[(String, String)],
 ) -> io::Result<Command> {
-    harness_launch(
-        sandbox_enabled(),
-        &DockerHost::process(),
-        program,
-        args,
-        cwd,
-        env,
-    )
+    let (enabled, host) = sandbox_context();
+    harness_launch(enabled, &host, program, args, cwd, env)
+}
+
+pub(crate) fn probe_command(program: &str, args: &[&str]) -> io::Result<Command> {
+    let (enabled, host) = sandbox_context();
+    let cwd = if enabled {
+        probe_dir()?
+    } else {
+        PathBuf::new()
+    };
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    harness_launch(enabled, &host, program, &args, &cwd, &[])
+}
+
+pub(crate) fn probe_dir() -> io::Result<PathBuf> {
+    let dir = env::temp_dir().join(PROBE_DIR);
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+pub(crate) fn sandbox_on() -> bool {
+    sandbox_context().0
+}
+
+fn sandbox_context() -> (bool, DockerHost) {
+    #[cfg(test)]
+    if let Some(context) = TEST_SANDBOX.with(|slot| slot.borrow().clone()) {
+        return context;
+    }
+    (sandbox_enabled(), DockerHost::process())
 }
 
 fn harness_launch(
@@ -174,15 +202,8 @@ pub(crate) fn sandboxed_program(
     cwd: &Path,
     env: &[(String, String)],
 ) -> io::Result<(PathBuf, Vec<String>)> {
-    sandbox_launch(
-        sandbox_enabled(),
-        &DockerHost::process(),
-        program,
-        args,
-        cwd,
-        env,
-    )
-    .map_err(io::Error::other)
+    let (enabled, host) = sandbox_context();
+    sandbox_launch(enabled, &host, program, args, cwd, env).map_err(io::Error::other)
 }
 
 fn sandbox_launch(
@@ -199,6 +220,7 @@ fn sandbox_launch(
     docker_launch(host, &program.display().to_string(), args, cwd, env)
 }
 
+#[derive(Clone)]
 struct DockerHost {
     resolve: fn() -> Result<PathBuf, String>,
     run: fn(&Path, &[&str]) -> io::Result<Output>,
@@ -252,6 +274,7 @@ fn docker_launch(
         .filter(|(key, _)| key.as_str() != "PATH")
         .cloned()
         .collect();
+    let instance = launch_instance();
     let launch = DockerLaunch {
         home,
         uid: host.uid,
@@ -260,6 +283,7 @@ fn docker_launch(
         git_common_dir: common.as_deref(),
         extra_read_write: &[],
         boot_id: &host.boot_id,
+        instance: &instance,
         tty: false,
         pass_gh_token: host.pass_gh_token,
         image: &image,
@@ -269,6 +293,11 @@ fn docker_launch(
     };
     let argv = docker_argv(&launch, Path::exists);
     Ok((docker, argv))
+}
+
+fn launch_instance() -> String {
+    let sequence = LAUNCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{:x}-{sequence:x}", std::process::id())
 }
 
 fn trust_linked_worktree(store: Option<&Path>, cwd: &Path) -> Result<Option<PathBuf>, String> {
@@ -304,10 +333,62 @@ fn apply_shell_path(command: &mut Command) {
 }
 
 #[cfg(test)]
+pub(crate) const TEST_DOCKER: &str = "/ajax-test-docker";
+
+#[cfg(test)]
+thread_local! {
+    static TEST_SANDBOX: std::cell::RefCell<Option<(bool, DockerHost)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_sandbox<R>(enabled: bool, run: impl FnOnce() -> R) -> R {
+    let host = DockerHost {
+        resolve: || Ok(PathBuf::from(TEST_DOCKER)),
+        run: |_, _| {
+            Ok(Output {
+                status: std::os::unix::process::ExitStatusExt::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        },
+        home: Some(PathBuf::from("/ajax-test-home")),
+        store: None,
+        uid: 501,
+        gid: 20,
+        pass_gh_token: false,
+        boot_id: "boot-test".to_string(),
+    };
+    TEST_SANDBOX.with(|slot| *slot.borrow_mut() = Some((enabled, host)));
+    let result = run();
+    TEST_SANDBOX.with(|slot| *slot.borrow_mut() = None);
+    result
+}
+
+#[cfg(test)]
+pub(crate) fn assert_probe_docker_launch(command: &Command) {
+    let argv: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let dir = probe_dir().expect("probe dir").display().to_string();
+    assert_eq!(command.get_program(), std::ffi::OsStr::new(TEST_DOCKER));
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair[0] == "-w" && pair[1] == dir),
+        "{argv:?}"
+    );
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair[0] == "-v" && pair[1] == format!("{dir}:{dir}")),
+        "{argv:?}"
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
-    use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
 
@@ -674,6 +755,50 @@ mod tests {
             .collect();
         assert!(argv.ends_with(&["ajax-not-a-real-program".to_string(), "exec".to_string()]));
         assert!(command.get_envs().all(|(key, _)| key != OsStr::new("PATH")));
+    }
+
+    fn container_name(argv: &[String]) -> &str {
+        argv.windows(2)
+            .find(|pair| pair[0] == "--name")
+            .map_or("", |pair| pair[1].as_str())
+    }
+
+    #[test]
+    fn two_launches_for_one_worktree_get_distinct_container_names() {
+        let cwd = Path::new("/work/task");
+        let args = vec!["exec".to_string()];
+        let home = scratch_dir("home-names");
+        let launch_host = host(&home, None);
+
+        let (_, first) = sandbox_launch(true, &launch_host, Path::new("codex"), &args, cwd, &[])
+            .expect("first launch wraps");
+        let (_, second) = sandbox_launch(true, &launch_host, Path::new("codex"), &args, cwd, &[])
+            .expect("second launch wraps");
+
+        assert_ne!(container_name(&first), container_name(&second));
+        assert!(container_name(&first).starts_with("ajax-"));
+        assert!(container_name(&second).starts_with("ajax-"));
+    }
+
+    #[test]
+    fn a_sandboxed_probe_is_a_docker_launch_in_the_probe_directory_with_no_host_binary() {
+        let command = with_test_sandbox(true, || {
+            probe_command("ajax-not-a-real-program", &["auth", "status"])
+        })
+        .expect("a docker launch needs no host install");
+
+        assert_probe_docker_launch(&command);
+        assert!(command
+            .get_args()
+            .any(|arg| arg == "ajax-not-a-real-program"));
+    }
+
+    #[test]
+    fn a_probe_without_the_sandbox_still_needs_the_host_binary() {
+        let error = with_test_sandbox(false, || probe_command("ajax-not-a-real-program", &[]))
+            .expect_err("a host probe needs the host binary");
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]

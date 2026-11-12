@@ -1,5 +1,5 @@
 use crate::adapters::{
-    program::{harness_command, resolve_program},
+    program::{probe_command, resolve_program, sandbox_on},
     web_session_acp::{CursorCredentialStatus, CursorLogin},
 };
 use ajax_core::adapters::agent::PI_DEFAULT_MODEL;
@@ -7,7 +7,7 @@ use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    io::Read,
+    io::{self, Read},
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc,
     thread,
@@ -109,16 +109,16 @@ fn probe_harness(harness: Harness) -> HarnessAuthStatus {
     match harness {
         Harness::Claude => cli_status(
             harness,
-            cli_command("claude", &["auth", "status", "--json"]),
+            probe_command("claude", &["auth", "status", "--json"]),
             |output| claude_signed_in(&output.stdout),
         ),
         Harness::Codex => cli_status(
             harness,
-            cli_command("codex", &["login", "status"]),
+            probe_command("codex", &["login", "status"]),
             codex_signed_in,
         ),
         Harness::Cursor => {
-            let installed = resolve_program("node").is_some();
+            let installed = sandbox_on() || resolve_program("node").is_some();
             let status = installed
                 .then(|| CursorLogin::global().status().ok())
                 .flatten();
@@ -126,7 +126,7 @@ fn probe_harness(harness: Harness) -> HarnessAuthStatus {
         }
         Harness::Pi => cli_status(
             harness,
-            cli_command(
+            probe_command(
                 "pi",
                 &[
                     "auth",
@@ -151,19 +151,23 @@ fn undetermined(harness: Harness) -> HarnessAuthStatus {
     }
 }
 
-fn cli_command(program: &str, args: &[&str]) -> Option<Command> {
-    let mut command = harness_command(program)?;
-    command.args(args);
-    Some(command)
-}
-
 fn cli_status(
     harness: Harness,
-    command: Option<Command>,
+    command: io::Result<Command>,
     signed_in: fn(&ProbeOutput) -> Option<bool>,
 ) -> HarnessAuthStatus {
-    let installed = command.is_some();
-    let output = command.and_then(|command| run_probe(command, PROBE_TIMEOUT));
+    let (installed, output) = match command {
+        Ok(command) => (true, run_probe(command, PROBE_TIMEOUT)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (false, None),
+        Err(error) => {
+            return HarnessAuthStatus {
+                harness: harness.name(),
+                installed: true,
+                signed_in: None,
+                detail: Some(error.to_string()),
+            }
+        }
+    };
     let signed_in = output.as_ref().and_then(signed_in);
     HarnessAuthStatus {
         harness: harness.name(),
@@ -276,6 +280,7 @@ fn cursor_signed_in(status: &CursorCredentialStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::program::{assert_probe_docker_launch, with_test_sandbox};
 
     fn output(success: bool, stdout: &str) -> ProbeOutput {
         ProbeOutput {
@@ -410,14 +415,47 @@ mod tests {
     }
 
     #[test]
-    fn missing_binary_is_reported_as_not_installed() {
-        let status = cli_status(Harness::Pi, None, |output| pi_signed_in(&output.stdout));
+    fn missing_binary_is_reported_as_not_installed_without_the_sandbox() {
+        let missing = with_test_sandbox(false, || probe_command("ajax-not-a-real-program", &[]));
+        let status = cli_status(Harness::Pi, missing, |output| pi_signed_in(&output.stdout));
         assert!(!status.installed);
         assert_eq!(status.signed_in, None);
         assert_eq!(
             status.detail.as_deref(),
             Some("pi is not installed on the host")
         );
+    }
+
+    #[test]
+    fn a_sandboxed_cli_probe_builds_a_docker_launch_in_the_probe_directory() {
+        let command = with_test_sandbox(true, || {
+            probe_command("claude", &["auth", "status", "--json"])
+        });
+        assert_probe_docker_launch(&command.expect("a docker launch needs no host binary"));
+    }
+
+    #[test]
+    fn a_sandboxed_harness_is_never_reported_as_missing_from_the_host() {
+        let statuses = with_test_sandbox(true, || HARNESSES.map(probe_harness));
+        for status in statuses {
+            assert!(
+                status.installed,
+                "{} reported missing: {status:?}",
+                status.harness
+            );
+        }
+    }
+
+    #[test]
+    fn a_sandboxed_probe_that_cannot_launch_reports_the_reason() {
+        let status = cli_status(
+            Harness::Pi,
+            Err(io::Error::other("docker is not installed")),
+            |output| pi_signed_in(&output.stdout),
+        );
+        assert!(status.installed);
+        assert_eq!(status.signed_in, None);
+        assert_eq!(status.detail.as_deref(), Some("docker is not installed"));
     }
 
     #[test]

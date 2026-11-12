@@ -171,7 +171,8 @@ decides which.
 
 The host now sees only the `docker` client:
 
-- `web_session/background_jobs.rs` reads `docker top ajax-<task-key>`.
+- `web_session/background_jobs.rs` finds the task's containers with
+  `docker ps --filter label=ajax.task_key=<key>` and reads `docker top`.
 - `orphan_sweep.rs` runs `docker rm -f` on containers whose `ajax.boot` label
   is not the current boot, because a SIGKILLed client may leave the
   container running.
@@ -202,7 +203,7 @@ uses a releasing title, so no release ships both backends.
   `~/.config/ajax` and the registry DBs are never mounted (keeps #1396 and
   #1415 covered). Also fail-closed tests for missing docker, daemon down, and
   image building.
-- [ ] **Packet 2: web launch sites, sign-in and observation.** Slice 2a (launch sites: `program.rs`, `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `session_client.rs`, `cursor_sdk_spawn.rs`) accepted 2026-11-12. Remaining: 2b sign-in/models (`agent_auth.rs` incl. the host-only pi check, `cursor_login.rs` incl. `cursor_login_launch`, `session_models.rs`), 2c observation + startup (`background_jobs.rs`, `orphan_sweep.rs`, `process_tree_tests.rs`, image build at web startup, wiring `set_sandbox_boot_id`), 2d docs. `program.rs`,
+- [ ] **Packet 2: web launch sites, sign-in and observation.** Slice 2a (launch sites: `program.rs`, `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `session_client.rs`, `cursor_sdk_spawn.rs`) accepted 2026-11-12. Slice 2b (sign-in probes, Cursor login, model listing in the container from a dedicated empty probe dir under the OS temp dir; unique container names `ajax-<task_key>-<pid>-<seq>` with an `ajax.task_key` label) accepted 2026-11-12. Remaining: 2c observation (look containers up by the `ajax.task_key` label, not by name) + startup (`background_jobs.rs`, `orphan_sweep.rs`, `process_tree_tests.rs`, image build at web startup, wiring `set_sandbox_boot_id`), 2d docs. `program.rs`,
   `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `agent_auth.rs`,
   `cursor_login.rs`, `session_models.rs`, `background_jobs.rs`,
   `orphan_sweep.rs`, `process_tree_tests.rs` fixtures, image ensure at
@@ -305,3 +306,7 @@ work stays "start a task in repo B").
   correctly at out-of-scope Pi and Cursor SDK callers). Orchestrator gate:
   fmt ok, workspace clippy ok, `env -u RUST_LOG cargo nextest run -p ajax-web
   -p ajax-core` 2825 passed, 1 skipped.
+- 2026-11-12: slice 2b accepted (Haiku, plus one revise round to reuse the
+  Cursor SDK constants instead of duplicating them). Orchestrator gate: fmt ok,
+  workspace clippy ok, 2836 passed, 1 skipped. Known overhead: every sandboxed
+  probe runs `docker info` and `image inspect` first.

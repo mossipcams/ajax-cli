@@ -77,6 +77,7 @@ pub struct DockerLaunch<'a> {
     pub git_common_dir: Option<&'a Path>,
     pub extra_read_write: &'a [PathBuf],
     pub boot_id: &'a str,
+    pub instance: &'a str,
     pub tty: bool,
     pub pass_gh_token: bool,
     pub image: &'a str,
@@ -97,8 +98,9 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     argv.extend(strings(&["--init", "--user"]));
     argv.push(format!("{}:{}", launch.uid, launch.gid));
     argv.extend(strings(&["--network", "host", "--name"]));
-    argv.push(format!("ajax-{key}"));
+    argv.push(format!("ajax-{key}-{}", launch.instance));
     argv.extend(pair("--label", format!("ajax.boot={}", launch.boot_id)));
+    argv.extend(pair("--label", format!("ajax.task_key={key}")));
     argv.extend(pair("--label", format!("ajax.worktree={cwd}")));
     argv.extend(pair("-e", format!("HOME={home}")));
     if exists(&sock) {
@@ -225,6 +227,7 @@ mod tests {
     const KEY: &str = "ajax-docker-sandboxes-1576734c";
     const IMAGE: &str = "ajax-agent:test";
     const SOCK: &str = "/Users/matt/.config/ajax/ssh/agent.sock";
+    const INSTANCE: &str = "1f-2";
 
     fn sample<'a>(home: &'a Path, cwd: &'a Path, args: &'a [String]) -> DockerLaunch<'a> {
         DockerLaunch {
@@ -235,6 +238,7 @@ mod tests {
             git_common_dir: Some(Path::new(COMMON)),
             extra_read_write: &[],
             boot_id: "boot-1",
+            instance: INSTANCE,
             tty: false,
             pass_gh_token: false,
             image: IMAGE,
@@ -303,8 +307,8 @@ mod tests {
         let args = strings(&["-p", "hi"]);
         let argv = docker_argv(&sample(home, cwd, &args), |_| true);
         let expected = words(&format!(
-            "run --rm -i --init --user 501:20 --network host --name ajax-{KEY} \
-             --label ajax.boot=boot-1 --label ajax.worktree={CWD} -e HOME={HOME} \
+            "run --rm -i --init --user 501:20 --network host --name ajax-{KEY}-{INSTANCE} \
+             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.worktree={CWD} -e HOME={HOME} \
              -e SSH_AUTH_SOCK={SOCK} -w {CWD} -v ajax-agent-home:{HOME} \
              -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v {COMMON}:{COMMON} \
@@ -347,14 +351,45 @@ mod tests {
         };
         let argv = docker_argv(&launch, |_| false);
         let expected = words(&format!(
-            "run --rm -i -t --init --user 501:20 --network host --name ajax-{KEY} \
-             --label ajax.boot=boot-1 --label ajax.worktree={CWD} -e HOME={HOME} -w {CWD} \
+            "run --rm -i -t --init --user 501:20 --network host --name ajax-{KEY}-{INSTANCE} \
+             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.worktree={CWD} -e HOME={HOME} -w {CWD} \
              -v ajax-agent-home:{HOME} -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v /var/folders/ajax/events:/var/folders/ajax/events \
              -v ajax-target-{KEY}:{CWD}/target -v ajax-node-modules-{KEY}:{CWD}/node_modules \
              {IMAGE} claude --print"
         ));
         assert_eq!(argv, expected);
+    }
+
+    fn container_name(argv: &[String]) -> &str {
+        argv.windows(2)
+            .find(|pair| pair[0] == "--name")
+            .map_or("", |pair| pair[1].as_str())
+    }
+
+    fn volumes(argv: &[String]) -> Vec<&String> {
+        argv.windows(2)
+            .filter(|pair| pair[0] == "-v")
+            .map(|pair| &pair[1])
+            .collect()
+    }
+
+    #[test]
+    fn two_launches_for_one_worktree_get_distinct_names_and_shared_volumes() {
+        let home = Path::new(HOME);
+        let cwd = Path::new(CWD);
+        let args = strings(&[]);
+        let first = docker_argv(&sample(home, cwd, &args), |_| false);
+        let second_launch = DockerLaunch {
+            instance: "1f-3",
+            ..sample(home, cwd, &args)
+        };
+        let second = docker_argv(&second_launch, |_| false);
+
+        assert_eq!(container_name(&first), format!("ajax-{KEY}-{INSTANCE}"));
+        assert_eq!(container_name(&second), format!("ajax-{KEY}-1f-3"));
+        assert!(!volumes(&first).is_empty());
+        assert_eq!(volumes(&first), volumes(&second));
     }
 
     #[test]
