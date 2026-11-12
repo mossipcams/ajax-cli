@@ -1,4 +1,4 @@
-import { Activity, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import {
   dashboardHash,
   parseRoute,
@@ -39,6 +39,7 @@ import Skeleton from "@/shared/ui/Skeleton";
 import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
 import RouteScroll from "./RouteScroll";
+import WorkspaceStack from "./routes/WorkspaceStack";
 import TaskWorkspaceRoute from "./routes/TaskWorkspaceRoute";
 import { PULL_THRESHOLD } from "@/shared/gestures/pullToRefresh";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
@@ -99,25 +100,6 @@ function routeStillOnDroppedTask(
     (current.kind === "task" || current.kind === "diff" || current.kind === "session") &&
     current.handle === handle
   );
-}
-
-function workspaceSurfaceVisible(
-  surface: "task" | "session" | "diff",
-  activeRoute: Route,
-  leaving: Route | null,
-): boolean {
-  const routeMatches = (candidate: Route) => {
-    if (surface === "task") return candidate.kind === "task";
-    if (surface === "session") return candidate.kind === "session" && Boolean(candidate.handle);
-    return candidate.kind === "diff";
-  };
-  return routeMatches(activeRoute) || (leaving ? routeMatches(leaving) : false);
-}
-
-function workspaceSurfaceKind(surface: "task" | "session" | "diff"): Route["kind"] {
-  if (surface === "session") return "session";
-  if (surface === "diff") return "diff";
-  return "task";
 }
 
 function swipeOutletClassName(entrance: SwipeEnterDirection | "none" | null): string {
@@ -567,17 +549,6 @@ function AppContent() {
 
   const swipeOutletClass = crossSlideActive ? "" : swipeOutletClassName(swipeEnter);
 
-  function workspacePaneStyle(surface: "task" | "session" | "diff"): CSSProperties | undefined {
-    if (!crossSlideActive || !crossSlide || !leavingRoute) return undefined;
-    if (workspaceSurfaceKind(surface) === leavingRoute.kind) {
-      return crossSlide.paneStyle("leaving");
-    }
-    if (workspaceSurfaceKind(surface) === route.kind) {
-      return crossSlide.paneStyle("entering");
-    }
-    return undefined;
-  }
-
   function renderWorkspaceStack(handle: string): ReactNode {
     const diffSelectedPr =
       route.kind === "diff" && route.handle === handle
@@ -586,124 +557,90 @@ function AppContent() {
           ? leavingRoute.pr
           : undefined;
 
-    const surfaceShell = (surface: "task" | "session" | "diff", content: ReactNode) => {
-      const visible = workspaceSurfaceVisible(surface, route, leavingRoute);
-      const leavingSurface = leavingRoute?.kind === workspaceSurfaceKind(surface);
-      const mountContent = visible || (crossSlideActive && leavingSurface);
-      const motionStyle = workspacePaneStyle(surface);
-      const paneAnimating = motionStyle !== undefined;
-      const isLeaving = leavingSurface;
-      const isEntering = crossSlideActive && route.kind === workspaceSurfaceKind(surface);
-      return (
-        <Activity key={`activity-${surface}-${handle}`} mode={visible ? "visible" : "hidden"}>
-          {mountContent ? (
-            <div
-              className={[
-                "page-cross-slide-pane",
-                paneAnimating
-                  ? isLeaving
-                    ? "page-cross-slide-leaving"
-                    : "page-cross-slide-entering"
-                  : "page-cross-slide-pane-idle",
-              ].join(" ")}
-              style={motionStyle}
-              onTransitionEnd={isEntering ? crossSlide?.onEnteringTransitionEnd : undefined}
-              aria-hidden={isLeaving ? true : undefined}
-            >
-              {content}
-            </div>
-          ) : null}
-        </Activity>
-      );
-    };
-
     return (
-      <div
-        className={`page-cross-slide-host${crossSlideActive ? "" : " page-cross-slide-host-idle"}`}
-      >
-        {surfaceShell(
-          "task",
-          <TaskWorkspaceRoute
-            kind="task"
-            handle={handle}
-            orchestrationChat={orchestrationChat}
-            detail={detail}
-            reload={reload}
-            outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
-            onGo={go}
-            onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-            onOpenDiff={() => go(taskDiffHash(handle))}
-            onCockpit={applyCockpit}
-            onResult={showResult}
-            onDismiss={() => go(dashboardHash())}
-            pendingConfirmAction={pendingConfirm?.action.action ?? null}
-            onCancelPendingConfirm={cancelPendingConfirm}
-          />,
-        )}
-        {orchestrationChat
-          ? surfaceShell(
-              "session",
-              <TaskWorkspaceRoute
-                kind="session"
-                handle={handle}
-                orchestrationChat={orchestrationChat}
-                detail={detail}
-                reload={reload}
-                outletClassName={
-                  route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
-                }
-                onGo={go}
-                onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-                onOpenDiff={() => go(taskDiffHash(handle))}
-                onCockpit={applyCockpit}
-                onResult={showResult}
-                onDismiss={() => go(dashboardHash())}
-                pendingConfirmAction={pendingConfirm?.action.action ?? null}
-                onCancelPendingConfirm={cancelPendingConfirm}
-              />,
-            )
-          : null}
-        {surfaceShell(
-          "diff",
-          <section
-            className={route.kind === "diff" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
-            data-outlet="diff"
-            data-testid="outlet-diff"
-            data-handle={handle}
-            aria-live="polite"
-          >
-            {detail.status === "loading" ? (
-              <Skeleton testid="task-skeleton" rows={6} />
-            ) : detail.data ? (
-              <DiffReview
-                handle={handle}
-                title={detail.data.title}
-                selectedPr={diffSelectedPr}
-                onBack={() => {
-                  goBack(
-                    resolveTaskWorkspaceHash(handle, {
-                      orchestrationChat,
-                      sessionCapable: detailSessionCapable(
-                        detail.data,
-                        handle,
-                        cockpitRef.current.data,
-                      ),
-                    }),
-                  );
-                }}
-                onSelectPr={(pr) => {
-                  go(taskDiffHash(handle, pr));
-                }}
-              />
-            ) : (
-              <TaskLoadError
-                message={detail.error?.message ?? "Request failed"}
-                onRetry={reload}
-              />
-            )}
-          </section>,
-        )}
-      </div>
+      <WorkspaceStack
+        handle={handle}
+        route={route}
+        surfaces={{
+          task: (
+            <TaskWorkspaceRoute
+              kind="task"
+              handle={handle}
+              orchestrationChat={orchestrationChat}
+              detail={detail}
+              reload={reload}
+              outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
+              onGo={go}
+              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onOpenDiff={() => go(taskDiffHash(handle))}
+              onCockpit={applyCockpit}
+              onResult={showResult}
+              onDismiss={() => go(dashboardHash())}
+              pendingConfirmAction={pendingConfirm?.action.action ?? null}
+              onCancelPendingConfirm={cancelPendingConfirm}
+            />
+          ),
+          session: orchestrationChat ? (
+            <TaskWorkspaceRoute
+              kind="session"
+              handle={handle}
+              orchestrationChat={orchestrationChat}
+              detail={detail}
+              reload={reload}
+              outletClassName={
+                route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
+              }
+              onGo={go}
+              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onOpenDiff={() => go(taskDiffHash(handle))}
+              onCockpit={applyCockpit}
+              onResult={showResult}
+              onDismiss={() => go(dashboardHash())}
+              pendingConfirmAction={pendingConfirm?.action.action ?? null}
+              onCancelPendingConfirm={cancelPendingConfirm}
+            />
+          ) : null,
+          diff: (
+            <section
+              className={route.kind === "diff" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
+              data-outlet="diff"
+              data-testid="outlet-diff"
+              data-handle={handle}
+              aria-live="polite"
+            >
+              {detail.status === "loading" ? (
+                <Skeleton testid="task-skeleton" rows={6} />
+              ) : detail.data ? (
+                <DiffReview
+                  handle={handle}
+                  title={detail.data.title}
+                  selectedPr={diffSelectedPr}
+                  onBack={() => {
+                    goBack(
+                      resolveTaskWorkspaceHash(handle, {
+                        orchestrationChat,
+                        sessionCapable: detailSessionCapable(
+                          detail.data,
+                          handle,
+                          cockpitRef.current.data,
+                        ),
+                      }),
+                    );
+                  }}
+                  onSelectPr={(pr) => {
+                    go(taskDiffHash(handle, pr));
+                  }}
+                />
+              ) : (
+                <TaskLoadError
+                  message={detail.error?.message ?? "Request failed"}
+                  onRetry={reload}
+                />
+              )}
+            </section>
+          ),
+        }}
+      />
     );
   }
 

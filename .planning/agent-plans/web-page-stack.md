@@ -1,8 +1,8 @@
 # Web Cockpit page stack: interactive, native-feel navigation
 
-Status: **Approved 2026-11-12 ("Continue the plan"). D1–D4 decided. Slice 1 done. Slice 2 (App.tsx) waits for #1613 to merge.**
+Status: **Approved 2026-11-12 ("Continue the plan"). D1–D4 decided. Slice 1 merged (#1619). Slice 2 done 2026-11-12, local commit only.**
 Issues: [#1614](https://github.com/mossipcams/ajax-cli/issues/1614) (interactive back), [#1615](https://github.com/mossipcams/ajax-cli/issues/1615) (push/pop moves both pages), [#1608](https://github.com/mossipcams/ajax-cli/issues/1608) (commit threshold).
-Branch: slice 1 is on `fix/web/swipe-commit-rule`, from `origin/main` at 5b81e40f. It doesn't touch any #1613 file. Slices that touch `App.tsx` start after #1613 merges.
+Branches: slice 1 merged as #1619 (4791de60). Slice 2 is on `refactor/web/page-stack-extract`, from `origin/main` at f21cca09, after #1613 merged.
 
 ## Why
 
@@ -125,7 +125,7 @@ Each slice builds, tests and is reviewed on its own. Delegated through the model
    - Files: `navigateSwipe.ts`, `useSwipePageTransition.ts`, `navigateSwipe.test.ts`, `useSwipePageTransition.test.tsx` and `swipeCommitTiming.test.ts`.
    - The 56px-commit assertions are rewritten to the new rule with equal strength. Approving this plan approves that rewrite.
    - This slice is worth shipping on its own, for #1608.
-2. [ ] **Extract layers.** Move workspace-stack rendering out of App.tsx into `app/pageStack/`, with no behaviour change. App.tsx shrinks.
+2. [x] **Extract layers.** Done 2026-11-12 (see Deviations / results). Move workspace-stack rendering out of App.tsx into `app/routes/WorkspaceStack.tsx`, next to `TaskWorkspaceRoute.tsx`, with no behaviour change. App.tsx shrinks. (Deviation: the plan said `app/pageStack/`; `app/routes/` already exists for route surfaces.)
 3. [ ] **Below layer (D4).**
    - Move `RouteScroll`'s offsets map to module scope and export a read function.
    - Add the fixed, inert below layer behind `route-scroll`. Mount it on edge touchstart, on swipe engage, or in the `armed` phase of a pop; unmount it on settle or cancel.
@@ -176,3 +176,11 @@ Each slice builds, tests and is reviewed on its own. Delegated through the model
     - short flicks at 0.43–0.54px/ms commit;
     - a release at −0.22px/ms after passing 50% springs back.
   - CDP touches starting on `xterm-screen` reached the page 450ms late on the loaded host, which the terminal reads as a long-press selection. Start probes off the terminal.
+- **Slice 2, result.**
+  - `WorkspaceStack` takes `handle`, `route` and the three surfaces (`session` is `null` when chat orchestration is off). It owns `usePageCrossSlide`, the visibility rules and the pane shells.
+  - App.tsx still builds the surfaces. It went from 977 to 914 lines.
+  - A line-multiset diff shows the moved lines are unchanged.
+- **Slice 2, scope.** The `App.test.tsx` cross-slide test checked App.tsx source for `page-cross-slide-host-idle` and `page-cross-slide-pane-idle`. Those two assertions now read `WorkspaceStack.tsx?raw`, at the same strength. Every other assertion is unchanged.
+- **Slice 2, verification.**
+  - `web:test` 2006 passed, 9 skipped. `web:check`, `web:lint` and `web:sg` are clean.
+  - Local desktop-chromium e2e did not run: `chromium.launch()` segfaults on this host even with no app code involved. Rely on CI Web E2E.
