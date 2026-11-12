@@ -19,7 +19,7 @@ export function useSheetExit<Card extends HTMLElement = HTMLDivElement>(onClose:
     const scrim = scrimRef.current;
     const card = cardRef.current;
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    if (!scrim || !card || typeof card.animate !== "function" || reducedMotion) {
+    if (!card || typeof card.animate !== "function" || reducedMotion) {
       notify();
       return;
     }
@@ -29,9 +29,16 @@ export function useSheetExit<Card extends HTMLElement = HTMLDivElement>(onClose:
       easing: EXIT_EASING,
       fill: "forwards",
     };
-    scrim.style.pointerEvents = "none";
-    scrim.animate([{ opacity: 0 }], timing);
-    const finished = card.animate([{ transform: "translateY(100%)" }], timing).finished;
+    const dragOffset = /translateY\(\s*([\d.]+)px\s*\)/.exec(card.style.transform);
+    const cardKeyframes: Keyframe[] =
+      dragOffset && Number(dragOffset[1]) > 0
+        ? [{ transform: "translateY(100%)" }]
+        : [{ opacity: 0, transform: "translateY(16px)" }];
+    if (scrim) {
+      scrim.style.pointerEvents = "none";
+      scrim.animate([{ opacity: 0 }], timing);
+    }
+    const finished = card.animate(cardKeyframes, timing).finished;
     finished.then(notify, notify);
   }, [onClose]);
 

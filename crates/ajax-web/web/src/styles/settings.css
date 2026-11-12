@@ -136,6 +136,7 @@
   touch-action: pan-y;
   overscroll-behavior: contain;
   background: var(--paper);
+  animation: sheet-rise var(--dur-sheet) var(--ease-spring);
 }
 
 .training-header {
