@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io;
+use std::process::Output;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
+
+use ajax_core::adapters::docker_sandbox::{parse_ps, ps_argv, top_argv};
 
 use super::os_process;
 
@@ -74,6 +78,53 @@ pub(super) fn background_shells(table: &[ProcessEntry], root: u32) -> Vec<&Proce
 
 pub(super) fn has_background_shell(table: &[ProcessEntry], root: u32) -> bool {
     !background_shells(table, root).is_empty()
+}
+
+pub(super) fn docker_text(
+    run: &dyn Fn(&[&str]) -> io::Result<Output>,
+    argv: &[String],
+) -> Option<String> {
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let output = run(&args).ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub(super) fn container_table(
+    run: &dyn Fn(&[&str]) -> io::Result<Output>,
+    server: &str,
+    key: &str,
+) -> Option<Vec<ProcessEntry>> {
+    let listing = docker_text(run, &ps_argv(server, key))?;
+    let mut table = Vec::new();
+    for row in parse_ps(&listing) {
+        let processes = docker_text(run, &top_argv(&row.id))?;
+        table.extend(parse_top(&processes));
+    }
+    Some(table)
+}
+
+pub(super) fn parse_top(output: &str) -> Vec<ProcessEntry> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let ppid = fields.next()?.parse().ok()?;
+            let comm = fields.collect::<Vec<_>>().join(" ");
+            (!comm.is_empty()).then_some(ProcessEntry { pid, ppid, comm })
+        })
+        .collect()
+}
+
+pub(super) fn has_container_background_shell(table: &[ProcessEntry]) -> bool {
+    let pids: HashSet<u32> = table.iter().map(|entry| entry.pid).collect();
+    table
+        .iter()
+        .filter(|entry| !pids.contains(&entry.ppid))
+        .any(|root| has_background_shell(table, root.pid))
 }
 
 pub(super) fn is_shell(comm: &str) -> bool {

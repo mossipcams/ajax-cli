@@ -69,6 +69,58 @@ pub fn task_key(cwd: &Path) -> String {
     format!("{slug}-{digest:08x}")
 }
 
+pub fn server_id(state_dir: &Path) -> String {
+    format!(
+        "{:016x}",
+        stable_hash(state_dir.as_os_str().as_encoded_bytes())
+    )
+}
+
+pub fn ps_argv(server: &str, key: &str) -> Vec<String> {
+    let mut argv = strings(&["ps", "--no-trunc"]);
+    argv.extend(pair("--filter", format!("label=ajax.server={server}")));
+    argv.extend(pair("--filter", format!("label=ajax.task_key={key}")));
+    argv.extend(pair(
+        "--format",
+        "{{.ID}} {{.Label \"ajax.boot\"}} {{.Label \"ajax.server\"}}",
+    ));
+    argv
+}
+
+pub fn top_argv(container: &str) -> Vec<String> {
+    let mut argv = strings(&["top"]);
+    argv.push(container.to_string());
+    argv.extend(strings(&["-eo", "pid,ppid,comm"]));
+    argv
+}
+
+pub fn rm_argv(container: &str) -> Vec<String> {
+    let mut argv = strings(&["rm", "-f"]);
+    argv.push(container.to_string());
+    argv
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ContainerRow {
+    pub id: String,
+    pub boot_id: String,
+    pub server: String,
+}
+
+pub fn parse_ps(output: &str) -> Vec<ContainerRow> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some(ContainerRow {
+                id: fields.next()?.to_string(),
+                boot_id: fields.next()?.to_string(),
+                server: fields.next()?.to_string(),
+            })
+        })
+        .collect()
+}
+
 pub struct DockerLaunch<'a> {
     pub home: &'a Path,
     pub uid: u32,
@@ -77,6 +129,7 @@ pub struct DockerLaunch<'a> {
     pub git_common_dir: Option<&'a Path>,
     pub extra_read_write: &'a [PathBuf],
     pub boot_id: &'a str,
+    pub server: &'a str,
     pub instance: &'a str,
     pub tty: bool,
     pub pass_gh_token: bool,
@@ -101,6 +154,7 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     argv.push(format!("ajax-{key}-{}", launch.instance));
     argv.extend(pair("--label", format!("ajax.boot={}", launch.boot_id)));
     argv.extend(pair("--label", format!("ajax.task_key={key}")));
+    argv.extend(pair("--label", format!("ajax.server={}", launch.server)));
     argv.extend(pair("--label", format!("ajax.worktree={cwd}")));
     argv.extend(pair("-e", format!("HOME={home}")));
     if exists(&sock) {
@@ -228,6 +282,7 @@ mod tests {
     const IMAGE: &str = "ajax-agent:test";
     const SOCK: &str = "/Users/matt/.config/ajax/ssh/agent.sock";
     const INSTANCE: &str = "1f-2";
+    const SERVER: &str = "5a1c0e2f9b3d4e61";
 
     fn sample<'a>(home: &'a Path, cwd: &'a Path, args: &'a [String]) -> DockerLaunch<'a> {
         DockerLaunch {
@@ -238,6 +293,7 @@ mod tests {
             git_common_dir: Some(Path::new(COMMON)),
             extra_read_write: &[],
             boot_id: "boot-1",
+            server: SERVER,
             instance: INSTANCE,
             tty: false,
             pass_gh_token: false,
@@ -308,7 +364,7 @@ mod tests {
         let argv = docker_argv(&sample(home, cwd, &args), |_| true);
         let expected = words(&format!(
             "run --rm -i --init --user 501:20 --network host --name ajax-{KEY}-{INSTANCE} \
-             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.worktree={CWD} -e HOME={HOME} \
+             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.server={SERVER} --label ajax.worktree={CWD} -e HOME={HOME} \
              -e SSH_AUTH_SOCK={SOCK} -w {CWD} -v ajax-agent-home:{HOME} \
              -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v {COMMON}:{COMMON} \
@@ -352,7 +408,7 @@ mod tests {
         let argv = docker_argv(&launch, |_| false);
         let expected = words(&format!(
             "run --rm -i -t --init --user 501:20 --network host --name ajax-{KEY}-{INSTANCE} \
-             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.worktree={CWD} -e HOME={HOME} -w {CWD} \
+             --label ajax.boot=boot-1 --label ajax.task_key={KEY} --label ajax.server={SERVER} --label ajax.worktree={CWD} -e HOME={HOME} -w {CWD} \
              -v ajax-agent-home:{HOME} -v ajax-rustup:/opt/rustup -v ajax-cargo-registry:/opt/cargo/registry \
              -v ajax-cargo-git:/opt/cargo/git -v {CWD}:{CWD} -v /var/folders/ajax/events:/var/folders/ajax/events \
              -v ajax-target-{KEY}:{CWD}/target -v ajax-node-modules-{KEY}:{CWD}/node_modules \
@@ -607,6 +663,59 @@ mod tests {
         );
 
         assert_eq!(check_ready(IMAGE, |_| Ok(output(0))), Ok(()));
+    }
+
+    #[test]
+    fn server_id_is_a_stable_hex_digest_of_the_state_dir() {
+        let id = server_id(Path::new("/Users/matt/.local/state/ajax"));
+
+        assert_eq!(id, server_id(Path::new("/Users/matt/.local/state/ajax")));
+        assert_eq!(id.len(), 16);
+        assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(id, server_id(Path::new("/Users/matt/.ajax-dev")));
+    }
+
+    #[test]
+    fn ps_top_and_rm_argv_are_exact() {
+        assert_eq!(
+            ps_argv("srv", "key"),
+            strings(&[
+                "ps",
+                "--no-trunc",
+                "--filter",
+                "label=ajax.server=srv",
+                "--filter",
+                "label=ajax.task_key=key",
+                "--format",
+                "{{.ID}} {{.Label \"ajax.boot\"}} {{.Label \"ajax.server\"}}",
+            ])
+        );
+        assert_eq!(
+            top_argv("abc"),
+            strings(&["top", "abc", "-eo", "pid,ppid,comm"])
+        );
+        assert_eq!(rm_argv("abc"), strings(&["rm", "-f", "abc"]));
+    }
+
+    #[test]
+    fn parse_ps_reads_id_boot_and_server_and_skips_malformed_rows() {
+        let rows = parse_ps("c1 boot-1 srv\nc2 boot-2 srv\n\nbroken\n");
+
+        assert_eq!(
+            rows,
+            vec![
+                ContainerRow {
+                    id: "c1".to_string(),
+                    boot_id: "boot-1".to_string(),
+                    server: "srv".to_string(),
+                },
+                ContainerRow {
+                    id: "c2".to_string(),
+                    boot_id: "boot-2".to_string(),
+                    server: "srv".to_string(),
+                },
+            ]
+        );
     }
 
     fn playwright_base(text: &str) -> &str {

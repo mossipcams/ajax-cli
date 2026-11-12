@@ -1,5 +1,7 @@
-use super::process_tree;
+use super::process_tree::{self, container_table, has_container_background_shell};
 use super::task_session::TaskSessionState;
+use crate::adapters::program;
+use ajax_core::adapters::docker_sandbox::task_key;
 use std::time::{Duration, Instant, SystemTime};
 
 pub(super) const END_DEBOUNCE: Duration = Duration::from_secs(5);
@@ -100,6 +102,11 @@ pub(super) fn probe(root: Option<u32>, max_age: Duration) -> Option<bool> {
     Some(process_tree::has_background_shell(&table, root))
 }
 
+fn probe_containers(server: &str, key: &str) -> Option<bool> {
+    let table = container_table(&program::sandbox_docker_run, server, key)?;
+    Some(has_container_background_shell(&table))
+}
+
 impl TaskSessionState {
     pub(super) async fn poll_background_jobs(&mut self) {
         let root = self
@@ -118,10 +125,16 @@ impl TaskSessionState {
                 .set_background(false, SystemTime::now()),
             Step::Poll(pid) => {
                 let max_age = if held { POLL_MAX_AGE } else { IDLE_POLL_EVERY };
-                let read = tokio::task::spawn_blocking(move || probe(Some(pid), max_age))
-                    .await
-                    .ok()
-                    .flatten();
+                let server = program::sandbox_docker_server();
+                let key = self.worktree_path.as_deref().map(task_key);
+                let read = tokio::task::spawn_blocking(move || match (server, key) {
+                    (None, _) => probe(Some(pid), max_age),
+                    (Some(server), Some(key)) => probe_containers(&server, &key),
+                    (Some(_), None) => None,
+                })
+                .await
+                .ok()
+                .flatten();
                 let next = self.background.record_poll(read, held, now);
                 if next == held {
                     return;

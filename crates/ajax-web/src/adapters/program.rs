@@ -22,6 +22,7 @@ const TRUST_STORE_UNSET: &str =
     "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off";
 
 static SANDBOX_BOOT_ID: OnceLock<String> = OnceLock::new();
+static SANDBOX_SERVER_ID: OnceLock<String> = OnceLock::new();
 
 static RESOLVED: Mutex<Option<HashMap<String, Option<PathBuf>>>> = Mutex::new(None);
 static SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
@@ -129,6 +130,10 @@ pub fn set_sandbox_boot_id(id: &str) {
     let _ = SANDBOX_BOOT_ID.set(id.to_string());
 }
 
+pub fn set_sandbox_server_id(id: &str) {
+    let _ = SANDBOX_SERVER_ID.set(id.to_string());
+}
+
 pub(crate) fn sandboxed_harness_command(
     program: &str,
     args: &[String],
@@ -158,6 +163,21 @@ pub(crate) fn probe_dir() -> io::Result<PathBuf> {
 
 pub(crate) fn sandbox_on() -> bool {
     sandbox_context().0
+}
+
+pub(crate) fn sandbox_docker_server() -> Option<String> {
+    #[cfg(test)]
+    if TEST_SANDBOX.with(|slot| slot.borrow().is_none()) {
+        return None;
+    }
+    let (enabled, host) = sandbox_context();
+    enabled.then_some(host.server)
+}
+
+pub(crate) fn sandbox_docker_run(args: &[&str]) -> io::Result<Output> {
+    let (_, host) = sandbox_context();
+    let docker = (host.resolve)().map_err(io::Error::other)?;
+    (host.run)(&docker, args)
 }
 
 fn sandbox_context() -> (bool, DockerHost) {
@@ -230,6 +250,7 @@ struct DockerHost {
     gid: u32,
     pass_gh_token: bool,
     boot_id: String,
+    server: String,
 }
 
 impl DockerHost {
@@ -243,6 +264,10 @@ impl DockerHost {
             gid: getgid().as_raw(),
             pass_gh_token: env::var_os("GH_TOKEN").is_some(),
             boot_id: SANDBOX_BOOT_ID
+                .get()
+                .cloned()
+                .unwrap_or_else(|| "unset".to_string()),
+            server: SANDBOX_SERVER_ID
                 .get()
                 .cloned()
                 .unwrap_or_else(|| "unset".to_string()),
@@ -283,6 +308,7 @@ fn docker_launch(
         git_common_dir: common.as_deref(),
         extra_read_write: &[],
         boot_id: &host.boot_id,
+        server: &host.server,
         instance: &instance,
         tty: false,
         pass_gh_token: host.pass_gh_token,
@@ -358,6 +384,7 @@ pub(crate) fn with_test_sandbox<R>(enabled: bool, run: impl FnOnce() -> R) -> R 
         gid: 20,
         pass_gh_token: false,
         boot_id: "boot-test".to_string(),
+        server: "server-test".to_string(),
     };
     TEST_SANDBOX.with(|slot| *slot.borrow_mut() = Some((enabled, host)));
     let result = run();
@@ -541,6 +568,7 @@ mod tests {
             gid: 20,
             pass_gh_token: false,
             boot_id: "boot-test".to_string(),
+            server: "server-test".to_string(),
         }
     }
 
@@ -791,6 +819,18 @@ mod tests {
         assert!(command
             .get_args()
             .any(|arg| arg == "ajax-not-a-real-program"));
+    }
+
+    #[test]
+    fn a_sandboxed_launch_labels_its_container_with_the_server_id() {
+        let command = with_test_sandbox(true, || {
+            probe_command("ajax-not-a-real-program", &["auth", "status"])
+        })
+        .expect("a docker launch needs no host install");
+
+        assert!(command
+            .get_args()
+            .any(|arg| arg == "ajax.server=server-test"));
     }
 
     #[test]

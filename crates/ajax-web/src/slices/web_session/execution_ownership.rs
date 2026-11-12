@@ -1,4 +1,6 @@
 use super::SessionStorage;
+use crate::adapters::program;
+use ajax_core::adapters::docker_sandbox;
 use ajax_core::registry::OwnerClaim;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,6 +19,8 @@ const STALE_AFTER_MS: i64 = 30_000;
 impl ExecutionOwnership {
     pub(crate) fn new(mut storage: SessionStorage) -> Self {
         let boot_id = random_boot_id();
+        program::set_sandbox_boot_id(&boot_id);
+        program::set_sandbox_server_id(&docker_sandbox::server_id(&storage.state_dir));
         storage.owner_fence = Default::default();
         Self {
             storage,

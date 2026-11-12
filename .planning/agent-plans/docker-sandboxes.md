@@ -173,9 +173,10 @@ The host now sees only the `docker` client:
 
 - `web_session/background_jobs.rs` finds the task's containers with
   `docker ps --filter label=ajax.task_key=<key>` and reads `docker top`.
-- `orphan_sweep.rs` runs `docker rm -f` on containers whose `ajax.boot` label
-  is not the current boot, because a SIGKILLed client may leave the
-  container running.
+- `orphan_sweep.rs` runs `docker rm -f` only on this server's
+  (`ajax.server`) prior-boot containers of sessions that startup recovery
+  marks interrupted (never adoptable ones), because a SIGKILLed client may
+  leave the container running. Stable and dev web servers share one engine.
 - Cancel signals the client (`docker run` proxies to `--init`), with
   `docker kill` as the fallback.
 - The session shim keeps holding the client's stdio, so durable adoption is
@@ -203,7 +204,7 @@ uses a releasing title, so no release ships both backends.
   `~/.config/ajax` and the registry DBs are never mounted (keeps #1396 and
   #1415 covered). Also fail-closed tests for missing docker, daemon down, and
   image building.
-- [ ] **Packet 2: web launch sites, sign-in and observation.** Slice 2a (launch sites: `program.rs`, `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `session_client.rs`, `cursor_sdk_spawn.rs`) accepted 2026-11-12. Slice 2b (sign-in probes, Cursor login, model listing in the container from a dedicated empty probe dir under the OS temp dir; unique container names `ajax-<task_key>-<pid>-<seq>` with an `ajax.task_key` label) accepted 2026-11-12. Remaining: 2c observation (look containers up by the `ajax.task_key` label, not by name) + startup (`background_jobs.rs`, `orphan_sweep.rs`, `process_tree_tests.rs`, image build at web startup, wiring `set_sandbox_boot_id`), 2d docs. `program.rs`,
+- [ ] **Packet 2: web launch sites, sign-in and observation.** Slice 2a (launch sites: `program.rs`, `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `session_client.rs`, `cursor_sdk_spawn.rs`) accepted 2026-11-12. Slice 2b (sign-in probes, Cursor login, model listing in the container from a dedicated empty probe dir under the OS temp dir; unique container names `ajax-<task_key>-<pid>-<seq>` with an `ajax.task_key` label) accepted 2026-11-12. Slice 2c (observation: `ajax.server` label from the state dir, boot/server ids set in `ExecutionOwnership::new`, background jobs via `docker ps` + `docker top`, orphan containers removed only for prior-boot, non-adoptable `recovered_handles` and never another server's) accepted 2026-11-12. Remaining: + startup (`background_jobs.rs`, `orphan_sweep.rs`, `process_tree_tests.rs`, image build at web startup, wiring `set_sandbox_boot_id`), 2d docs. `program.rs`,
   `acp_launch.rs`, `jsonl_process.rs`, `claude_sdk_spawn.rs`, `agent_auth.rs`,
   `cursor_login.rs`, `session_models.rs`, `background_jobs.rs`,
   `orphan_sweep.rs`, `process_tree_tests.rs` fixtures, image ensure at
@@ -233,7 +234,8 @@ uses a releasing title, so no release ships both backends.
      `scripts/run-delegate` round completes
    - [ ] `gh auth status`; commit and push the canary branch
    - [ ] `CI=1 npm run web:smoke` passes; workspace nextest time noted
-   - [ ] a `sleep 60 &` job shows in the background-jobs indicator
+   - [ ] a `sleep 60 &` job shows in the background-jobs indicator (proves the
+     `docker ps` label format and `docker top -eo pid,ppid,comm` parsing)
    - [ ] stdio stays clean over a long chat (no garbled or dropped events)
    - [ ] from inside the container, minting a web session cookie on :8787 or
      :8788 fails (host networking makes #1413 load-bearing)
@@ -310,3 +312,9 @@ work stays "start a task in repo B").
   Cursor SDK constants instead of duplicating them). Orchestrator gate: fmt ok,
   workspace clippy ok, 2836 passed, 1 skipped. Known overhead: every sandboxed
   probe runs `docker info` and `image inspect` first.
+- 2026-11-12: slice 2c accepted (Haiku). Orchestrator reviewed the sweep set
+  (`recovered_handles` excludes adoptable sessions in both recovery paths)
+  and re-ran the gate: 2848 passed, 1 skipped. File sizes: `program.rs` 860,
+  `docker_sandbox.rs` 741 lines (under the 1,000 hard limit; do not grow them
+  further without splitting). Untested live: `docker ps` label format and
+  `docker top -eo` output; add both to the canary.
