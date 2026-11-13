@@ -5,6 +5,7 @@ import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import App from "./App";
 import appSource from "./App.tsx?raw";
 import appViewportSource from "./AppViewport.tsx?raw";
+import workspaceStackSource from "./routes/WorkspaceStack.tsx?raw";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 
@@ -371,8 +372,8 @@ describe("App shell", () => {
       /\.page-cross-slide-entering\s*\{[^}]*will-change:\s*transform/,
     );
     expect(stylesSource).not.toMatch(/\.page-cross-slide-pane\s*\{[^}]*will-change:\s*transform/);
-    expect(appSource).toMatch(/page-cross-slide-host-idle/);
-    expect(appSource).toMatch(/page-cross-slide-pane-idle/);
+    expect(workspaceStackSource).toMatch(/page-cross-slide-host-idle/);
+    expect(workspaceStackSource).toMatch(/page-cross-slide-pane-idle/);
   });
 
   it("hides the xterm DOM scrollbar the viewport override cannot reach", () => {
