@@ -908,7 +908,7 @@ function AppContent() {
         >
           {belowRoute ? renderRouteOutlet(belowRoute) : null}
         </PageStackBelow>
-        <RouteScroll>{routeOutlet}</RouteScroll>
+        <RouteScroll restoreKey={leavingStackHandle}>{routeOutlet}</RouteScroll>
       </AppShell>
 
       {pendingConfirm ? (
