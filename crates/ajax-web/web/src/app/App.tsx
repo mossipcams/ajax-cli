@@ -860,20 +860,21 @@ function AppContent() {
   // Chat and the Diff that Back returns to Chat are one chrome-less workspace (#1604).
   // Until the cockpit and this task's detail load, treat the task as session-capable so a cold
   // Diff load never flashes chrome (#1606).
+  const chromeRoute = leavingStackHandle && leavingRoute ? leavingRoute : route;
   const taskSessionLoaded =
-    detail.data?.qualified_handle === route.handle &&
+    detail.data?.qualified_handle === chromeRoute.handle &&
     (cockpit.data !== null || detail.data?.session_capable === false);
   const diffReturnsToChat =
-    route.kind === "diff" &&
-    route.handle != null &&
-    resolveTaskWorkspaceHash(route.handle, {
+    chromeRoute.kind === "diff" &&
+    chromeRoute.handle != null &&
+    resolveTaskWorkspaceHash(chromeRoute.handle, {
       orchestrationChat,
-      sessionCapable: !taskSessionLoaded || detailSessionCapable(detail.data, route.handle, cockpit.data),
-    }) === sessionHash(route.handle);
-  const isChatWorkspace = (route.kind === "session" && orchestrationChat) || diffReturnsToChat;
+      sessionCapable:
+        !taskSessionLoaded || detailSessionCapable(detail.data, chromeRoute.handle, cockpit.data),
+    }) === sessionHash(chromeRoute.handle);
+  const isChatWorkspace = (chromeRoute.kind === "session" && orchestrationChat) || diffReturnsToChat;
   const hideBottomNav = isChatWorkspace;
-
-  const nav = hideBottomNav ? null : (
+  const bottomNav = (
     <nav className="bottom-nav" aria-label="Mobile navigation">
       <button
         type="button"
@@ -891,6 +892,7 @@ function AppContent() {
       </button>
     </nav>
   );
+  const nav = hideBottomNav ? null : bottomNav;
 
   return (
     <AppViewport>
@@ -899,7 +901,11 @@ function AppContent() {
         nav={nav}
         className={isChatWorkspace ? "app-shell--session" : undefined}
       >
-        <PageStackBelow route={belowRoute}>
+        <PageStackBelow
+          route={belowRoute}
+          chrome={isChatWorkspace ? chrome : null}
+          nav={isChatWorkspace ? bottomNav : null}
+        >
           {belowRoute ? renderRouteOutlet(belowRoute) : null}
         </PageStackBelow>
         <RouteScroll>{routeOutlet}</RouteScroll>

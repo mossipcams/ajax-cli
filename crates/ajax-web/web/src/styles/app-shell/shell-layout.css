@@ -209,9 +209,14 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   overflow: hidden;
   pointer-events: none;
   visibility: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-stack-below-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   width: min(var(--shell), 100%);
   margin: 0 auto;
   padding: 16px calc(20px + env(safe-area-inset-right)) 48px

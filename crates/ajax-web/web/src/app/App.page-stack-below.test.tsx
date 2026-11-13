@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, act, within } from "@testing-library/react";
+import { render, screen, act, within, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
-import { taskDiffHash, taskHash } from "@/shared/lib/routes";
+import { sessionHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
 
 function setHash(hash: string) {
   window.location.hash = hash;
@@ -122,10 +122,10 @@ describe("App page-stack below layer", () => {
     });
 
     // eslint-disable-next-line testing-library/no-node-access -- the wrapper has no test id; its transform is the contract
-    const content = screen.getByTestId("page-stack-below").querySelector(
-      ".page-stack-below-content",
+    const belowScroll = screen.getByTestId("page-stack-below").querySelector(
+      ".page-stack-below-scroll",
     ) as HTMLElement;
-    expect(content).toHaveStyle({ transform: "translate3d(0, -300px, 0)" });
+    expect(belowScroll).toHaveStyle({ transform: "translate3d(0, -300px, 0)" });
   });
 
   it("never pulls the list from a drag on the inert below copy", async () => {
@@ -184,5 +184,74 @@ describe("App page-stack below layer", () => {
       diff.dispatchEvent(touch("touchend", 4, 40));
     });
     expect(screen.queryByTestId("page-stack-below")).toBeNull();
+  });
+
+  function gestureTarget() {
+    return screen.getByTestId("session-chat");
+  }
+
+  it("carries the dashboard chrome and nav in the below copy on a chat workspace", async () => {
+    render(<App />);
+    setHash(sessionHash("web/fix-login"));
+    await waitFor(() => expect(gestureTarget()).toBeTruthy());
+    await act(async () => {
+      gestureTarget().dispatchEvent(touch("touchstart", 4, 40));
+    });
+
+    const below = screen.getByTestId("page-stack-below");
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the copy carries both elements
+    expect(below.querySelectorAll(".cockpit-chrome").length).toBe(1);
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the copy carries both elements
+    expect(below.querySelectorAll(".bottom-nav").length).toBe(1);
+    // eslint-disable-next-line testing-library/no-node-access -- every chrome element must be inside the inert copy
+    for (const chromeEl of Array.from(document.querySelectorAll(".cockpit-chrome"))) {
+      expect(below.contains(chromeEl)).toBe(true);
+    }
+  });
+
+  it("carries neither chrome nor nav in the below copy on a terminal task page", async () => {
+    render(<App />);
+    setHash(taskHash("web/fix-login"));
+    const detail = await screen.findByTestId("task-detail");
+    await act(async () => {
+      detail.dispatchEvent(touch("touchstart", 4, 40));
+    });
+
+    const below = screen.getByTestId("page-stack-below");
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the copy carries neither element
+    expect(below.querySelectorAll(".cockpit-chrome").length).toBe(0);
+    // eslint-disable-next-line testing-library/no-node-access -- asserting the copy carries neither element
+    expect(below.querySelectorAll(".bottom-nav").length).toBe(0);
+  });
+
+  it("keeps chrome in the below copy through a committed back swipe from a chat workspace", async () => {
+    render(<App />);
+    setHash(sessionHash("web/fix-login"));
+    await waitFor(() => expect(gestureTarget()).toBeTruthy());
+
+    vi.useFakeTimers();
+    const halfWidth = Math.floor(window.innerWidth / 2);
+    await act(async () => {
+      gestureTarget().dispatchEvent(touch("touchstart", 4, 40, undefined, 1000));
+      gestureTarget().dispatchEvent(touch("touchmove", 30, 42, undefined, 1150));
+      gestureTarget().dispatchEvent(touch("touchmove", halfWidth + 60, 42, undefined, 1250));
+      gestureTarget().dispatchEvent(touch("touchend", halfWidth + 60, 42, undefined, 1300));
+    });
+
+    const below = screen.getByTestId("page-stack-below");
+    expect(below).toBeTruthy();
+    // eslint-disable-next-line testing-library/no-node-access -- every chrome element must be inside the inert copy
+    const chromeDuringSlide = Array.from(document.querySelectorAll(".cockpit-chrome"));
+    expect(chromeDuringSlide.length).toBeGreaterThan(0);
+    for (const chromeEl of chromeDuringSlide) {
+      expect(below.contains(chromeEl)).toBe(true);
+    }
+
+    await act(() => vi.advanceTimersByTimeAsync(3000));
+
+    expect(screen.queryByTestId("page-stack-below")).toBeNull();
+    // eslint-disable-next-line testing-library/no-node-access -- the settled chrome belongs to the main shell
+    const mainChrome = Array.from(document.querySelectorAll(".cockpit-chrome"));
+    expect(mainChrome.length).toBeGreaterThan(0);
   });
 });
