@@ -1,15 +1,25 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::thread;
+use std::time::Duration;
 
+use nix::unistd::{getgid, getuid};
+
+use super::docker_sandbox::{
+    check_ready, docker_argv, ensure_task_volumes, image_tag, resolve_docker, stable_hash,
+    task_key, DockerLaunch,
+};
 use super::trusted_git::{self, TrustedGit};
-
-const PROFILE_JSON: &str = include_str!("nono_agent_profile.json");
-const PROFILE_FILE: &str = "ajax-agent.json";
-const LOCAL_FILE: &str = "local.json";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct GitGrants {
@@ -27,86 +37,6 @@ pub fn sandbox_enabled_from(value: Option<&str>) -> bool {
 
 pub fn sandbox_enabled() -> bool {
     sandbox_enabled_from(env::var("AJAX_SANDBOX").ok().as_deref())
-}
-
-pub fn write_profile(dir: &Path) -> std::io::Result<PathBuf> {
-    fs::create_dir_all(dir)?;
-    let content = profile_content(dir)?;
-    let path = dir.join(PROFILE_FILE);
-    if fs::read_to_string(&path).is_ok_and(|existing| existing == content) {
-        return Ok(path);
-    }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    let tmp = dir.join(format!("{PROFILE_FILE}.{}.{nanos}.tmp", std::process::id()));
-    fs::write(&tmp, content)?;
-    if let Err(err) = fs::rename(&tmp, &path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err);
-    }
-    Ok(path)
-}
-
-fn profile_content(dir: &Path) -> std::io::Result<String> {
-    let local_path = dir.join(LOCAL_FILE);
-    let local = match fs::read_to_string(&local_path) {
-        Ok(local) => local,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(PROFILE_JSON.to_string())
-        }
-        Err(err) => return Err(err),
-    };
-    let invalid = |err: serde_json::Error| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("{}: {err}", local_path.display()),
-        )
-    };
-    let mut profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).map_err(invalid)?;
-    merge_json(&mut profile, serde_json::from_str(&local).map_err(invalid)?);
-    serde_json::to_string_pretty(&profile).map_err(invalid)
-}
-
-fn merge_json(base: &mut serde_json::Value, extra: serde_json::Value) {
-    use serde_json::Value;
-    match (base, extra) {
-        (Value::Object(base), Value::Object(extra)) => {
-            for (key, value) in extra {
-                merge_json(base.entry(key).or_insert(Value::Null), value);
-            }
-        }
-        (Value::Array(base), Value::Array(extra)) => base.extend(extra),
-        (base, extra) => *base = extra,
-    }
-}
-
-pub fn default_profile_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono"))
-}
-
-pub fn resolve_nono() -> Result<PathBuf, String> {
-    let on_path = env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths)
-            .map(|dir| dir.join("nono"))
-            .find(|candidate| candidate.is_file())
-    });
-    let home = env::var_os("HOME").map(PathBuf::from);
-    let fixed =
-        [
-            PathBuf::from("/opt/homebrew/bin/nono"),
-            PathBuf::from("/usr/local/bin/nono"),
-        ]
-        .into_iter()
-        .chain(home.into_iter().flat_map(|home| {
-            [".cargo/bin/nono", ".nix-profile/bin/nono"].map(|rel| home.join(rel))
-        }));
-    on_path
-        .or_else(|| fixed.into_iter().find(|candidate| candidate.is_file()))
-        .ok_or_else(|| {
-            "agent sandbox is on but nono is not installed; run `brew install nono` or set AJAX_SANDBOX=off"
-                .to_string()
-        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -175,109 +105,299 @@ fn linked_worktree(worktree: &Path) -> Option<LinkedWorktree> {
     Some(LinkedWorktree { gitdir, common })
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn wrap_argv(
-    nono: &Path,
-    profile: &Path,
-    worktree: &Path,
-    read: &[PathBuf],
-    read_write: &[PathBuf],
-    read_write_files: &[PathBuf],
-    program: &str,
-    args: &[String],
-) -> (String, Vec<String>) {
-    let mut argv: Vec<String> = [
-        "-s",
-        "run",
-        "--allow-cwd",
-        "--no-rollback-prompt",
-        "--profile",
-    ]
-    .map(String::from)
-    .into();
-    argv.push(profile.display().to_string());
-    argv.push("--workdir".into());
-    argv.push(worktree.display().to_string());
-    for path in read {
-        argv.push("--read".into());
-        argv.push(path.display().to_string());
-    }
-    for path in read_write {
-        argv.push("--allow".into());
-        argv.push(path.display().to_string());
-    }
-    for path in read_write_files {
-        argv.push("--allow-file".into());
-        argv.push(path.display().to_string());
-    }
-    argv.push("--".into());
-    argv.push(program.into());
-    if Path::new(program).file_name() == Some(OsStr::new("codex")) {
-        argv.push("-c".into());
-        argv.push("sandbox_mode=\"danger-full-access\"".into());
-    }
-    argv.extend(args.iter().cloned());
-    (nono.display().to_string(), argv)
+const HOME_UNSET: &str =
+    "agent sandbox is on but HOME is unset, so the agent home cannot be mounted; set HOME or AJAX_SANDBOX=off";
+const TRUST_STORE_UNSET: &str =
+    "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off";
+const SSH_AGENT_SOCK: &str = ".config/ajax/ssh/agent.sock";
+static LAUNCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static SSH_AGENT_RELAY: OnceLock<Option<String>> = OnceLock::new();
+static PARENTS_REPAIRED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+const HOME_REPAIR_FAILED: &str = "agent sandbox could not repair ownership of the ajax-agent-home volume; set AJAX_SANDBOX=off to run unsandboxed";
+
+#[derive(Clone)]
+pub struct DockerHost {
+    pub resolve: fn() -> Result<PathBuf, String>,
+    pub run: fn(&Path, &[&str]) -> io::Result<Output>,
+    pub home: Option<PathBuf>,
+    pub store: Option<PathBuf>,
+    pub uid: u32,
+    pub gid: u32,
+    pub pass_gh_token: bool,
+    pub boot_id: String,
+    pub server: String,
 }
 
-pub fn sandbox_command(
-    enabled: bool,
-    nono: impl FnOnce() -> Result<PathBuf, String>,
-    profile_dir: Option<PathBuf>,
-    cwd: &Path,
-    extra_read_write: &[PathBuf],
+impl DockerHost {
+    pub fn process(boot_id: String, server: String) -> Self {
+        Self {
+            resolve: resolve_docker,
+            run: run_docker,
+            home: env::var_os("HOME").map(PathBuf::from),
+            store: trusted_git::default_store(),
+            uid: getuid().as_raw(),
+            gid: getgid().as_raw(),
+            pass_gh_token: env::var_os("GH_TOKEN").is_some(),
+            boot_id,
+            server,
+        }
+    }
+}
+
+fn run_docker(docker: &Path, args: &[&str]) -> io::Result<Output> {
+    Command::new(docker)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+}
+
+/// Force-removes the launched container when dropped so killing the `docker run` client never leaves the agent running.
+pub struct ContainerReaper {
+    docker: PathBuf,
+    name: String,
+}
+
+impl ContainerReaper {
+    pub fn for_launch(docker: &Path, argv: &[String]) -> Option<Self> {
+        let index = argv.iter().position(|arg| arg == "--name")?;
+        Some(Self {
+            docker: docker.to_path_buf(),
+            name: argv.get(index + 1)?.clone(),
+        })
+    }
+}
+
+impl Drop for ContainerReaper {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.docker)
+            .args(["rm", "-f", &self.name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+pub fn ssh_agent_relay(socket: &Path) -> Option<String> {
+    if !socket.exists() {
+        return None;
+    }
+    SSH_AGENT_RELAY
+        .get_or_init(|| start_ssh_agent_relay(socket))
+        .clone()
+}
+
+fn start_ssh_agent_relay(socket: &Path) -> Option<String> {
+    let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, stable_relay_port(socket))) {
+        Ok(listener) => listener,
+        Err(_) => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok()?,
+    };
+    let addr = listener.local_addr().ok()?;
+    let socket = socket.to_path_buf();
+    thread::Builder::new()
+        .name("ajax-ssh-agent-relay".to_string())
+        .spawn(move || accept_ssh_agent_connections(&listener, &socket))
+        .ok()?;
+    Some(addr.to_string())
+}
+
+fn stable_relay_port(socket: &Path) -> u16 {
+    20_000 + (stable_hash(socket.as_os_str().as_bytes()) % 20_000) as u16
+}
+
+fn accept_ssh_agent_connections(listener: &TcpListener, socket: &Path) {
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let socket = socket.to_path_buf();
+                let _ = thread::Builder::new().spawn(move || {
+                    if let Err(err) = relay_ssh_agent_connection(stream, &socket) {
+                        tracing::debug!(error = %err, "ssh agent relay connection failed");
+                    }
+                });
+            }
+            Err(err) => {
+                tracing::debug!(error = %err, "ssh agent relay accept failed");
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+fn relay_ssh_agent_connection(tcp: TcpStream, socket: &Path) -> io::Result<()> {
+    let agent = UnixStream::connect(socket)?;
+    let mut tcp_in = tcp.try_clone()?;
+    let mut agent_out = agent.try_clone()?;
+    let (tcp_hangup, agent_hangup) = (tcp.try_clone()?, agent.try_clone()?);
+    let upstream = thread::Builder::new().spawn(move || {
+        let _ = io::copy(&mut tcp_in, &mut agent_out);
+        let _ = tcp_hangup.shutdown(Shutdown::Both);
+        let _ = agent_hangup.shutdown(Shutdown::Both);
+    })?;
+    let mut agent_in = agent;
+    let mut tcp_out = tcp;
+    let _ = io::copy(&mut agent_in, &mut tcp_out);
+    let _ = tcp_out.shutdown(Shutdown::Both);
+    let _ = agent_in.shutdown(Shutdown::Both);
+    let _ = upstream.join();
+    Ok(())
+}
+
+pub fn docker_command(
+    host: &DockerHost,
     program: &str,
     args: &[String],
-) -> Result<(String, Vec<String>), String> {
-    if !enabled {
-        return Ok((program.to_string(), args.to_vec()));
-    }
-    let nono = nono()?;
-    let dir = profile_dir.ok_or_else(|| {
-        "agent sandbox is on but HOME is unset, so no profile directory can be found; set HOME or AJAX_SANDBOX=off"
-            .to_string()
-    })?;
-    let profile = write_profile(&dir).map_err(|err| {
-        format!(
-            "agent sandbox could not write profile to {}: {err}; set AJAX_SANDBOX=off to run unsandboxed",
-            dir.display()
-        )
-    })?;
-    let linked = linked_worktree(cwd);
-    if let Some(linked) = &linked {
-        let store = trusted_git::default_store().ok_or_else(|| {
-            "agent sandbox is on but HOME is unset, so no trusted-git store can be found; set HOME or AJAX_SANDBOX=off"
-                .to_string()
-        })?;
-        let trusted = TrustedGit {
-            git_dir: linked.gitdir.clone(),
-            common_dir: linked.common.clone(),
-            work_tree: cwd.to_path_buf(),
-        };
-        trusted_git::record(&store, &trusted).map_err(|err| {
-            format!(
-                "agent sandbox could not record trusted git metadata for {}: {err}; set AJAX_SANDBOX=off to run unsandboxed",
-                cwd.display()
-            )
-        })?;
-    }
-    let mut grants = linked.map_or_else(GitGrants::default, |linked| linked.grants());
-    grants.read_write.extend(extra_read_write.iter().cloned());
-    Ok(wrap_argv(
-        &nono,
-        &profile,
+    cwd: &Path,
+    env: &[(String, String)],
+    extra_read_write: &[PathBuf],
+    tty: bool,
+) -> Result<(PathBuf, Vec<String>), String> {
+    let docker = (host.resolve)()?;
+    let image = image_tag();
+    check_ready(&image, |docker_args| (host.run)(&docker, docker_args))?;
+    let common = trust_linked_worktree(host.store.as_deref(), cwd)?;
+    let home = host.home.as_deref().ok_or_else(|| HOME_UNSET.to_string())?;
+    let relay = if cfg!(test) {
+        None
+    } else {
+        ssh_agent_relay(&home.join(SSH_AGENT_SOCK))
+    };
+    let env: Vec<(String, String)> = env
+        .iter()
+        .filter(|(key, _)| key.as_str() != "PATH")
+        .cloned()
+        .collect();
+    let instance = launch_instance();
+    let launch = DockerLaunch {
+        home,
+        uid: host.uid,
+        gid: host.gid,
         cwd,
-        &grants.read,
-        &grants.read_write,
-        &grants.read_write_files,
+        git_common_dir: common.as_deref(),
+        extra_read_write,
+        boot_id: &host.boot_id,
+        server: &host.server,
+        instance: &instance,
+        tty,
+        pass_gh_token: host.pass_gh_token,
+        ssh_agent_relay: relay.as_deref(),
+        image: &image,
         program,
         args,
-    ))
+        env: &env,
+    };
+    let argv = docker_argv(&launch, Path::exists);
+    repair_home_once(host, &docker, &image, &argv, home)?;
+    ensure_task_volumes(
+        &docker,
+        &image,
+        &task_key(cwd),
+        host.uid,
+        host.gid,
+        host.run,
+    )?;
+    Ok((docker, argv))
+}
+
+pub fn home_repair_argv(
+    image: &str,
+    home: &Path,
+    uid: u32,
+    gid: u32,
+    parents: &[PathBuf],
+) -> Vec<String> {
+    let home = home.display();
+    let script = format!(
+        "home=\"$1\"; shift; for dir in \"$@\"; do mkdir -p \"$dir\" || exit 1; done && find \"$home\" -xdev -user 0 -exec chown {uid}:{gid} {{}} +"
+    );
+    let mut argv: Vec<String> = ["run", "--rm", "--user", "0", "-v"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    argv.push(format!("ajax-agent-home:{home}"));
+    argv.extend(
+        ["--entrypoint", "sh", image, "-c"]
+            .into_iter()
+            .map(String::from),
+    );
+    argv.push(script);
+    argv.push("sh".to_string());
+    argv.push(home.to_string());
+    argv.extend(parents.iter().map(|parent| parent.display().to_string()));
+    argv
+}
+
+fn home_parents(argv: &[String], image: &str, home: &Path) -> Vec<PathBuf> {
+    let mounts = argv
+        .iter()
+        .position(|arg| arg == image)
+        .unwrap_or(argv.len());
+    let parents: BTreeSet<PathBuf> = argv[..mounts]
+        .windows(2)
+        .filter(|pair| pair[0] == "-v")
+        .filter_map(|pair| pair[1].split(':').next())
+        .map(Path::new)
+        .filter(|source| source.starts_with(home))
+        .filter_map(Path::parent)
+        .map(Path::to_path_buf)
+        .collect();
+    parents.into_iter().collect()
+}
+
+fn repair_home_once(
+    host: &DockerHost,
+    docker: &Path,
+    image: &str,
+    argv: &[String],
+    home: &Path,
+) -> Result<(), String> {
+    let parents = home_parents(argv, image, home);
+    let mut repaired = PARENTS_REPAIRED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if parents.iter().all(|parent| repaired.contains(parent)) {
+        return Ok(());
+    }
+    let repair = home_repair_argv(image, home, host.uid, host.gid, &parents);
+    let args: Vec<&str> = repair.iter().map(String::as_str).collect();
+    if !(host.run)(docker, &args).is_ok_and(|output| output.status.success()) {
+        return Err(HOME_REPAIR_FAILED.to_string());
+    }
+    repaired.extend(parents);
+    Ok(())
+}
+
+fn launch_instance() -> String {
+    let sequence = LAUNCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{:x}-{sequence:x}", std::process::id())
+}
+
+fn trust_linked_worktree(store: Option<&Path>, cwd: &Path) -> Result<Option<PathBuf>, String> {
+    let grants = git_grants(cwd);
+    let (Some(common), Some(gitdir)) = (grants.read.first(), grants.read_write.first()) else {
+        return Ok(None);
+    };
+    let store = store.ok_or_else(|| TRUST_STORE_UNSET.to_string())?;
+    let trusted = TrustedGit {
+        git_dir: gitdir.clone(),
+        common_dir: common.clone(),
+        work_tree: cwd.to_path_buf(),
+    };
+    trusted_git::record(store, &trusted).map_err(|err| {
+        format!(
+            "agent sandbox could not record trusted git metadata for {}: {err}; set AJAX_SANDBOX=off to run unsandboxed",
+            cwd.display()
+        )
+    })?;
+    Ok(Some(common.clone()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -335,371 +455,6 @@ mod tests {
         for (value, expected) in cases {
             assert_eq!(sandbox_enabled_from(value), expected, "{value:?}");
         }
-    }
-
-    #[test]
-    fn profile_denies_host_tmux_socket_issue_1396() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        for (path, platform) in [
-            ("/private/tmp/tmux-$UID", "macos"),
-            ("/tmp/tmux-$UID", "linux"),
-        ] {
-            assert!(
-                deny.contains(&serde_json::json!({"path": path, "when": platform})),
-                "agents must not reach the host tmux server at {path} on {platform}"
-            );
-        }
-    }
-
-    #[test]
-    fn profile_denies_host_escape_sockets() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        for path in [
-            "$HOME/.orbstack/run",
-            "/private/var/run/docker.sock",
-            "$HOME/.colima",
-            "$HOME/.lima",
-            "$HOME/.rd",
-            "$HOME/.docker",
-            "$HOME/.local/share/containers",
-            "$HOME/Library/Containers/com.docker.docker",
-            "$HOME/.config/colima",
-            "/private/tmp/.s.PGSQL.5432",
-        ] {
-            assert!(
-                deny.contains(&serde_json::json!({"path": path, "when": "macos"})),
-                "agents must not reach the host socket at {path}: a reachable Docker API or Postgres superuser can run commands outside the sandbox"
-            );
-        }
-    }
-
-    #[test]
-    fn profile_sets_allow_parent_of_protected() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        assert_eq!(
-            profile["allow_parent_of_protected"],
-            serde_json::json!(true),
-            "nono refuses the $HOME grant because it contains ~/.nono, and every macOS launch fails without this flag"
-        );
-    }
-
-    #[test]
-    fn profile_omits_unlink_protection_group() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let include = profile["groups"]["include"].as_array().unwrap();
-        assert!(
-            !include.contains(&serde_json::json!("unlink_protection")),
-            "unlink_protection's unlink overrides let agents delete denied Ajax state such as ~/.ajax-dev/ajax.db-wal"
-        );
-    }
-
-    #[test]
-    fn profile_denies_credential_files_outside_nono_defaults() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        for path in [
-            "$HOME/.pgpass",
-            "$HOME/.pypirc",
-            "$HOME/.cargo/credentials",
-            "$HOME/.cargo/credentials.toml",
-        ] {
-            assert!(
-                deny.contains(&serde_json::json!(path)),
-                "the $HOME grant exposes the credential file {path}, which nono's deny_credentials group does not cover"
-            );
-        }
-    }
-
-    #[test]
-    fn profile_allows_home_and_denies_ajax_state() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let allow = profile["filesystem"]["allow"].as_array().unwrap();
-        assert!(
-            allow.contains(&serde_json::json!({"path": "$HOME", "when": "macos"})),
-            "the denylist profile must grant $HOME on macOS"
-        );
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        for path in [
-            "$HOME/.config/ajax/nono",
-            "$HOME/.config/ajax/config.toml",
-            "$HOME/.local/state/ajax/ajax.db",
-            "$HOME/.local/state/ajax/ajax.db-wal",
-            "$HOME/.local/state/ajax/ajax.db-shm",
-            "$HOME/.ajax-dev/config.toml",
-            "$HOME/.ajax-dev/ajax.db",
-            "$HOME/.ajax-dev/ajax.db-wal",
-            "$HOME/.ajax-dev/ajax.db-shm",
-        ] {
-            assert!(
-                deny.contains(&serde_json::json!(path)),
-                "agents must not reach Ajax state at {path}"
-            );
-        }
-    }
-
-    #[test]
-    fn profile_does_not_deny_whole_ajax_dirs() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        for path in ["$HOME/.ajax-dev", "$HOME/.config/ajax"] {
-            assert!(
-                !deny.iter().any(|entry| {
-                    entry.as_str() == Some(path)
-                        || entry.get("path").and_then(|p| p.as_str()) == Some(path)
-                }),
-                "a whole-dir deny of {path} breaks dev worktrees, agent events and the ssh agent"
-            );
-        }
-    }
-
-    #[test]
-    fn profile_lets_ssh_read_orbstack_include_but_not_its_keys_issue_1423() {
-        let profile: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-        let allow = profile["filesystem"]["allow"].as_array().unwrap();
-        assert!(
-            allow.contains(&serde_json::json!({"path": "$HOME", "when": "macos"})),
-            "ssh aborts on an unreadable Include (#1423)"
-        );
-        for key in ["read", "allow", "read_file", "allow_file"] {
-            if let Some(entries) = profile["filesystem"][key].as_array() {
-                for entry in entries {
-                    let path = entry
-                        .get("path")
-                        .and_then(|p| p.as_str())
-                        .or_else(|| entry.as_str())
-                        .unwrap_or("");
-                    assert!(
-                        path == "$HOME/.orbstack/ssh/config"
-                            || !path.starts_with("$HOME/.orbstack"),
-                        "{key} grant {path} exposes ~/.orbstack beyond the ssh config"
-                    );
-                }
-            }
-        }
-        let deny = profile["filesystem"]["deny"].as_array().unwrap();
-        assert!(
-            !deny.contains(&serde_json::json!({"path": "$HOME/.orbstack", "when": "macos"})),
-            "a whole-dir ~/.orbstack deny breaks the ssh Include (#1423)"
-        );
-        assert!(
-            deny.contains(
-                &serde_json::json!({"path": "$HOME/.orbstack/ssh/id_ed25519", "when": "macos"})
-            ),
-            "the $HOME grant would otherwise expose OrbStack's private key"
-        );
-    }
-
-    #[test]
-    fn wrap_argv_builds_exact_argv_with_multiple_grants() {
-        let (program, argv) = wrap_argv(
-            Path::new("/opt/nono"),
-            Path::new("/cache/nono/ajax-agent.json"),
-            Path::new("/work/task"),
-            &[PathBuf::from("/repo/.git-common")],
-            &[
-                PathBuf::from("/repo/.git"),
-                PathBuf::from("/cache/agent-events"),
-            ],
-            &[PathBuf::from("/repo/.git-common/packed-refs")],
-            "claude",
-            &["--resume".to_string()],
-        );
-        assert_eq!(program, "/opt/nono");
-        assert_eq!(
-            argv,
-            [
-                "-s",
-                "run",
-                "--allow-cwd",
-                "--no-rollback-prompt",
-                "--profile",
-                "/cache/nono/ajax-agent.json",
-                "--workdir",
-                "/work/task",
-                "--read",
-                "/repo/.git-common",
-                "--allow",
-                "/repo/.git",
-                "--allow",
-                "/cache/agent-events",
-                "--allow-file",
-                "/repo/.git-common/packed-refs",
-                "--",
-                "claude",
-                "--resume",
-            ]
-        );
-    }
-
-    #[test]
-    fn wrap_argv_disables_codex_inner_sandbox_for_bare_and_absolute_codex() {
-        for program in ["codex", "/x/y/codex"] {
-            let (_, argv) = wrap_argv(
-                Path::new("/opt/nono"),
-                Path::new("/p.json"),
-                Path::new("/w"),
-                &[],
-                &[],
-                &[],
-                program,
-                &["exec".to_string()],
-            );
-            assert_eq!(
-                argv.iter().map(String::as_str).collect::<Vec<_>>(),
-                [
-                    "-s",
-                    "run",
-                    "--allow-cwd",
-                    "--no-rollback-prompt",
-                    "--profile",
-                    "/p.json",
-                    "--workdir",
-                    "/w",
-                    "--",
-                    program,
-                    "-c",
-                    "sandbox_mode=\"danger-full-access\"",
-                    "exec",
-                ],
-                "{program}"
-            );
-        }
-    }
-
-    #[test]
-    fn wrap_argv_does_not_rewrite_other_programs() {
-        for program in ["codex-acp", "claude"] {
-            let (_, argv) = wrap_argv(
-                Path::new("/opt/nono"),
-                Path::new("/p.json"),
-                Path::new("/w"),
-                &[],
-                &[],
-                &[],
-                program,
-                &[],
-            );
-            assert!(!argv.iter().any(|arg| arg == "-c"), "{program}");
-        }
-    }
-
-    #[test]
-    fn write_profile_overwrites_tampered_file_with_valid_json() {
-        let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/sandbox-tests/write-profile");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(PROFILE_FILE), "tampered").unwrap();
-
-        let path = write_profile(&dir).unwrap();
-
-        assert_eq!(path, dir.join(PROFILE_FILE));
-        let content = fs::read_to_string(&path).unwrap();
-        assert_eq!(content, PROFILE_JSON);
-        serde_json::from_str::<serde_json::Value>(&content).unwrap();
-    }
-
-    #[test]
-    fn write_profile_leaves_identical_file_untouched() {
-        let dir = scratch("write-profile-identical");
-
-        let first = write_profile(&dir).unwrap();
-        let second = write_profile(&dir).unwrap();
-
-        assert_eq!(first, second);
-        assert_eq!(fs::read_to_string(&second).unwrap(), PROFILE_JSON);
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn write_profile_merges_local_grants_into_embedded_profile() {
-        let dir = scratch("write-profile-local");
-        fs::write(
-            dir.join(LOCAL_FILE),
-            r#"{"filesystem": {"read": ["/opt/router"]}, "security": {"process_info_mode": "allow_same_sandbox"}}"#,
-        )
-        .unwrap();
-
-        let profile: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(write_profile(&dir).unwrap()).unwrap())
-                .unwrap();
-        let embedded: serde_json::Value = serde_json::from_str(PROFILE_JSON).unwrap();
-
-        let read = profile["filesystem"]["read"].as_array().unwrap();
-        assert!(read.contains(&serde_json::json!("/opt/router")));
-        for grant in embedded["filesystem"]["read"]
-            .as_array()
-            .map_or(&[][..], |v| v.as_slice())
-        {
-            assert!(read.contains(grant), "lost embedded grant {grant}");
-        }
-        assert_eq!(
-            profile["filesystem"]["allow"],
-            embedded["filesystem"]["allow"]
-        );
-        assert_eq!(
-            profile["security"]["process_info_mode"],
-            "allow_same_sandbox"
-        );
-        assert_eq!(profile["extends"], embedded["extends"]);
-    }
-
-    #[test]
-    fn write_profile_fails_closed_on_invalid_local_json() {
-        let dir = scratch("write-profile-local-invalid");
-        fs::write(dir.join(LOCAL_FILE), "{not json").unwrap();
-
-        let err = write_profile(&dir).unwrap_err();
-
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("local.json"), "{err}");
-        assert!(!dir.join(PROFILE_FILE).exists());
-    }
-
-    #[test]
-    fn sandbox_command_disabled_returns_program_unchanged_without_resolving_nono() {
-        let args = ["--resume".to_string()];
-        let result = sandbox_command(
-            false,
-            || -> Result<PathBuf, String> { panic!("nono must not be resolved when disabled") },
-            None,
-            Path::new("/w"),
-            &[],
-            "claude",
-            &args,
-        );
-        assert_eq!(result, Ok(("claude".to_string(), args.to_vec())));
-    }
-
-    #[test]
-    fn sandbox_command_enabled_propagates_nono_error() {
-        let result = sandbox_command(
-            true,
-            || Err("nono missing".to_string()),
-            Some(PathBuf::from("/unused")),
-            Path::new("/w"),
-            &[],
-            "claude",
-            &[],
-        );
-        assert_eq!(result, Err("nono missing".to_string()));
-    }
-
-    #[test]
-    fn sandbox_command_enabled_without_profile_dir_mentions_override() {
-        let result = sandbox_command(
-            true,
-            || Ok(PathBuf::from("/opt/nono")),
-            None,
-            Path::new("/w"),
-            &[],
-            "claude",
-            &[],
-        );
-        let err = result.unwrap_err();
-        assert!(err.contains("HOME"), "{err}");
-        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
     }
 
     #[test]
@@ -811,5 +566,261 @@ mod tests {
         let dir = scratch("not-git");
 
         assert_eq!(git_grants(&dir), GitGrants::default());
+    }
+
+    fn docker_ok(_: &Path, _: &[&str]) -> io::Result<Output> {
+        Ok(Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
+    fn fake_docker_host(home: Option<PathBuf>) -> DockerHost {
+        DockerHost {
+            resolve: || Ok(PathBuf::from("/opt/docker")),
+            run: docker_ok,
+            home,
+            store: None,
+            uid: 501,
+            gid: 20,
+            pass_gh_token: false,
+            boot_id: "boot-test".to_string(),
+            server: "server-test".to_string(),
+        }
+    }
+
+    #[test]
+    fn docker_command_mounts_extra_read_write_paths_and_allocates_a_tty_when_asked() {
+        let host = fake_docker_host(Some(PathBuf::from("/ajax-test-home")));
+        let extra = [PathBuf::from("/var/folders/ajax/events")];
+
+        let (program, argv) = docker_command(
+            &host,
+            "codex",
+            &[],
+            Path::new("/work/task"),
+            &[],
+            &extra,
+            true,
+        )
+        .expect("launch wraps");
+
+        assert_eq!(program, PathBuf::from("/opt/docker"));
+        assert_eq!(argv[..4], ["run", "--rm", "-i", "-t"]);
+        assert!(argv.windows(2).any(|pair| {
+            pair[0] == "-v" && pair[1] == "/var/folders/ajax/events:/var/folders/ajax/events"
+        }));
+    }
+
+    #[test]
+    fn docker_command_without_home_fails_closed_and_mentions_override() {
+        let host = fake_docker_host(None);
+
+        let err =
+            docker_command(&host, "claude", &[], Path::new("/w"), &[], &[], false).unwrap_err();
+
+        assert!(err.contains("HOME"), "{err}");
+        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
+    }
+
+    const REPAIR_SCRIPT: &str = "home=\"$1\"; shift; for dir in \"$@\"; do mkdir -p \"$dir\" || exit 1; done && find \"$home\" -xdev -user 0 -exec chown 501:20 {} +";
+
+    #[test]
+    fn home_repair_argv_is_exact() {
+        let parents = [
+            PathBuf::from("/Users/matt/.local/state"),
+            PathBuf::from("/Users/matt/Projects"),
+        ];
+
+        assert_eq!(
+            home_repair_argv(
+                "ajax-agent:abc",
+                Path::new("/Users/matt"),
+                501,
+                20,
+                &parents
+            ),
+            [
+                "run",
+                "--rm",
+                "--user",
+                "0",
+                "-v",
+                "ajax-agent-home:/Users/matt",
+                "--entrypoint",
+                "sh",
+                "ajax-agent:abc",
+                "-c",
+                REPAIR_SCRIPT,
+                "sh",
+                "/Users/matt",
+                "/Users/matt/.local/state",
+                "/Users/matt/Projects",
+            ]
+        );
+    }
+
+    thread_local! {
+        static DOCKER_CALLS: RefCell<Vec<Vec<String>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn recording_docker(_: &Path, args: &[&str]) -> io::Result<Output> {
+        DOCKER_CALLS.with(|calls| {
+            calls
+                .borrow_mut()
+                .push(args.iter().map(|arg| (*arg).to_string()).collect());
+        });
+        docker_ok(Path::new("/opt/docker"), args)
+    }
+
+    fn docker_fails_repair(docker: &Path, args: &[&str]) -> io::Result<Output> {
+        if args.contains(&"--entrypoint") {
+            return Ok(Output {
+                status: std::os::unix::process::ExitStatusExt::from_raw(1 << 8),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+        }
+        docker_ok(docker, args)
+    }
+
+    fn is_home_repair(call: &[String]) -> bool {
+        call.starts_with(&["run", "--rm", "--user", "0"].map(String::from))
+    }
+
+    #[test]
+    fn home_repair_runs_only_for_parents_not_yet_repaired() {
+        let home = PathBuf::from("/ajax-repair-parents-home");
+        let host = DockerHost {
+            run: recording_docker,
+            ..fake_docker_host(Some(home.clone()))
+        };
+        let first = home.join("Projects/repo__worktrees/a");
+        let second = home.join("Other/repo__worktrees/b");
+        DOCKER_CALLS.with(|calls| calls.borrow_mut().clear());
+
+        for cwd in [&first, &second, &first] {
+            docker_command(&host, "claude", &[], cwd, &[], &[], false).expect("launch wraps");
+        }
+
+        let repairs = DOCKER_CALLS.with(|calls| {
+            calls
+                .borrow()
+                .iter()
+                .filter(|call| is_home_repair(call))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            repairs,
+            [
+                home_repair_argv(
+                    &image_tag(),
+                    &home,
+                    501,
+                    20,
+                    &[home.join("Projects/repo__worktrees")]
+                ),
+                home_repair_argv(
+                    &image_tag(),
+                    &home,
+                    501,
+                    20,
+                    &[home.join("Other/repo__worktrees")]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_home_repair_refuses_the_launch() {
+        let host = DockerHost {
+            run: docker_fails_repair,
+            ..fake_docker_host(Some(PathBuf::from("/ajax-repair-failed-home")))
+        };
+
+        let err = docker_command(
+            &host,
+            "claude",
+            &[],
+            Path::new("/ajax-repair-failed-home/w"),
+            &[],
+            &[],
+            false,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("ajax-agent-home"), "{err}");
+        assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
+    }
+
+    #[test]
+    fn ssh_agent_relay_copies_bytes_both_ways() {
+        let dir = fs::canonicalize(scratch("relay")).unwrap();
+        let socket = dir.join("a.sock");
+        let agent = UnixListener::bind(&socket).unwrap();
+        thread::spawn(move || {
+            for stream in agent.incoming().flatten() {
+                thread::spawn(move || {
+                    let mut reader = stream.try_clone().unwrap();
+                    let mut writer = stream;
+                    let _ = io::copy(&mut reader, &mut writer);
+                });
+            }
+        });
+
+        let addr = start_ssh_agent_relay(&socket).expect("relay binds");
+        assert!(addr.starts_with("127.0.0.1:"), "{addr}");
+        let mut client = TcpStream::connect(&addr).unwrap();
+        client.write_all(b"agent-bytes").unwrap();
+        let mut echoed = [0u8; 11];
+        client.read_exact(&mut echoed).unwrap();
+        assert_eq!(&echoed, b"agent-bytes");
+    }
+
+    #[test]
+    fn ssh_agent_relay_is_none_without_a_socket() {
+        let dir = scratch("relay-missing");
+
+        assert_eq!(ssh_agent_relay(&dir.join("agent.sock")), None);
+    }
+
+    #[test]
+    fn container_reaper_for_launch_reads_the_name_flag() {
+        let argv = ["run", "--rm", "--name", "ajax-k-1", "img"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        let reaper = ContainerReaper::for_launch(Path::new("/ajax-test-docker-missing"), &argv)
+            .expect("reaper from launch argv");
+        assert_eq!(reaper.docker, PathBuf::from("/ajax-test-docker-missing"));
+        assert_eq!(reaper.name, "ajax-k-1");
+
+        let no_name = ["run", "img"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert!(
+            ContainerReaper::for_launch(Path::new("/ajax-test-docker-missing"), &no_name).is_none()
+        );
+
+        let trailing_name = ["run", "--name"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert!(ContainerReaper::for_launch(
+            Path::new("/ajax-test-docker-missing"),
+            &trailing_name
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn stable_relay_port_is_deterministic_and_in_range() {
+        let socket = Path::new("/ajax/config/ssh/agent.sock");
+        let port = stable_relay_port(socket);
+        assert_eq!(port, stable_relay_port(socket));
+        assert!((20_000..40_000).contains(&port), "port {port} out of range");
     }
 }

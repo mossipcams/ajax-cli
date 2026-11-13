@@ -1,7 +1,11 @@
 use super::process_tree::{
-    background_shells, cached_table, has_background_shell, is_shell, snapshot, ProcessEntry,
+    background_shells, cached_table, container_table, has_background_shell,
+    has_container_background_shell, is_shell, parse_top, snapshot, ProcessEntry,
 };
-use std::process::{Command, Stdio};
+use std::cell::RefCell;
+use std::io;
+use std::os::unix::process::ExitStatusExt;
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -28,7 +32,7 @@ fn shell_pids(table: &[ProcessEntry], root: u32) -> Vec<u32> {
 
 fn sdk_session_rows() -> Vec<(u32, u32, &'static str)> {
     vec![
-        (10, 1, "nono"),
+        (10, 1, "docker"),
         (11, 10, "node"),
         (12, 10, "log"),
         (13, 11, "claude"),
@@ -79,7 +83,7 @@ fn monitor_job_reports_its_shell_not_the_multicall_grep() {
 #[test]
 fn login_style_and_full_path_shells_are_recognised() {
     let t = table(&[
-        (1, 0, "nono"),
+        (1, 0, "docker"),
         (2, 1, "-zsh"),
         (3, 1, "/bin/bash"),
         (4, 1, "/usr/local/bin/-fish"),
@@ -92,7 +96,7 @@ fn login_style_and_full_path_shells_are_recognised() {
 #[test]
 fn shell_under_shell_counts_once_as_the_top_shell() {
     let t = table(&[
-        (1, 0, "nono"),
+        (1, 0, "docker"),
         (2, 1, "zsh"),
         (3, 2, "bash"),
         (4, 3, "sleep"),
@@ -104,9 +108,9 @@ fn shell_under_shell_counts_once_as_the_top_shell() {
 #[test]
 fn shells_in_another_sessions_subtree_are_excluded() {
     let t = table(&[
-        (1, 0, "nono"),
+        (1, 0, "docker"),
         (2, 1, "zsh"),
-        (100, 0, "nono"),
+        (100, 0, "docker"),
         (101, 100, "zsh"),
     ]);
 
@@ -122,23 +126,23 @@ fn root_that_is_a_shell_is_not_returned_but_its_shell_children_are() {
 
 #[test]
 fn ppid_cycle_terminates() {
-    let t = table(&[(1, 2, "nono"), (2, 1, "node"), (3, 1, "zsh")]);
+    let t = table(&[(1, 2, "docker"), (2, 1, "node"), (3, 1, "zsh")]);
 
     assert_eq!(shell_pids(&t, 1), vec![3]);
 }
 
 #[test]
 fn results_are_sorted_by_pid() {
-    let t = table(&[(1, 0, "nono"), (9, 1, "zsh"), (4, 1, "bash")]);
+    let t = table(&[(1, 0, "docker"), (9, 1, "zsh"), (4, 1, "bash")]);
 
     assert_eq!(shell_pids(&t, 1), vec![4, 9]);
 }
 
 #[test]
 fn has_background_shell_is_true_only_when_a_shell_hangs_under_the_root() {
-    let with_shell = table(&[(1, 0, "nono"), (2, 1, "node"), (3, 2, "zsh")]);
+    let with_shell = table(&[(1, 0, "docker"), (2, 1, "node"), (3, 2, "zsh")]);
     let shell_under_harness_only = table(&sdk_session_rows());
-    let shell_in_other_session = table(&[(1, 0, "nono"), (100, 0, "nono"), (101, 100, "zsh")]);
+    let shell_in_other_session = table(&[(1, 0, "docker"), (100, 0, "docker"), (101, 100, "zsh")]);
     let root_is_only_shell = table(&[(1, 0, "zsh")]);
 
     assert!(has_background_shell(&with_shell, 1));
@@ -168,7 +172,7 @@ fn cached_table_reuses_the_same_arc_within_max_age() {
     let mut loads = 0;
     let mut load = || {
         loads += 1;
-        Some(vec![entry(1, 0, "nono")])
+        Some(vec![entry(1, 0, "docker")])
     };
 
     let first = cached_table(&cache, base, Duration::from_secs(60), &mut load).expect("loaded");
@@ -191,7 +195,7 @@ fn cached_table_reloads_once_the_copy_is_older_than_max_age() {
     let mut loads = 0;
     let mut load = || {
         loads += 1;
-        Some(vec![entry(1, 0, "nono")])
+        Some(vec![entry(1, 0, "docker")])
     };
 
     let first = cached_table(&cache, base, Duration::from_secs(2), &mut load).expect("loaded");
@@ -221,7 +225,7 @@ fn cached_table_does_not_cache_a_failed_snapshot() {
     assert!(cached_table(&cache, base, Duration::from_secs(60), &mut failing).is_none());
     assert_eq!(loads, 2);
 
-    let recovered = || Some(vec![entry(1, 0, "nono")]);
+    let recovered = || Some(vec![entry(1, 0, "docker")]);
     assert!(cached_table(&cache, base, Duration::from_secs(60), recovered).is_some());
 }
 
@@ -264,4 +268,93 @@ fn snapshot_lists_a_spawned_shell_as_a_child_of_this_process() {
         "comm {:?} must read as a shell",
         found.comm
     );
+}
+
+fn docker_output(stdout: &str, code: i32) -> Output {
+    Output {
+        status: ExitStatus::from_raw(code << 8),
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: Vec::new(),
+    }
+}
+
+#[test]
+fn parse_top_skips_the_header_and_reads_host_pids() {
+    let entries = parse_top(
+        "PID PPID COMMAND\n  101     5 tini\n  102   101 claude\n  103   102 /bin/bash\n",
+    );
+
+    assert_eq!(
+        entries,
+        vec![
+            entry(101, 5, "tini"),
+            entry(102, 101, "claude"),
+            entry(103, 102, "/bin/bash"),
+        ]
+    );
+}
+
+#[test]
+fn container_table_reads_top_of_every_container_for_the_task() {
+    let calls = RefCell::new(Vec::new());
+    let run = |args: &[&str]| -> io::Result<Output> {
+        calls.borrow_mut().push(args.join(" "));
+        if args[0] == "ps" {
+            return Ok(docker_output("c1 boot-1 srv\nc2 boot-1 srv\n", 0));
+        }
+        match args[1] {
+            "c1" => Ok(docker_output("PID PPID COMMAND\n 101 5 tini\n", 0)),
+            _ => Ok(docker_output(
+                "PID PPID COMMAND\n 201 7 tini\n 202 201 zsh\n",
+                0,
+            )),
+        }
+    };
+
+    let table = container_table(&run, "srv", "key").expect("readable");
+
+    assert_eq!(
+        table,
+        vec![
+            entry(101, 5, "tini"),
+            entry(201, 7, "tini"),
+            entry(202, 201, "zsh")
+        ]
+    );
+    assert_eq!(
+        calls.into_inner(),
+        vec![
+            "ps --no-trunc --filter label=ajax.server=srv --filter label=ajax.task_key=key --format {{.ID}} {{.Label \"ajax.boot\"}} {{.Label \"ajax.server\"}}",
+            "top c1 -eo pid,ppid,comm",
+            "top c2 -eo pid,ppid,comm",
+        ]
+    );
+}
+
+#[test]
+fn container_table_is_unknown_when_docker_fails() {
+    let daemon_down = |_: &[&str]| -> io::Result<Output> { Err(io::Error::other("no socket")) };
+    assert_eq!(container_table(&daemon_down, "srv", "key"), None);
+
+    let list_fails = |_: &[&str]| -> io::Result<Output> { Ok(docker_output("", 1)) };
+    assert_eq!(container_table(&list_fails, "srv", "key"), None);
+
+    let top_fails = |args: &[&str]| -> io::Result<Output> {
+        if args[0] == "ps" {
+            Ok(docker_output("c1 boot-1 srv\n", 0))
+        } else {
+            Ok(docker_output("", 1))
+        }
+    };
+    assert_eq!(container_table(&top_fails, "srv", "key"), None);
+}
+
+#[test]
+fn container_background_shell_is_found_under_the_init_process() {
+    let with_shell = table(&[(101, 5, "tini"), (102, 101, "claude"), (103, 102, "bash")]);
+    let without_shell = table(&[(101, 5, "tini"), (102, 101, "claude"), (104, 102, "node")]);
+
+    assert!(has_container_background_shell(&with_shell));
+    assert!(!has_container_background_shell(&without_shell));
+    assert!(!has_container_background_shell(&[]));
 }

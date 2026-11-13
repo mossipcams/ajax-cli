@@ -1,10 +1,14 @@
 use super::os_process;
 use super::process_identity::{judge, start_token, Verdict};
+use super::process_tree::docker_text;
 use super::shim_adoption::adoptable;
 use super::startup_recovery::RecoveryResult;
-use ajax_core::registry::{ExecutionCommit, RunUpdate, SqliteRegistryStore};
+use crate::adapters::program;
+use ajax_core::adapters::docker_sandbox::{parse_ps, ps_argv, rm_argv, task_key};
+use ajax_core::registry::{ExecutionCommit, Registry, RunUpdate, SqliteRegistryStore};
+use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -30,10 +34,58 @@ pub(crate) fn sweep_once(
     let mut recovery =
         super::startup_recovery::recover_interrupted_prompts(store, state_dir, boot_id);
     recovery.complete &= sweep.complete;
+    remove_finalised_containers(store, boot_id, &recovery.recovered_handles);
     if recovery.complete {
         let _ = SWEPT_ONCE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
     }
     recovery
+}
+
+fn remove_finalised_containers(store: &SqliteRegistryStore, boot_id: &str, handles: &[String]) {
+    if handles.is_empty() {
+        return;
+    }
+    let Some(server) = program::sandbox_docker_server() else {
+        return;
+    };
+    let registry = match store.load_tasks_only() {
+        Ok(registry) => registry,
+        Err(error) => {
+            tracing::warn!(target: "ajax_web", %error, "orphan sweep: cannot load tasks for container cleanup");
+            return;
+        }
+    };
+    for handle in handles {
+        let Some(task) = registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == *handle)
+        else {
+            continue;
+        };
+        let key = task_key(&task.worktree_path);
+        remove_task_containers(&program::sandbox_docker_run, &server, boot_id, &key);
+    }
+}
+
+fn remove_task_containers(
+    run: &dyn Fn(&[&str]) -> io::Result<Output>,
+    server: &str,
+    boot_id: &str,
+    key: &str,
+) {
+    let Some(listing) = docker_text(run, &ps_argv(server, key)) else {
+        tracing::warn!(target: "ajax_web", key, "orphan sweep: cannot list sandbox containers");
+        return;
+    };
+    for row in parse_ps(&listing) {
+        if row.server != server || row.boot_id == boot_id {
+            continue;
+        }
+        if docker_text(run, &rm_argv(&row.id)).is_none() {
+            tracing::warn!(target: "ajax_web", container = %row.id, "orphan sweep: failed to remove sandbox container");
+        }
+    }
 }
 
 pub(crate) struct SweepResult {
@@ -212,5 +264,78 @@ fn signal_group_or_pid(pid: i64, signal: &str) -> bool {
         true
     } else {
         signal_pid(pid, signal)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    const SERVER: &str = "5a1c0e2f9b3d4e61";
+    const KEY: &str = "repo-00000001";
+
+    fn output(stdout: &str, code: i32) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn removal_calls(listing: &str, docker_up: bool, server: &str, boot_id: &str) -> Vec<String> {
+        let calls = RefCell::new(Vec::new());
+        let run = |args: &[&str]| -> io::Result<Output> {
+            calls.borrow_mut().push(args.join(" "));
+            if !docker_up {
+                return Err(io::Error::other("daemon down"));
+            }
+            if args[0] == "ps" {
+                return Ok(output(listing, 0));
+            }
+            Ok(output("", 0))
+        };
+        remove_task_containers(&run, server, boot_id, KEY);
+        calls.into_inner()
+    }
+
+    fn removed(calls: &[String]) -> Vec<&str> {
+        calls
+            .iter()
+            .filter_map(|call| call.strip_prefix("rm -f "))
+            .collect()
+    }
+
+    #[test]
+    fn finalised_orphan_container_of_a_dead_boot_is_removed() {
+        let calls = removal_calls("c1 dead-boot 5a1c0e2f9b3d4e61\n", true, SERVER, "live-boot");
+
+        assert!(calls[0].starts_with("ps --no-trunc --filter label=ajax.server=5a1c0e2f9b3d4e61"));
+        assert!(calls[0].contains("label=ajax.task_key=repo-00000001"));
+        assert_eq!(removed(&calls), vec!["c1"]);
+    }
+
+    #[test]
+    fn container_of_the_current_boot_is_never_removed() {
+        let calls = removal_calls("c2 live-boot 5a1c0e2f9b3d4e61\n", true, SERVER, "live-boot");
+
+        assert!(removed(&calls).is_empty());
+    }
+
+    #[test]
+    fn container_of_another_server_is_never_removed() {
+        let calls = removal_calls("c3 dead-boot 9f0e1d2c3b4a5968\n", true, SERVER, "live-boot");
+
+        assert!(removed(&calls).is_empty());
+    }
+
+    #[test]
+    fn docker_failure_removes_nothing_and_does_not_panic() {
+        let calls = removal_calls("", false, SERVER, "live-boot");
+
+        assert_eq!(calls.len(), 1);
+        assert!(removed(&calls).is_empty());
     }
 }

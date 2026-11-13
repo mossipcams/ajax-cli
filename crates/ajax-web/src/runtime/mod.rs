@@ -178,6 +178,7 @@ where
         let mut terminate = shutdown::terminate_signal();
         spawn_background_loops(&state);
         headless::spawn_startup_dispatch(&state);
+        crate::adapters::sandbox_image::ensure_image_in_background();
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
             .await

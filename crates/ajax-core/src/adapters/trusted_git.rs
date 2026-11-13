@@ -97,7 +97,7 @@ pub fn forget(store: &Path, work_tree: &Path) -> io::Result<()> {
 }
 
 pub fn default_store() -> Option<PathBuf> {
-    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/nono/trusted-worktrees"))
+    env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/ajax/trusted-worktrees"))
 }
 
 pub fn apply_env(command: &mut Command, trusted: &TrustedGit) {
