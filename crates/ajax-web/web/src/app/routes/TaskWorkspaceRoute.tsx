@@ -56,7 +56,6 @@ export default function TaskWorkspaceRoute({
       data-outlet={outlet}
       data-testid={testId}
       data-handle={handle}
-      aria-live="polite"
     >
       <TaskWorkspace
         handle={handle}

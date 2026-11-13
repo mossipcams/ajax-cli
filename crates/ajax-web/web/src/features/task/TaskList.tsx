@@ -427,7 +427,7 @@ export default function TaskList({
   return (
     <>
       {calm.length > 0 ? (
-        <section className="tasks" aria-label="Tasks" aria-live="polite">
+        <section className="tasks" aria-label="Tasks">
           <div className="task-list">
             {needsYou.length > 0 ? <h2 className="task-group-heading">Needs you</h2> : null}
             {needsYou.map(renderRow)}

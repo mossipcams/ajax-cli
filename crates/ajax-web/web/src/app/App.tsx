@@ -636,7 +636,6 @@ function AppContent() {
               data-outlet="diff"
               data-testid="outlet-diff"
               data-handle={handle}
-              aria-live="polite"
             >
               {detail.status === "loading" ? (
                 <Skeleton testid="task-skeleton" rows={6} />
@@ -692,7 +691,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="settings"
           data-testid="outlet-settings"
-          aria-live="polite"
         >
           <SettingsView
             detailHandle={null}
@@ -714,7 +712,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="training"
           data-testid="outlet-training"
-          aria-live="polite"
         >
           <TrainingPage onBack={() => goBack(dashboardHash())} />
         </section>
@@ -728,7 +725,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="session"
           data-testid="outlet-session"
-          aria-live="polite"
         >
           <NewTaskSheet
             repos={cockpit.data?.repos?.repos ?? []}
@@ -749,7 +745,6 @@ function AppContent() {
         className={outletClassName || undefined}
         data-outlet={activeRoute.kind === "project" ? "project" : "dashboard"}
         data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
-        aria-live="polite"
       >
         <div
           className={`pull-indicator${pullDistance > 0 ? " is-pulling" : ""}${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
