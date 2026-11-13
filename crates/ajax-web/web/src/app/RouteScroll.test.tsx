@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import RouteScroll from "./RouteScroll";
+import RouteScroll, { readRouteScrollOffset } from "./RouteScroll";
+import { parseRoute } from "@/shared/lib/routes";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
 
 function Harness() {
@@ -106,5 +107,21 @@ describe("RouteScroll", () => {
     changeHash("#/t/a");
     changeHash("#/");
     expect(scroll.scrollTop).toBe(1200);
+  });
+
+  it("exposes the saved offset through readRouteScrollOffset and clears it on unmount", () => {
+    const { unmount } = render(<Harness />);
+    const scroll = screen.getByTestId("route-scroll");
+    setScrollTop(scroll, 0);
+
+    setScrollTop(scroll, 1200);
+    fireEvent.scroll(scroll);
+    changeHash("#/t/a");
+
+    expect(readRouteScrollOffset(parseRoute("#/"))).toBe(1200);
+    expect(readRouteScrollOffset(parseRoute("#/t/zzz"))).toBe(0);
+
+    unmount();
+    expect(readRouteScrollOffset(parseRoute("#/"))).toBe(0);
   });
 });

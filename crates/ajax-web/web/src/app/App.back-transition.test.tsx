@@ -65,19 +65,24 @@ describe("App back navigation transition", () => {
     sessionStorage.clear();
   });
 
-  it("slides the dashboard in from the right when going back from a task", async () => {
+  it("reveals the dashboard under the leaving task when going back from a task", async () => {
     render(<App />);
     setHash(taskHash("web/fix-login"));
     await screen.findByTestId("outlet-task");
 
     fireEvent.click(within(screen.getByTestId("mobile-chrome-header")).getByRole("button", { name: "← Back" }));
 
-    const outlet = await screen.findByTestId("outlet-dashboard");
-    await waitFor(() => expect(outlet).toHaveClass("ajax-swipe-enter-right"));
+    expect(within(screen.getByTestId("page-stack-below")).getByTestId("outlet-dashboard")).toBeTruthy();
+    expect(within(screen.getByTestId("route-scroll")).getByTestId("outlet-task")).toBeTruthy();
+
+    await waitFor(() => expect(screen.queryByTestId("page-stack-below")).toBeNull());
+    const outlet = within(screen.getByTestId("route-scroll")).getByTestId("outlet-dashboard");
+    expect(outlet).toHaveClass("ajax-swipe-enter-none");
+    expect(outlet).not.toHaveClass("ajax-swipe-enter-right");
     expect(outlet).not.toHaveClass("ajax-swipe-enter-left");
   });
 
-  it("slides the dashboard in from the right when going back from the terminal view", async () => {
+  it("reveals the dashboard under the leaving terminal view when going back from the terminal view", async () => {
     localStorage.setItem(TASK_TERMINAL_PREFERENCE_STORAGE_KEY, JSON.stringify(["web/fix-login"]));
     render(<App />);
     setHash(taskHash("web/fix-login"));
@@ -86,8 +91,13 @@ describe("App back navigation transition", () => {
     const back = within(screen.getByTestId("task-detail")).getByRole("button", { name: "← Back" });
     fireEvent.click(back);
 
-    const outlet = await screen.findByTestId("outlet-dashboard");
-    expect(outlet).toHaveClass("ajax-swipe-enter-right");
+    expect(within(screen.getByTestId("page-stack-below")).getByTestId("outlet-dashboard")).toBeTruthy();
+    expect(within(screen.getByTestId("route-scroll")).getByTestId("outlet-task")).toBeTruthy();
+
+    await waitFor(() => expect(screen.queryByTestId("page-stack-below")).toBeNull());
+    const outlet = within(screen.getByTestId("route-scroll")).getByTestId("outlet-dashboard");
+    expect(outlet).toHaveClass("ajax-swipe-enter-none");
+    expect(outlet).not.toHaveClass("ajax-swipe-enter-right");
     expect(outlet).not.toHaveClass("ajax-swipe-enter-left");
   });
 

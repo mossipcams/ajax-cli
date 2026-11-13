@@ -88,6 +88,26 @@ function LeavingPaneProbe() {
   return <div data-testid="leaving-pane" style={crossSlide?.paneStyle("leaving")} />;
 }
 
+function BelowActiveProbe() {
+  const crossSlide = usePageCrossSlide();
+  return (
+    <div data-testid="below-active" data-below={crossSlide?.belowActive ? "true" : "false"} />
+  );
+}
+
+function renderWithBelowProbe(props: Parameters<typeof Harness>[0] = {}) {
+  return render(
+    <PageCrossSlideProvider>
+      <Harness {...props} />
+      <BelowActiveProbe />
+    </PageCrossSlideProvider>,
+  );
+}
+
+function belowMounted(): boolean {
+  return screen.getByTestId("below-active").dataset.below === "true";
+}
+
 describe("useSwipePageTransition", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -616,5 +636,135 @@ describe("useSwipePageTransition", () => {
       node.dispatchEvent(touch("touchmove", 130, 42, node, 1300));
     });
     expect(node.style.transform).toBe("translate3d(10px, 0, 0)");
+  });
+
+  it("mounts the below layer on an edge touchstart and unmounts on a no-move release", async () => {
+    renderWithBelowProbe({ onRight: vi.fn() });
+    const node = screen.getByTestId("swipe-target");
+
+    expect(belowMounted()).toBe(false);
+    await act(async () => {
+      node.dispatchEvent(touch("touchstart", 40, 40, node));
+    });
+    expect(belowMounted()).toBe(true);
+    await act(async () => {
+      node.dispatchEvent(touch("touchend", 40, 40, node));
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(belowMounted()).toBe(false);
+  });
+
+  it("mounts the below layer only after a mid-screen rightward drag engages", async () => {
+    renderWithBelowProbe({ onRight: vi.fn() });
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    expect(belowMounted()).toBe(false);
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 240, 42, node));
+    });
+    expect(belowMounted()).toBe(false);
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 250, 42, node));
+    });
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 260, 42, node));
+    });
+    expect(belowMounted()).toBe(true);
+  });
+
+  it("keeps the below layer mounted during a spring-back until it settles", async () => {
+    renderWithBelowProbe({ onRight: vi.fn() });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 40, 40, node, 1000));
+    node.dispatchEvent(touch("touchmove", 70, 42, node, 1000));
+    node.dispatchEvent(touch("touchmove", 120, 42, node, 2000));
+    await act(async () => {
+      node.dispatchEvent(touch("touchend", 120, 42, node, 2000));
+    });
+    expect(belowMounted()).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(belowMounted()).toBe(false);
+  });
+
+  it("keeps the below layer mounted while a committed right cross-slide is active", async () => {
+    const originalUserAgent = navigator.userAgent;
+    const originalRaf = window.requestAnimationFrame;
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+      configurable: true,
+    });
+    window.requestAnimationFrame = vi.fn(() => 0) as typeof requestAnimationFrame;
+
+    try {
+      const onRight = vi.fn();
+      renderWithBelowProbe({ onRight });
+      const node = screen.getByTestId("swipe-target");
+      Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+      await act(async () => {
+        node.dispatchEvent(touch("touchstart", 40, 40, node));
+        node.dispatchEvent(touch("touchmove", 160, 42, node));
+        node.dispatchEvent(touch("touchmove", 200, 42, node));
+        node.dispatchEvent(touch("touchend", 200, 42, node));
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onRight).toHaveBeenCalledOnce();
+      expect(belowMounted()).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          SWIPE_PAGE_COMMIT_MS + 40 + CROSS_SLIDE_ARMED_SLACK_MS,
+        );
+      });
+      expect(onRight).toHaveBeenCalledOnce();
+      expect(belowMounted()).toBe(false);
+    } finally {
+      Object.defineProperty(navigator, "userAgent", {
+        value: originalUserAgent,
+        configurable: true,
+      });
+      window.requestAnimationFrame = originalRaf;
+    }
+  });
+
+  it("never mounts the below layer for a leftward engaged drag", async () => {
+    renderWithBelowProbe({ onLeft: vi.fn() });
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 300, 40, node, 1000));
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 250, 42, node, 1000));
+    });
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 120, 42, node, 2000));
+    });
+    expect(belowMounted()).toBe(false);
+    await act(async () => {
+      node.dispatchEvent(touch("touchend", 120, 42, node, 2000));
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(belowMounted()).toBe(false);
+  });
+
+  it("does not mount the below layer on an edge touchstart while the list route is active (#1064)", async () => {
+    window.location.hash = "#/";
+    renderWithBelowProbe({ onRight: vi.fn(), from_route: taskHash("web/fix-login") });
+    const node = screen.getByTestId("swipe-target");
+
+    await act(async () => {
+      node.dispatchEvent(touch("touchstart", 40, 40, node));
+    });
+    expect(belowMounted()).toBe(false);
+    await act(async () => {
+      node.dispatchEvent(touch("touchmove", 120, 42, node));
+      node.dispatchEvent(touch("touchend", 120, 42, node));
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(belowMounted()).toBe(false);
   });
 });

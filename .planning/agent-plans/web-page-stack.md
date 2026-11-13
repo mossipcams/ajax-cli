@@ -1,8 +1,8 @@
 # Web Cockpit page stack: interactive, native-feel navigation
 
-Status: **Approved 2026-11-12 ("Continue the plan"). D1–D4 decided. Slice 1 merged (#1619). Slice 2 done 2026-11-12, local commit only.**
+Status: **Approved 2026-11-12 ("Continue the plan"). D1–D4 decided. Slice 1 merged (#1619). Slice 2 in PR #1621. Slice 3 done 2026-11-13, local commits only.**
 Issues: [#1614](https://github.com/mossipcams/ajax-cli/issues/1614) (interactive back), [#1615](https://github.com/mossipcams/ajax-cli/issues/1615) (push/pop moves both pages), [#1608](https://github.com/mossipcams/ajax-cli/issues/1608) (commit threshold).
-Branches: slice 1 merged as #1619 (4791de60). Slice 2 is on `refactor/web/page-stack-extract`, from `origin/main` at f21cca09, after #1613 merged.
+Branches: slice 1 merged as #1619 (4791de60). Slice 2 is on `refactor/web/page-stack-extract` (PR #1621), from `origin/main` at f21cca09. Slice 3 is on `feat/web/page-stack-below`, stacked on slice 2; retarget it to main once #1621 merges.
 
 ## Why
 
@@ -126,7 +126,7 @@ Each slice builds, tests and is reviewed on its own. Delegated through the model
    - The 56px-commit assertions are rewritten to the new rule with equal strength. Approving this plan approves that rewrite.
    - This slice is worth shipping on its own, for #1608.
 2. [x] **Extract layers.** Done 2026-11-12 (see Deviations / results). Move workspace-stack rendering out of App.tsx into `app/routes/WorkspaceStack.tsx`, next to `TaskWorkspaceRoute.tsx`, with no behaviour change. App.tsx shrinks. (Deviation: the plan said `app/pageStack/`; `app/routes/` already exists for route surfaces.)
-3. [ ] **Below layer (D4).**
+3. [x] **Below layer (D4).** Done 2026-11-13 (see Deviations / results).
    - Move `RouteScroll`'s offsets map to module scope and export a read function.
    - Add the fixed, inert below layer behind `route-scroll`. Mount it on edge touchstart, on swipe engage, or in the `armed` phase of a pop; unmount it on settle or cancel.
    - Keep the leaving workspace stack in `route-scroll` through the pop settle.
@@ -184,3 +184,29 @@ Each slice builds, tests and is reviewed on its own. Delegated through the model
 - **Slice 2, verification.**
   - `web:test` 2006 passed, 9 skipped. `web:check`, `web:lint` and `web:sg` are clean.
   - Local desktop-chromium e2e did not run: `chromium.launch()` segfaults on this host even with no app code involved. Rely on CI Web E2E.
+- **Slice 3, result.**
+  - `RouteScroll`'s offsets live in a module-scope map, cleared on unmount, read through `readRouteScrollOffset(route)`.
+  - `PageCrossSlideProvider` has `belowActive`, `showBelow` and `hideBelow`.
+    - The swipe hook raises it on a left-edge back touchstart or a rightward engage, and drops it on reset or cancel.
+    - `beginCommit` raises it for a right (pop) cross-slide; `finishCrossSlide` clears it.
+  - `app/routes/PageStackBelow.tsx` renders the inert, `aria-hidden` copy of the destination list route.
+    - It sits behind route-scroll inside `.app-main` and is offset by the saved scroll position.
+    - It renders only from task or session routes, never from Diff.
+  - During a pop, route-scroll keeps the leaving workspace stack until the cross-slide settles. The real list outlet then takes over with `ajax-swipe-enter-none`.
+- **Slice 3, deviations.**
+  - **Position.** The layer is `position: absolute` inside `.app-main`, not `fixed`. A second fixed pin was ruled out (`web-cockpit.md:74-87`).
+  - **Visibility.** It mounts per D4 but stays `visibility: hidden` until the top page moves (`.is-diff-swiping` or `.page-cross-slide-leaving`). An edge touch never shows it through the page. The moving page gets `background: var(--paper)` while the layer is mounted.
+  - **Chrome from Chat.** Chat hides the cockpit header and bottom nav, so the copy carries both when the top page is a chat workspace. Through the pop, the main shell keeps the leaving route's chat layout (`chromeRoute`), so header and list swap in one commit. Without this, the probe measured a 58px jump on release (copy row at 40.8px, real dashboard at 99.3px).
+  - **Test rewrite pulled forward from slice 4.** Tap ← Back pops through the right cross-slide, so the two `App.back-transition` tests that pinned the dashboard's `ajax-swipe-enter-right` now assert the reveal and the handover instead: copy under the leaving task, real outlet with `ajax-swipe-enter-none` after the settle. Their strength is equal or greater. Keeping `ajax-swipe-enter-right` would have played a second motion after the slide.
+  - **Separate box rule.** The copy's box is its own rule in `shell-layout.css`. Adding it to the route-scroll selector broke an `App.test.tsx` source-text test, which stays unedited.
+  - **App.tsx size.** It grew from 914 to 950 lines (limit 1000). The plan's "every slice shrinks App.tsx" rule was written at 977; slice 4 should move the below-route logic out.
+- **Slice 3, verification.**
+  - `web:test` 2021 passed, 9 skipped. `web:check`, `web:lint` and `web:sg` are clean.
+  - Chromium over CDP at 390×844, touches dispatched in the page, vite source:
+    - An edge touchstart mounts the layer hidden; the centre paints the top page.
+    - Dragging the terminal task 130px shows the copy only in the vacated strip.
+    - A cancel keeps the layer through the spring-back, then removes it.
+    - A pop keeps the task in route-scroll over the visible copy; afterwards the real outlet has `ajax-swipe-enter-none`, no running animations, and its first row at the copy's 99.3px.
+    - From Chat, the copy shows the header and nav at 99.3px during the drag, and the dashboard lands at 99.3px.
+  - The fixture dashboard does not scroll, so the offset path is covered only by unit tests.
+  - Local Playwright e2e cannot launch Chromium on this host (segfault); rely on CI Web E2E.

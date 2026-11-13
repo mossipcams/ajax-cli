@@ -196,3 +196,42 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   display: flex;
   flex-direction: column;
 }
+
+/* PAGE STACK BELOW — inert copy of the list route a back gesture reveals. */
+.app-main:has(> .page-stack-below) {
+  position: relative;
+}
+
+.page-stack-below {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-stack-below-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  width: min(var(--shell), 100%);
+  margin: 0 auto;
+  padding: 16px calc(20px + env(safe-area-inset-right)) 48px
+    calc(20px + env(safe-area-inset-left));
+}
+
+.app-main:has(.is-diff-swiping, .page-cross-slide-leaving) > .page-stack-below {
+  visibility: visible;
+}
+
+.page-stack-below ~ [data-testid="route-scroll"] {
+  position: relative;
+  z-index: 1;
+}
+
+.page-stack-below ~ [data-testid="route-scroll"] :is(.is-diff-swiping, .page-cross-slide-leaving) {
+  background: var(--paper);
+}
