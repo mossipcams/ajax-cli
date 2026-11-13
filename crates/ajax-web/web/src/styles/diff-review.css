@@ -245,6 +245,7 @@
 
 .diff-hunk code {
   display: block;
+  min-width: max-content;
 }
 
 .diff-line {

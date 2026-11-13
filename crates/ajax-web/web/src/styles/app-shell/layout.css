@@ -9,7 +9,7 @@
   -webkit-overflow-scrolling: touch;
   -ms-overflow-style: none;
   scrollbar-width: none;
-  padding: 16px calc(20px + env(safe-area-inset-right)) 48px
+  padding: 16px calc(20px + env(safe-area-inset-right)) 72px
     calc(20px + env(safe-area-inset-left));
 }
 
@@ -83,11 +83,6 @@
 
   [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail[data-task-details-open] .terminal-panel:not(.is-expanded) {
     flex: 0 0 auto;
-  }
-
-  [data-testid="route-scroll"] {
-    /* Clears .bottom-nav, which no longer pads by the safe-area inset. */
-    padding-bottom: 72px;
   }
 
   html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="task"]) {
