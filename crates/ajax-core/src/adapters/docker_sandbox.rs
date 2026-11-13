@@ -11,7 +11,7 @@ const FNV_PRIME: u64 = 0x0100_0000_01b3;
 const CODEX_SANDBOX_OVERRIDE: [&str; 2] = ["-c", "sandbox_mode=\"danger-full-access\""];
 const SHARED_HARNESS_HOMES: [&str; 3] = [".claude", ".codex", ".cursor"];
 const GH_CONFIG: &str = ".config/gh";
-const READ_ONLY_TOOLING: [&str; 8] = [
+const READ_ONLY_TOOLING: [&str; 9] = [
     "Projects/ajax-model-router",
     ".agents/skills",
     "Projects/AGENTS.md",
@@ -20,6 +20,7 @@ const READ_ONLY_TOOLING: [&str; 8] = [
     "Projects/.claude",
     "Projects/.codex",
     "Projects/scripts",
+    ".gitconfig",
 ];
 const READ_WRITE_TOOLING: [&str; 4] = [
     ".ajax-router",
@@ -316,6 +317,7 @@ pub fn ensure_task_volumes(
         let init = volume_init_argv(image, &volume, uid, gid);
         let init_args: Vec<&str> = init.iter().map(String::as_str).collect();
         if !succeeded(run(docker, &init_args)) {
+            let _ = run(docker, &["volume", "rm", "-f", volume.as_str()]);
             return Err(volume_error("chown", &volume));
         }
     }
@@ -468,6 +470,7 @@ mod tests {
              -v {HOME}/Projects/.claude:{HOME}/Projects/.claude:ro \
              -v {HOME}/Projects/.codex:{HOME}/Projects/.codex:ro \
              -v {HOME}/Projects/scripts:{HOME}/Projects/scripts:ro \
+             -v {HOME}/.gitconfig:{HOME}/.gitconfig:ro \
              -v {HOME}/.ajax-router:{HOME}/.ajax-router -v {HOME}/.pi/agent:{HOME}/.pi/agent \
              -v {HOME}/.local/share/opencode:{HOME}/.local/share/opencode \
              -v {HOME}/.config/opencode:{HOME}/.config/opencode {IMAGE} claude -p hi"
@@ -966,6 +969,25 @@ mod tests {
 
         assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
         assert!(error.contains("chown"), "{error}");
-        assert_eq!(calls.into_inner().len(), 3);
+        assert_eq!(calls.into_inner().len(), 4);
+    }
+
+    #[test]
+    fn a_failed_volume_chown_removes_the_half_initialised_volume() {
+        let calls = VolumeCalls::default();
+
+        ensure(volume_recorder(&calls, |args| {
+            output(if args[0] == "run" || args[1] == "inspect" {
+                1
+            } else {
+                0
+            })
+        }))
+        .expect_err("failed chown refuses");
+
+        assert_eq!(
+            calls.into_inner().last(),
+            Some(&strings(&["volume", "rm", "-f", &target()]))
+        );
     }
 }

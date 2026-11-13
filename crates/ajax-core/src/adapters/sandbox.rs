@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -15,8 +16,8 @@ use std::time::Duration;
 use nix::unistd::{getgid, getuid};
 
 use super::docker_sandbox::{
-    check_ready, docker_argv, ensure_task_volumes, image_tag, resolve_docker, task_key,
-    DockerLaunch,
+    check_ready, docker_argv, ensure_task_volumes, image_tag, resolve_docker, stable_hash,
+    task_key, DockerLaunch,
 };
 use super::trusted_git::{self, TrustedGit};
 
@@ -150,6 +151,33 @@ fn run_docker(docker: &Path, args: &[&str]) -> io::Result<Output> {
         .output()
 }
 
+/// Force-removes the launched container when dropped so killing the `docker run` client never leaves the agent running.
+pub struct ContainerReaper {
+    docker: PathBuf,
+    name: String,
+}
+
+impl ContainerReaper {
+    pub fn for_launch(docker: &Path, argv: &[String]) -> Option<Self> {
+        let index = argv.iter().position(|arg| arg == "--name")?;
+        Some(Self {
+            docker: docker.to_path_buf(),
+            name: argv.get(index + 1)?.clone(),
+        })
+    }
+}
+
+impl Drop for ContainerReaper {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.docker)
+            .args(["rm", "-f", &self.name])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 pub fn ssh_agent_relay(socket: &Path) -> Option<String> {
     if !socket.exists() {
         return None;
@@ -160,7 +188,10 @@ pub fn ssh_agent_relay(socket: &Path) -> Option<String> {
 }
 
 fn start_ssh_agent_relay(socket: &Path) -> Option<String> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok()?;
+    let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, stable_relay_port(socket))) {
+        Ok(listener) => listener,
+        Err(_) => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).ok()?,
+    };
     let addr = listener.local_addr().ok()?;
     let socket = socket.to_path_buf();
     thread::Builder::new()
@@ -168,6 +199,10 @@ fn start_ssh_agent_relay(socket: &Path) -> Option<String> {
         .spawn(move || accept_ssh_agent_connections(&listener, &socket))
         .ok()?;
     Some(addr.to_string())
+}
+
+fn stable_relay_port(socket: &Path) -> u16 {
+    20_000 + (stable_hash(socket.as_os_str().as_bytes()) % 20_000) as u16
 }
 
 fn accept_ssh_agent_connections(listener: &TcpListener, socket: &Path) {
@@ -749,5 +784,43 @@ mod tests {
         let dir = scratch("relay-missing");
 
         assert_eq!(ssh_agent_relay(&dir.join("agent.sock")), None);
+    }
+
+    #[test]
+    fn container_reaper_for_launch_reads_the_name_flag() {
+        let argv = ["run", "--rm", "--name", "ajax-k-1", "img"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        let reaper = ContainerReaper::for_launch(Path::new("/ajax-test-docker-missing"), &argv)
+            .expect("reaper from launch argv");
+        assert_eq!(reaper.docker, PathBuf::from("/ajax-test-docker-missing"));
+        assert_eq!(reaper.name, "ajax-k-1");
+
+        let no_name = ["run", "img"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert!(
+            ContainerReaper::for_launch(Path::new("/ajax-test-docker-missing"), &no_name).is_none()
+        );
+
+        let trailing_name = ["run", "--name"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>();
+        assert!(ContainerReaper::for_launch(
+            Path::new("/ajax-test-docker-missing"),
+            &trailing_name
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn stable_relay_port_is_deterministic_and_in_range() {
+        let socket = Path::new("/ajax/config/ssh/agent.sock");
+        let port = stable_relay_port(socket);
+        assert_eq!(port, stable_relay_port(socket));
+        assert!((20_000..40_000).contains(&port), "port {port} out of range");
     }
 }

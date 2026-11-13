@@ -1,6 +1,6 @@
 use super::acp_slot::AcpSlot;
 use super::agent_slot::AgentSlot;
-use super::background_jobs::{probe, BackgroundLevel, PROBE_MAX_AGE};
+use super::background_jobs::{read_background, BackgroundLevel, PROBE_MAX_AGE};
 use super::execution_ownership::ExecutionOwnership;
 use super::normalize::StreamNormalizer;
 use super::prompt_queue::PromptQueue;
@@ -304,8 +304,9 @@ impl TaskSessionState {
             .agent
             .client()
             .and_then(|client| client.child_pid());
+        let worktree = self.worktree_path.clone();
         let mut read_level = || {
-            let read = probe(root, PROBE_MAX_AGE);
+            let read = read_background(root, worktree.as_deref(), PROBE_MAX_AGE);
             self.background.record_turn_end(read, Instant::now());
             read
         };

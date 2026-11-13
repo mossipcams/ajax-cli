@@ -5,12 +5,14 @@ use std::{
     io::{IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, DockerHost};
+use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, ContainerReaper, DockerHost};
 use ajax_core::canonical_agent_event::CanonicalEventKind;
+use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use serde::{Deserialize, Serialize};
 
 use crate::CliError;
@@ -136,13 +138,18 @@ fn run_agent_runtime_sandboxed(
         CliError::CommandFailed(format!("failed to read current directory: {error}"))
     })?;
     publish_cwd_index(&agent_events_dir, task_id, "primary", &cwd)?;
-    let (program, args) =
+    let (program, args, reaper) =
         match agent_command(sandbox, task_id, &cwd, &agent_events_dir, program, args) {
             Ok(command) => command,
             Err(message) => {
                 return fail_launch(state_root, task_id, &agent_events_dir, &cwd, message);
             }
         };
+    if reaper.is_some() {
+        install_termination_handlers().map_err(|error| {
+            CliError::CommandFailed(format!("failed to install termination handlers: {error}"))
+        })?;
+    }
     let child = Command::new(&program)
         .args(&args)
         .env("AJAX_TASK_ID", task_id)
@@ -167,6 +174,10 @@ fn run_agent_runtime_sandboxed(
     let pid = child.id();
 
     loop {
+        if TERMINATED.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         let status = child.try_wait().map_err(|error| {
             CliError::CommandFailed(format!("failed to observe agent: {error}"))
         })?;
@@ -218,10 +229,10 @@ fn agent_command(
     agent_events_dir: &Path,
     program: &str,
     args: &[&str],
-) -> Result<(String, Vec<String>), String> {
+) -> Result<(String, Vec<String>, Option<ContainerReaper>), String> {
     let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
     if !sandbox.enabled {
-        return Ok((program.to_string(), args));
+        return Ok((program.to_string(), args, None));
     }
     let env = [
         ("AJAX_TASK_ID".to_string(), task_id.to_string()),
@@ -240,7 +251,27 @@ fn agent_command(
         &[agent_events_dir.to_path_buf()],
         std::io::stdin().is_terminal(),
     )?;
-    Ok((docker.display().to_string(), argv))
+    let reaper = ContainerReaper::for_launch(&docker, &argv);
+    Ok((docker.display().to_string(), argv, reaper))
+}
+
+static TERMINATED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn termination_handler(_signal: std::os::raw::c_int) {
+    TERMINATED.store(true, Ordering::SeqCst);
+}
+
+fn install_termination_handlers() -> Result<(), nix::errno::Errno> {
+    let action = SigAction::new(
+        SigHandler::Handler(termination_handler),
+        SaFlags::SA_RESTART,
+        SigSet::empty(),
+    );
+    // SAFETY: the handler only stores into an AtomicBool, which is async-signal-safe.
+    unsafe {
+        sigaction(Signal::SIGHUP, &action).map(|_| ())?;
+        sigaction(Signal::SIGTERM, &action).map(|_| ())
+    }
 }
 
 fn fail_launch(
@@ -652,7 +683,7 @@ mod tests {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
         let events_dir = base.join("agent-events");
 
-        let (program, argv) = agent_command(
+        let (program, argv, reaper) = agent_command(
             SandboxInputs {
                 enabled: true,
                 host: docker_host(
@@ -669,6 +700,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(program, "/opt/docker");
+        assert!(reaper.is_some());
         assert!(argv.contains(&"run".to_string()));
         assert!(argv.windows(2).any(|pair| {
             pair[0] == "-v" && pair[1] == format!("{0}:{0}", events_dir.display())
@@ -685,7 +717,7 @@ mod tests {
     fn disabled_sandbox_keeps_agent_program_and_args_without_resolving_docker() {
         let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        let (program, argv) = agent_command(
+        let (program, argv, reaper) = agent_command(
             SandboxInputs {
                 enabled: false,
                 host: docker_host(
@@ -703,6 +735,7 @@ mod tests {
 
         assert_eq!(program, "claude");
         assert_eq!(argv, ["--resume"]);
+        assert!(reaper.is_none());
     }
 
     #[test]

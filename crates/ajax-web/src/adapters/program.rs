@@ -231,7 +231,7 @@ fn sandbox_launch(
     if !enabled {
         return Ok((program.to_path_buf(), args.to_vec()));
     }
-    docker_command(
+    let launch = docker_command(
         host,
         &program.display().to_string(),
         args,
@@ -239,7 +239,12 @@ fn sandbox_launch(
         env,
         &[],
         false,
-    )
+    );
+    if launch.is_err() {
+        #[cfg(not(test))]
+        crate::adapters::sandbox_image::ensure_image_in_background();
+    }
+    launch
 }
 
 fn apply_shell_path(command: &mut Command) {

@@ -37,7 +37,10 @@ pub fn ensure_image_in_background() {
     }
     let spawned = thread::Builder::new()
         .name("ajax-sandbox-image".to_string())
-        .spawn(build_missing_image);
+        .spawn(|| {
+            build_missing_image();
+            BUILD_STARTED.store(false, Ordering::SeqCst);
+        });
     if let Err(error) = spawned {
         tracing::warn!(target: "ajax_web", error = %error, "sandbox image build thread did not start");
     }

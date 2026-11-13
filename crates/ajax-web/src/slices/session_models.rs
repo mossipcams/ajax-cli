@@ -121,9 +121,10 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
+    let probe_dir = crate::adapters::program::probe_dir().unwrap_or_else(|_| std::env::temp_dir());
     if client == AgentClient::Cursor {
         if let Some(sdk_models) = without_shim(|| {
-            crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&std::env::temp_dir())
+            crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&probe_dir)
         }) {
             return SessionModelsResponse {
                 models: cursor_options_from_sdk(sdk_models),
@@ -165,7 +166,7 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     }
 
     let catalog = without_shim(|| {
-        crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir())
+        crate::adapters::web_session_acp::read_agent_model_catalog(client, &probe_dir)
     });
     let models = catalog
         .models

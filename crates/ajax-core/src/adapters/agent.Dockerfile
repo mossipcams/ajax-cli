@@ -9,7 +9,7 @@ ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git openssh-client curl ca-certificates python3 build-essential pkg-config \
+      git git-lfs openssh-client curl ca-certificates python3 build-essential pkg-config \
       procps ripgrep jq tmux socat libsqlite3-dev \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
@@ -17,7 +17,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-RUN git config --system credential.https://github.com.helper '!gh auth git-credential'
+RUN printf '%s\n' \
+      '[include]' \
+      '	path = ~/.gitconfig' \
+      '[credential "https://github.com"]' \
+      '	helper =' \
+      '	helper = !gh auth git-credential' \
+      '[credential "https://gist.github.com"]' \
+      '	helper =' \
+      '	helper = !gh auth git-credential' > /etc/ajax-gitconfig
+ENV GIT_CONFIG_GLOBAL=/etc/ajax-gitconfig
 
 RUN npm install -g \
       @anthropic-ai/claude-code \
@@ -64,7 +73,8 @@ RUN mkdir -p /opt/cargo/bin /opt/cursor \
  && curl -fsSL "https://get.nexte.st/latest/$NEXTEST" | tar zxf - -C /opt/cargo/bin
 
 RUN curl -fsSL https://cursor.com/install | HOME=/opt/cursor bash \
- && ln -s /opt/cursor/.local/bin/cursor-agent /usr/local/bin/cursor-agent
+ && ln -s /opt/cursor/.local/bin/cursor-agent /usr/local/bin/cursor-agent \
+ && ln -s /opt/cursor/.local/bin/cursor-agent /usr/local/bin/agent
 
 RUN (getent passwd "$HOST_UID" >/dev/null || useradd -o -u "$HOST_UID" -g "$HOST_GID" -M -d "$HOST_HOME" -s /bin/bash agent) \
  && usermod -d "$HOST_HOME" "$(getent passwd "$HOST_UID" | cut -d: -f1)" \

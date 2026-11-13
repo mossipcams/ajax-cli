@@ -9,7 +9,7 @@ use std::{
 };
 
 use ajax_core::{
-    adapters::sandbox::{docker_command, sandbox_enabled, DockerHost},
+    adapters::sandbox::{docker_command, sandbox_enabled, ContainerReaper, DockerHost},
     events::{AgentEvent, MonitorEvent, ProcessEvent},
 };
 use tokio::{
@@ -98,7 +98,7 @@ async fn supervise_launch<P: ProcessProtocol>(
     worktree: Option<&Path>,
     sandbox: SandboxInputs,
 ) -> Result<Option<i32>, SupervisorError> {
-    let mut command = agent_command(
+    let (mut command, _reaper) = agent_command(
         protocol.program(),
         &protocol.args(prompt),
         worktree,
@@ -224,26 +224,30 @@ fn agent_command(
     args: &[String],
     worktree: Option<&Path>,
     sandbox: SandboxInputs,
-) -> Result<Command, SupervisorError> {
+) -> Result<(Command, Option<ContainerReaper>), SupervisorError> {
     let cwd = match worktree {
         Some(worktree) => worktree.to_path_buf(),
         None => std::env::current_dir().map_err(|error| {
             SupervisorError::Process(format!("failed to read the working directory: {error}"))
         })?,
     };
-    let (program, args) = if sandbox.enabled {
+    let (program, args, reaper) = if sandbox.enabled {
         let (docker, argv) = docker_command(&sandbox.host, program, args, &cwd, &[], &[], false)
             .map_err(SupervisorError::Process)?;
-        (docker.display().to_string(), argv)
+        (
+            docker.display().to_string(),
+            argv.clone(),
+            ContainerReaper::for_launch(&docker, &argv),
+        )
     } else {
-        (program.to_string(), args.to_vec())
+        (program.to_string(), args.to_vec(), None)
     };
     let mut command = Command::new(program);
     command.args(args);
     if let Some(worktree) = worktree {
         command.current_dir(worktree);
     }
-    Ok(command)
+    Ok((command, reaper))
 }
 
 async fn terminate(child: &mut Child) -> Result<ExitStatus, SupervisorError> {
@@ -641,7 +645,7 @@ mod launch_tests {
         let worktree = dir.join("worktree");
         fs::create_dir_all(&worktree).unwrap();
 
-        let command = agent_command(
+        let (command, reaper) = agent_command(
             "codex",
             &["exec".to_string()],
             Some(&worktree),
@@ -655,6 +659,7 @@ mod launch_tests {
         )
         .unwrap();
 
+        assert!(reaper.is_some());
         let std_command = command.as_std();
         assert_eq!(std_command.get_program(), "/opt/docker");
         assert_eq!(std_command.get_current_dir(), Some(worktree.as_path()));
@@ -675,7 +680,7 @@ mod launch_tests {
     fn disabled_command_keeps_program_and_args_and_sets_worktree_cwd() {
         let worktree = scratch_dir("disabled-cwd");
 
-        let command = agent_command(
+        let (command, reaper) = agent_command(
             "codex",
             &["exec".to_string(), "fix".to_string()],
             Some(&worktree),
@@ -689,6 +694,7 @@ mod launch_tests {
         )
         .unwrap();
 
+        assert!(reaper.is_none());
         let std_command = command.as_std();
         assert_eq!(std_command.get_program(), "codex");
         assert_eq!(
