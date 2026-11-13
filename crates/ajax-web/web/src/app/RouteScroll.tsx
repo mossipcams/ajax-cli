@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
+import type { Route } from "@/shared/lib/routes";
 
 interface Props {
   children?: ReactNode;
@@ -8,17 +9,24 @@ interface Props {
 const RESTORE_WINDOW_MS = 600;
 const INTERRUPT_EVENTS = ["touchstart", "wheel", "pointerdown", "keydown"] as const;
 
+const offsets = new Map<string, number>();
+
+export function readRouteScrollOffset(route: Route): number {
+  return offsets.get(JSON.stringify(route)) ?? 0;
+}
+
 export default function RouteScroll({ children }: Props) {
   const route = useHashRoute();
   const routeKey = JSON.stringify(route);
   const ref = useRef<HTMLDivElement>(null);
-  const offsets = useRef(new Map<string, number>());
   const restoring = useRef(false);
+
+  useLayoutEffect(() => () => offsets.clear(), []);
 
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const target = offsets.current.get(routeKey) ?? 0;
+    const target = offsets.get(routeKey) ?? 0;
     const deadline = performance.now() + RESTORE_WINDOW_MS;
     let frame = 0;
     const stop = () => {
@@ -47,7 +55,7 @@ export default function RouteScroll({ children }: Props) {
       className="route-scroll"
       onScroll={() => {
         if (!restoring.current && ref.current) {
-          offsets.current.set(routeKey, ref.current.scrollTop);
+          offsets.set(routeKey, ref.current.scrollTop);
         }
       }}
     >

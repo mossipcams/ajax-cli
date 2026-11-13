@@ -40,6 +40,7 @@ import AppViewport from "./AppViewport";
 import AppShell from "./AppShell";
 import RouteScroll from "./RouteScroll";
 import WorkspaceStack from "./routes/WorkspaceStack";
+import PageStackBelow from "./routes/PageStackBelow";
 import TaskWorkspaceRoute from "./routes/TaskWorkspaceRoute";
 import { PULL_THRESHOLD } from "@/shared/gestures/pullToRefresh";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
@@ -146,7 +147,29 @@ function AppContent() {
   const crossSlide = usePageCrossSlide();
   const crossSlideActive = crossSlide?.active ?? false;
   const leavingRoute = crossSlide?.leavingRoute ?? null;
+  const leavingStackHandle =
+    crossSlideActive &&
+    (route.kind === "dashboard" || route.kind === "project") &&
+    leavingRoute?.handle &&
+    (leavingRoute.kind === "task" || leavingRoute.kind === "session" || leavingRoute.kind === "diff")
+      ? leavingRoute.handle
+      : null;
+  const belowRoute = (() => {
+    if (!crossSlide?.belowActive) return null;
+    if (crossSlideActive && leavingRoute) {
+      return (
+        (route.kind === "dashboard" || route.kind === "project") &&
+        (leavingRoute.kind === "task" || leavingRoute.kind === "session") ? route : null
+      );
+    }
+    return (
+      (route.kind === "task" || route.kind === "session") && route.handle
+        ? parseRoute(selectedProject ? projectHash(selectedProject) : dashboardHash())
+        : null
+    );
+  })();
   const taskOpenHandle = (() => {
+    if (leavingStackHandle) return leavingStackHandle;
     if (route.kind === "task" || route.kind === "diff" || route.kind === "session") {
       return route.handle ?? null;
     }
@@ -173,8 +196,8 @@ function AppContent() {
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
   const [swipeEnter, setSwipeEnter] = useState<SwipeEnterDirection | "none" | null>(null);
-  const crossSlideActiveRef = useRef(crossSlideActive);
-  crossSlideActiveRef.current = crossSlideActive;
+  const crossSlideRef = useRef(crossSlide);
+  crossSlideRef.current = crossSlide;
   const cockpitRef = useRef(cockpit);
   cockpitRef.current = cockpit;
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -542,9 +565,13 @@ function AppContent() {
     // swipe-enter on their outlet plays the same motion again once the slide finishes (#1601).
     // "none" stays set after the slide settles so the base fade never starts on that outlet (#1600).
     const crossSlideOwnsOutlet =
-      crossSlideActiveRef.current &&
+      crossSlideRef.current?.active === true &&
       (route.kind === "task" || route.kind === "session" || route.kind === "diff");
-    setSwipeEnter(crossSlideOwnsOutlet ? "none" : direction);
+    const popOwnsOutlet =
+      crossSlideRef.current?.active === true &&
+      (route.kind === "dashboard" || route.kind === "project") &&
+      (crossSlideRef.current.leavingRoute?.kind === "task" || crossSlideRef.current.leavingRoute?.kind === "session");
+    setSwipeEnter(crossSlideOwnsOutlet || popOwnsOutlet ? "none" : direction);
   }, [route]);
 
   const swipeOutletClass = crossSlideActive ? "" : swipeOutletClassName(swipeEnter);
@@ -872,6 +899,9 @@ function AppContent() {
         nav={nav}
         className={isChatWorkspace ? "app-shell--session" : undefined}
       >
+        <PageStackBelow route={belowRoute}>
+          {belowRoute ? renderRouteOutlet(belowRoute) : null}
+        </PageStackBelow>
         <RouteScroll>{routeOutlet}</RouteScroll>
       </AppShell>
 

@@ -113,6 +113,9 @@ export type PageCrossSlideContextValue = {
   beginCommit: (params: CrossSlideCommitParams) => boolean;
   paneStyle: (role: "leaving" | "entering") => CSSProperties;
   onEnteringTransitionEnd: (event: ReactTransitionEvent) => void;
+  belowActive: boolean;
+  showBelow: () => void;
+  hideBelow: () => void;
 };
 
 const PageCrossSlideContext = createContext<PageCrossSlideContextValue | null>(null);
@@ -154,6 +157,7 @@ export function scheduleCrossSlideAnimatingFlip(callback: () => void): void {
 
 export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
   const [active, setActive] = useState<ActiveCrossSlide | null>(null);
+  const [belowActive, setBelowActive] = useState(false);
   const activeRef = useRef<ActiveCrossSlide | null>(null);
   activeRef.current = active;
   const settleHeldRef = useRef(false);
@@ -202,6 +206,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
     });
     activeRef.current = null;
     setActive(null);
+    setBelowActive(false);
     releaseSettleGesture();
   }, []);
 
@@ -232,6 +237,7 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
     };
     activeRef.current = nextActive;
     setActive(nextActive);
+    if (params.direction === "right") setBelowActive(true);
     markNavigationStart(params.fromRoute, "swipe");
     params.navigate();
 
@@ -289,6 +295,15 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
 
   const isBusy = useCallback(() => activeRef.current !== null, []);
 
+  const showBelow = useCallback(() => {
+    setBelowActive(true);
+  }, []);
+
+  const hideBelow = useCallback(() => {
+    if (activeRef.current !== null) return;
+    setBelowActive(false);
+  }, []);
+
   const value: PageCrossSlideContextValue = {
     active: active !== null,
     isBusy,
@@ -296,6 +311,9 @@ export function PageCrossSlideProvider({ children }: { children: ReactNode }) {
     beginCommit,
     paneStyle,
     onEnteringTransitionEnd,
+    belowActive,
+    showBelow,
+    hideBelow,
   };
 
   return createElement(PageCrossSlideContext.Provider, { value }, children);
@@ -390,6 +408,7 @@ export function useSwipePageTransition(
       settlingRef.current = false;
       maxDistanceRef.current = 0;
       releaseGestures();
+      crossSlideRef.current?.hideBelow();
       setDragX(0);
       setDragging(false);
       setSettling(false);
@@ -567,6 +586,9 @@ export function useSwipePageTransition(
       const edgeStart =
         point.x - rootLeft <= EDGE_ZONE_PX && !isEdgeArmingExcludedTarget(event.target);
       swipeRef.current = navigateSwipeStart(edgeStart);
+      if (edgeStart && optsRef.current.onRight && !capRightCommit()) {
+        crossSlideRef.current?.showBelow();
+      }
       samplesRef.current = [{ t: startedAt, x: point.x }];
       setDragging(false);
       setSettling(false);
@@ -604,6 +626,13 @@ export function useSwipePageTransition(
         capRightCommit: capRightCommit(),
       });
       swipeRef.current = next;
+      if (
+        next.engaged &&
+        navigateSwipeTranslateX(next) > 0 &&
+        optsRef.current.onRight
+      ) {
+        crossSlideRef.current?.showBelow();
+      }
       if (!next.engaged) return;
       if (event.cancelable) event.preventDefault();
       const distance = Math.abs(navigateSwipeTranslateX(next));
@@ -708,6 +737,7 @@ export function useSwipePageTransition(
     return () => {
       abortSettle();
       releaseGestures();
+      crossSlideRef.current?.hideBelow();
       root.removeEventListener("touchstart", onTouchStart, capture);
       root.removeEventListener("touchmove", onTouchMove, capture);
       root.removeEventListener("touchend", onTouchEnd, capture);
