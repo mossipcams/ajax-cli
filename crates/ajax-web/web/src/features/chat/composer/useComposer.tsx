@@ -585,6 +585,7 @@ export function ComposerProvider({
 
   const onComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         if (isBuiltInClearCommand(draftRef.current)) {
