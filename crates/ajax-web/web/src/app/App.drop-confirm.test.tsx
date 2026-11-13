@@ -427,6 +427,33 @@ describe("App drop shell confirm", () => {
       expect(operations.filter((op) => op.action === "drop")).toHaveLength(1);
     });
   });
+
+  it("keeps a failed Drop error visible when the undo timer also dismisses the undo banner", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.reject(new Error("network down"));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    fireEvent.click(await screen.findByText("Drop"));
+    fireEvent.click(await screen.findByText("Confirm"));
+    expect(await screen.findByTestId("result-panel")).toHaveTextContent(/Dropping/);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DROP_UNDO_MS);
+    });
+
+    expect(screen.getByTestId("result-panel")).toHaveTextContent("Action failed — network error");
+  });
 });
 
 describe("App drop shell confirm on session chat (#947)", () => {

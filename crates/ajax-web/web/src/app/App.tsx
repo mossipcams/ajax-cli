@@ -929,7 +929,7 @@ function AppContent() {
           isError={result.isError}
           onUndo={result.onUndo}
           onCommit={result.onCommit}
-          onDismiss={() => setResult(null)}
+          onDismiss={() => setResult((current) => (current?.id === result.id ? null : current))}
         />
       ) : null}
 
