@@ -347,6 +347,16 @@ describe("NewTaskSheet", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("clears the empty-title error once a title is typed", () => {
+    const spy = vi.spyOn(api, "startTask");
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.submit(taskForm());
+    expect(screen.getByText("Add a title")).toBeInTheDocument();
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    expect(screen.queryByText("Add a title")).not.toBeInTheDocument();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("adopts the first repository when repository data arrives after opening", async () => {
     stubCatalog();
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
