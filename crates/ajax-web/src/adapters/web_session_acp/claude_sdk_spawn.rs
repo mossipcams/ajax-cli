@@ -2,10 +2,18 @@
 
 use std::path::{Path, PathBuf};
 
+use ajax_core::adapters::sandbox::sandbox_enabled;
+
 use super::claude_sdk_client::ClaudeSdkClient;
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::PromptCapabilityDescriptor;
+const CONTAINER_SDK_MODULE: &str = "/opt/ajax/claude-agent-sdk/sdk.mjs";
+
 pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    claude_launch_for(sandbox_enabled())
+}
+
+fn claude_launch_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     #[cfg(test)]
     if let Some(module) = claude_sdk_module_override() {
         return Ok((
@@ -18,6 +26,12 @@ pub(super) fn claude_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
                 "--sdk-module".to_string(),
                 module.to_string_lossy().into_owned(),
             ],
+        ));
+    }
+    if sandboxed {
+        return Ok((
+            PathBuf::from("node"),
+            super::claude_sdk_client::sidecar_launch_args(Some(CONTAINER_SDK_MODULE)),
         ));
     }
     let program = crate::adapters::program::resolve_program("node").ok_or_else(|| {
@@ -149,4 +163,21 @@ where
     let result = f();
     *TEST_CLAUDE_SDK_MODULE.lock().unwrap() = None;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_claude_sidecar_runs_bare_node_against_the_image_sdk() {
+        let (program, args) = claude_launch_for(true).expect("docker launch needs no host sdk");
+
+        assert_eq!(program, PathBuf::from("node"));
+        assert!(args.ends_with(&[
+            "--".to_string(),
+            "--sdk-module".to_string(),
+            CONTAINER_SDK_MODULE.to_string(),
+        ]));
+    }
 }

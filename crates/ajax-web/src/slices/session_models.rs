@@ -4,7 +4,7 @@ use ajax_core::{
     models::AgentClient,
 };
 use serde::Serialize;
-use std::{collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, io, process::Command, sync::Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SessionModelOption {
@@ -51,13 +51,9 @@ pub fn harness_version(agent: AgentClient) -> String {
         AgentClient::Pi => "pi",
         AgentClient::Other => return String::new(),
     };
-    let Some(mut command) = crate::adapters::program::harness_command(program) else {
-        return String::new();
-    };
-    command
-        .arg("--version")
-        .output()
+    crate::adapters::program::probe_command(program, &["--version"])
         .ok()
+        .and_then(|mut command| command.output().ok())
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .unwrap_or_default()
@@ -125,9 +121,10 @@ pub(crate) fn cached_versions() -> Vec<(String, String)> {
 
 fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     let client = agent_client_from_name(agent);
+    let probe_dir = crate::adapters::program::probe_dir().unwrap_or_else(|_| std::env::temp_dir());
     if client == AgentClient::Cursor {
         if let Some(sdk_models) = without_shim(|| {
-            crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&std::env::temp_dir())
+            crate::adapters::web_session_acp::read_cursor_catalog_if_sdk(&probe_dir)
         }) {
             return SessionModelsResponse {
                 models: cursor_options_from_sdk(sdk_models),
@@ -169,7 +166,7 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
     }
 
     let catalog = without_shim(|| {
-        crate::adapters::web_session_acp::read_agent_model_catalog(client, &std::env::temp_dir())
+        crate::adapters::web_session_acp::read_agent_model_catalog(client, &probe_dir)
     });
     let models = catalog
         .models
@@ -216,6 +213,9 @@ fn fetch_catalog(agent: &str) -> SessionModelsResponse {
 }
 
 fn missing_acp_program(client: AgentClient) -> Option<String> {
+    if crate::adapters::program::sandbox_on() {
+        return None;
+    }
     let launch = ajax_core::adapters::acp_launch_for_agent(client)?;
     let found = launch
         .candidates
@@ -229,11 +229,12 @@ fn missing_acp_program(client: AgentClient) -> Option<String> {
     })
 }
 
+fn models_command() -> io::Result<Command> {
+    crate::adapters::program::probe_command("agent", &["models"])
+}
+
 fn fetch_models_from_agent() -> Option<Vec<SessionModelOption>> {
-    let output = crate::adapters::program::harness_command("agent")?
-        .arg("models")
-        .output()
-        .ok()?;
+    let output = models_command().ok()?.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -371,6 +372,7 @@ fn cursor_options_from_sdk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::program::{assert_probe_docker_launch, with_test_sandbox};
 
     #[test]
     fn catalog_is_cached_against_the_harness_version() {
@@ -597,6 +599,25 @@ mod tests {
         let models = parse_agent_models_output("composer-2.5 - Composer 2.5\n");
         assert_eq!(models[0].id, "auto");
         assert_eq!(models[1].id, "composer-2.5");
+    }
+
+    #[test]
+    fn a_sandboxed_model_listing_runs_in_the_probe_directory() {
+        let command = with_test_sandbox(true, models_command);
+        assert_probe_docker_launch(&command.expect("a docker launch needs no host agent"));
+    }
+
+    #[test]
+    fn a_sandboxed_harness_version_never_reads_the_host_binary() {
+        assert!(with_test_sandbox(true, || harness_version(AgentClient::Pi)).is_empty());
+    }
+
+    #[test]
+    fn a_sandboxed_harness_is_never_reported_as_missing_from_the_host() {
+        assert_eq!(
+            with_test_sandbox(true, || missing_acp_program(AgentClient::Claude)),
+            None
+        );
     }
 
     #[test]

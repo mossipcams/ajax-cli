@@ -45,7 +45,7 @@ pub struct JsonlProcess {
 
 impl JsonlProcess {
     pub fn spawn(program: &Path, args: &[String], cwd: &Path) -> io::Result<Self> {
-        let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd)?;
+        let (program, args) = crate::adapters::program::sandboxed_program(program, args, cwd, &[])?;
         let command = piped_command(&program, &args, cwd);
         if let Some(shim) = shim_spawn(&command)? {
             return Self::from_shim(shim.child, shim.stream);

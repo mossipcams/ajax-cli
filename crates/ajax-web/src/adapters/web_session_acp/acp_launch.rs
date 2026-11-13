@@ -1,7 +1,7 @@
 #[cfg(test)]
 use ajax_core::adapters::acp_spawn_model_for_argv;
 use ajax_core::{
-    adapters::{acp_launch_for_agent, AcpLaunch},
+    adapters::{acp_launch_for_agent, sandbox::sandbox_enabled, AcpLaunch},
     models::AgentClient,
 };
 use std::{
@@ -23,10 +23,14 @@ use std::path::PathBuf;
 use super::client::acp_args_for_program;
 use crate::adapters::session_shim::shim_spawn;
 
-fn acp_candidates(launch: AcpLaunch) -> Vec<(String, Vec<String>)> {
+fn acp_candidates(
+    launch: AcpLaunch,
+    sandboxed: bool,
+    advertised: fn(&str) -> bool,
+) -> Vec<(String, Vec<String>)> {
     let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
     if let Some(program) = launch.native_program {
-        if native_acp_advertised(program) {
+        if !sandboxed && advertised(program) {
             candidates.push((program.to_string(), vec!["acp".to_string()]));
         }
     }
@@ -154,13 +158,19 @@ pub(super) fn spawn_acp_process(
     let Some(launch) = acp_launch_for_agent(agent) else {
         return Err(format!("no ACP mapping for agent {agent:?}"));
     };
-    for (program, base_args) in acp_candidates(launch) {
+    let sandboxed = sandbox_enabled();
+    let mut candidates = acp_candidates(launch, sandboxed, native_acp_advertised);
+    if sandboxed {
+        candidates.truncate(1);
+    }
+    for (program, base_args) in candidates {
         let base_args: Vec<&str> = base_args.iter().map(String::as_str).collect();
         let args = acp_args_for_program(launch, &base_args, model);
         let mut command = match crate::adapters::program::sandboxed_harness_command(
             &program,
             &args,
             worktree_path,
+            &[],
         ) {
             Ok(command) => command,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -190,4 +200,35 @@ pub(super) fn spawn_acp_process(
         "{agent:?} ACP agent is not installed — {}",
         launch.install_hint
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn codex_launch() -> AcpLaunch {
+        acp_launch_for_agent(AgentClient::Codex).expect("codex has an ACP launch")
+    }
+
+    #[test]
+    fn a_sandboxed_acp_launch_takes_the_image_adapter_without_probing_the_host() {
+        let candidates = acp_candidates(codex_launch(), true, |_| {
+            panic!("the host harness must not be probed when sandboxed")
+        });
+
+        assert_eq!(
+            candidates.first().map(|(program, _)| program.as_str()),
+            Some("codex-acp")
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_acp_launch_still_prefers_a_native_acp_harness() {
+        let candidates = acp_candidates(codex_launch(), false, |_| true);
+
+        assert_eq!(
+            candidates.first().map(|(program, _)| program.as_str()),
+            Some("codex")
+        );
+    }
 }

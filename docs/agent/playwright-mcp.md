@@ -1,11 +1,12 @@
 # Playwright MCP (CDP)
 
-Browser automation for sandboxed Ajax agents via `@playwright/mcp` and host Chrome.
+Browser automation for Ajax agents via `@playwright/mcp` and host Chrome.
 
-## Why Chrome runs outside nono
+## Why Chrome runs on the host
 
-Chrome aborts inside nono on a denied Mach bootstrap check-in. MCP attaches to
-unsandboxed host Chrome on CDP. The repo wrapper is `scripts/playwright-mcp-cdp`:
+MCP attaches to host Chrome on CDP. Agent containers use host networking, so
+`127.0.0.1:9222` stays reachable from them. The repo wrapper is
+`scripts/playwright-mcp-cdp`:
 
 ```bash
 install -m 755 /path/to/ajax-cli/scripts/playwright-mcp-cdp ~/.local/bin/playwright-mcp-cdp
@@ -18,7 +19,7 @@ point at a worktree path.
 
 launchd does not expand environment variables in `ProgramArguments` or
 `StandardErrorPath`. Save the template below with literal `$HOME` placeholders, then
-run this from a shell (outside nono) so Chrome gets real paths:
+run this from a host shell so Chrome gets real paths:
 
 ```bash
 sed -i "" "s|\$HOME|$HOME|g" ~/Library/LaunchAgents/com.ajax.playwright-chrome.plist
@@ -61,13 +62,8 @@ mkdir -p ~/.local/share/playwright-chrome
 Save as `~/Library/LaunchAgents/com.ajax.playwright-chrome.plist`, run the `sed` command
 above, then run
 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ajax.playwright-chrome.plist`
-from a shell **outside** nono; sandboxed agents cannot run `launchctl bootstrap`.
+from a host shell. Agents run in a Linux container and cannot run `launchctl`.
 Stop with `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.ajax.playwright-chrome.plist`.
-
-## nono profile
-
-No extra nono grant is needed while the agent profile keeps `network.block` false.
-`--open-port` applies only in restricted network modes, not this CDP setup.
 
 ## Harness registration
 
@@ -82,11 +78,11 @@ set to the absolute path of `~/.local/bin/playwright-mcp-cdp`.
 
 ## Security
 
-Port 9222 CDP has no authentication. Any local process can control Chrome. A sandboxed
-agent driving MCP steers unsandboxed Chrome, including `file://` reads of paths nono
-denies and download redirection to arbitrary paths (known protocol behavior; not
-tested here). Playwright MCP is not a security boundary. Use `launchctl bootout` when
-not doing browser work.
+Port 9222 CDP has no authentication. Any local process can control Chrome. An agent
+driving MCP steers host Chrome, including `file://` reads of any host path and
+download redirection to arbitrary paths (known protocol behavior; not tested here).
+Playwright MCP is not a security boundary. Use `launchctl bootout` when not doing
+browser work.
 
 ## Verification status
 

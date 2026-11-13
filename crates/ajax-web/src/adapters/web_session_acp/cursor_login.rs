@@ -1,12 +1,15 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::cursor_sdk_spawn::cursor_login_launch;
+use crate::adapters::program::{probe_dir, sandbox_on, sandboxed_program};
+
+use super::cursor_sdk_spawn::{cursor_login_launch, CONTAINER_SDK_MODULE, LOGIN_SOURCE};
 use super::jsonl_process::{JsonlProcess, JsonlRecord};
+use super::rpc_handshake::sidecar_launch_args;
 
 const GLOBAL_TIMEOUT: Duration = Duration::from_secs(300);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
@@ -93,15 +96,14 @@ impl CursorLogin {
             (state.flow_id, cancel_flag)
         };
 
-        let (program, args) = match cursor_login_launch("login", self.store_path.as_deref()) {
+        let (program, args, cwd) = match sidecar_launch("login", self.store_path.as_deref()) {
             Ok(launch) => launch,
             Err(error) => {
-                self.fail_flow(flow, error.to_string());
+                self.fail_flow(flow, error);
                 return self.phase();
             }
         };
-        let process = match JsonlProcess::spawn_unsandboxed(&program, &args, &std::env::temp_dir())
-        {
+        let process = match JsonlProcess::spawn_unsandboxed(&program, &args, &cwd) {
             Ok(process) => process,
             Err(error) => {
                 self.fail_flow(flow, format!("cursor login spawn failed: {error}"));
@@ -133,9 +135,8 @@ impl CursorLogin {
     }
 
     pub fn status(&self) -> Result<CursorCredentialStatus, String> {
-        let (program, args) = cursor_login_launch("status", self.store_path.as_deref())
-            .map_err(|error| error.to_string())?;
-        let process = JsonlProcess::spawn_unsandboxed(&program, &args, &std::env::temp_dir())
+        let (program, args, cwd) = sidecar_launch("status", self.store_path.as_deref())?;
+        let process = JsonlProcess::spawn_unsandboxed(&program, &args, &cwd)
             .map_err(|error| format!("cursor status spawn failed: {error}"))?;
         let deadline = Instant::now() + STATUS_TIMEOUT;
         loop {
@@ -177,6 +178,29 @@ impl CursorLogin {
             state.phase = CursorLoginPhase::Failed { message };
         }
     }
+}
+
+fn sidecar_launch(
+    mode: &str,
+    store_path: Option<&Path>,
+) -> Result<(PathBuf, Vec<String>, PathBuf), String> {
+    if !sandbox_on() {
+        let (program, args) =
+            cursor_login_launch(mode, store_path).map_err(|error| error.to_string())?;
+        return Ok((program, args, std::env::temp_dir()));
+    }
+    let mut args = sidecar_launch_args(LOGIN_SOURCE, Some(CONTAINER_SDK_MODULE));
+    args.extend(["--mode".to_string(), mode.to_string()]);
+    if let Some(path) = store_path {
+        args.extend([
+            "--store-path".to_string(),
+            path.to_string_lossy().into_owned(),
+        ]);
+    }
+    let cwd = probe_dir().map_err(|error| error.to_string())?;
+    let (program, args) = sandboxed_program(Path::new("node"), &args, &cwd, &[])
+        .map_err(|error| error.to_string())?;
+    Ok((program, args, cwd))
 }
 
 fn is_terminal(phase: &CursorLoginPhase) -> bool {
@@ -294,5 +318,40 @@ fn status_from_value(value: &Value) -> CursorCredentialStatus {
         error: value
             .get("error")
             .and_then(|v| v.as_str().map(String::from)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use ajax_core::adapters::docker_sandbox::image_tag;
+
+    use super::{sidecar_launch, CONTAINER_SDK_MODULE};
+    use crate::adapters::program::{probe_dir, with_test_sandbox, TEST_DOCKER};
+
+    #[test]
+    fn a_sandboxed_login_sidecar_runs_bare_node_from_the_probe_directory() {
+        let (program, args, cwd) = with_test_sandbox(true, || sidecar_launch("login", None))
+            .expect("a docker launch needs no host node or sdk");
+
+        assert_eq!(program, PathBuf::from(TEST_DOCKER));
+        assert_eq!(cwd, probe_dir().expect("probe dir"));
+        let at = args
+            .iter()
+            .position(|arg| arg == &image_tag())
+            .expect("image argument");
+        assert_eq!(args[at + 1], "node");
+        let cwd_text = cwd.display().to_string();
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-w" && pair[1] == cwd_text));
+        assert!(args.ends_with(&[
+            "--".to_string(),
+            "--sdk-module".to_string(),
+            CONTAINER_SDK_MODULE.to_string(),
+            "--mode".to_string(),
+            "login".to_string(),
+        ]));
     }
 }

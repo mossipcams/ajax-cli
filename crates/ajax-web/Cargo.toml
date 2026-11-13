@@ -19,7 +19,7 @@ futures = { workspace = true }
 portable-pty = { workspace = true }
 getrandom = { workspace = true }
 jsonwebtoken = { workspace = true }
-nix = { workspace = true }
+nix = { workspace = true, features = ["user"] }
 rcgen = { workspace = true }
 rusqlite = { workspace = true, features = ["limits"] }
 rustls = { workspace = true }

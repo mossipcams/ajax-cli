@@ -744,6 +744,13 @@ pub(super) fn pi_program_and_args() -> Result<(PathBuf, Vec<String>), AcpSpawnEr
     if let Some(pair) = pi_program_override() {
         return Ok(pair);
     }
+    pi_program_for(ajax_core::adapters::sandbox::sandbox_enabled())
+}
+
+fn pi_program_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    if sandboxed {
+        return Ok((PathBuf::from("pi"), Vec::new()));
+    }
     let program = crate::adapters::program::resolve_program("pi").ok_or_else(|| {
         AcpSpawnError::Message(
             "pi is not installed - npm install -g @earendil-works/pi-coding-agent".to_string(),
@@ -809,4 +816,17 @@ pub(super) fn prompt_text(blocks: &[ContentBlock]) -> String {
     }
 
     parts.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_pi_rpc_runs_the_bare_program_with_no_host_install() {
+        let (program, args) = pi_program_for(true).expect("docker launch needs no host pi");
+
+        assert_eq!(program, PathBuf::from("pi"));
+        assert!(args.is_empty());
+    }
 }

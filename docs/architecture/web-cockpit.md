@@ -1634,9 +1634,9 @@ shutdown, and process-level startup by composing `ajax-web::slices::*` with
 passes resolved runtime context to `ajax-web` explicitly.
 
 `POST /api/state/query` provides host-side, read-only SQLite inspection for
-nono-sandboxed agents, which retain their deny on `ajax.db`, `ajax.db-wal`, and
-`ajax.db-shm`. It requires the same session-cookie authentication as other
-protected `/api` routes. The request is `{"sql":"SELECT ..."}`; the response is
+sandboxed agents, which cannot reach `ajax.db`, `ajax.db-wal`, or `ajax.db-shm`
+(the state directory is not mounted into agent containers). It requires the same
+session-cookie authentication as other protected `/api` routes. The request is `{"sql":"SELECT ..."}`; the response is
 `{"columns":[...],"rows":[[...]],"truncated":false}`. SQLite values become JSON
 nulls, numbers, or strings, with BLOBs encoded as hexadecimal strings.
 

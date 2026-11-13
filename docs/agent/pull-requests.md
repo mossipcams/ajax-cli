@@ -40,15 +40,14 @@ Use `type(optional-scope): summary`, for example `fix(web): ...` or
 - Prefer a scope when it helps. Confirm the type is in the table before
   creating or retitling a PR.
 
-## Web test plans under the agent sandbox
+## Web test plans in the agent container
 
-Agents run inside the nono sandbox, where Playwright's WebKit cannot start:
-WebKit sandboxes its own page processes, and macOS sandboxes cannot nest. The
-Vite dev server itself runs fine. So a sandboxed agent does not run
-`npm run web:smoke` locally. The PR's **Web E2E** CI job runs `web:smoke` with
-`mobile-webkit` on every PR that touches web paths; cite that job's result in the
-test plan instead. The on-device phone check is an operator step: leave it in the
-test plan for Matt, with the screen and behaviour to check.
+Agents run inside a Docker container built on the Playwright base image that CI's
+Web E2E job uses, so an agent runs `CI=1 npm run web:smoke` itself and cites that
+result in the test plan. The PR's **Web E2E** CI job still runs `web:smoke` with
+`mobile-webkit` on every PR that touches web paths; cite its result too. The
+on-device phone check is an operator step: leave it in the test plan for Matt, with
+the screen and behaviour to check.
 
 ## CI trigger contract
 

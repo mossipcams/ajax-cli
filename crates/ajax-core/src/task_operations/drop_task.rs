@@ -1,7 +1,7 @@
 use crate::{
     adapters::{
-        trusted_git, CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter,
-        TmuxAdapter,
+        docker_sandbox, trusted_git, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+        GitAdapter, TmuxAdapter,
     },
     commands::{
         self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
@@ -217,6 +217,7 @@ pub fn execute_drop_task_operation<R: Registry>(
                 outputs.push(output);
                 if matches!(op, DropOp::EnsureWorktreeAbsent) {
                     forget_trusted_worktree(context, qualified_handle);
+                    remove_sandbox_task_resources(context, qualified_handle);
                 }
                 commands::mark_task_cleanup_step_completed(context, qualified_handle, &command)?;
                 record_drop_step_event(context, qualified_handle, op)?;
@@ -275,6 +276,12 @@ fn forget_trusted_worktree<R: Registry>(context: &CommandContext<R>, qualified_h
     };
     if let Ok(task) = task(context, qualified_handle) {
         let _ = trusted_git::forget(&store, &task.worktree_path);
+    }
+}
+
+fn remove_sandbox_task_resources<R: Registry>(context: &CommandContext<R>, qualified_handle: &str) {
+    if let Ok(task) = task(context, qualified_handle) {
+        docker_sandbox::remove_task_resources(&docker_sandbox::task_key(&task.worktree_path));
     }
 }
 

@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use ajax_core::adapters::sandbox::sandbox_enabled;
+
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::cursor_sdk_client::CursorSdkClient;
 use super::PromptCapabilityDescriptor;
@@ -10,6 +12,7 @@ use super::PromptCapabilityDescriptor;
 const INSTALL_HINT: &str = "npm install -g @cursor/sdk";
 const LOGIN_HINT: &str = "Cursor rejected the SDK credential - sign in again from Settings > Cursor in Ajax Web, or set CURSOR_API_KEY for the ajax-web host";
 const MIN_NODE: (u32, u32) = (22, 13);
+pub(super) const CONTAINER_SDK_MODULE: &str = "/opt/ajax/cursor-sdk/dist/esm/index.js";
 
 pub(super) fn node_version_ok(text: &str) -> bool {
     let mut parts = text.trim().trim_start_matches('v').split('.');
@@ -86,6 +89,16 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
             ],
         ));
     }
+    cursor_launch_for(sandbox_enabled())
+}
+
+fn cursor_launch_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    if sandboxed {
+        return Ok((
+            PathBuf::from("node"),
+            super::cursor_sdk_client::sidecar_launch_args(Some(CONTAINER_SDK_MODULE)),
+        ));
+    }
     let (program, module) = resolve_node_and_sdk()?;
     Ok((
         program,
@@ -112,7 +125,7 @@ pub(super) fn spawn_error(text: String, resume_session_id: Option<&str>) -> AcpS
     }
     AcpSpawnError::Message(text)
 }
-const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
+pub(super) const LOGIN_SOURCE: &str = include_str!("../../../sidecar/cursor_sdk_login.mjs");
 
 pub(super) fn cursor_login_launch(
     mode: &str,
@@ -229,4 +242,21 @@ where
     let result = f();
     *TEST_CURSOR_SDK_MODULE.lock().unwrap() = None;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sandboxed_cursor_sidecar_runs_bare_node_against_the_image_sdk() {
+        let (program, args) = cursor_launch_for(true).expect("docker launch needs no host sdk");
+
+        assert_eq!(program, PathBuf::from("node"));
+        assert!(args.ends_with(&[
+            "--".to_string(),
+            "--sdk-module".to_string(),
+            CONTAINER_SDK_MODULE.to_string(),
+        ]));
+    }
 }

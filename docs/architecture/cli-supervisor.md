@@ -18,9 +18,9 @@ Composition shell and supervised agent execution.
 - `event_log.rs` owns optional append-only JSONL event persistence.
 - `status.rs` reduces monitor events into observed live status.
 
-`process_observer.rs` wraps the supervised agent in nono via `ajax-core`
-`adapters::sandbox`. The workdir is the worktree when one is given, otherwise
-the current directory.
+`process_observer.rs` runs the supervised agent in a `docker run` container via
+`ajax-core` `adapters::sandbox`. The workdir is the worktree when one is given,
+otherwise the current directory.
 
 ## CLI Architecture
 
@@ -58,10 +58,10 @@ the current directory.
   tmux bindings, and resumes Cockpit when the task attach client detaches.
   Ctrl-T returns to Cockpit on the create-task screen for the task's project.
 
-`__agent-runtime` wraps the tmux agent in nono via `ajax-core`
-`adapters::sandbox`, granting the git common dir and the agent-events dir
-read-write. The profile already allows `$HOME` under the denylist, so these
-explicit grants are belt-and-braces.
+`__agent-runtime` runs the tmux agent in a `docker run` container via `ajax-core`
+`adapters::sandbox`, mounting the git common dir and the agent-events dir read-write
+alongside the worktree. Its containers carry the `ajax.server=cli` label (the
+supervisor uses `supervisor`).
 
 Startup behavior should stay inside normal CLI parsing and dispatch. Bare
 invocations may choose a default operator surface, and flags may select runtime
