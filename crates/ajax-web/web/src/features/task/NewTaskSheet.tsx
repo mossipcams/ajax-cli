@@ -228,7 +228,14 @@ export default function NewTaskSheet({
             <>
           <label htmlFor="new-task-repo">Repository</label>
           {repos.length ? (
-            <select id="new-task-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
+            <select
+              id="new-task-repo"
+              value={repo}
+              onChange={(e) => {
+                setRepo(e.target.value);
+                setError(null);
+              }}
+            >
               {repos.map((option) => (
                 <option key={option.name} value={option.name}>
                   {option.name}
@@ -249,7 +256,10 @@ export default function NewTaskSheet({
             enterKeyHint="go"
             placeholder="Short title"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              setError(null);
+            }}
           />
 
           <span className="field-label" id="new-task-agent">

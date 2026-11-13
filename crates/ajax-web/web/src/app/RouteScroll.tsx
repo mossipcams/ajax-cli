@@ -4,6 +4,7 @@ import type { Route } from "@/shared/lib/routes";
 
 interface Props {
   children?: ReactNode;
+  restoreKey?: string | null;
 }
 
 const RESTORE_WINDOW_MS = 600;
@@ -15,7 +16,7 @@ export function readRouteScrollOffset(route: Route): number {
   return offsets.get(JSON.stringify(route)) ?? 0;
 }
 
-export default function RouteScroll({ children }: Props) {
+export default function RouteScroll({ children, restoreKey }: Props) {
   const route = useHashRoute();
   const routeKey = JSON.stringify(route);
   const ref = useRef<HTMLDivElement>(null);
@@ -46,7 +47,7 @@ export default function RouteScroll({ children }: Props) {
     for (const type of INTERRUPT_EVENTS) node.addEventListener(type, stop, { passive: true });
     apply();
     return stop;
-  }, [routeKey]);
+  }, [routeKey, restoreKey]);
 
   return (
     <div

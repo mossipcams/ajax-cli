@@ -4,10 +4,10 @@ import RouteScroll, { readRouteScrollOffset } from "./RouteScroll";
 import { parseRoute } from "@/shared/lib/routes";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
 
-function Harness() {
+function Harness({ restoreKey }: { restoreKey?: string | null }) {
   useHashRoute();
   return (
-    <RouteScroll>
+    <RouteScroll restoreKey={restoreKey}>
       <div>{window.location.hash}</div>
     </RouteScroll>
   );
@@ -107,6 +107,25 @@ describe("RouteScroll", () => {
     changeHash("#/t/a");
     changeHash("#/");
     expect(scroll.scrollTop).toBe(1200);
+  });
+
+  it("restores the offset in the commit that swaps in the real content, before paint", () => {
+    let max = 5000;
+    const { rerender } = render(<Harness />);
+    const scroll = screen.getByTestId("route-scroll");
+    clampScrollTop(scroll, () => max);
+
+    scroll.scrollTop = 300;
+    fireEvent.scroll(scroll);
+    changeHash("#/t/a");
+
+    max = 0;
+    changeHash("#/");
+    expect(scroll.scrollTop).toBe(0);
+
+    max = 5000;
+    rerender(<Harness restoreKey="stack" />);
+    expect(scroll.scrollTop).toBe(300);
   });
 
   it("exposes the saved offset through readRouteScrollOffset and clears it on unmount", () => {

@@ -60,6 +60,17 @@ describe("ChatComposer", () => {
     expect(screen.getAllByTestId("session-message-user")).toHaveLength(1);
   });
 
+  it("ignores Enter while an IME composition is in progress (#1631)", () => {
+    mountChat();
+    const input = screen.getByLabelText("Message");
+    fireEvent.change(input, { target: { value: "にほん" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229, isComposing: true });
+    expect(transport.sendPrompt).not.toHaveBeenCalled();
+    expect(input).toHaveValue("にほん");
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+    expect(transport.sendPrompt).toHaveBeenCalledExactlyOnceWith("にほん", [], undefined);
+  });
+
   it("queues one editable follow-up and stages it on the host while a turn is live", () => {
     mountChat();
 

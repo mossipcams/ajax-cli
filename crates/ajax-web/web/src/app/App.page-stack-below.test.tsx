@@ -3,7 +3,7 @@ import { render, screen, act, within, waitFor } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
-import { sessionHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
+import { projectHash, sessionHash, taskDiffHash, taskHash } from "@/shared/lib/routes";
 
 function setHash(hash: string) {
   window.location.hash = hash;
@@ -105,6 +105,21 @@ describe("App page-stack below layer", () => {
       detail.dispatchEvent(touch("touchend", 4, 40));
     });
     expect(screen.queryByTestId("page-stack-below")).toBeNull();
+  });
+
+  it("renders the project list as the below copy when a task was opened from a project", async () => {
+    render(<App />);
+    setHash(projectHash("api"));
+    await screen.findByTestId("outlet-project");
+    setHash(taskHash("web/fix-login"));
+    const detail = await screen.findByTestId("task-detail");
+    await act(async () => {
+      detail.dispatchEvent(touch("touchstart", 4, 40));
+    });
+
+    const below = within(screen.getByTestId("page-stack-below"));
+    expect(below.getByTestId("outlet-project")).toBeTruthy();
+    expect(below.queryByTestId("outlet-dashboard")).toBeNull();
   });
 
   it("renders the below layer at the saved destination offset", async () => {

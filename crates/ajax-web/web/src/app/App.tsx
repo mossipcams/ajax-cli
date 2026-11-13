@@ -144,6 +144,9 @@ function AppContent() {
     markConnected,
   } = useCockpitResource();
   const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
+  const listRouteRef = useRef(dashboardHash());
+  if (route.kind === "dashboard") listRouteRef.current = dashboardHash();
+  if (selectedProject) listRouteRef.current = projectHash(selectedProject);
   const crossSlide = usePageCrossSlide();
   const crossSlideActive = crossSlide?.active ?? false;
   const leavingRoute = crossSlide?.leavingRoute ?? null;
@@ -164,7 +167,7 @@ function AppContent() {
     }
     return (
       (route.kind === "task" || route.kind === "session") && route.handle
-        ? parseRoute(selectedProject ? projectHash(selectedProject) : dashboardHash())
+        ? parseRoute(listRouteRef.current)
         : null
     );
   })();
@@ -598,7 +601,7 @@ function AppContent() {
               reload={reload}
               outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
               onGo={go}
-              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onBack={() => goBack(listRouteRef.current)}
               onOpenDiff={() => go(taskDiffHash(handle))}
               onCockpit={applyCockpit}
               onResult={showResult}
@@ -618,7 +621,7 @@ function AppContent() {
                 route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
               }
               onGo={go}
-              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onBack={() => goBack(listRouteRef.current)}
               onOpenDiff={() => go(taskDiffHash(handle))}
               onCockpit={applyCockpit}
               onResult={showResult}
@@ -633,7 +636,6 @@ function AppContent() {
               data-outlet="diff"
               data-testid="outlet-diff"
               data-handle={handle}
-              aria-live="polite"
             >
               {detail.status === "loading" ? (
                 <Skeleton testid="task-skeleton" rows={6} />
@@ -689,7 +691,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="settings"
           data-testid="outlet-settings"
-          aria-live="polite"
         >
           <SettingsView
             detailHandle={null}
@@ -711,7 +712,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="training"
           data-testid="outlet-training"
-          aria-live="polite"
         >
           <TrainingPage onBack={() => goBack(dashboardHash())} />
         </section>
@@ -725,7 +725,6 @@ function AppContent() {
           className={outletClassName || undefined}
           data-outlet="session"
           data-testid="outlet-session"
-          aria-live="polite"
         >
           <NewTaskSheet
             repos={cockpit.data?.repos?.repos ?? []}
@@ -746,7 +745,6 @@ function AppContent() {
         className={outletClassName || undefined}
         data-outlet={activeRoute.kind === "project" ? "project" : "dashboard"}
         data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
-        aria-live="polite"
       >
         <div
           className={`pull-indicator${pullDistance > 0 ? " is-pulling" : ""}${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
@@ -908,7 +906,7 @@ function AppContent() {
         >
           {belowRoute ? renderRouteOutlet(belowRoute) : null}
         </PageStackBelow>
-        <RouteScroll>{routeOutlet}</RouteScroll>
+        <RouteScroll restoreKey={leavingStackHandle}>{routeOutlet}</RouteScroll>
       </AppShell>
 
       {pendingConfirm ? (
@@ -929,7 +927,7 @@ function AppContent() {
           isError={result.isError}
           onUndo={result.onUndo}
           onCommit={result.onCommit}
-          onDismiss={() => setResult(null)}
+          onDismiss={() => setResult((current) => (current?.id === result.id ? null : current))}
         />
       ) : null}
 
