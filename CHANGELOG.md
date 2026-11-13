@@ -2,6 +2,43 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.61.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.60.0...ajax-cli-v0.61.0) (2026-11-13)
+
+
+### Features
+
+* **sandbox:** run agents in docker instead of nono ([#1620](https://github.com/mossipcams/ajax-cli/issues/1620)) ([f605292](https://github.com/mossipcams/ajax-cli/commit/f60529229d76dc6b07c604e94e72da822d8e23df))
+* **web:** page stack below ([#1622](https://github.com/mossipcams/ajax-cli/issues/1622)) ([ee7922d](https://github.com/mossipcams/ajax-cli/commit/ee7922d699f04096dd131cc95bf4a22d6cf63ea4))
+
+
+### Bug Fixes
+
+* **cli:** start lifecycle conflict ([#1576](https://github.com/mossipcams/ajax-cli/issues/1576)) ([dedf13f](https://github.com/mossipcams/ajax-cli/commit/dedf13f5ef8989e2f67619317374cdc653b9d913))
+* **core:** record activity ([#1590](https://github.com/mossipcams/ajax-cli/issues/1590)) ([98dc5f5](https://github.com/mossipcams/ajax-cli/commit/98dc5f52897ea0ab205a41c6440c4fc7a45f7ae8))
+* **web:** chat rate limits ([#1588](https://github.com/mossipcams/ajax-cli/issues/1588)) ([a3270d0](https://github.com/mossipcams/ajax-cli/commit/a3270d015d52cf5fba78492c6a5b5c2eb33300eb))
+* **web:** claude pump exit ([#1592](https://github.com/mossipcams/ajax-cli/issues/1592)) ([5cb0921](https://github.com/mossipcams/ajax-cli/commit/5cb092195faccadbe573b818437ff3d149d73cbc))
+* **web:** claude usage gauge ([#1589](https://github.com/mossipcams/ajax-cli/issues/1589)) ([78cfc8d](https://github.com/mossipcams/ajax-cli/commit/78cfc8dc84c09ea02025813abd2aeddfdafbe1ff))
+* **web:** close slash menu on pick ([#1575](https://github.com/mossipcams/ajax-cli/issues/1575)) ([c985987](https://github.com/mossipcams/ajax-cli/commit/c9859878c824f369b10909e68cefff8251b31b08))
+* **web:** exit cursor login sidecar after cancel grace ([#1597](https://github.com/mossipcams/ajax-cli/issues/1597)) ([ca44c2a](https://github.com/mossipcams/ajax-cli/commit/ca44c2a9334aa069def74250666e5c523eca6e03))
+* **web:** harness swap atomic ([#1586](https://github.com/mossipcams/ajax-cli/issues/1586)) ([ce65725](https://github.com/mossipcams/ajax-cli/commit/ce6572537d0239c6cf7e0815c80358cb98a65f74))
+* **web:** model change confirm ([#1593](https://github.com/mossipcams/ajax-cli/issues/1593)) ([a3feb6b](https://github.com/mossipcams/ajax-cli/commit/a3feb6bb3607f7e339142362d63a095a73868763))
+* **web:** motion continuity ([#1605](https://github.com/mossipcams/ajax-cli/issues/1605)) ([5b81e40](https://github.com/mossipcams/ajax-cli/commit/5b81e40f6764a544cc85adfd9fe01feadfe3db21))
+* **web:** motion followups ([#1613](https://github.com/mossipcams/ajax-cli/issues/1613)) ([f21cca0](https://github.com/mossipcams/ajax-cli/commit/f21cca09c45491e12e8dec9fff7f2fbfa7a30cb9))
+* **web:** pwa resume network ([#1598](https://github.com/mossipcams/ajax-cli/issues/1598)) ([b846adb](https://github.com/mossipcams/ajax-cli/commit/b846adbefa1db562bd165a542a7987cdad5c3262))
+* **web:** restart agent lifecycle ([#1582](https://github.com/mossipcams/ajax-cli/issues/1582)) ([ceba082](https://github.com/mossipcams/ajax-cli/commit/ceba08213b774473b6dcd10a3a45ee2d8a429021))
+* **web:** sigterm flush ([#1594](https://github.com/mossipcams/ajax-cli/issues/1594)) ([1c96661](https://github.com/mossipcams/ajax-cli/commit/1c966611f56ab1ce1fc386e72be6a0443b679f55))
+* **web:** stop and send stale queue ([#1579](https://github.com/mossipcams/ajax-cli/issues/1579)) ([594bda9](https://github.com/mossipcams/ajax-cli/commit/594bda9cf572079c5fc0dfb90d2e0ddb18504e3a))
+* **web:** surface edge auth-proxy sign-in expiry ([#1599](https://github.com/mossipcams/ajax-cli/issues/1599)) ([7f6e811](https://github.com/mossipcams/ajax-cli/commit/7f6e811e75431aed51633994567651309563b363))
+* **web:** swipe back double slide ([#1581](https://github.com/mossipcams/ajax-cli/issues/1581)) ([3cc816e](https://github.com/mossipcams/ajax-cli/commit/3cc816e7adc8062b43f3f28b156a3d2cb7836786))
+* **web:** swipe commit rule ([#1619](https://github.com/mossipcams/ajax-cli/issues/1619)) ([4791de6](https://github.com/mossipcams/ajax-cli/commit/4791de608be17cc956fc0ef6219662e660a68898))
+* **web:** ux quick wins ([#1637](https://github.com/mossipcams/ajax-cli/issues/1637)) ([cb0ae22](https://github.com/mossipcams/ajax-cli/commit/cb0ae2271825ce25c7a71ef9db26ae4ef05776c4))
+
+
+### Code Refactoring
+
+* **web:** agent slot ([#1591](https://github.com/mossipcams/ajax-cli/issues/1591)) ([d20e864](https://github.com/mossipcams/ajax-cli/commit/d20e86494591b40fe7de074dc90491b3b7bfc270))
+* **web:** extract WorkspaceStack from App ([#1621](https://github.com/mossipcams/ajax-cli/issues/1621)) ([672b32b](https://github.com/mossipcams/ajax-cli/commit/672b32bc931b4d5c84c3feec4d2033d6df1e82f7))
+
 ## [0.60.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.59.0...ajax-cli-v0.60.0) (2026-11-05)
 
 
