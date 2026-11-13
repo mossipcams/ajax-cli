@@ -144,6 +144,9 @@ function AppContent() {
     markConnected,
   } = useCockpitResource();
   const selectedProject = route.kind === "project" ? (route.project ?? null) : null;
+  const listRouteRef = useRef(dashboardHash());
+  if (route.kind === "dashboard") listRouteRef.current = dashboardHash();
+  if (selectedProject) listRouteRef.current = projectHash(selectedProject);
   const crossSlide = usePageCrossSlide();
   const crossSlideActive = crossSlide?.active ?? false;
   const leavingRoute = crossSlide?.leavingRoute ?? null;
@@ -164,7 +167,7 @@ function AppContent() {
     }
     return (
       (route.kind === "task" || route.kind === "session") && route.handle
-        ? parseRoute(selectedProject ? projectHash(selectedProject) : dashboardHash())
+        ? parseRoute(listRouteRef.current)
         : null
     );
   })();
@@ -598,7 +601,7 @@ function AppContent() {
               reload={reload}
               outletClassName={route.kind === "task" && !crossSlideActive ? swipeOutletClass || undefined : undefined}
               onGo={go}
-              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onBack={() => goBack(listRouteRef.current)}
               onOpenDiff={() => go(taskDiffHash(handle))}
               onCockpit={applyCockpit}
               onResult={showResult}
@@ -618,7 +621,7 @@ function AppContent() {
                 route.kind === "session" && !crossSlideActive ? swipeOutletClass || undefined : undefined
               }
               onGo={go}
-              onBack={() => goBack(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+              onBack={() => goBack(listRouteRef.current)}
               onOpenDiff={() => go(taskDiffHash(handle))}
               onCockpit={applyCockpit}
               onResult={showResult}

@@ -4,7 +4,7 @@ import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 import { TASK_TERMINAL_PREFERENCE_STORAGE_KEY } from "@/features/task-workspace/public";
-import { taskHash } from "@/shared/lib/routes";
+import { projectHash, taskHash } from "@/shared/lib/routes";
 
 function setHash(hash: string) {
   window.location.hash = hash;
@@ -80,6 +80,20 @@ describe("App back navigation transition", () => {
     expect(outlet).toHaveClass("ajax-swipe-enter-none");
     expect(outlet).not.toHaveClass("ajax-swipe-enter-right");
     expect(outlet).not.toHaveClass("ajax-swipe-enter-left");
+  });
+
+  it("returns to the project a task was opened from when going back", async () => {
+    render(<App />);
+    setHash(projectHash("api"));
+    await screen.findByTestId("outlet-project");
+    setHash(taskHash("web/fix-login"));
+    await screen.findByTestId("outlet-task");
+
+    fireEvent.click(within(screen.getByTestId("mobile-chrome-header")).getByRole("button", { name: "← Back" }));
+
+    await waitFor(() => expect(window.location.hash).toBe(projectHash("api")));
+    await waitFor(() => expect(screen.queryByTestId("page-stack-below")).toBeNull());
+    expect(within(screen.getByTestId("route-scroll")).getByTestId("outlet-project")).toBeTruthy();
   });
 
   it("reveals the dashboard under the leaving terminal view when going back from the terminal view", async () => {
