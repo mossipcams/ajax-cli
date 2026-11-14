@@ -35,7 +35,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     const composer = screen.getByLabelText("Message");
     composer.focus();
-    fireEvent.click(screen.getByTestId("session-thread"));
+    fireEvent.pointerDown(screen.getByTestId("session-thread"));
     expect(composer).not.toHaveFocus();
   });
 
@@ -43,7 +43,7 @@ describe("ChatScroller integration", () => {
     mountChat();
     const composer = screen.getByLabelText("Message");
     composer.focus();
-    fireEvent.click(screen.getByTestId("session-chat"));
+    fireEvent.pointerDown(screen.getByTestId("session-chat"));
     expect(composer).not.toHaveFocus();
   });
 

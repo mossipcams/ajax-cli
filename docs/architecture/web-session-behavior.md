@@ -1369,11 +1369,9 @@ dividers for cancellations, reconnects, harness switches and context resets.
   No stale `keyboard-open`, `--app-height`, bottom padding, or fixed positioning after
   dismissal; safe-area is preserved without a second blank strip below the
   composer.
-- Tapping (click) anywhere on the session page outside the composer controls
-  (textarea, Mic, Send, and other interactive targets) blurs the composer so
-  iOS can dismiss the keyboard without leaving it stranded mid-viewport. The
-  blur fires on click, not pointerdown, so scrolling the transcript keeps the
-  keyboard open.
+- Tapping anywhere on the session page outside the composer controls (textarea,
+  Mic, Send, and other interactive targets) blurs the composer so iOS can
+  dismiss the keyboard without leaving it stranded mid-viewport.
 - Clearing `keyboard-open` blurs a focused session composer textarea and resets
   document scroll so iOS does not keep `visualViewport.offsetTop` on a
   still-focused input.
