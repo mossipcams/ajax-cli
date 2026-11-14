@@ -79,6 +79,20 @@ describe("ChatSurface smoke", () => {
     expect(surface).toContainElement(composer);
   });
 
+  it("keeps the composer focused while scrolling the transcript and dismisses on tap", () => {
+    mountChat();
+    const textarea = screen.getByRole("textbox");
+    act(() => textarea.focus());
+    expect(textarea).toHaveFocus();
+
+    const thread = screen.getByTestId("session-thread");
+    fireEvent.pointerDown(thread);
+    expect(textarea).toHaveFocus();
+
+    fireEvent.click(thread);
+    expect(textarea).not.toHaveFocus();
+  });
+
   it("keeps transcript events replayed before ready", () => {
     vi.restoreAllMocks();
     vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(

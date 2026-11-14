@@ -1,4 +1,4 @@
-import type { PointerEvent, RefObject } from "react";
+import type { RefObject } from "react";
 
 export const COMPOSER_KEYBOARD_DISMISS_EXEMPT_SELECTOR =
   "button, a, input, textarea, select, [role='button'], summary, [data-testid='session-composer-hotbar']";
@@ -33,7 +33,7 @@ export function attachToolbarKeyboardRetention(root: HTMLElement): () => void {
 }
 
 export function blurComposerOnPointerDown(
-  event: PointerEvent<HTMLElement>,
+  event: { target: EventTarget | null },
   composerRef: RefObject<HTMLTextAreaElement | null>,
 ) {
   if (!isComposerKeyboardDismissTarget(event.target)) return;

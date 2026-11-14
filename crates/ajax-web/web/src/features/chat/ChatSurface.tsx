@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentProps, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ComponentProps, type ReactNode, type RefObject } from "react";
 import type { BrowserTaskDetail } from "@/shared/lib/types";
 import { toolCount, useChatSession, type ConversationItem } from "./session/public";
 import { useHistoryWindow } from "./conversation/useHistoryWindow";
@@ -329,15 +329,14 @@ export default function ChatSurface({
   if (!handle) return null;
 
   return (
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <section
       ref={rootRef}
       className={`session-page session-chat${swiping ? " is-diff-swiping" : ""}`}
       data-testid="session-chat"
       data-handle={handle}
       style={style}
-      onPointerDown={(event: PointerEvent<HTMLElement>) =>
-        blurComposerOnPointerDown(event, composerRef)
-      }
+      onClick={(event) => blurComposerOnPointerDown(event, composerRef)}
     >
       <ChatSessionScroll
         handle={handle}
