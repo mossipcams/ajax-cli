@@ -8,6 +8,8 @@ use std::{
     thread,
 };
 
+mod prune;
+
 use ajax_core::adapters::{
     docker_sandbox::{build_argv, image_tag, resolve_docker, DOCKERFILE},
     sandbox::sandbox_enabled,
@@ -96,6 +98,7 @@ pub(crate) fn ensure_image(
     let output = built?;
     if output.status.success() {
         tracing::info!(target: "ajax_web", tag = plan.tag, "sandbox image built");
+        prune::prune_old_agent_images(docker, plan.tag, run);
         return Ok(());
     }
     Err(format!(
@@ -282,10 +285,21 @@ mod tests {
         .expect("successful build");
 
         let calls = calls.into_inner();
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 4);
         let expected = build_argv(TAG, UID, GID, Path::new(HOME), &context);
         assert_eq!(calls[2].0, expected);
         assert_eq!(calls[2].1.as_deref(), Some(DOCKERFILE.as_bytes()));
+        assert_eq!(
+            calls[3].0,
+            argv(&[
+                "image",
+                "ls",
+                "--filter",
+                "reference=ajax-agent:*",
+                "--format",
+                "{{.Repository}}:{{.Tag}}\t{{.CreatedSince}}"
+            ])
+        );
         assert!(!context.exists());
     }
 
@@ -367,5 +381,104 @@ mod tests {
         let none = dir.join("no-source");
         prepare_context(&none, None).expect("context without any source");
         assert!(!none.join("pi-acp").exists());
+    }
+
+    fn listing_listing(stdout: &[u8]) -> Output {
+        Output {
+            status: ExitStatus::from_raw(0 << 8),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    const SAMPLE_LISTING: &str =
+        "ajax-agent:aaaaaaaaaaaaaaaa\t8 days ago\najax-agent:cccccccccccccccc\t1 day ago\n";
+
+    #[test]
+    fn a_successful_build_removes_only_stale_agent_images_and_prunes_the_cache() {
+        let dir = scratch_dir("prune");
+        let context = dir.join("context");
+        let calls = Calls::default();
+        let run = image_recorder(&calls, |args| {
+            if args[0] == "image" && args[1] == "ls" {
+                listing_listing(SAMPLE_LISTING.as_bytes())
+            } else {
+                output(if args[0] == "image" { 1 } else { 0 })
+            }
+        });
+
+        ensure_image(
+            Path::new("/opt/docker"),
+            &plan(Path::new(HOME), &context),
+            run,
+        )
+        .expect("successful build with cleanup");
+
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 6);
+        assert_eq!(
+            calls[0].0,
+            argv(&["info", "--format", "{{.ServerVersion}}"])
+        );
+        assert_eq!(calls[1].0, argv(&["image", "inspect", TAG]));
+        let build = build_argv(TAG, UID, GID, Path::new(HOME), &context);
+        assert_eq!(calls[2].0, build);
+        assert_eq!(
+            calls[3].0,
+            argv(&[
+                "image",
+                "ls",
+                "--filter",
+                "reference=ajax-agent:*",
+                "--format",
+                "{{.Repository}}:{{.Tag}}\t{{.CreatedSince}}"
+            ])
+        );
+        assert_eq!(
+            calls[4].0,
+            argv(&["image", "rm", "ajax-agent:aaaaaaaaaaaaaaaa"])
+        );
+        assert_eq!(
+            calls[5].0,
+            argv(&["builder", "prune", "-f", "--filter", "until=168h"])
+        );
+    }
+
+    #[test]
+    fn a_cleanup_failure_never_fails_the_build() {
+        let dir = scratch_dir("prune-fails");
+        let context = dir.join("context");
+        let calls = Calls::default();
+        let run = |_docker: &Path, args: &[&str], stdin: Option<&[u8]>| {
+            calls.borrow_mut().push((
+                args.iter().map(|arg| arg.to_string()).collect(),
+                stdin.map(<[u8]>::to_vec),
+            ));
+            if args[0] == "image" && args.len() > 1 && args[1] == "ls" {
+                Ok(listing_listing(SAMPLE_LISTING.as_bytes()))
+            } else if args[0] == "build" || args[0] == "info" {
+                Ok(output(0))
+            } else if args[0] == "image" {
+                Ok(output(1))
+            } else {
+                Err(io::Error::other("docker gone"))
+            }
+        };
+
+        ensure_image(
+            Path::new("/opt/docker"),
+            &plan(Path::new(HOME), &context),
+            run,
+        )
+        .expect("cleanup failure is ignored");
+
+        let calls = calls.into_inner();
+        assert_eq!(calls.len(), 6);
+        assert_eq!(calls[3].0[0..2], ["image".to_string(), "ls".to_string()]);
+        assert_eq!(
+            calls[4].0,
+            argv(&["image", "rm", "ajax-agent:aaaaaaaaaaaaaaaa"])
+        );
+        assert_eq!(calls[5].0[0], "builder");
     }
 }

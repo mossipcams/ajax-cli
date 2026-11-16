@@ -300,7 +300,9 @@ binaries are sandboxed.
 
 The web server builds the image `ajax-agent:<hash>` in the background at startup,
 from the Dockerfile embedded in the binary. The tag is a hash of that Dockerfile,
-so upgrading Ajax builds a new image on the next web start.
+so upgrading Ajax builds a new image on the next web start. After a successful
+build, Ajax removes other `ajax-agent` images older than 7 days that no container
+uses and prunes Docker build cache unused for 7 days.
 
 Agents see:
 
@@ -361,8 +363,12 @@ is `cli` or `supervisor` for those processes, and otherwise a hash of the web
 server's state directory, so the stable and dev web servers sharing one engine
 never touch each other's containers. At startup, containers left by a previous
 boot of the same server are removed for sessions that recovery marks interrupted;
-adoptable sessions are never swept. Dropping a task removes its containers and its
-`target/` and `node_modules/` volumes.
+adoptable sessions are never swept. Dropping a task always removes its containers and
+its `target/` and `node_modules/` volumes, even when the worktree was already gone.
+New task volumes carry the `ajax.server` label like their containers do. At startup,
+each web server also removes volumes carrying its own server label whose task is no
+longer in its registry; unlabelled volumes from before this change, and `cli` /
+`supervisor` volumes, are left for drop or manual cleanup.
 
 Agents can run `gh` (with `GH_TOKEN`), `CI=1 npm run web:smoke` and Playwright,
 and `ps` and `pgrep` inside their own container. Agents cannot use the iOS
