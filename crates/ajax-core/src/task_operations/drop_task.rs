@@ -217,7 +217,6 @@ pub fn execute_drop_task_operation<R: Registry>(
                 outputs.push(output);
                 if matches!(op, DropOp::EnsureWorktreeAbsent) {
                     forget_trusted_worktree(context, qualified_handle);
-                    remove_sandbox_task_resources(context, qualified_handle);
                 }
                 commands::mark_task_cleanup_step_completed(context, qualified_handle, &command)?;
                 record_drop_step_event(context, qualified_handle, op)?;
@@ -233,6 +232,10 @@ pub fn execute_drop_task_operation<R: Registry>(
                 )?;
             }
         }
+    }
+
+    if !preserve_main_checkout {
+        remove_sandbox_task_resources(context, qualified_handle);
     }
 
     if preserve_main_checkout {
@@ -279,9 +282,17 @@ fn forget_trusted_worktree<R: Registry>(context: &CommandContext<R>, qualified_h
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_SANDBOX_REMOVALS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn remove_sandbox_task_resources<R: Registry>(context: &CommandContext<R>, qualified_handle: &str) {
     if let Ok(task) = task(context, qualified_handle) {
-        docker_sandbox::remove_task_resources(&docker_sandbox::task_key(&task.worktree_path));
+        let key = docker_sandbox::task_key(&task.worktree_path);
+        #[cfg(test)]
+        TEST_SANDBOX_REMOVALS.with(|recorded| recorded.borrow_mut().push(key.clone()));
+        docker_sandbox::remove_task_resources(&key);
     }
 }
 
@@ -681,6 +692,84 @@ mod worktree_guard_tests {
             }),
             "no git worktree remove/prune/--force command may run, got {:?}",
             commands
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn drop_requests_sandbox_removal_when_worktree_already_absent() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("ajax-drop-sandbox-{}-{nanos}", std::process::id()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", repo.display().to_string(), "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let worktree_path = root.join("worktrees").join("ajax-fix-login");
+        let task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            worktree_path.display().to_string(),
+            "ajax-web-fix-login",
+            "task",
+            AgentClient::Codex,
+        );
+        context.registry.create_task(task).unwrap();
+
+        let mut runner = RecordingDropRunner {
+            commands: Vec::new(),
+            worktree_list_output: format!(
+                "worktree {}\nHEAD abc123\nbranch refs/heads/main\n",
+                repo.display()
+            ),
+        };
+
+        let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner)
+            .expect("plan must succeed for an observed-absent worktree");
+        let (_, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .expect("drop must complete when all resources are absent");
+
+        assert!(matches!(completion, DropTaskCompletion::Removed));
+
+        let commands = std::mem::take(&mut runner.commands);
+        assert!(
+            !commands.iter().any(|command| {
+                command.program == "git"
+                    && command.args.iter().any(|arg| arg == "worktree")
+                    && (command.args.iter().any(|arg| arg == "remove")
+                        || command.args.iter().any(|arg| arg == "--force")
+                        || command.args.iter().any(|arg| arg == "prune"))
+            }),
+            "EnsureWorktreeAbsent must not run for an observed-absent worktree, got {:?}",
+            commands
+        );
+
+        let expected_key = docker_sandbox::task_key(&worktree_path);
+        let removals = TEST_SANDBOX_REMOVALS.with(|recorded| recorded.borrow().clone());
+        assert_eq!(
+            removals.iter().filter(|key| **key == expected_key).count(),
+            1,
+            "sandbox task resources must be removed exactly once, got {removals:?}"
         );
 
         let _ = std::fs::remove_dir_all(&root);

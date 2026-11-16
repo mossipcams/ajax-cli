@@ -292,6 +292,7 @@ pub fn docker_command(
         &docker,
         &image,
         &task_key(cwd),
+        launch.server,
         host.uid,
         host.gid,
         host.run,

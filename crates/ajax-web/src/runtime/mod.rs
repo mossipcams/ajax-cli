@@ -5,7 +5,8 @@ use crate::{
     slices::{dev_deploy, install, push, training},
     WebError,
 };
-use ajax_core::adapters::CommandRunner;
+use ajax_core::adapters::{docker_sandbox, CommandRunner};
+use ajax_core::registry::{Registry, SqliteRegistryStore};
 pub(crate) use ajax_core::runtime_refresh::RefreshTier;
 use axum::{
     body::Bytes,
@@ -19,7 +20,9 @@ use axum::{
 };
 use serde::Deserialize;
 use std::{
+    collections::HashSet,
     net::{SocketAddr, ToSocketAddrs},
+    path::Path,
     sync::Arc,
     thread,
     time::Duration,
@@ -173,6 +176,7 @@ where
         .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
 
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
+    spawn_sandbox_volume_sweep(&state.state_dir);
 
     let result = runtime.block_on(async move {
         let mut terminate = shutdown::terminate_signal();
@@ -202,6 +206,29 @@ where
     });
     runtime.shutdown_timeout(Duration::from_secs(1));
     result
+}
+
+fn spawn_sandbox_volume_sweep(state_dir: &Path) {
+    if !crate::adapters::program::sandbox_on() {
+        return;
+    }
+    let state_dir = state_dir.to_path_buf();
+    let server = docker_sandbox::server_id(&state_dir);
+    thread::spawn(move || {
+        let Ok(docker) = docker_sandbox::resolve_docker() else {
+            return;
+        };
+        let Ok(registry) = SqliteRegistryStore::new(state_dir.join("ajax.db")).load_tasks_only()
+        else {
+            return;
+        };
+        let live_keys: HashSet<String> = registry
+            .list_tasks()
+            .into_iter()
+            .map(|task| docker_sandbox::task_key(&task.worktree_path))
+            .collect();
+        docker_sandbox::sweep_orphan_task_volumes(&docker, &server, &live_keys);
+    });
 }
 
 fn spawn_background_loops<C, B>(state: &WebAppState<C, B>)

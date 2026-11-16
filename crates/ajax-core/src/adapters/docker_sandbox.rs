@@ -1,3 +1,9 @@
+mod volumes;
+
+pub use volumes::{
+    ensure_task_volumes, sweep_orphan_task_volumes, task_volumes, volume_init_argv, volume_rm_argv,
+};
+
 use std::env;
 use std::ffi::OsStr;
 use std::io;
@@ -63,13 +69,6 @@ pub fn task_key(cwd: &Path) -> String {
     format!("{slug}-{digest:08x}")
 }
 
-pub fn task_volumes(key: &str) -> [String; 2] {
-    [
-        format!("ajax-target-{key}"),
-        format!("ajax-node-modules-{key}"),
-    ]
-}
-
 pub fn server_id(state_dir: &Path) -> String {
     format!(
         "{:016x}",
@@ -108,12 +107,6 @@ pub fn rm_containers_argv(containers: &[String]) -> Vec<String> {
 pub fn task_containers_argv(key: &str) -> Vec<String> {
     let mut argv = strings(&["ps", "-aq"]);
     argv.extend(pair("--filter", format!("label=ajax.task_key={key}")));
-    argv
-}
-
-pub fn volume_rm_argv(volumes: &[String]) -> Vec<String> {
-    let mut argv = strings(&["volume", "rm", "-f"]);
-    argv.extend(volumes.iter().cloned());
     argv
 }
 
@@ -255,16 +248,6 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
     argv
 }
 
-pub fn volume_init_argv(image: &str, volume: &str, uid: u32, gid: u32) -> Vec<String> {
-    let mut argv = strings(&["run", "--rm", "--user", "0"]);
-    argv.extend(pair("-v", format!("{volume}:/v")));
-    argv.push(image.to_string());
-    argv.push("chown".to_string());
-    argv.push(format!("{uid}:{gid}"));
-    argv.push("/v".to_string());
-    argv
-}
-
 pub fn build_argv(tag: &str, uid: u32, gid: u32, home: &Path, context_dir: &Path) -> Vec<String> {
     let mut argv = strings(&["build"]);
     argv.extend(pair("--build-arg", format!("HOST_UID={uid}")));
@@ -299,35 +282,6 @@ pub fn check_ready(tag: &str, run: impl Fn(&[&str]) -> io::Result<Output>) -> Re
     Ok(())
 }
 
-pub fn ensure_task_volumes(
-    docker: &Path,
-    image: &str,
-    key: &str,
-    uid: u32,
-    gid: u32,
-    run: impl Fn(&Path, &[&str]) -> io::Result<Output>,
-) -> Result<(), String> {
-    for volume in task_volumes(key) {
-        if succeeded(run(docker, &["volume", "inspect", volume.as_str()])) {
-            continue;
-        }
-        if !succeeded(run(docker, &["volume", "create", volume.as_str()])) {
-            return Err(volume_error("create", &volume));
-        }
-        let init = volume_init_argv(image, &volume, uid, gid);
-        let init_args: Vec<&str> = init.iter().map(String::as_str).collect();
-        if !succeeded(run(docker, &init_args)) {
-            let _ = run(docker, &["volume", "rm", "-f", volume.as_str()]);
-            return Err(volume_error("chown", &volume));
-        }
-    }
-    Ok(())
-}
-
-fn volume_error(step: &str, volume: &str) -> String {
-    format!("agent sandbox could not {step} volume {volume}; {AJAX_SANDBOX_OFF}")
-}
-
 fn succeeded(result: io::Result<Output>) -> bool {
     result.is_ok_and(|output| output.status.success())
 }
@@ -352,13 +306,9 @@ fn same_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
     use std::fs;
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
-
-    const UID: u32 = 501;
-    const GID: u32 = 20;
 
     const HOME: &str = "/Users/matt";
     const CWD: &str = "/Users/matt/Projects/ajax-cli__worktrees/ajax-docker-sandboxes";
@@ -711,25 +661,6 @@ mod tests {
     }
 
     #[test]
-    fn volume_init_argv_is_exact() {
-        assert_eq!(
-            volume_init_argv(IMAGE, "ajax-target-x", 501, 20),
-            strings(&[
-                "run",
-                "--rm",
-                "--user",
-                "0",
-                "-v",
-                "ajax-target-x:/v",
-                IMAGE,
-                "chown",
-                "501:20",
-                "/v",
-            ])
-        );
-    }
-
-    #[test]
     fn build_argv_is_exact() {
         assert_eq!(
             build_argv(IMAGE, 501, 20, Path::new(HOME), Path::new("/ctx")),
@@ -875,119 +806,5 @@ mod tests {
         ))
         .expect("read ci.yml");
         assert_eq!(playwright_base(DOCKERFILE), playwright_base(&ci));
-    }
-
-    type VolumeCalls = RefCell<Vec<Vec<String>>>;
-
-    fn volume_recorder<'a>(
-        calls: &'a VolumeCalls,
-        respond: impl Fn(&[&str]) -> Output + 'a,
-    ) -> impl Fn(&Path, &[&str]) -> io::Result<Output> + 'a {
-        move |_, args| {
-            calls
-                .borrow_mut()
-                .push(args.iter().map(|arg| arg.to_string()).collect());
-            Ok(respond(args))
-        }
-    }
-
-    fn ensure(run: impl Fn(&Path, &[&str]) -> io::Result<Output>) -> Result<(), String> {
-        ensure_task_volumes(Path::new("/opt/docker"), IMAGE, KEY, UID, GID, run)
-    }
-
-    fn target() -> String {
-        format!("ajax-target-{KEY}")
-    }
-
-    fn node_modules() -> String {
-        format!("ajax-node-modules-{KEY}")
-    }
-
-    #[test]
-    fn existing_task_volumes_are_left_alone() {
-        let calls = VolumeCalls::default();
-
-        ensure(volume_recorder(&calls, |_| output(0))).expect("existing volumes");
-
-        assert_eq!(
-            calls.into_inner(),
-            vec![
-                strings(&["volume", "inspect", &target()]),
-                strings(&["volume", "inspect", &node_modules()]),
-            ]
-        );
-    }
-
-    #[test]
-    fn missing_task_volumes_are_created_then_chowned_in_order() {
-        let calls = VolumeCalls::default();
-
-        ensure(volume_recorder(&calls, |args| {
-            output(if args[0] == "volume" && args[1] == "inspect" {
-                1
-            } else {
-                0
-            })
-        }))
-        .expect("missing volumes are created");
-
-        let mut expected = Vec::new();
-        for volume in [target(), node_modules()] {
-            expected.push(strings(&["volume", "inspect", &volume]));
-            expected.push(strings(&["volume", "create", &volume]));
-            expected.push(volume_init_argv(IMAGE, &volume, UID, GID));
-        }
-        assert_eq!(calls.into_inner(), expected);
-    }
-
-    #[test]
-    fn a_failed_volume_create_refuses_the_launch() {
-        let calls = VolumeCalls::default();
-
-        let error = ensure(volume_recorder(&calls, |args| {
-            output(if args[0] == "volume" { 1 } else { 0 })
-        }))
-        .expect_err("failed create refuses");
-
-        assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
-        assert!(error.contains("create"), "{error}");
-        assert_eq!(calls.into_inner().len(), 2);
-    }
-
-    #[test]
-    fn a_failed_volume_chown_refuses_the_launch() {
-        let calls = VolumeCalls::default();
-
-        let error = ensure(volume_recorder(&calls, |args| {
-            output(if args[0] == "run" || args[1] == "inspect" {
-                1
-            } else {
-                0
-            })
-        }))
-        .expect_err("failed chown refuses");
-
-        assert!(error.contains("AJAX_SANDBOX=off"), "{error}");
-        assert!(error.contains("chown"), "{error}");
-        assert_eq!(calls.into_inner().len(), 4);
-    }
-
-    #[test]
-    fn a_failed_volume_chown_removes_the_half_initialised_volume() {
-        let calls = VolumeCalls::default();
-
-        ensure(volume_recorder(&calls, |args| {
-            output(if args[0] == "run" || args[1] == "inspect" {
-                1
-            } else {
-                0
-            })
-        }))
-        .expect_err("failed chown refuses");
-
-        assert_eq!(
-            calls.into_inner().last(),
-            Some(&strings(&["volume", "rm", "-f", &target()]))
-        );
     }
 }
