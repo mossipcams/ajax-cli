@@ -23,6 +23,7 @@ import {
   canAttachFiles,
   fitPromptContentBlocks,
   flattenAttachmentBlocks,
+  hasPromptContent,
   promptFrameFits,
 } from "@/shared/lib/promptContent";
 import { autoGrow } from "./autoGrow";
@@ -96,6 +97,7 @@ type ComposerContextValue = {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   queued: string | null;
   stopping: boolean;
+  replacesQueued: boolean;
   submitLabel: string;
   speechModel: ReturnType<typeof useChatSpeech>["speechModel"];
   micAriaLabel: string;
@@ -624,13 +626,22 @@ export function ComposerProvider({
     [insertSlashMatch, sendDraft, slashMatches, slashMenuOpen, slashSelection],
   );
 
-  const submitLabel = queued !== null ? "Stop & send" : busy ? "Queue" : "Send";
+  const replacesQueued = queued !== null && hasPromptContent(draft.trim(), contentBlocks);
+  const submitLabel =
+    queued === null
+      ? busy
+        ? "Queue"
+        : "Send"
+      : replacesQueued
+        ? "Replace queued"
+        : "Stop & send";
 
   const value: ComposerContextValue = {
     draft,
     composerRef,
     queued,
     stopping,
+    replacesQueued,
     submitLabel,
     speechModel,
     micAriaLabel,

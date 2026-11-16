@@ -1,7 +1,7 @@
 import { useComposerContext } from "./useComposer";
 
 export default function QueuedFollowUp() {
-  const { queued, stopping, editQueued, removeQueued } = useComposerContext();
+  const { queued, stopping, replacesQueued, editQueued, removeQueued } = useComposerContext();
   if (queued === null) return null;
 
   return (
@@ -9,7 +9,11 @@ export default function QueuedFollowUp() {
       <p className="session-queued-label">{stopping ? "Stopping…" : "Queued"}</p>
       <article className="session-said is-queued">{queued}</article>
       {stopping ? null : (
-        <p className="session-queued-hint">Press Enter again to stop and send now</p>
+        <p className="session-queued-hint">
+          {replacesQueued
+            ? "Enter replaces this queued message"
+            : "Press Enter again to stop and send now"}
+        </p>
       )}
       <div className="session-queued-actions">
         <button type="button" onClick={editQueued}>

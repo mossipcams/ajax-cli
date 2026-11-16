@@ -234,6 +234,30 @@ describe("ChatComposer", () => {
     expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
   });
 
+  it("says Enter replaces the queued follow-up while a new draft is typed (#1629)", () => {
+    mountChat();
+
+    typeComposer("First");
+    transport.sendPrompt.mockClear();
+    typeComposer("Next");
+    expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent(
+      "Press Enter again to stop and send now",
+    );
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "Newer" } });
+    expect(screen.getByRole("button", { name: "Replace queued" })).toBeInTheDocument();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent(
+      "Enter replaces this queued message",
+    );
+
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Stop & send" })).toBeInTheDocument();
+    expect(screen.getByTestId("session-queued")).toHaveTextContent(
+      "Press Enter again to stop and send now",
+    );
+  });
+
   it("shows warn text while listening without a filled chip", () => {
     vi.spyOn(useChatSpeechModule, "useChatSpeech").mockReturnValue({
       speechModel: {
