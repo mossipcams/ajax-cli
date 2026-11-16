@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant},
 };
 
 use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, DockerHost};
@@ -164,6 +166,56 @@ pub(crate) fn sandbox_docker_run(args: &[&str]) -> io::Result<Output> {
     let (_, host) = sandbox_context();
     let docker = (host.resolve)().map_err(io::Error::other)?;
     (host.run)(&docker, args)
+}
+
+pub(crate) const SANDBOX_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub(crate) fn output_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut stdout_pipe = child.stdout.take().expect("stdout is piped");
+    let reader = thread::spawn(move || {
+        use io::Read;
+        let mut bytes = Vec::new();
+        stdout_pipe.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = reader
+        .join()
+        .expect("reader thread")
+        .map_err(io::Error::other)?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
+pub(crate) fn sandbox_docker_probe(args: &[&str]) -> io::Result<Output> {
+    #[cfg(test)]
+    if let Some((_, host)) = TEST_SANDBOX.with(|slot| slot.borrow().clone()) {
+        let docker = (host.resolve)().map_err(io::Error::other)?;
+        return (host.run)(&docker, args);
+    }
+    let (_, host) = sandbox_context();
+    let docker = (host.resolve)().map_err(io::Error::other)?;
+    let mut command = Command::new(docker);
+    command.args(args);
+    output_with_timeout(command, SANDBOX_PROBE_TIMEOUT)
 }
 
 fn sandbox_context() -> (bool, DockerHost) {
@@ -781,6 +833,28 @@ mod tests {
             .expect_err("a host probe needs the host binary");
 
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn an_output_with_timeout_captures_stdout_of_a_fast_command() {
+        let started = Instant::now();
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo hi"]);
+        let out = output_with_timeout(command, Duration::from_secs(2))
+            .expect("a fast command finishes in time");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_output_with_timeout_times_out_and_kills_a_slow_command() {
+        let started = Instant::now();
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5"]);
+        let error = output_with_timeout(command, Duration::from_millis(100))
+            .expect_err("a slow command must time out");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]

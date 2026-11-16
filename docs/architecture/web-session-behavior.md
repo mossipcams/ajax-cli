@@ -1150,18 +1150,28 @@ only the chat live head knew a turn was in flight.
   work is alive it reports `Background work running`, and it reports `Agent
   stopped` once the level clears (or at once when no background work is alive).
   An idle, never-run or running root never carries it. No process tree (no client, or no
-  child pid) reads as clear. An unavailable process-table read is no evidence: it
+  child pid) reads as clear, with or without the Docker sandbox. An unavailable
+  process-table read is no evidence: it
   never clears a held level and never sets an unheld one. While held, the level is one
   synthetic completion-holding child run (`background`) and reads as `AgentRunning`
   with summary `Background work running` instead of `Done` or `WaitingForInput`.
   The actor ticks while the turn is finished: every 5 s while not held, so a shell
   started after the turn ended is seen, and every 2 s while held. A held level clears
   after 5 s with no shell seen, after 30 s with no successful scan, at once when the
-  client is lost, or when the turn is no longer finished. Every session shares one
-  cached process table, read in-process from the kernel (see `os_process.rs`): turn-end
+  client is lost, or when the turn is no longer finished. Without the Docker sandbox,
+  every session shares one cached process table, read in-process from the kernel (see
+  `os_process.rs`): turn-end
   reads accept a table up to 250 ms old, held ticks up to 1 s, and idle ticks up to 5 s,
   so a turn end and a tick close together cost one table read, and idle polling across
-  all sessions costs about one table read per 5 s host-wide.
+  all sessions costs about one table read per 5 s host-wide. With the Docker sandbox
+  on (the default), agent processes run in containers the host table cannot see, so each
+  read lists the task's containers (`docker ps` filtered by server and task key) and runs
+  `docker top` on each one. These reads are neither cached nor shared: every session with
+  a finished turn pays one `docker ps` plus one `docker top` per container on each tick.
+  Every probe docker call is killed after 2 s (`SANDBOX_PROBE_TIMEOUT` in
+  `adapters/program.rs`) and reads as unavailable, so a stalled daemon delays the session
+  actor by about 2 s per read instead of freezing it. The scan covers every container
+  labelled with the task key, not only the session's own.
   A restored session with background shells is not scanned until a turn finishes.
   Known ceiling: a harness that keeps an idle persistent shell reads as background
   work; only Claude sessions have been verified. A harness without lineage events
