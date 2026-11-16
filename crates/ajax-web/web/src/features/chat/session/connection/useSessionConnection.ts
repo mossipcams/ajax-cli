@@ -88,6 +88,7 @@ export function useSessionConnection({
     let handshakeAttempts = 0;
     let reconnectAttempts = 0;
     let reconnecting = false;
+    let openFailed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let buffer: MessageBuffer | undefined;
     let nextToReadCursor: number | undefined;
@@ -117,6 +118,20 @@ export function useSessionConnection({
       }, delay);
     };
 
+    const taskCannotStart = () =>
+      detailRef.current?.status === "error" || detailRef.current?.session_capable === false;
+
+    const failHandshake = () => {
+      reconnecting = false;
+      setState("failed");
+      onSessionInvalidated?.();
+      if (openFailed) return;
+      dispatchWireEvent(dispatch, {
+        type: "error",
+        message: "Lost the session connection. Reopen the task to try again.",
+      });
+    };
+
     const normalizeEvent = (event: WebSessionServerEvent): WebSessionServerEvent => {
       onActivity();
       if (event.type === "error" && /ACP restore unavailable/i.test(event.message)) {
@@ -129,6 +144,7 @@ export function useSessionConnection({
         onConfigError?.(event.message);
       }
       if (event.type === "error" && event.message === OPEN_FAILURE) {
+        openFailed = true;
         return { type: "error", message: explainOpenFailure(detailRef.current) };
       }
       return event;
@@ -218,15 +234,13 @@ export function useSessionConnection({
             if (disposed) return;
             reconnecting = true;
             if (!everOpenedRef.current) {
+              if (openFailed && taskCannotStart()) {
+                failHandshake();
+                return;
+              }
               handshakeAttempts += 1;
               if (handshakeAttempts > MAX_HANDSHAKE_ATTEMPTS) {
-                reconnecting = false;
-                setState("failed");
-                onSessionInvalidated?.();
-                dispatchWireEvent(dispatch, {
-                  type: "error",
-                  message: "Lost the session connection. Reopen the task to try again.",
-                });
+                failHandshake();
                 return;
               }
             }

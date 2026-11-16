@@ -1,5 +1,7 @@
 import { renderHook, act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import taskDetail from "@/fixtures/task-detail.json";
+import type { BrowserTaskDetail } from "@/shared/lib/types";
 import * as webSessionTransport from "../transport/public";
 import { writeSessionModel } from "@/features/task/public";
 import type { ChatSessionAction } from "../model";
@@ -578,6 +580,96 @@ describe("useSessionConnection", () => {
       });
 
       expect(promptsBlockedInView()).toBe(true);
+      unmount();
+    });
+  });
+
+  describe("#1633 session that cannot start", () => {
+    function renderUnstartable(detail: BrowserTaskDetail) {
+      const dispatched: ChatSessionAction[] = [];
+      const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+      const setConnectionState = vi.fn();
+      const onSessionInvalidated = vi.fn();
+      const transport: webSessionTransport.WebSessionTransport = {
+        sendPrompt: vi.fn(() => "prompt-1"),
+        sendCancel: vi.fn(),
+        setModel: vi.fn(),
+        setConfigOption: vi.fn(),
+        respondPermission: vi.fn(),
+        dispose: vi.fn(),
+      };
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, nextCallbacks) => {
+          callbacks.push(nextCallbacks);
+          return transport;
+        },
+      );
+      const { unmount } = renderHook(() =>
+        useSessionConnection({
+          ...hookOptions({
+            detailRef: { current: detail },
+            setConnectionState,
+            onSessionInvalidated,
+            dispatch: (action) => dispatched.push(action),
+          }),
+        }),
+      );
+      const noteTexts = () =>
+        dispatched
+          .reduce(reduceChatSession, initialChatSessionReducerState)
+          .view.conversation.flatMap((item) => (item.kind === "note" ? [item.text] : []));
+      return { callbacks, setConnectionState, onSessionInvalidated, noteTexts, unmount };
+    }
+
+    it("stops retrying and shows one can't-start note when the task is in error", () => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const detail = {
+        ...(taskDetail as BrowserTaskDetail),
+        status: "error",
+        session_capable: true,
+        status_explanation: "Worktree missing",
+      } as BrowserTaskDetail;
+      const { callbacks, setConnectionState, onSessionInvalidated, noteTexts, unmount } =
+        renderUnstartable(detail);
+
+      act(() => {
+        callbacks[0]?.onEvent({ type: "error", message: webSessionTransport.OPEN_FAILURE });
+        callbacks[0]?.onClosed();
+      });
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+
+      expect(callbacks).toHaveLength(1);
+      expect(setConnectionState).toHaveBeenLastCalledWith("failed");
+      expect(onSessionInvalidated).toHaveBeenCalledTimes(1);
+      expect(noteTexts()).toEqual(["Can't start the session: Worktree missing"]);
+      unmount();
+    });
+
+    it("keeps retrying with backoff when the task is still running", () => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const detail = {
+        ...(taskDetail as BrowserTaskDetail),
+        status: "running",
+        session_capable: true,
+        status_explanation: "Worktree missing",
+      } as BrowserTaskDetail;
+      const { callbacks, setConnectionState, onSessionInvalidated, unmount } =
+        renderUnstartable(detail);
+
+      act(() => {
+        callbacks[0]?.onEvent({ type: "error", message: webSessionTransport.OPEN_FAILURE });
+        callbacks[0]?.onClosed();
+      });
+      act(() => vi.advanceTimersByTime(500));
+
+      expect(callbacks).toHaveLength(2);
+      expect(setConnectionState).not.toHaveBeenLastCalledWith("failed");
+      expect(onSessionInvalidated).not.toHaveBeenCalled();
       unmount();
     });
   });
