@@ -19,6 +19,23 @@ describe("parseElicitationFormSchema", () => {
       expect.objectContaining({ name: "replicas", kind: "number", required: false }),
     ]);
   });
+
+  it("labels fields without a title by their description, then by key (#1636)", () => {
+    expect(
+      parseElicitationFormSchema({
+        type: "object",
+        properties: {
+          env: { type: "string", description: "Deployment environment" },
+          target: { type: "string", title: "Target", description: "Where to deploy" },
+          region: { type: "string" },
+        },
+      }),
+    ).toEqual([
+      expect.objectContaining({ name: "env", title: "Deployment environment" }),
+      expect.objectContaining({ name: "target", title: "Target" }),
+      expect.objectContaining({ name: "region", title: "region" }),
+    ]);
+  });
 });
 
 describe("isElicitationValid", () => {
