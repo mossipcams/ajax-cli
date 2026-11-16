@@ -487,6 +487,16 @@ describe("reduceChatSession", () => {
     expect(replayed.conversation.filter((item) => item.kind === "permission")).toHaveLength(1);
   });
 
+  it("#1636 closes the permission prompt when its turn ends and ignores a replayed request", () => {
+    const request: WebSessionServerEvent = { type: "permission_request", requestId: "7", title: "Run tests?" };
+    const ended = run([request, { type: "turn_end" }]);
+    expect(ended.permission.decision).toBeNull();
+    expect(ended.conversation[0]).toMatchObject({ kind: "permission", resolved: true });
+    const replayed = reduceWire(asReducer(ended), request).view;
+    expect(replayed.permission.decision).toBeNull();
+    expect(replayed.conversation.filter((item) => item.kind === "permission")).toHaveLength(1);
+  });
+
   it("clears the elicitation head on elicitation_answered without waiting for elicitation_resolved", () => {
     const schema = {
       type: "object",

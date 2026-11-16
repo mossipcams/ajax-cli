@@ -35,6 +35,7 @@ function applyChatSessionEvent(
   state: ChatSessionReducerState,
   event: ChatSessionEvent,
 ): ChatSessionReducerState {
+  if (event.type === "turn_end") return applyErrorEvent(applyDecided(state), event);
   if (isErrorOrTurnEndEvent(event)) return applyErrorEvent(state, event);
   if (event.type === "transcript_snapshot") return applyTranscriptSnapshot(state, event);
   if (isPermissionEvent(event)) return applyPermissionEvent(state, event);
