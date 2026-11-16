@@ -22,6 +22,8 @@ import {
 import { isSessionModelChangeFailure, isSessionConfigChangeFailure } from "../../model/public";
 import type { ConnectionState } from "./connectionState";
 
+const STABLE_CONNECTION_MS = 5000;
+
 type Dispatch = (action: ChatSessionAction) => void;
 
 type ForwardedTranscriptState = { transcriptError?: string; promptsBlocked: boolean };
@@ -88,7 +90,9 @@ export function useSessionConnection({
     let handshakeAttempts = 0;
     let reconnectAttempts = 0;
     let reconnecting = false;
+    let openFailed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let stableTimer: ReturnType<typeof setTimeout> | undefined;
     let buffer: MessageBuffer | undefined;
     let nextToReadCursor: number | undefined;
     let forwardedTranscript: ForwardedTranscriptState = { promptsBlocked: false };
@@ -98,6 +102,11 @@ export function useSessionConnection({
     const setState = (state: ConnectionState) => {
       connectionStateRef.current = state;
       setConnectionState(state);
+    };
+
+    const clearStableTimer = () => {
+      if (stableTimer) clearTimeout(stableTimer);
+      stableTimer = undefined;
     };
 
     const scheduleReconnect = () => {
@@ -117,6 +126,20 @@ export function useSessionConnection({
       }, delay);
     };
 
+    const taskCannotStart = () =>
+      detailRef.current?.status === "error" || detailRef.current?.session_capable === false;
+
+    const failHandshake = () => {
+      reconnecting = false;
+      setState("failed");
+      onSessionInvalidated?.();
+      if (openFailed) return;
+      dispatchWireEvent(dispatch, {
+        type: "error",
+        message: "Lost the session connection. Reopen the task to try again.",
+      });
+    };
+
     const normalizeEvent = (event: WebSessionServerEvent): WebSessionServerEvent => {
       onActivity();
       if (event.type === "error" && /ACP restore unavailable/i.test(event.message)) {
@@ -129,6 +152,7 @@ export function useSessionConnection({
         onConfigError?.(event.message);
       }
       if (event.type === "error" && event.message === OPEN_FAILURE) {
+        openFailed = true;
         return { type: "error", message: explainOpenFailure(detailRef.current) };
       }
       return event;
@@ -187,6 +211,7 @@ export function useSessionConnection({
     };
 
     const open = () => {
+      clearStableTimer();
       setState("connecting");
       transportRef.current?.dispose();
       transportRef.current = undefined;
@@ -202,7 +227,11 @@ export function useSessionConnection({
           onReady: (nextModel) => {
             buffer?.flushAll();
             handshakeAttempts = 0;
-            reconnectAttempts = 0;
+            clearStableTimer();
+            stableTimer = setTimeout(() => {
+              stableTimer = undefined;
+              reconnectAttempts = 0;
+            }, STABLE_CONNECTION_MS);
             everOpenedRef.current = true;
             setEverOpened(true);
             reconnecting = false;
@@ -216,17 +245,16 @@ export function useSessionConnection({
           },
           onClosed: () => {
             if (disposed) return;
+            clearStableTimer();
             reconnecting = true;
             if (!everOpenedRef.current) {
+              if (openFailed && taskCannotStart()) {
+                failHandshake();
+                return;
+              }
               handshakeAttempts += 1;
               if (handshakeAttempts > MAX_HANDSHAKE_ATTEMPTS) {
-                reconnecting = false;
-                setState("failed");
-                onSessionInvalidated?.();
-                dispatchWireEvent(dispatch, {
-                  type: "error",
-                  message: "Lost the session connection. Reopen the task to try again.",
-                });
+                failHandshake();
                 return;
               }
             }
@@ -258,6 +286,7 @@ export function useSessionConnection({
       reconnecting = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (retryTimer) clearTimeout(retryTimer);
+      clearStableTimer();
       buffer?.dispose();
       buffer = undefined;
       transportRef.current?.dispose();

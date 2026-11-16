@@ -31,6 +31,7 @@ export default function ChatComposer({
     onComposerKeyDown,
     submitComposer,
     connected,
+    failed,
     promptingEnabled,
     everOpened,
     agentStarting,
@@ -225,20 +226,23 @@ export default function ChatComposer({
       <textarea
         rows={1}
         enterKeyHint="send"
+        disabled={failed}
         placeholder={
-          !connected
-            ? agentStarting
-              ? "Starting agent…"
-              : everOpened
-                ? "Reconnecting…"
-                : "Starting…"
-            : !promptingEnabled
-              ? "Transcript unavailable…"
-              : queued !== null
-                ? "Enter stops this turn and sends…"
-                : busy
-                  ? "Queues after this turn…"
-                  : "Message…"
+          failed
+            ? "Can't start the session"
+            : !connected
+              ? agentStarting
+                ? "Starting agent…"
+                : everOpened
+                  ? "Reconnecting…"
+                  : "Starting…"
+              : !promptingEnabled
+                ? "Transcript unavailable…"
+                : queued !== null
+                  ? "Enter stops this turn and sends…"
+                  : busy
+                    ? "Queues after this turn…"
+                    : "Message…"
         }
         aria-label="Message"
         ref={composerRef}

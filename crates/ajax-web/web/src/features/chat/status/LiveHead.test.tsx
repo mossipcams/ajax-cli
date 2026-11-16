@@ -81,6 +81,13 @@ describe("LiveHead connection badge", () => {
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
   });
 
+  it("shows Can't start instead of Reconnecting when the session failed to start (#1633)", () => {
+    mountHead({ state: "idle", connected: false, failed: true });
+
+    expect(screen.getByTestId("session-head-offline")).toHaveTextContent("Can't start");
+    expect(screen.getByTestId("session-head-offline")).not.toHaveTextContent("Reconnecting");
+  });
+
   it("shows the state label while connected", () => {
     mountHead({ state: "idle", connected: true });
 
@@ -200,6 +207,47 @@ describe("LiveHead stop control", () => {
     fireEvent.click(screen.getByTestId("session-cancel"));
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onStop).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("LiveHead attention stop control (#1629)", () => {
+  it("offers Stop while a waiting task's turn is running", () => {
+    const onStop = vi.fn();
+    render(
+      <LiveHead
+        view={initialHeadViewForTests({
+          state: "attention",
+          tone: "waiting",
+          taskAttention: { status: "waiting" },
+          attentionText: "Waiting for review",
+          showHeadLine: false,
+          streamBusy: true,
+        })}
+        permission={null}
+        actions={<button type="button">Review</button>}
+        onStop={onStop}
+      />,
+    );
+    expect(screen.getAllByTestId("session-cancel")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("session-cancel"));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onStop).toHaveBeenCalledWith(true);
+  });
+
+  it("omits Stop on a waiting task when the stream is not busy", () => {
+    mountHead(
+      {
+        state: "attention",
+        tone: "waiting",
+        taskAttention: { status: "waiting" },
+        attentionText: "Waiting for review",
+        showHeadLine: false,
+        streamBusy: false,
+      },
+      { actions: <button type="button">Review</button> },
+    );
+    expect(screen.queryByTestId("session-cancel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument();
   });
 });
 

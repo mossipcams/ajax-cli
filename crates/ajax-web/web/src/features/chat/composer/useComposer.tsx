@@ -23,6 +23,7 @@ import {
   canAttachFiles,
   fitPromptContentBlocks,
   flattenAttachmentBlocks,
+  hasPromptContent,
   promptFrameFits,
 } from "@/shared/lib/promptContent";
 import { autoGrow } from "./autoGrow";
@@ -75,6 +76,7 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
+  failed?: boolean;
   promptingEnabled: boolean;
   busy: boolean;
   everOpened: boolean;
@@ -95,6 +97,7 @@ type ComposerContextValue = {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   queued: string | null;
   stopping: boolean;
+  replacesQueued: boolean;
   submitLabel: string;
   speechModel: ReturnType<typeof useChatSpeech>["speechModel"];
   micAriaLabel: string;
@@ -106,6 +109,7 @@ type ComposerContextValue = {
   editQueued: () => void;
   removeQueued: () => void;
   connected: boolean;
+  failed: boolean;
   promptingEnabled: boolean;
   everOpened: boolean;
   agentStarting: boolean;
@@ -136,6 +140,7 @@ export function useComposerContext(): ComposerContextValue {
 export function ComposerProvider({
   handle,
   connected,
+  failed = false,
   promptingEnabled,
   busy,
   everOpened,
@@ -621,13 +626,22 @@ export function ComposerProvider({
     [insertSlashMatch, sendDraft, slashMatches, slashMenuOpen, slashSelection],
   );
 
-  const submitLabel = queued !== null ? "Stop & send" : busy ? "Queue" : "Send";
+  const replacesQueued = queued !== null && hasPromptContent(draft.trim(), contentBlocks);
+  const submitLabel =
+    queued === null
+      ? busy
+        ? "Queue"
+        : "Send"
+      : replacesQueued
+        ? "Replace queued"
+        : "Stop & send";
 
   const value: ComposerContextValue = {
     draft,
     composerRef,
     queued,
     stopping,
+    replacesQueued,
     submitLabel,
     speechModel,
     micAriaLabel,
@@ -639,6 +653,7 @@ export function ComposerProvider({
     editQueued,
     removeQueued,
     connected,
+    failed,
     promptingEnabled,
     everOpened,
     agentStarting,

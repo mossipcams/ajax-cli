@@ -162,3 +162,39 @@
 .session-attention .pill {
   min-height: 44px;
 }
+
+/* Keyboard open: the head compacts to one line so the transcript keeps several
+   lines above the composer (#1626). The attention explanation stays, ellipsized;
+   the Review action, working status and usage collapse until the keyboard closes. */
+html.keyboard-open .session-head {
+  padding: 0 12px;
+}
+
+html.keyboard-open .session-head-line,
+html.keyboard-open .session-head-stop {
+  min-height: 32px;
+}
+
+html.keyboard-open .session-head .session-working,
+html.keyboard-open .session-head .session-usage {
+  display: none;
+}
+
+html.keyboard-open .session-attention {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+html.keyboard-open .session-attention .session-head-quiet {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+html.keyboard-open .session-attention [data-testid="session-head-actions"] {
+  display: none;
+}

@@ -70,6 +70,7 @@ function ChatSessionBody({
   taskAttention,
   view,
   connected,
+  failed,
   everOpened,
   agentStarting,
   activityAgeMs,
@@ -99,6 +100,7 @@ function ChatSessionBody({
   taskAttention: ChatTaskAttention | null;
   view: ReturnType<typeof useChatSession>["view"];
   connected: boolean;
+  failed: boolean;
   everOpened: boolean;
   agentStarting: boolean;
   activityAgeMs: number;
@@ -138,6 +140,7 @@ function ChatSessionBody({
           taskAttention={taskAttention}
           activityAgeMs={activityAgeMs}
           connected={connected}
+          failed={failed}
           starting={agentStarting}
           permission={
             view.elicitation.decision ? (
@@ -174,6 +177,7 @@ function ChatSessionBody({
         <ComposerProvider
           handle={handle}
           connected={connected}
+          failed={failed}
           promptingEnabled={promptingEnabled}
           busy={view.turn.busy}
           turnEndRevision={view.turnEndRevision}
@@ -297,6 +301,7 @@ export default function ChatSurface({
     view,
     dispatch,
     connected,
+    connectionState,
     everOpened,
     agentStarting,
     activityAgeMs,
@@ -315,6 +320,7 @@ export default function ChatSurface({
     respondPermission,
     respondElicitation,
   } = useChatSession({ handle, detail, onMutated, onConfigError: showNotice });
+  const failed = connectionState === "failed";
 
   useEffect(() => {
     onSessionActivity?.({
@@ -349,6 +355,7 @@ export default function ChatSurface({
         headActions={headActions}
         taskAttention={taskAttention}
         connected={connected}
+        failed={failed}
         everOpened={everOpened}
         agentStarting={agentStarting}
         activityAgeMs={activityAgeMs}

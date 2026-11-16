@@ -583,3 +583,99 @@ describe("isKeyboardOpen", () => {
     expect(isKeyboardOpen()).toBe(true);
   });
 });
+
+describe("owned session viewport on the iOS PWA keyboard", () => {
+  let composer: HTMLTextAreaElement;
+  let shell: HTMLFormElement;
+  let frames: FrameRequestCallback[];
+
+  const flushFrames = () => {
+    for (const frame of frames.splice(0)) frame(0);
+  };
+
+  const setViewport = (height: number) => {
+    vvHeight = height;
+    vi.stubGlobal("innerHeight", height);
+  };
+
+  const blurComposer = () => {
+    composer.blur();
+    document.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    flushFrames();
+  };
+
+  beforeEach(() => {
+    frames = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal("innerHeight", 800);
+    document.documentElement.setAttribute("data-session-viewport", "owned");
+    composer = document.createElement("textarea");
+    shell = document.createElement("form");
+    shell.setAttribute("data-testid", "session-composer");
+    shell.appendChild(composer);
+    document.body.appendChild(shell);
+  });
+
+  afterEach(() => {
+    shell.remove();
+  });
+
+  it("sets keyboard-open on reopen after the PWA keyboard closes while innerHeight stays small", () => {
+    start();
+    composer.focus();
+    setViewport(464);
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    blurComposer();
+    expect(isKeyboardOpen()).toBe(false);
+
+    setViewport(800);
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+
+    composer.focus();
+    setViewport(464);
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+  });
+
+  it("sets keyboard-open on reopen when the keyboard closes without a viewport resize", () => {
+    start();
+    composer.focus();
+    setViewport(464);
+    dispatchVV("resize");
+    blurComposer();
+    expect(isKeyboardOpen()).toBe(false);
+
+    setViewport(800);
+    composer.focus();
+    setViewport(464);
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+  });
+
+  it("sets keyboard-open when the composer takes focus after a keyboard resize that landed before focus", () => {
+    start();
+    setViewport(464);
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+
+    composer.focus();
+    composer.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(isKeyboardOpen()).toBe(true);
+  });
+
+  it("sets keyboard-open when the visual viewport shrinks in sub-threshold steps", () => {
+    start();
+    composer.focus();
+    for (const height of [716, 632, 548, 464]) {
+      vvHeight = height;
+      dispatchVV("resize");
+    }
+    expect(isKeyboardOpen()).toBe(true);
+  });
+});

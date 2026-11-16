@@ -13,6 +13,12 @@ function isUsableHeight(height: number): boolean {
   return height >= MIN_USABLE_HEIGHT_PX;
 }
 
+function isFormControl(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 export function isKeyboardOpen(): boolean {
   return (
     typeof document !== "undefined" &&
@@ -79,15 +85,19 @@ export function initViewport(): () => void {
     return null;
   };
 
-  const restoreGeometryAfterKeyboardDismiss = () => {
+  const neverShrinkBaseline = (measured: number) =>
+    window.innerWidth === baselineWidth ? Math.max(baselineHeight, measured) : measured;
+
+  const restoreGeometryAfterKeyboardDismiss = (monotonic = true) => {
     const layoutHeight = window.innerHeight;
     const visualHeight = vv.height;
     if (isSessionViewportOwned()) {
       clearAppGeometry();
-      baselineHeight =
+      const measured =
         layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX
           ? layoutHeight
           : visualHeight;
+      baselineHeight = monotonic ? neverShrinkBaseline(measured) : measured;
     } else if (layoutHeight - visualHeight > KEYBOARD_CLOSE_DELTA_PX) {
       setAppHeight(layoutHeight);
       setAppTop(0);
@@ -116,7 +126,8 @@ export function initViewport(): () => void {
 
   const rebaseBaselineFromResolved = () => {
     const resolved = resolveViewportHeight();
-    baselineHeight = resolved ?? vv.height;
+    baselineHeight =
+      resolved ?? (isUsableHeight(vv.height) ? neverShrinkBaseline(vv.height) : vv.height);
     baselineWidth = window.innerWidth;
   };
 
@@ -139,12 +150,7 @@ export function initViewport(): () => void {
     resetDocumentScroll();
   };
 
-  const isFormControlFocused = () => {
-    const active = document.activeElement;
-    if (!active) return false;
-    const tag = active.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  };
+  const isFormControlFocused = () => isFormControl(document.activeElement);
 
   const onViewportResize = () => {
     const current = vv.height;
@@ -226,7 +232,7 @@ export function initViewport(): () => void {
     cancelCloseSettle();
     const wasKeyboardOpen = keyboardOpen;
     dismissKeyboardOpen();
-    restoreGeometryAfterKeyboardDismiss();
+    restoreGeometryAfterKeyboardDismiss(false);
     if (!wasKeyboardOpen) {
       resetDocumentScroll();
     }
@@ -257,9 +263,16 @@ export function initViewport(): () => void {
     });
   };
 
+  const onFormControlFocusIn = (event: FocusEvent) => {
+    if (!isSessionViewportOwned()) return;
+    if (!(event.target instanceof Element) || !isFormControl(event.target)) return;
+    onViewportResize();
+  };
+
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
   document.addEventListener("focusout", onSessionComposerFocusOut, true);
+  document.addEventListener("focusin", onFormControlFocusIn, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("pageshow", onPageShow);
   document.addEventListener("gesturestart", onGesture);
@@ -273,6 +286,7 @@ export function initViewport(): () => void {
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     document.removeEventListener("focusout", onSessionComposerFocusOut, true);
+    document.removeEventListener("focusin", onFormControlFocusIn, true);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", onPageShow);
     document.removeEventListener("gesturestart", onGesture);

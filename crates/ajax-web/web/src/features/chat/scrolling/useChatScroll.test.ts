@@ -9,6 +9,7 @@ import { AUTO_LOAD_COOLDOWN_MS } from "./historyScroll";
 describe("useChatScroll", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   function mountScroll(
@@ -107,6 +108,37 @@ describe("useChatScroll", () => {
       view.rerender({ rev: 1, key: "s1", historyScroll: undefined });
     });
 
+    expect(thread.scrollTop).toBe(-120);
+  });
+
+  it("keeps the reading position when the head above the thread resizes (#1636)", () => {
+    const resizeCallbacks: Array<() => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    let top = 0;
+    vi.spyOn(HTMLDivElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ top }) as DOMRect,
+    );
+    const { thread, view } = mountScroll("s1", 0);
+    stubScrollMetrics(thread, 1200, 400, -120);
+    act(() => {
+      view.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+
+    top = 26;
+    act(() => resizeCallbacks[resizeCallbacks.length - 1]());
+    expect(thread.scrollTop).toBe(-94);
+
+    top = 0;
+    act(() => resizeCallbacks[resizeCallbacks.length - 1]());
     expect(thread.scrollTop).toBe(-120);
   });
 

@@ -65,7 +65,7 @@ function parseEnumOptions(property: Record<string, unknown>): ElicitationEnumOpt
 
 function parseField(name: string, property: Record<string, unknown>, required: boolean): ElicitationFormField | null {
   const type = readString(property.type);
-  const title = readString(property.title) ?? name;
+  const title = readString(property.title) ?? readString(property.description) ?? name;
   const description = readString(property.description);
   const enumOptions = parseEnumOptions(property);
   if (type === "string" && enumOptions) {

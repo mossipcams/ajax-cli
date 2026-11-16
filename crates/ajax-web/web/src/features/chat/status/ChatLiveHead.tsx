@@ -9,6 +9,7 @@ interface Props {
   activityAgeMs: number;
   connected: boolean;
   starting?: boolean;
+  failed?: boolean;
   permission?: ReactNode;
   actions?: ReactNode;
   onStop: () => void;
@@ -20,6 +21,7 @@ export default function ChatLiveHead({
   activityAgeMs,
   connected,
   starting = false,
+  failed = false,
   permission = null,
   actions = null,
   onStop,
@@ -39,6 +41,7 @@ export default function ChatLiveHead({
     activityAgeMs,
     connected,
     starting,
+    failed,
   });
 
   return (

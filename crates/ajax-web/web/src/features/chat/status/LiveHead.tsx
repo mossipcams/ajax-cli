@@ -33,7 +33,7 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
               className="session-head-label session-head-offline"
               data-testid="session-head-offline"
             >
-              {view.starting ? "Starting agent" : "Reconnecting"}
+              {view.failed ? "Can't start" : view.starting ? "Starting agent" : "Reconnecting"}
             </span>
           )}
           {view.usage ? <ContextUsageMeter usage={view.usage} /> : null}
@@ -80,6 +80,16 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
             {view.attentionText}
           </p>
           {actions}
+          {view.streamBusy === true ? (
+            <button
+              type="button"
+              className="session-head-stop"
+              data-testid="session-cancel"
+              onClick={() => onStop(true)}
+            >
+              Stop
+            </button>
+          ) : null}
         </div>
       ) : null}
 
