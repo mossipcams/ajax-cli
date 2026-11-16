@@ -134,10 +134,11 @@ describe("ChatSurface smoke", () => {
     },
   );
 
-  it("opens Diff Review on a left swipe", async () => {
+  it("does not open Diff Review or go back on a left swipe", async () => {
     vi.useFakeTimers();
     const onOpenDiff = vi.fn();
-    mountChat({ onOpenDiff });
+    const onBack = vi.fn();
+    mountChat({ onOpenDiff, onBack });
     const root = screen.getByTestId("session-chat");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
     fireEvent.touchStart(root, { changedTouches: [{ clientX: 200, clientY: 40 }] });
@@ -146,14 +147,15 @@ describe("ChatSurface smoke", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(onOpenDiff).toHaveBeenCalledOnce();
+    expect(onOpenDiff).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 
-  it("opens Diff Review when swiping on transcript text without active highlighting", async () => {
+  it("goes back when swiping right on transcript text without active highlighting", async () => {
     vi.useFakeTimers();
-    const onOpenDiff = vi.fn();
-    mountChat({ onOpenDiff });
+    const onBack = vi.fn();
+    mountChat({ onBack });
     send({ type: "message", role: "agent", text: "Selectable answer", itemId: "a1" });
     send({ type: "turn_end", stopReason: "end_turn" });
 
@@ -161,20 +163,20 @@ describe("ChatSurface smoke", () => {
     const message = screen.getByTestId("session-message-agent");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
 
-    fireEvent.touchStart(message, { changedTouches: [{ clientX: 200, clientY: 40 }] });
-    fireEvent.touchMove(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchStart(message, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchMove(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
+    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(onOpenDiff).toHaveBeenCalledOnce();
+    expect(onBack).toHaveBeenCalledOnce();
     vi.useRealTimers();
   });
 
-  it("does not open Diff Review when transcript highlighting activates after touchstart (#1051)", async () => {
+  it("does not go back when transcript highlighting activates after touchstart (#1051)", async () => {
     vi.useFakeTimers();
-    const onOpenDiff = vi.fn();
-    mountChat({ onOpenDiff });
+    const onBack = vi.fn();
+    mountChat({ onBack });
     send({ type: "message", role: "agent", text: "Selectable answer", itemId: "a1" });
     send({ type: "turn_end", stopReason: "end_turn" });
 
@@ -182,7 +184,7 @@ describe("ChatSurface smoke", () => {
     const message = screen.getByTestId("session-message-agent");
     Object.defineProperty(root, "clientWidth", { value: 390, configurable: true });
 
-    fireEvent.touchStart(message, { changedTouches: [{ clientX: 200, clientY: 40 }] });
+    fireEvent.touchStart(message, { changedTouches: [{ clientX: 120, clientY: 40 }] });
 
     const range = document.createRange();
     range.selectNodeContents(message);
@@ -190,20 +192,20 @@ describe("ChatSurface smoke", () => {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    fireEvent.touchMove(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchMove(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
+    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(onOpenDiff).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
     selection?.removeAllRanges();
     vi.useRealTimers();
   });
 
-  it("does not open Diff Review when swiping on transcript text with active highlighting", async () => {
+  it("does not go back when swiping right on transcript text with active highlighting", async () => {
     vi.useFakeTimers();
-    const onOpenDiff = vi.fn();
-    mountChat({ onOpenDiff });
+    const onBack = vi.fn();
+    mountChat({ onBack });
     send({ type: "message", role: "agent", text: "Selectable answer", itemId: "a1" });
     send({ type: "turn_end", stopReason: "end_turn" });
 
@@ -217,13 +219,13 @@ describe("ChatSurface smoke", () => {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    fireEvent.touchStart(message, { changedTouches: [{ clientX: 200, clientY: 40 }] });
-    fireEvent.touchMove(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
-    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 120, clientY: 42 }] });
+    fireEvent.touchStart(message, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+    fireEvent.touchMove(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
+    fireEvent.touchEnd(message, { changedTouches: [{ clientX: 200, clientY: 42 }] });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
     });
-    expect(onOpenDiff).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
     selection?.removeAllRanges();
     vi.useRealTimers();
   });

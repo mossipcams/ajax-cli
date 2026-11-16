@@ -147,7 +147,9 @@ the session route scroller owns `env(safe-area-inset-top)` so the shared task
 header clears the iPhone notch. The Details sheet is iOS-safe: `.session-details-sheet`
 contains overflow and `.session-details-body` scrolls. While the terminal is
 fullscreen (`html.terminal-expanded`), the header Details control stays
-reachable without permanently reserving terminal band space. Diff Review remains swipe-left.
+reachable without permanently reserving terminal band space. From the terminal view
+swipe-left opens Diff Review; from chat, Diff Review opens from the Details sheet's
+Show diff, and chat keeps swipe-right back.
 The browser still does not own transcript/queue.
 
 The chat live head projects server task status, the same `status` and
@@ -645,7 +647,7 @@ dropped, and unknown legacy updates remain generic artifacts. Ajax advertises
 no ACP filesystem or terminal client capabilities until worktree-scoped
 handlers exist.
 
-From a selected task, swipe-left navigation opens Diff Review
+From a selected task's terminal view, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe
