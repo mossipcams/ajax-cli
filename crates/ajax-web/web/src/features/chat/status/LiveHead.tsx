@@ -80,6 +80,16 @@ export default function LiveHead({ view, permission, actions, onStop }: Props) {
             {view.attentionText}
           </p>
           {actions}
+          {view.streamBusy === true ? (
+            <button
+              type="button"
+              className="session-head-stop"
+              data-testid="session-cancel"
+              onClick={() => onStop(true)}
+            >
+              Stop
+            </button>
+          ) : null}
         </div>
       ) : null}
 
