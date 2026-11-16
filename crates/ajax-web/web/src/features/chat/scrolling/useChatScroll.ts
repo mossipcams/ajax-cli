@@ -192,12 +192,18 @@ export function useChatScroll({
     if (!node || typeof ResizeObserver === "undefined") return;
 
     contentScrollHeightRef.current = node.scrollHeight;
+    let lastTop = node.getBoundingClientRect().top;
     const observer = new ResizeObserver(() => {
+      const top = node.getBoundingClientRect().top;
+      const delta = top - lastTop;
+      lastTop = top;
       if (layoutTransitionRef?.current) return;
       if (pendingTopRestoreRef.current) return;
       if (pinnedRef.current) {
         pinTranscriptToLiveEdge(node);
         contentScrollHeightRef.current = node.scrollHeight;
+      } else if (delta !== 0) {
+        node.scrollTop += delta;
       }
     });
     observer.observe(node);
