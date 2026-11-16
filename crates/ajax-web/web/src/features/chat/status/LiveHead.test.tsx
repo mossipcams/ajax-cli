@@ -81,6 +81,13 @@ describe("LiveHead connection badge", () => {
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
   });
 
+  it("shows Can't start instead of Reconnecting when the session failed to start (#1633)", () => {
+    mountHead({ state: "idle", connected: false, failed: true });
+
+    expect(screen.getByTestId("session-head-offline")).toHaveTextContent("Can't start");
+    expect(screen.getByTestId("session-head-offline")).not.toHaveTextContent("Reconnecting");
+  });
+
   it("shows the state label while connected", () => {
     mountHead({ state: "idle", connected: true });
 

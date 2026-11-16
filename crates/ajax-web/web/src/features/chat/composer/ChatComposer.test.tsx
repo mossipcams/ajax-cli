@@ -750,6 +750,35 @@ describe("ChatComposer transcript durability gate", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
+  it("shows the can't-start placeholder and disables the textarea when the session failed (#1633)", () => {
+    const noop = vi.fn();
+    render(
+      <ComposerProvider
+        handle="web/fix-login"
+        connected={false}
+        failed
+        promptingEnabled
+        busy={false}
+        everOpened={false}
+        agentStarting={false}
+        conversation={[]}
+        conversationRevision={0}
+        composerRef={{ current: null }}
+        scrollToLatest={noop}
+        sendPrompt={noop}
+        withdrawQueuedPrompt={noop}
+        sendCancel={noop}
+        sendClear={noop}
+        markStopped={noop}
+      >
+        <ChatComposer />
+      </ComposerProvider>,
+    );
+    const textarea = screen.getByLabelText("Message");
+    expect(textarea).toHaveAttribute("placeholder", "Can't start the session");
+    expect(textarea).toBeDisabled();
+  });
+
   it("keeps /clear sendable while prompting is blocked", () => {
     const noop = vi.fn();
     const sendPrompt = vi.fn();

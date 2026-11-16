@@ -75,6 +75,7 @@ export type ComposerCommands = {
 export type ComposerProviderProps = ComposerCommands & {
   handle: string;
   connected: boolean;
+  failed?: boolean;
   promptingEnabled: boolean;
   busy: boolean;
   everOpened: boolean;
@@ -106,6 +107,7 @@ type ComposerContextValue = {
   editQueued: () => void;
   removeQueued: () => void;
   connected: boolean;
+  failed: boolean;
   promptingEnabled: boolean;
   everOpened: boolean;
   agentStarting: boolean;
@@ -136,6 +138,7 @@ export function useComposerContext(): ComposerContextValue {
 export function ComposerProvider({
   handle,
   connected,
+  failed = false,
   promptingEnabled,
   busy,
   everOpened,
@@ -639,6 +642,7 @@ export function ComposerProvider({
     editQueued,
     removeQueued,
     connected,
+    failed,
     promptingEnabled,
     everOpened,
     agentStarting,
