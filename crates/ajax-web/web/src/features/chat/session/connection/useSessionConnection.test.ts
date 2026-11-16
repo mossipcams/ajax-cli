@@ -673,4 +673,98 @@ describe("useSessionConnection", () => {
       unmount();
     });
   });
+
+  describe("#1629 socket that closes after each ready", () => {
+    function renderSocket() {
+      const callbacks: webSessionTransport.WebSessionTransportCallbacks[] = [];
+      const transport: webSessionTransport.WebSessionTransport = {
+        sendPrompt: vi.fn(() => "prompt-1"),
+        sendCancel: vi.fn(),
+        setModel: vi.fn(),
+        setConfigOption: vi.fn(),
+        respondPermission: vi.fn(),
+        dispose: vi.fn(),
+      };
+      vi.spyOn(webSessionTransport, "connectWebSessionTransport").mockImplementation(
+        (_handle, nextCallbacks) => {
+          callbacks.push(nextCallbacks);
+          return transport;
+        },
+      );
+      const { unmount } = renderHook(() => useSessionConnection(hookOptions()));
+      return { callbacks, unmount };
+    }
+
+    it("backs off instead of reopening every few milliseconds", () => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { callbacks, unmount } = renderSocket();
+      const opened: number[] = [];
+      let elapsed = 0;
+      const readyAndCloseNewOpens = () => {
+        while (opened.length < callbacks.length) {
+          opened.push(elapsed);
+          act(() => {
+            callbacks[opened.length - 1]?.onReady("auto");
+            callbacks[opened.length - 1]?.onClosed();
+          });
+        }
+      };
+
+      readyAndCloseNewOpens();
+      while (elapsed < 6000) {
+        elapsed += 1;
+        act(() => vi.advanceTimersByTime(1));
+        readyAndCloseNewOpens();
+      }
+
+      expect(opened.length).toBeLessThanOrEqual(5);
+      const gaps = opened.slice(1).map((time, index) => time - opened[index]);
+      expect(gaps.slice(1)).toEqual([1000, 2000]);
+      unmount();
+    });
+
+    it("reconnects immediately after a connection stayed open past the stable window", () => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { callbacks, unmount } = renderSocket();
+
+      act(() => callbacks[0]?.onReady("auto"));
+      act(() => vi.advanceTimersByTime(5000));
+      act(() => callbacks[0]?.onClosed());
+      act(() => vi.advanceTimersByTime(0));
+      expect(callbacks).toHaveLength(2);
+      unmount();
+    });
+
+    it("reconnects immediately after a stable connection that follows quick cycles", () => {
+      vi.useFakeTimers();
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { callbacks, unmount } = renderSocket();
+
+      act(() => {
+        callbacks[0]?.onReady("auto");
+        callbacks[0]?.onClosed();
+      });
+      act(() => vi.advanceTimersByTime(0));
+      act(() => {
+        callbacks[1]?.onReady("auto");
+        callbacks[1]?.onClosed();
+      });
+      act(() => vi.advanceTimersByTime(1000));
+      act(() => {
+        callbacks[2]?.onReady("auto");
+        callbacks[2]?.onClosed();
+      });
+      act(() => vi.advanceTimersByTime(2000));
+      expect(callbacks).toHaveLength(4);
+
+      act(() => callbacks[3]?.onReady("auto"));
+      act(() => vi.advanceTimersByTime(5000));
+      act(() => callbacks[3]?.onClosed());
+      act(() => vi.advanceTimersByTime(0));
+      expect(callbacks).toHaveLength(5);
+      unmount();
+    });
+  });
 });

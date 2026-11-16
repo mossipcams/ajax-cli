@@ -22,6 +22,8 @@ import {
 import { isSessionModelChangeFailure, isSessionConfigChangeFailure } from "../../model/public";
 import type { ConnectionState } from "./connectionState";
 
+const STABLE_CONNECTION_MS = 5000;
+
 type Dispatch = (action: ChatSessionAction) => void;
 
 type ForwardedTranscriptState = { transcriptError?: string; promptsBlocked: boolean };
@@ -90,6 +92,7 @@ export function useSessionConnection({
     let reconnecting = false;
     let openFailed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let stableTimer: ReturnType<typeof setTimeout> | undefined;
     let buffer: MessageBuffer | undefined;
     let nextToReadCursor: number | undefined;
     let forwardedTranscript: ForwardedTranscriptState = { promptsBlocked: false };
@@ -99,6 +102,11 @@ export function useSessionConnection({
     const setState = (state: ConnectionState) => {
       connectionStateRef.current = state;
       setConnectionState(state);
+    };
+
+    const clearStableTimer = () => {
+      if (stableTimer) clearTimeout(stableTimer);
+      stableTimer = undefined;
     };
 
     const scheduleReconnect = () => {
@@ -203,6 +211,7 @@ export function useSessionConnection({
     };
 
     const open = () => {
+      clearStableTimer();
       setState("connecting");
       transportRef.current?.dispose();
       transportRef.current = undefined;
@@ -218,7 +227,11 @@ export function useSessionConnection({
           onReady: (nextModel) => {
             buffer?.flushAll();
             handshakeAttempts = 0;
-            reconnectAttempts = 0;
+            clearStableTimer();
+            stableTimer = setTimeout(() => {
+              stableTimer = undefined;
+              reconnectAttempts = 0;
+            }, STABLE_CONNECTION_MS);
             everOpenedRef.current = true;
             setEverOpened(true);
             reconnecting = false;
@@ -232,6 +245,7 @@ export function useSessionConnection({
           },
           onClosed: () => {
             if (disposed) return;
+            clearStableTimer();
             reconnecting = true;
             if (!everOpenedRef.current) {
               if (openFailed && taskCannotStart()) {
@@ -272,6 +286,7 @@ export function useSessionConnection({
       reconnecting = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (retryTimer) clearTimeout(retryTimer);
+      clearStableTimer();
       buffer?.dispose();
       buffer = undefined;
       transportRef.current?.dispose();
