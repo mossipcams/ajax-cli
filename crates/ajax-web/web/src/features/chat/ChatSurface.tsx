@@ -275,7 +275,6 @@ export default function ChatSurface({
   detail,
   detailStatus,
   onBack,
-  onOpenDiff,
   onMutated,
   headActions = null,
   taskAttention = null,
@@ -283,12 +282,9 @@ export default function ChatSurface({
   onSessionActivity,
 }: Props) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const onOpenDiffRef = useRef(onOpenDiff);
-  onOpenDiffRef.current = onOpenDiff;
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
   const { swiping, style } = useSwipePageTransition(rootRef, {
-    onLeft: () => onOpenDiffRef.current?.(),
     onRight: () => onBackRef.current?.(),
     shouldIgnoreTarget: shouldIgnoreChatTranscriptSwipeTarget,
   });

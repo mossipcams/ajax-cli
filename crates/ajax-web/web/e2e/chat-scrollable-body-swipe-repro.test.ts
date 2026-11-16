@@ -94,21 +94,35 @@ test("markdown code blocks keep horizontal touch scrolling local", async ({ page
   await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
 });
 
-test("page swipe outside bodies still opens Diff", async ({ page }) => {
-  await openTurn(page);
+async function swipeHeader(page: Page, direction: "left" | "right") {
   const header = page.getByTestId("mobile-chrome-header");
   const box = await header.boundingBox();
   if (!box) throw new Error("header missing box");
-  await header.evaluate((element, point) => {
-    const dispatch = (type: string, x: number) => {
+  const x = box.x + box.width * 0.15;
+  const [startX, endX] = direction === "left" ? [x + 120, x] : [x, x + 120];
+  await header.evaluate((element, points) => {
+    const dispatch = (type: string, clientX: number) => {
       const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, "touches", { value: [{ clientX: x, clientY: point.y }] });
-      Object.defineProperty(event, "changedTouches", { value: [{ clientX: x, clientY: point.y }] });
+      Object.defineProperty(event, "touches", { value: [{ clientX, clientY: points.y }] });
+      Object.defineProperty(event, "changedTouches", { value: [{ clientX, clientY: points.y }] });
       element.dispatchEvent(event);
     };
-    dispatch("touchstart", point.x + 120);
-    dispatch("touchmove", point.x);
-    dispatch("touchend", point.x);
-  }, { x: box.x + box.width * 0.15, y: box.y + box.height / 2 });
-  await expect(page.getByTestId("outlet-diff")).toBeVisible({ timeout: 8_000 });
+    dispatch("touchstart", points.startX);
+    dispatch("touchmove", points.endX);
+    dispatch("touchend", points.endX);
+  }, { startX, endX, y: box.y + box.height / 2 });
+}
+
+test("left page swipe outside bodies does not open Diff", async ({ page }) => {
+  await openTurn(page);
+  await swipeHeader(page, "left");
+  await page.waitForTimeout(1_000);
+  await expect(page.getByTestId("outlet-diff")).toHaveCount(0);
+  await expect(page.getByTestId("session-chat")).toBeVisible();
+});
+
+test("right page swipe outside bodies still navigates back", async ({ page }) => {
+  await openTurn(page);
+  await swipeHeader(page, "right");
+  await expect(page.getByTestId("outlet-dashboard")).toBeVisible({ timeout: 8_000 });
 });
