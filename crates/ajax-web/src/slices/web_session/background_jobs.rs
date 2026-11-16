@@ -104,7 +104,7 @@ pub(super) fn probe(root: Option<u32>, max_age: Duration) -> Option<bool> {
 }
 
 fn probe_containers(server: &str, key: &str) -> Option<bool> {
-    let table = container_table(&program::sandbox_docker_run, server, key)?;
+    let table = container_table(&program::sandbox_docker_probe, server, key)?;
     Some(has_container_background_shell(&table))
 }
 
@@ -113,6 +113,9 @@ pub(super) fn read_background(
     worktree: Option<&Path>,
     max_age: Duration,
 ) -> Option<bool> {
+    if pid.is_none() {
+        return Some(false);
+    }
     match (program::sandbox_docker_server(), worktree.map(task_key)) {
         (None, _) => probe(pid, max_age),
         (Some(server), Some(key)) => probe_containers(&server, &key),

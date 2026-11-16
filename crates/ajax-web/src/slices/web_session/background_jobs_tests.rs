@@ -1,10 +1,12 @@
 use super::background_jobs::{
-    probe, BackgroundLevel, Step, END_DEBOUNCE, IDLE_POLL_EVERY, POLL_EVERY, POLL_MAX_AGE, SCAN_TTL,
+    probe, read_background, BackgroundLevel, Step, END_DEBOUNCE, IDLE_POLL_EVERY, POLL_EVERY,
+    POLL_MAX_AGE, SCAN_TTL,
 };
 use super::session_activity::{SessionActivity, SessionActivityReporter};
 use super::SessionServerEvent;
 use ajax_core::models::{LiveObservation, LiveStatusKind};
 use std::cell::{Cell, RefCell};
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 fn prompt() -> SessionServerEvent {
@@ -453,4 +455,14 @@ fn a_second_turn_end_without_a_prompt_clears_the_stale_level() {
 #[test]
 fn a_failed_level_read_never_reports_a_background_level_for_a_missing_root() {
     assert_eq!(probe(None, POLL_MAX_AGE), Some(false));
+}
+
+#[test]
+fn a_missing_agent_pid_reads_as_no_background_work_in_docker_mode_too() {
+    assert_eq!(
+        crate::adapters::program::with_test_sandbox(true, || {
+            read_background(None, Some(Path::new("/w")), Duration::ZERO)
+        }),
+        Some(false)
+    );
 }
