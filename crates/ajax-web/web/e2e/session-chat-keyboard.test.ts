@@ -508,3 +508,46 @@ test.describe("Session chat home-indicator inset (#1034)", () => {
     }
   });
 });
+
+async function pinKeyboardBand(page: Page, heightPx: number) {
+  await page.evaluate((height) => {
+    for (const selector of ["#app", '[data-testid="app-viewport"]']) {
+      const el = document.querySelector(selector) as HTMLElement | null;
+      if (!el) continue;
+      el.style.height = `${height}px`;
+      el.style.maxHeight = `${height}px`;
+    }
+  }, heightPx);
+  await page.waitForTimeout(300);
+}
+
+async function readHeadGeometry(page: Page) {
+  return page.evaluate(() => {
+    const head = document.querySelector('[data-testid="session-head"]') as HTMLElement;
+    const thread = document.querySelector('[data-testid="session-thread"]') as HTMLElement;
+    return {
+      headHeight: head.getBoundingClientRect().height,
+      threadHeight: thread.getBoundingClientRect().height,
+      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+    };
+  });
+}
+
+test.describe("Session chat head compaction (#1626)", () => {
+  test.use({ viewport: { width: 320, height: 568 } });
+
+  test("keyboard open compacts session-head so the transcript keeps several lines (#1626)", async ({
+    page,
+  }) => {
+    await openSessionChat(page);
+    await seedTranscript(page, 40);
+    const closed = await readHeadGeometry(page);
+    await page.getByLabel("Message").click();
+    await simulateKeyboard(page, 280);
+    await pinKeyboardBand(page, 308);
+    const open = await readHeadGeometry(page);
+    expect(open.keyboardOpen).toBe(true);
+    expect(open.headHeight).toBeLessThan(closed.headHeight - 40);
+    expect(open.threadHeight).toBeGreaterThanOrEqual(150);
+  });
+});
