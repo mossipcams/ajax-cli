@@ -18,7 +18,6 @@ import type { LivePromptCapabilities } from "@/shared/lib/liveSessionPromptCapab
 import type { ComposerAttachment, PromptContentBlockWire } from "@/shared/lib/promptContent";
 import {
   attachmentFromFile,
-  attachmentFromPaste,
   attachmentsFromContentBlocks,
   canAttachFiles,
   fitPromptContentBlocks,
@@ -573,19 +572,17 @@ export function ComposerProvider({
   );
 
   const onComposerPaste = useCallback(
-    async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-      const items = event.clipboardData?.items;
-      if (!items?.length) return;
-      const next: ComposerAttachment[] = [];
-      for (const item of Array.from(items)) {
-        const attachment = await attachmentFromPaste(item, promptCapabilities);
-        if (attachment) next.push(attachment);
-      }
-      if (!next.length) return;
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!canAttachFiles(promptCapabilities)) return;
+      const files = Array.from(event.clipboardData?.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+      if (!files.length) return;
       event.preventDefault();
-      setAttachments((current) => [...current, ...next]);
+      void attachFiles(files);
     },
-    [promptCapabilities],
+    [attachFiles, promptCapabilities],
   );
 
   const onComposerKeyDown = useCallback(

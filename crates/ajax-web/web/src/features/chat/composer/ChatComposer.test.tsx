@@ -139,6 +139,55 @@ describe("ChatComposer", () => {
     );
   });
 
+  it("suppresses the native paste synchronously when the clipboard carries a file", async () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+
+    const file = new File(["hello"], "photo.jpg", { type: "image/jpeg" });
+    const notPrevented = fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: {
+        items: [
+          { kind: "string", type: "text/plain", getAsFile: () => null },
+          { kind: "file", type: "image/jpeg", getAsFile: () => file },
+        ],
+      },
+    });
+
+    expect(notPrevented).toBe(false);
+    expect(await screen.findByText("photo.jpg")).toBeInTheDocument();
+  });
+
+  it("leaves a text-only paste to the browser", () => {
+    mountChat();
+    act(() => {
+      chatH.snapshot?.({
+        type: "snapshot",
+        protocolVersion: 2,
+        cursor: 0,
+        model: "auto",
+        turnState: "idle",
+        reset: false,
+        promptCapabilities: { image: true, embeddedContext: false },
+      });
+    });
+
+    const notPrevented = fireEvent.paste(screen.getByLabelText("Message"), {
+      clipboardData: { items: [{ kind: "string", type: "text/plain", getAsFile: () => null }] },
+    });
+
+    expect(notPrevented).toBe(true);
+  });
+
   it("stops the turn on a second Enter without resending the staged follow-up", () => {
     mountChat();
 
