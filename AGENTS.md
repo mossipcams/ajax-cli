@@ -44,6 +44,8 @@ before editing:
 - Before creating or retitling a PR or changing CI/release behavior, read
   `docs/agent/pull-requests.md`.
 
+UI skills (gestures, animation-performance, apple-web-app, mobile-native) are advisory. DESIGN.md and .impeccable/design.json win on motion timing, color and density.
+
 For architecture or security changes, create a written plan and wait for
 approval unless the user explicitly requested immediate implementation. Update
 the owning architecture documentation in the same change.
