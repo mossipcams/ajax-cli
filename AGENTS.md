@@ -109,6 +109,14 @@ tracking system.
 - Prefer reusing existing code over writing a new equivalent. Search for an
   existing implementation before adding one.
 
+## Code search
+
+- `rg` for text: strings, config keys, errors, comments.
+- `ast-grep` (see skill) when structure matters: calls/definitions where rg hits
+  comments or strings, and ALL multi-file rewrites. Never sed/regex rewrites on
+  code.
+- `ast-grep outline` before reading an unfamiliar file in full.
+
 ## Rust file-size limit
 
 Keep handwritten Rust source files near 600 lines. The hard maximum is 1,000
