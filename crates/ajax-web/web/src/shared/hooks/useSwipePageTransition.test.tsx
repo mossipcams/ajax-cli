@@ -63,13 +63,16 @@ function Harness({
   onRight,
   commitRef,
   from_route,
+  onRender,
 }: {
   onLeft?: () => void;
   onRight?: () => void;
   commitRef?: { current: ((direction: "left" | "right") => void) | null };
   from_route?: string;
+  onRender?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  onRender?.();
   const { style, commit } = useSwipePageTransition(ref, { onLeft, onRight, from_route });
   if (commitRef) commitRef.current = commit;
   return <div ref={ref} data-testid="swipe-target" style={style} />;
@@ -106,6 +109,12 @@ function renderWithBelowProbe(props: Parameters<typeof Harness>[0] = {}) {
 
 function belowMounted(): boolean {
   return screen.getByTestId("below-active").dataset.below === "true";
+}
+
+async function nextFrame() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(16);
+  });
 }
 
 describe("useSwipePageTransition", () => {
@@ -276,7 +285,76 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 70, 42, node));
     });
+    await nextFrame();
     expect(node.style.transform).toBe("translate3d(20px, 0px, 0px)");
+  });
+
+  it("#1657 tracks engaged moves on the root without re-rendering the hook's owner", async () => {
+    const onRender = vi.fn();
+    renderHarness({ onRight: vi.fn(), onRender });
+    const node = screen.getByTestId("swipe-target");
+
+    node.dispatchEvent(touch("touchstart", 40, 40, node));
+    node.dispatchEvent(touch("touchmove", 70, 42, node));
+    await nextFrame();
+    onRender.mockClear();
+
+    node.dispatchEvent(touch("touchmove", 90, 42, node));
+    node.dispatchEvent(touch("touchmove", 100, 42, node));
+    node.dispatchEvent(touch("touchmove", 110, 42, node));
+    expect(onRender).not.toHaveBeenCalled();
+    await nextFrame();
+    expect(onRender).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe("translate3d(40px, 0px, 0px)");
+  });
+
+  it("#1657 a snap-back leaves no inline translate on the root after it settles", async () => {
+    renderHarness({ onLeft: vi.fn() });
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 300, 40, node, 1000));
+    node.dispatchEvent(touch("touchmove", 250, 42, node, 1000));
+    node.dispatchEvent(touch("touchmove", 100, 42, node, 2000));
+    await nextFrame();
+    expect(node.style.transform).toMatch(/^translate3d\(-\d+px, 0px, 0px\)$/);
+    node.dispatchEvent(touch("touchend", 100, 42, node, 2000));
+    expect(node.style.transform).toBe("");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(node.style.transform).toBe("");
+    expect(node.style.transition).toBe("");
+  });
+
+  it("#1657 a committed swipe hands the release position to the leaving pane and still navigates", async () => {
+    const onLeft = vi.fn();
+    render(
+      <PageCrossSlideProvider>
+        <Harness onLeft={onLeft} />
+        <LeavingPaneProbe />
+      </PageCrossSlideProvider>,
+    );
+    const node = screen.getByTestId("swipe-target");
+    Object.defineProperty(node, "clientWidth", { value: 390, configurable: true });
+
+    node.dispatchEvent(touch("touchstart", 200, 40, node));
+    node.dispatchEvent(touch("touchmove", 120, 42, node));
+    node.dispatchEvent(touch("touchmove", 80, 42, node));
+    await nextFrame();
+    const releaseTransform = node.style.transform;
+    expect(releaseTransform).toMatch(/^translate3d\(-\d+px, 0px, 0px\)$/);
+
+    act(() => {
+      node.dispatchEvent(touch("touchend", 80, 42, node));
+    });
+    expect(onLeft).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("leaving-pane").style.transform).toBe(releaseTransform);
+    expect(node.style.transform).toBe("");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SWIPE_PAGE_COMMIT_MS + 50);
+    });
+    expect(onLeft).toHaveBeenCalledOnce();
   });
 
   it("keeps the 48px dead-zone for a mid-screen rightward drag", async () => {
@@ -576,6 +654,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 140, 42, node, 1000));
     });
+    await nextFrame();
     expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
@@ -614,6 +693,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 130, 42, field, 1000));
     });
+    await nextFrame();
     expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
@@ -635,6 +715,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 130, 42, node, 1300));
     });
+    await nextFrame();
     expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
