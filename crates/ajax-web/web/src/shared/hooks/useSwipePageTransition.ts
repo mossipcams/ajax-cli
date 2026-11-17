@@ -402,12 +402,41 @@ export function useSwipePageTransition(
       return !isListRouteHash(origin);
     };
 
+    let trackFrame: number | null = null;
+    const fingerX = () => navigateSwipeTranslateX(swipeRef.current);
+    const trackTransform = (x: number) => (x ? `translate3d(${x}px, 0, 0)` : "");
+
+    const cancelTrackFrame = () => {
+      if (trackFrame !== null) {
+        cancelAnimationFrame(trackFrame);
+        trackFrame = null;
+      }
+    };
+
+    const writeTrack = () => {
+      trackFrame = null;
+      root.style.transition = "none";
+      root.style.transform = trackTransform(fingerX());
+    };
+
+    const pinAndSettle = (targetX: number, durationMs: number) => {
+      cancelTrackFrame();
+      root.style.transition = "none";
+      root.style.transform = trackTransform(fingerX());
+      root.getBoundingClientRect();
+      root.style.transition = `transform ${durationMs}ms var(--ease-spring)`;
+      root.style.transform = trackTransform(targetX);
+    };
+
     const reset = () => {
       swipeRef.current = navigateSwipeStart();
       touchTargetRef.current = null;
       settlingRef.current = false;
       maxDistanceRef.current = 0;
       releaseGestures();
+      cancelTrackFrame();
+      root.style.transform = "";
+      root.style.transition = "";
       crossSlideRef.current?.hideBelow();
       setDragX(0);
       setDragging(false);
@@ -471,6 +500,7 @@ export function useSwipePageTransition(
       settlingRef.current = true;
       settleDurationRef.current = commitDurationMs;
       settleAborted = false;
+      pinAndSettle(targetX, commitDurationMs);
       releaseDragGesture();
       holdSettleGesture();
       setDragging(false);
@@ -639,10 +669,12 @@ export function useSwipePageTransition(
       if (distance > maxDistanceRef.current) {
         maxDistanceRef.current = distance;
       }
-      holdDragGesture();
-      setDragging(true);
-      setSettling(false);
-      setDragX(navigateSwipeTranslateX(next));
+      if (!dragGestureHeldRef.current) {
+        holdDragGesture();
+        setDragging(true);
+        setSettling(false);
+      }
+      if (trackFrame === null) trackFrame = requestAnimationFrame(writeTrack);
     };
 
     const onTouchEnd = (event: TouchEvent) => {
@@ -736,6 +768,7 @@ export function useSwipePageTransition(
 
     return () => {
       abortSettle();
+      cancelTrackFrame();
       releaseGestures();
       crossSlideRef.current?.hideBelow();
       root.removeEventListener("touchstart", onTouchStart, capture);
