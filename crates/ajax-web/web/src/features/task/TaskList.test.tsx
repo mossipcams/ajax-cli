@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { Profiler } from "react";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { act, render, fireEvent, screen, within, waitFor } from "@testing-library/react";
 import * as api from "@/shared/lib/api";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
@@ -12,6 +13,15 @@ const stylesSource = readOrderedStylesSource(
 );
 
 const NOW_SECS = Math.floor(Date.now() / 1000);
+
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrameId = 1;
+
+function flushFrames() {
+  const pending = [...frames.values()];
+  frames.clear();
+  pending.forEach((callback) => callback(0));
+}
 
 function swipeRowLeft(row: HTMLElement, distance = 200) {
   fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
@@ -557,5 +567,71 @@ describe("TaskList", () => {
 
     const rowRule = stylesSource.match(/\.task-row\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(rowRule).toMatch(/transform 220ms/);
+  });
+
+  describe("#1648 drag tracking", () => {
+    beforeEach(() => {
+      frames.clear();
+      nextFrameId = 1;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        const id = nextFrameId++;
+        frames.set(id, callback);
+        return id;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+        frames.delete(id);
+      });
+    });
+
+    it("#1648 engaged drag moves cause no TaskList or TaskRow render and track the finger on the next frame", () => {
+      const onRender = vi.fn();
+      render(
+        <Profiler id="task-list" onRender={onRender}>
+          <TaskList cockpit={cockpit} />
+        </Profiler>,
+      );
+      const row = screen.getByRole("button", { name: /web\/a/ });
+
+      fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+      const rendersAfterStart = onRender.mock.calls.length;
+      fireEvent.touchMove(row, { touches: [{ clientX: 300, clientY: 40 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 280, clientY: 40 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 250, clientY: 40 }] });
+      expect(onRender.mock.calls.length).toBe(rendersAfterStart);
+
+      flushFrames();
+      expect(row.style.transform).toBe("translateX(-62px)");
+      expect(onRender.mock.calls.length).toBe(rendersAfterStart);
+
+      fireEvent.touchEnd(row, { changedTouches: [{ clientX: 250, clientY: 40 }] });
+    });
+
+    it("#1648 default-prevents an engaged horizontal drag so the page does not scroll, but not an unengaged vertical move", () => {
+      render(<TaskList cockpit={cockpit} />);
+      const row = screen.getByRole("button", { name: /web\/a/ });
+
+      fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+      expect(fireEvent.touchMove(row, { touches: [{ clientX: 320, clientY: 200 }] })).toBe(true);
+      fireEvent.touchEnd(row, { changedTouches: [{ clientX: 320, clientY: 200 }] });
+
+      fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+      expect(fireEvent.touchMove(row, { touches: [{ clientX: 300, clientY: 40 }] })).toBe(false);
+      fireEvent.touchEnd(row, { changedTouches: [{ clientX: 300, clientY: 40 }] });
+    });
+
+    it("#1648 keeps the reveal underlay visible while the row is held and dragged", () => {
+      render(<TaskList cockpit={cockpit} />);
+      const wrap = screen.getByTestId("task-row-wrap-web/a");
+      const row = screen.getByRole("button", { name: /web\/a/ });
+
+      expect(wrap).not.toHaveClass("is-dragging");
+      fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 300, clientY: 40 }] });
+      expect(wrap).toHaveClass("is-dragging");
+      expect(wrap).not.toHaveClass("is-revealed-wrap");
+      expect(screen.getByTestId("task-row-reveal-web/a")).toHaveStyle({ visibility: "visible" });
+      fireEvent.touchEnd(row, { changedTouches: [{ clientX: 300, clientY: 40 }] });
+      expect(wrap).not.toHaveClass("is-dragging");
+    });
   });
 });

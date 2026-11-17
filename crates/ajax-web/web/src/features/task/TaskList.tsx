@@ -83,6 +83,7 @@ const TaskRow = memo(function TaskRow({
   const statusInfo = taskRowStatus(card);
   const tone = statusInfo.tone;
   const wrapRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
   const visibleActions = visibleTaskActions(card.actions);
   const time = card.last_activity_unix_secs;
   const inlineActions = visibleActions.filter(
@@ -101,6 +102,7 @@ const TaskRow = memo(function TaskRow({
         onOpenChange: (open) => onRevealSettled(card.qualified_handle, open),
         onDragChange: setDragging,
         ignoreSelector: ".task-row-reveal",
+        target: rowRef,
       }
     : {});
 
@@ -154,6 +156,7 @@ const TaskRow = memo(function TaskRow({
         `tone-${tone}`,
         revealAction ? "has-reveal" : "",
         offset > 0 ? "is-revealed-wrap" : "",
+        dragging ? "is-dragging" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -163,7 +166,12 @@ const TaskRow = memo(function TaskRow({
       {...wrapRevealDismiss}
     >
       {revealAction ? (
-        <div className="task-row-reveal" aria-hidden={offset <= 0}>
+        <div
+          className="task-row-reveal"
+          aria-hidden={offset <= 0}
+          data-testid={`task-row-reveal-${card.qualified_handle}`}
+          style={dragging ? { visibility: "visible" } : undefined}
+        >
           <ActionBar
             actions={[revealAction]}
             handle={card.qualified_handle}
@@ -176,6 +184,7 @@ const TaskRow = memo(function TaskRow({
         </div>
       ) : null}
       <div
+        ref={rowRef}
         role="button"
         tabIndex={0}
         className={className}

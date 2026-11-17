@@ -30,10 +30,17 @@ describe("swipe-to-reveal gesture", () => {
     expect(swipeMove(swipeStart(), 80, 0).offset).toBe(0);
   });
 
+  it("#1648 continues the offset from the engage point so the first engaged move does not jump", () => {
+    const first = swipeMove(swipeStart(), -10, 0);
+    expect(first.engaged).toBe(true);
+    expect(first.offset).toBe(2);
+    expect(swipeMove(swipeStart(), -8, 0).offset).toBe(0);
+  });
+
   it("closes from an open offset on a rightward swipe", () => {
     const mid = swipeMove(swipeStart(SWIPE_REVEAL_WIDTH), 80, 0);
     expect(mid.engaged).toBe(true);
-    expect(mid.offset).toBe(SWIPE_REVEAL_WIDTH - 80);
+    expect(mid.offset).toBe(SWIPE_REVEAL_WIDTH - (80 - 8));
 
     const closed = swipeEnd(swipeMove(swipeStart(SWIPE_REVEAL_WIDTH), SWIPE_REVEAL_WIDTH, 0));
     expect(closed).toEqual({ open: false, offset: 0 });
