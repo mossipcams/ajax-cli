@@ -420,7 +420,7 @@ impl CommandRunner for RacingRunner {
     fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
         let raced = self
             .races
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok();

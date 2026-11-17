@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.62.1-noble
+FROM mcr.microsoft.com/playwright:v1.65.1-noble
 
 ARG HOST_UID=501
 ARG HOST_GID=20

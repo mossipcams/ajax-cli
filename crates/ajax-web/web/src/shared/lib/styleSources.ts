@@ -5,8 +5,8 @@ import { dirname, join } from "node:path";
 
 export const BASELINE = {
   sourceStylesCssBytes: 142_206,
-  builtAppCssBytes: 118_266,
-  builtAppCssGzipBytes: 19_620,
+  builtAppCssBytes: 118_403,
+  builtAppCssGzipBytes: 19_626,
   classSelectorLines: 831,
   hasSelectors: 20,
 } as const;
