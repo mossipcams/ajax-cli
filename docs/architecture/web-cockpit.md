@@ -437,6 +437,17 @@ sheet as the dashboard (orchestration chat pre-selected when the flag is on);
 the duplicate Cursor-only Session Starter is removed
 ([#911](https://github.com/mossipcams/ajax-cli/issues/911)).
 
+The sheet card follows the grabber one to one while the finger is down: the drag
+hook writes the card transform through a ref, at most once per animation frame,
+with no React state per move; the card carries `is-dragging` for the drag so no CSS
+transition runs. Release dismisses when
+the downward offset passes 96px or the downward release velocity over the last
+100ms is at least 0.5px/ms ([#1616](https://github.com/mossipcams/ajax-cli/issues/1616));
+otherwise the card springs back on the sheet duration and easing. Upward drag
+rubber-bands rather than hard-stopping at rest. On dismiss the latest offset is
+painted synchronously before the exit starts, so the exit animation begins at the
+finger.
+
 `POST /api/tasks/{handle}` with `{ "agent" }` is **Harness Switch**. A `model`
 field is refused (`unsupported_capability`). Same-harness Switch is refused;
 connected model, effort, and Fast changes use the composer controls. Cross-harness

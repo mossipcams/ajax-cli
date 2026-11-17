@@ -1,15 +1,25 @@
 import { useEffect, useRef, type RefObject } from "react";
-import { sheetStart, sheetMove, sheetEnd, type SheetDragState } from "@/shared/gestures/sheetDrag";
+import { RELEASE_VELOCITY_WINDOW_MS } from "@/shared/gestures/navigateSwipe";
+import {
+  sheetDismisses,
+  sheetOffset,
+  sheetReleaseVelocity,
+  type SheetSample,
+} from "@/shared/gestures/sheetDrag";
 
 export interface SheetDragOptions {
   onDismiss: () => void;
-  onOffset?: (offset: number) => void;
+  target: RefObject<HTMLElement | null>;
 }
 
 function readTouchY(event: Event): number | null {
   const touches = (event as TouchEvent).touches;
   if (!touches || touches.length !== 1) return null;
   return touches[0].clientY;
+}
+
+function eventTime(event: Event): number {
+  return event.timeStamp || performance.now();
 }
 
 export function useSheetDrag(
@@ -23,30 +33,63 @@ export function useSheetDrag(
     const node = ref.current;
     if (!node) return;
 
-    let state: SheetDragState | null = null;
+    let active = false;
     let startY = 0;
+    let offset = 0;
+    let samples: SheetSample[] = [];
+    let frame: number | null = null;
+
+    const paint = () => {
+      frame = null;
+      const target = optsRef.current.target.current;
+      if (target) target.style.transform = `translateY(${offset}px)`;
+    };
+
+    const cancelFrame = () => {
+      if (frame === null) return;
+      cancelAnimationFrame(frame);
+      frame = null;
+    };
 
     const onStart = (event: Event) => {
       const y = readTouchY(event);
       if (y === null) return;
+      const target = optsRef.current.target.current;
+      if (target) {
+        target.style.animation = "none";
+        target.classList.add("is-dragging");
+      }
+      active = true;
       startY = y;
-      state = sheetStart();
+      offset = 0;
+      samples = [{ t: eventTime(event), y }];
     };
 
     const onMove = (event: Event) => {
-      if (!state) return;
+      if (!active) return;
       const y = readTouchY(event);
       if (y === null) return;
-      state = sheetMove(state, y - startY);
-      optsRef.current.onOffset?.(state.offset);
+      const t = eventTime(event);
+      samples = samples.filter((sample) => sample.t >= t - RELEASE_VELOCITY_WINDOW_MS).concat({ t, y });
+      offset = sheetOffset(y - startY);
+      if (frame === null) frame = requestAnimationFrame(paint);
     };
 
-    const onEnd = () => {
-      if (!state) return;
-      const settled = sheetEnd(state);
-      optsRef.current.onOffset?.(settled.offset);
-      state = null;
-      if (settled.dismiss) optsRef.current.onDismiss();
+    const onEnd = (event: Event) => {
+      if (!active) return;
+      active = false;
+      cancelFrame();
+      const target = optsRef.current.target.current;
+      if (sheetDismisses(offset, sheetReleaseVelocity(samples, eventTime(event)))) {
+        paint();
+        target?.classList.remove("is-dragging");
+        optsRef.current.onDismiss();
+        return;
+      }
+      if (target) {
+        target.classList.remove("is-dragging");
+        target.style.transform = "translateY(0px)";
+      }
     };
 
     node.addEventListener("touchstart", onStart, { passive: true });
@@ -55,6 +98,8 @@ export function useSheetDrag(
     node.addEventListener("touchcancel", onEnd);
 
     return () => {
+      active = false;
+      cancelFrame();
       node.removeEventListener("touchstart", onStart);
       node.removeEventListener("touchmove", onMove);
       node.removeEventListener("touchend", onEnd);

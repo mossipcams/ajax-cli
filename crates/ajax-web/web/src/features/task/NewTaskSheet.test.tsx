@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { StrictMode } from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { Profiler, StrictMode } from "react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
@@ -337,6 +337,37 @@ describe("NewTaskSheet", () => {
     grab.dispatchEvent(new Event("touchend"));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1656 does not re-render the sheet on touchmove and paints the offset per frame", () => {
+    const queued: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => queued.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const onRender = vi.fn();
+    render(
+      <Profiler id="new-task-sheet" onRender={onRender}>
+        <NewTaskSheet repos={repos} onClose={vi.fn()} />
+      </Profiler>,
+    );
+    const grab = screen.getByTestId("sheet-grab");
+    const touch = (type: string, clientY: number) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, "touches", { value: [{ clientY }] });
+      return event;
+    };
+    grab.dispatchEvent(touch("touchstart", 0));
+    const rendersBeforeMoves = onRender.mock.calls.length;
+    grab.dispatchEvent(touch("touchmove", 10));
+    grab.dispatchEvent(touch("touchmove", 20));
+    grab.dispatchEvent(touch("touchmove", 30));
+
+    expect(onRender.mock.calls.length).toBe(rendersBeforeMoves);
+    expect(queued).toHaveLength(1);
+    const card = taskForm();
+    expect(card.style.transform).toBe("");
+    act(() => queued.forEach((cb) => cb(0)));
+    expect(card.style.transform).toBe("translateY(30px)");
+    vi.unstubAllGlobals();
   });
 
   it("rejects an empty title locally without calling the API", () => {
