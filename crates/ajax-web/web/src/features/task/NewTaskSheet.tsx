@@ -70,7 +70,6 @@ export default function NewTaskSheet({
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const mountedRef = useRef(true);
-  const [dragOffset, setDragOffset] = useState(0);
   const { scrimRef, cardRef, requestClose } = useSheetExit<HTMLFormElement>(() => onClose?.());
   const grabRef = useRef<HTMLDivElement>(null);
   const startTaskMutation = useStartTaskMutation();
@@ -93,7 +92,7 @@ export default function NewTaskSheet({
 
   useSheetDrag(grabRef, {
     onDismiss: requestClose,
-    onOffset: setDragOffset,
+    target: cardRef,
   });
 
   function savePrefs() {
@@ -187,12 +186,11 @@ export default function NewTaskSheet({
             onClick={handleBackdropClick}
           >
             <form
-              className={`sheet-card${dragOffset > 0 ? " is-dragging" : ""}${step === "model" ? " is-model-step" : ""}`}
+              className={`sheet-card${step === "model" ? " is-model-step" : ""}`}
               ref={cardRef}
               aria-label="New task"
               autoComplete="off"
               onSubmit={submit}
-              style={{ transform: `translateY(${dragOffset}px)` }}
             >
               <div
                 className="sheet-grab"

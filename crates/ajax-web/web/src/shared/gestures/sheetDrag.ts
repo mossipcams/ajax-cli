@@ -1,18 +1,28 @@
+import { releaseVelocity } from "./navigateSwipe";
+
 export const SHEET_DISMISS_THRESHOLD = 96;
+export const SHEET_FLICK_VELOCITY = 0.5;
+const RUBBER_BAND_LIMIT = 100;
+const RUBBER_BAND_STIFFNESS = 0.55;
 
-export interface SheetDragState {
-  offset: number;
+export interface SheetSample {
+  t: number;
+  y: number;
 }
 
-export function sheetStart(): SheetDragState {
-  return { offset: 0 };
+export function sheetOffset(dy: number): number {
+  if (dy >= 0) return dy;
+  const damped = 1 - 1 / ((-dy * RUBBER_BAND_STIFFNESS) / RUBBER_BAND_LIMIT + 1);
+  return -damped * RUBBER_BAND_LIMIT;
 }
 
-export function sheetMove(_state: SheetDragState, dy: number): SheetDragState {
-  return { offset: Math.max(0, dy) };
+export function sheetReleaseVelocity(samples: readonly SheetSample[], now: number): number {
+  return releaseVelocity(
+    samples.map((sample) => ({ t: sample.t, x: sample.y })),
+    now,
+  );
 }
 
-export function sheetEnd(state: SheetDragState): { dismiss: boolean; offset: number } {
-  const dismiss = state.offset >= SHEET_DISMISS_THRESHOLD;
-  return { dismiss, offset: dismiss ? state.offset : 0 };
+export function sheetDismisses(offset: number, velocity: number): boolean {
+  return offset >= SHEET_DISMISS_THRESHOLD || (offset > 0 && velocity >= SHEET_FLICK_VELOCITY);
 }
