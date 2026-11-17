@@ -10,6 +10,7 @@ export interface SwipeState {
   offset: number;
   open: boolean;
   baseOffset: number;
+  anchor: number;
 }
 
 export function swipeStart(initialOffset = 0): SwipeState {
@@ -19,19 +20,30 @@ export function swipeStart(initialOffset = 0): SwipeState {
     offset: baseOffset,
     open: baseOffset >= SWIPE_TRIGGER,
     baseOffset,
+    anchor: 0,
   };
 }
 
 export function swipeMove(state: SwipeState, dx: number, dy: number): SwipeState {
   let engaged = state.engaged;
-  const baseOffset = state.baseOffset;
+  let anchor = state.anchor;
   if (!engaged) {
     if (Math.abs(dx) < ENGAGE_MIN) return state;
     if (Math.abs(dx) <= Math.abs(dy) * LOCK_RATIO) return { ...state, engaged: false };
     engaged = true;
+    anchor = Math.sign(dx) * ENGAGE_MIN;
   }
-  const offset = Math.min(SWIPE_REVEAL_WIDTH, Math.max(0, baseOffset - dx));
-  return { engaged, offset, open: offset >= SWIPE_TRIGGER, baseOffset };
+  const offset = Math.min(
+    SWIPE_REVEAL_WIDTH,
+    Math.max(0, state.baseOffset - (dx - anchor)),
+  );
+  return {
+    engaged,
+    offset,
+    open: offset >= SWIPE_TRIGGER,
+    baseOffset: state.baseOffset,
+    anchor,
+  };
 }
 
 export function swipeEnd(state: SwipeState): { open: boolean; offset: number } {

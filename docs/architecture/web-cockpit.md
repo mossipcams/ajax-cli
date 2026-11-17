@@ -103,7 +103,11 @@ code. Task-list swipe reveals bind `useSwipeReveal` on `.task-row-wrap`
 (bubbled touches from the closed row still engage; swipe-right close hits the
 wrap while `.task-row.is-revealed` is `pointer-events: none`) and ignore
 touchstart inside `.task-row-reveal` so the revealed `ActionBar` stays
-tappable. Terminal-expanded Details stays
+tappable. While a row is held, the hook writes its `transform` straight to
+`.task-row` once per animation frame and touches React state only on start and
+release (#1648); once a horizontal swipe engages, its `touchmove` is
+default-prevented so the page does not scroll, and `touchcancel` restores the
+pre-drag offset without committing. Terminal-expanded Details stays
 in `.detail-header-controls` with explicit `pointer-events` and z-index above
 `.terminal-expand-corner`. Workspace swipe-right back is capped when the hash
 is already `#/` or `#/p/...` so a settling task surface cannot navigate past
