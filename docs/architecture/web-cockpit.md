@@ -662,7 +662,9 @@ From a selected task's terminal view, swipe-left navigation opens Diff Review
 (`#/t/<handle>/diff`), a read-only PR/file/hunk viewer with core-projected
 orientation, judgment flags, and reading-order guide chips, fed by
 `GET /api/tasks/.../pull-requests` and `GET /api/tasks/.../diff`. Swipe
-navigation finger-follows; on commit the shell keeps the outgoing workspace
+navigation finger-follows: while the finger is down, the page root's `transform` is written
+directly to the DOM once per animation frame, with no React render per `touchmove`; React state
+changes only when the swipe engages and when it releases. On commit the shell keeps the outgoing workspace
 surface mounted (React `Activity`) while the destination slides in beside it as
 one continuous transform over roughly `SWIPE_PAGE_COMMIT_MS` (≈220ms),
 shortened by the release velocity. The swipe rule lives in
