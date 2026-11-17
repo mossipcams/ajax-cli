@@ -165,7 +165,7 @@ describe("TaskList", () => {
     swipeWrapRight(wrap);
     expect(wrap).not.toHaveClass("is-revealed-wrap");
     expect(row).not.toHaveClass("is-revealed");
-    expect(row.style.transform).toBe("translateX(-0px)");
+    expect(row.style.transform).toBe("translateX(0px)");
   });
 
   it("closes the previously revealed row when another row is revealed", () => {
