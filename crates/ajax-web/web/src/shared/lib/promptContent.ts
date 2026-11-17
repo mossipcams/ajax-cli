@@ -265,16 +265,6 @@ export async function attachmentFromFile(
   return null;
 }
 
-export async function attachmentFromPaste(
-  item: DataTransferItem,
-  caps: LivePromptCapabilities | undefined,
-): Promise<ComposerAttachment | null> {
-  if (item.kind !== "file") return null;
-  const file = item.getAsFile();
-  if (!file) return null;
-  return attachmentFromFile(file, caps);
-}
-
 export function flattenAttachmentBlocks(attachments: ComposerAttachment[]): PromptContentBlockWire[] {
   return attachments.flatMap((attachment) => attachment.blocks);
 }
