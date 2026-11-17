@@ -489,6 +489,17 @@ describe("TaskList", () => {
     expect(onOpenTask).toHaveBeenCalledWith("web/a");
   });
 
+  it("marks the wrap revealed while a left drag is held, before release", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    fireEvent.touchStart(row, { touches: [{ clientX: 320, clientY: 40 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 120, clientY: 40 }] });
+    expect(wrap).toHaveClass("is-revealed-wrap");
+    expect(row.style.transform).toMatch(/^translateX\(-[1-9]\d*(\.\d+)?px\)$/);
+    fireEvent.touchEnd(row, { changedTouches: [{ clientX: 120, clientY: 40 }] });
+  });
+
   it("marks rows with swipe reveal and sets the reveal width CSS var", () => {
     render(<TaskList cockpit={cockpit} />);
     const wrap = screen.getByTestId("task-row-wrap-web/a");

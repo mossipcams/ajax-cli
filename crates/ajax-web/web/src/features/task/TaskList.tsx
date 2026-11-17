@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -92,11 +93,21 @@ const TaskRow = memo(function TaskRow({
         action.action !== "merge-pr",
   );
   const revealAction = visibleActions.find((action) => action.action === "drop");
+  const rowRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!dragging && rowRef.current) {
+      rowRef.current.style.transform = `translateX(-${offset}px)`;
+    }
+  }, [dragging, offset]);
 
   useSwipeReveal(wrapRef, revealAction
     ? {
         getInitialOffset: () => offset,
+        onDrag: (next) => {
+          if (rowRef.current) rowRef.current.style.transform = `translateX(-${next}px)`;
+        },
         onOffset: (next) => onOffset(card.qualified_handle, next),
         onOpenChange: (open) => onRevealSettled(card.qualified_handle, open),
         onDragChange: setDragging,
@@ -153,7 +164,7 @@ const TaskRow = memo(function TaskRow({
         "task-row-wrap",
         `tone-${tone}`,
         revealAction ? "has-reveal" : "",
-        offset > 0 ? "is-revealed-wrap" : "",
+        offset > 0 || dragging ? "is-revealed-wrap" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -178,11 +189,11 @@ const TaskRow = memo(function TaskRow({
       <div
         role="button"
         tabIndex={0}
+        ref={rowRef}
         className={className}
         data-ph-no-autocapture=""
         data-handle={card.qualified_handle}
         style={{
-          transform: `translateX(-${offset}px)`,
           transition: dragging ? "background 120ms var(--ease)" : undefined,
         }}
         onClick={(event) => {

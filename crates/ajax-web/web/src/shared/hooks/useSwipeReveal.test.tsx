@@ -5,7 +5,7 @@ import { useSwipeReveal } from "./useSwipeReveal";
 import { SWIPE_REVEAL_WIDTH } from "@/shared/gestures/swipeReveal";
 
 function touch(type: string, clientX: number, clientY: number): Event {
-  const event = new Event(type, { bubbles: true });
+  const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "touches", { value: [{ clientX, clientY }] });
   return event;
 }
@@ -56,6 +56,29 @@ describe("useSwipeReveal", () => {
 
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
     expect(onOffset).toHaveBeenLastCalledWith(SWIPE_REVEAL_WIDTH);
+  });
+
+  it("prevents page scroll for every touchmove once the horizontal swipe has engaged", () => {
+    render(<Harness />);
+    const row = screen.getByTestId("swipe-reveal-row");
+
+    row.dispatchEvent(touch("touchstart", 200, 100));
+    row.dispatchEvent(touch("touchmove", 80, 100));
+    const vertical = touch("touchmove", 80, 220);
+    row.dispatchEvent(vertical);
+
+    expect(vertical.defaultPrevented).toBe(true);
+  });
+
+  it("leaves a mostly-vertical touchmove before engagement to the browser scroll", () => {
+    render(<Harness />);
+    const row = screen.getByTestId("swipe-reveal-row");
+
+    row.dispatchEvent(touch("touchstart", 200, 100));
+    const vertical = touch("touchmove", 180, 260);
+    row.dispatchEvent(vertical);
+
+    expect(vertical.defaultPrevented).toBe(false);
   });
 
   it("settles closed when the swipe is mostly vertical", () => {

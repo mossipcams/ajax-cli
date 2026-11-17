@@ -4,6 +4,7 @@ import { gestureBusyGate } from "@/shared/lib/cockpitPoll";
 
 export interface SwipeOptions {
   onOffset?: (offset: number) => void;
+  onDrag?: (offset: number) => void;
   onOpenChange?: (open: boolean) => void;
   getInitialOffset?: () => number;
   ignoreSelector?: string;
@@ -70,7 +71,9 @@ export function useSwipeReveal(
       const point = readTouch(event);
       if (!point) return;
       state = swipeMove(state, point.x - startX, point.y - startY);
-      if (state.engaged) optsRef.current.onOffset?.(state.offset);
+      if (!state.engaged) return;
+      if (event.cancelable) event.preventDefault();
+      optsRef.current.onDrag?.(state.offset);
     };
 
     const onEnd = () => {
@@ -86,7 +89,7 @@ export function useSwipeReveal(
     };
 
     node.addEventListener("touchstart", onStart, { passive: true });
-    node.addEventListener("touchmove", onMove, { passive: true });
+    node.addEventListener("touchmove", onMove, { passive: false });
     node.addEventListener("touchend", onEnd);
     node.addEventListener("touchcancel", onEnd);
 
