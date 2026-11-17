@@ -208,6 +208,10 @@ none was used), list verification and its results, disclose failed or skipped
 commands, and state remaining risks or follow-up work. Do not claim the
 repository is clean unless status was checked.
 
+Give user-facing times in 12-hour US Central time (e.g. "5:30 PM CT"), not UTC
+or 24-hour. Convert UTC log/server timestamps (CST = UTC-6, CDT = UTC-5); raw
+UTC can stay inside commands and logs.
+
 ## Stop conditions
 
 Stop and request direction before an unapproved change that would:
