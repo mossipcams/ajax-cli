@@ -276,7 +276,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 70, 42, node));
     });
-    expect(node.style.transform).toBe("translate3d(20px, 0, 0)");
+    expect(node.style.transform).toBe("translate3d(20px, 0px, 0px)");
   });
 
   it("keeps the 48px dead-zone for a mid-screen rightward drag", async () => {
@@ -505,7 +505,7 @@ describe("useSwipePageTransition", () => {
         window.dispatchEvent(new Event("hashchange"));
         await vi.advanceTimersByTimeAsync(0);
       });
-      expect(pane.style.transform).toBe("translate3d(390px, 0, 0)");
+      expect(pane.style.transform).toBe("translate3d(390px, 0px, 0px)");
       expect(pane.style.transition).toContain("transform");
     } finally {
       back.mockRestore();
@@ -576,7 +576,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 140, 42, node, 1000));
     });
-    expect(node.style.transform).toBe("translate3d(10px, 0, 0)");
+    expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
   it("does not edge-arm a touch that sits beyond the root's edge zone", async () => {
@@ -614,7 +614,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 130, 42, field, 1000));
     });
-    expect(node.style.transform).toBe("translate3d(10px, 0, 0)");
+    expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
   it("needs the full 48px for an edge touch held 300ms before moving", async () => {
@@ -635,7 +635,7 @@ describe("useSwipePageTransition", () => {
     await act(async () => {
       node.dispatchEvent(touch("touchmove", 130, 42, node, 1300));
     });
-    expect(node.style.transform).toBe("translate3d(10px, 0, 0)");
+    expect(node.style.transform).toBe("translate3d(10px, 0px, 0px)");
   });
 
   it("mounts the below layer on an edge touchstart and unmounts on a no-move release", async () => {

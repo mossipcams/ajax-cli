@@ -474,18 +474,18 @@ fn ajax_binary_path() -> PathBuf {
     if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax-cli") {
         return binary.into();
     }
-    let current_exe = std::env::current_exe().unwrap();
-    let deps_dir = current_exe
-        .parent()
-        .expect("test binary should live under target debug deps");
-    let debug_dir = deps_dir
-        .parent()
-        .expect("test binary should live under target debug deps");
-    debug_dir.join(if cfg!(windows) {
+    let name = if cfg!(windows) {
         "ajax-cli.exe"
     } else {
         "ajax-cli"
-    })
+    };
+    std::env::current_exe()
+        .unwrap()
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .expect("ajax-cli binary should live in an ancestor of the test binary")
 }
 
 fn seeded_profile_homes(tag: &str) -> (PathBuf, CliContextPaths, CliContextPaths) {
