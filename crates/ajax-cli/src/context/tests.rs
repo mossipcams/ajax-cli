@@ -490,6 +490,109 @@ fn save_context_merges_independent_same_task_fact_updates() {
 }
 
 #[test]
+fn save_context_merges_concurrent_metadata_key_updates_issue_1649() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-metadata-merge-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline
+        .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("native task")
+        .set_session_model(Some("gpt-5.6-sol"));
+
+    let mut disk_registry = baseline.clone();
+    disk_registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("disk task")
+        .metadata
+        .insert("ajax_ci_monitor".to_string(), "watching".to_string());
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&disk_registry)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    save_tracked_context(&paths, &mut tracked).expect("metadata key updates merge");
+    let reloaded = load_context(&paths).expect("reload");
+    let reloaded_task = reloaded
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .expect("reloaded task");
+    assert_eq!(reloaded_task.session_model(), Some("gpt-5.6-sol"));
+    assert_eq!(
+        reloaded_task
+            .metadata
+            .get("ajax_ci_monitor")
+            .map(String::as_str),
+        Some("watching")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn save_context_surfaces_conflict_when_same_metadata_key_diverges_issue_1649() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-metadata-conflict-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    baseline
+        .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+        .unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("native task")
+        .set_session_model(Some("model-a"));
+
+    let mut disk_registry = baseline.clone();
+    disk_registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("disk task")
+        .set_session_model(Some("model-b"));
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&disk_registry)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    let error = save_tracked_context(&paths, &mut tracked)
+        .expect_err("divergent same-key writes must conflict");
+    assert!(
+        error.to_string().contains("state conflict"),
+        "unexpected error: {error}"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn save_context_keeps_memory_lifecycle_advance_when_disk_still_at_baseline() {
     let root = std::env::temp_dir().join(format!(
         "ajax-context-lifecycle-baseline-{}-{}",

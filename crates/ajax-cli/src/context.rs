@@ -415,6 +415,20 @@ fn merge_same_task_facts(
         }
 
         let disk_value = disk_fields.get(field);
+        if field == "metadata" {
+            if let (Some(memory_map), Some(disk_map), Some(baseline_map)) = (
+                memory_value.as_object(),
+                disk_value.and_then(serde_json::Value::as_object),
+                baseline_value.and_then(serde_json::Value::as_object),
+            ) {
+                let Some(merged_map) = merge_metadata_keys(disk_map, memory_map, baseline_map)
+                else {
+                    return Ok(None);
+                };
+                merged_fields.insert(field.clone(), serde_json::Value::Object(merged_map));
+                continue;
+            }
+        }
         if disk_value != baseline_value && disk_value != Some(memory_value) {
             return Ok(None);
         }
@@ -424,6 +438,31 @@ fn merge_same_task_facts(
     serde_json::from_value(serde_json::Value::Object(merged_fields))
         .map(Some)
         .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))
+}
+
+fn merge_metadata_keys(
+    disk: &serde_json::Map<String, serde_json::Value>,
+    memory: &serde_json::Map<String, serde_json::Value>,
+    baseline: &serde_json::Map<String, serde_json::Value>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut merged = disk.clone();
+    for key in memory.keys().chain(baseline.keys()) {
+        let memory_value = memory.get(key);
+        let baseline_value = baseline.get(key);
+        if memory_value == baseline_value {
+            continue;
+        }
+        let disk_value = disk.get(key);
+        if disk_value != baseline_value && disk_value != memory_value {
+            return None;
+        }
+        if let Some(value) = memory_value {
+            merged.insert(key.clone(), value.clone());
+        } else {
+            merged.remove(key);
+        }
+    }
+    Some(merged)
 }
 
 fn prevent_accidental_empty_overwrite(
