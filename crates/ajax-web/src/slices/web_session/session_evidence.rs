@@ -232,7 +232,7 @@ mod tests {
             pending_activity_report: None,
             report_activity: Some(Arc::new(move |_handle: &str, activity: SessionActivity| {
                 if lane
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                         left.checked_sub(1)
                     })
                     .is_ok()

@@ -282,12 +282,7 @@ pub(super) fn target_from_raw_input(raw_input: Option<&Value>) -> Option<String>
     let Value::Object(map) = raw_input? else {
         return None;
     };
-    for key in ["path"] {
-        if let Some(value) = map.get(key).and_then(non_empty_str) {
-            return Some(value.to_string());
-        }
-    }
-    for key in ["query", "pattern", "glob"] {
+    for key in ["path", "query", "pattern", "glob"] {
         if let Some(value) = map.get(key).and_then(non_empty_str) {
             return Some(value.to_string());
         }

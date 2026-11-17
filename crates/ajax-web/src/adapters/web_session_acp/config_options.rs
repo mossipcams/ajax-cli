@@ -553,10 +553,7 @@ fn split_axis_contract_satisfies(
             return false;
         }
     }
-    if intent.fast == Some(true) && model_config_boolean_option(options).is_none() {
-        return false;
-    }
-    true
+    intent.fast != Some(true) || model_config_boolean_option(options).is_some()
 }
 
 pub fn is_unspecified_model(raw: Option<&str>) -> bool {
