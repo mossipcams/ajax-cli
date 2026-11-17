@@ -1,4 +1,4 @@
-# root-cause reference: ajax-cli
+# Root-cause notes: ajax-cli
 
 ## Logs and evidence
 - `~/.local/state/ajax/logs/ajax.log`: every web operation. `grep "action=<name>"` shows `operate begin/end` with status.
