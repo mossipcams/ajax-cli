@@ -22,6 +22,9 @@
   line-height: 1.45;
   color: var(--ink-soft);
   overflow-wrap: anywhere;
+  max-height: 40dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .session-decision-actions {
