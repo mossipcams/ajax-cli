@@ -19,6 +19,9 @@
   display: grid;
   gap: 10px;
   margin-top: 12px;
+  max-height: 40dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .session-elicitation-field,
