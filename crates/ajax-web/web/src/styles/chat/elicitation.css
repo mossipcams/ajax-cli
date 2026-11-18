@@ -5,9 +5,14 @@
   border-radius: var(--radius-sm);
   background: var(--paper-tint);
   border: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .session-elicitation-message {
+  flex: none;
   margin: 0;
   font-size: var(--text-body);
   font-weight: 600;
@@ -18,8 +23,9 @@
 .session-elicitation-fields {
   display: grid;
   gap: 10px;
+  flex: 0 1 auto;
+  min-height: 0;
   margin-top: 12px;
-  max-height: 40dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -35,6 +41,13 @@
 .session-elicitation-label {
   font-weight: 500;
   color: var(--ink);
+}
+
+.session-elicitation-description {
+  margin: 0;
+  line-height: 1.45;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
 }
 
 .session-elicitation-field input,
@@ -55,6 +68,7 @@
 
 .session-elicitation-actions {
   display: flex;
+  flex: none;
   gap: 8px;
   margin-top: 12px;
 }

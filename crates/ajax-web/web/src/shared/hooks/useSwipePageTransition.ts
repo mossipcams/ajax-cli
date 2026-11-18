@@ -654,6 +654,7 @@ export function useSwipePageTransition(
       const dy = point.y - originRef.current.y;
       const next = navigateSwipeMove(swipeRef.current, dx, dy, pageWidth(), {
         capRightCommit: capRightCommit(),
+        blockLeft: !optsRef.current.onLeft,
       });
       swipeRef.current = next;
       if (

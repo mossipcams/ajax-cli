@@ -40,27 +40,51 @@ function FieldInput({
   onChange: (next: string | number | boolean) => void;
 }) {
   const id = `elicitation-${field.name}`;
+  const descriptionId = `${id}-description`;
+  const description =
+    field.description && field.description !== field.title ? (
+      <p className="session-elicitation-description" id={descriptionId}>
+        {field.description}
+      </p>
+    ) : null;
+  const describedBy = description ? descriptionId : undefined;
+  const label = (
+    <label className="session-elicitation-label" htmlFor={id}>
+      {field.title}
+    </label>
+  );
   if (field.kind === "boolean") {
     return (
-      <label className="session-elicitation-check" htmlFor={id}>
-        <input
-          id={id}
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(event) => onChange(event.target.checked)}
-        />
-        <span>{field.title}</span>
-      </label>
+      <div className="session-elicitation-field">
+        <label className="session-elicitation-check" htmlFor={id}>
+          <input
+            id={id}
+            type="checkbox"
+            checked={Boolean(value)}
+            aria-describedby={describedBy}
+            onChange={(event) => onChange(event.target.checked)}
+          />
+          <span>{field.title}</span>
+        </label>
+        {description}
+      </div>
     );
   }
   if (field.kind === "enum" && field.enumOptions?.length) {
+    const selected = field.enumOptions.find((option) => option.value === String(value));
+    const optionDescriptionId = `${id}-option-description`;
+    const optionDescribedBy =
+      [describedBy, selected?.description ? optionDescriptionId : undefined].filter(Boolean).join(" ") ||
+      undefined;
     return (
-      <label className="session-elicitation-field" htmlFor={id}>
-        <span className="session-elicitation-label">{field.title}</span>
+      <div className="session-elicitation-field">
+        {label}
+        {description}
         <select
           id={id}
           value={String(value)}
           required={field.required}
+          aria-describedby={optionDescribedBy}
           onChange={(event) => onChange(event.target.value)}
         >
           {!field.required ? <option value="">Select…</option> : null}
@@ -75,13 +99,19 @@ function FieldInput({
             </option>
           ))}
         </select>
-      </label>
+        {selected?.description ? (
+          <p className="session-elicitation-description" id={optionDescriptionId}>
+            {selected.description}
+          </p>
+        ) : null}
+      </div>
     );
   }
   if (field.kind === "number") {
     return (
-      <label className="session-elicitation-field" htmlFor={id}>
-        <span className="session-elicitation-label">{field.title}</span>
+      <div className="session-elicitation-field">
+        {label}
+        {description}
         <input
           id={id}
           type="number"
@@ -89,22 +119,25 @@ function FieldInput({
           required={field.required}
           min={field.minimum}
           max={field.maximum}
+          aria-describedby={describedBy}
           onChange={(event) => onChange(Number(event.target.value))}
         />
-      </label>
+      </div>
     );
   }
   return (
-    <label className="session-elicitation-field" htmlFor={id}>
-      <span className="session-elicitation-label">{field.title}</span>
+    <div className="session-elicitation-field">
+      {label}
+      {description}
       <input
         id={id}
         type="text"
         value={String(value)}
         required={field.required}
+        aria-describedby={describedBy}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </div>
   );
 }
 

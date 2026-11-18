@@ -298,3 +298,49 @@ describe("isDiffPanGestureTarget", () => {
     strip.remove();
   });
 });
+
+describe("navigate swipe with blockLeft", () => {
+  const blockLeft = { blockLeft: true };
+
+  it("never engages a leftward drag, however far it travels", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -48, 0, PAGE_WIDTH, blockLeft);
+    expect(state.engaged).toBe(false);
+    state = navigateSwipeMove(state, -300, 0, PAGE_WIDTH, blockLeft);
+    expect(state.engaged).toBe(false);
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: -5 })).toBe("none");
+  });
+
+  it("still engages and commits a rightward swipe", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), 48, 2, PAGE_WIDTH, blockLeft);
+    expect(state.engaged).toBe(true);
+    expect(state.direction).toBe("right");
+    state = navigateSwipeMove(state, 300, 2, PAGE_WIDTH, blockLeft);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: 0 })).toBe("right");
+  });
+
+  it("clamps engaged rightward travel to zero when the finger returns past the origin", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), 60, 0, PAGE_WIDTH, blockLeft);
+    state = navigateSwipeMove(state, 20, 0, PAGE_WIDTH, blockLeft);
+    expect(state.engaged).toBe(true);
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+    state = navigateSwipeMove(state, -200, 0, PAGE_WIDTH, blockLeft);
+    expect(navigateSwipeTranslateX(state)).toBe(0);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: -5 })).toBe("none");
+  });
+
+  it("never reports a left commit", () => {
+    const state = navigateSwipeMove(navigateSwipeStart(), -400, 0, PAGE_WIDTH, blockLeft);
+    expect(navigateSwipeEnd(state, { pageWidth: PAGE_WIDTH, releaseVelocity: -5 })).toBe("none");
+  });
+
+  it("leaves the default behaviour of a leftward drag unchanged", () => {
+    let state = navigateSwipeMove(navigateSwipeStart(), -48, 0, PAGE_WIDTH, {
+      blockLeft: false,
+    });
+    state = navigateSwipeMove(state, -100, 0, PAGE_WIDTH, { blockLeft: false });
+    expect(state.engaged).toBe(true);
+    expect(state.direction).toBe("left");
+    expect(navigateSwipeTranslateX(state)).toBe(-52);
+  });
+});
