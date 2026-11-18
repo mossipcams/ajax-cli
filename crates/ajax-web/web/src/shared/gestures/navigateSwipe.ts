@@ -45,6 +45,7 @@ export function crossSlideLeavingTarget(
 
 export interface NavigateSwipeMoveOptions {
   capRightCommit?: boolean;
+  blockLeft?: boolean;
 }
 
 export function navigateSwipeMove(
@@ -55,6 +56,7 @@ export function navigateSwipeMove(
   options: NavigateSwipeMoveOptions = {},
 ): NavigateSwipeState {
   const capRightCommit = options.capRightCommit ?? false;
+  const blockLeft = options.blockLeft ?? false;
   let engaged = state.engaged;
   let direction = state.direction;
   let engageDx = state.engageDx;
@@ -65,11 +67,16 @@ export function navigateSwipeMove(
       return navigateSwipeStart(state.edgeStart);
     }
     if (capRightCommit && dx > 0) return state;
+    if (blockLeft && dx < 0) return state;
     engaged = true;
     engageDx = dx;
     direction = dx < 0 ? "left" : "right";
   }
-  const travelDx = capRightCommit ? Math.min(dx, 0) : dx;
+  const travelDx = blockLeft
+    ? Math.max(dx, engageDx)
+    : capRightCommit
+      ? Math.min(dx, 0)
+      : dx;
   const clamped = Math.max(-pageWidth, Math.min(pageWidth, travelDx));
   return { engaged, direction, dx: clamped, engageDx, edgeStart: state.edgeStart };
 }

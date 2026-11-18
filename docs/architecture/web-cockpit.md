@@ -675,7 +675,8 @@ shortened by the release velocity. The swipe rule lives in
 `shared/gestures/navigateSwipe.ts`. A swipe arms after 48px of horizontal
 travel, except a back swipe that starts within 50px of the swipe root's left
 edge and moves within 300ms of touchstart, which arms after 10px. The
-direction is locked when the swipe arms. On release it commits when the
+direction is locked when the swipe arms. Surfaces without a left destination
+(Chat, Diff Review) never arm a left page swipe. On release it commits when the
 release velocity (the last 100ms of touch samples, by event time) is above
 0.2px/ms toward that direction, or the page has travelled more than half its
 width; a backward flick faster than 0.2px/ms cancels, and anything else
