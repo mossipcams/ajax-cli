@@ -140,6 +140,93 @@ describe("ElicitationPanel", () => {
     expect(onAccept).toHaveBeenCalledWith({ env: "staging" });
   });
 
+  it("shows each field's question text under its title and wires it as the description", () => {
+    render(
+      <ElicitationPanel
+        decision={{
+          requestId: "e5",
+          message: "Claude has questions for you",
+          schema: {
+            type: "object",
+            properties: {
+              question_0: {
+                type: "string",
+                title: "Eval set",
+                description: "Which evaluation set should the benchmark run against?",
+                oneOf: [
+                  { const: "Held-out", title: "Held-out" },
+                  { const: "Regression", title: "Regression" },
+                ],
+              },
+              question_1: {
+                type: "string",
+                title: "Metrics",
+                description: "Which metrics matter? (comma-separated: Accuracy, Latency)",
+              },
+              same: { type: "string", title: "Same", description: "Same" },
+            },
+            required: [],
+          },
+          fields: [],
+        }}
+        connected
+        onAccept={vi.fn()}
+        onDecline={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Which evaluation set should the benchmark run against?")).toBeInTheDocument();
+    expect(screen.getByLabelText("Eval set")).toHaveAccessibleDescription(
+      "Which evaluation set should the benchmark run against?",
+    );
+    expect(screen.getByLabelText("Metrics")).toHaveAccessibleDescription(
+      "Which metrics matter? (comma-separated: Accuracy, Latency)",
+    );
+    expect(screen.getAllByText("Same")).toHaveLength(1);
+    expect(screen.getByLabelText("Same")).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("shows the selected enum option's description under the select", () => {
+    render(
+      <ElicitationPanel
+        decision={{
+          requestId: "e6",
+          message: "Claude has questions for you",
+          schema: {
+            type: "object",
+            properties: {
+              host: {
+                type: "string",
+                title: "Hardware",
+                description: "Which GPU host should run the job?",
+                oneOf: [
+                  { const: "local", title: "sayso-llm", description: "Local host, idle right now." },
+                  { const: "cloud", title: "Cloud A100", description: "Faster, but costs money." },
+                ],
+              },
+            },
+            required: [],
+          },
+          fields: [],
+        }}
+        connected
+        onAccept={vi.fn()}
+        onDecline={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByLabelText("Hardware");
+    expect(screen.queryByText("Local host, idle right now.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Faster, but costs money.")).not.toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: "cloud" } });
+    expect(screen.getByText("Faster, but costs money.")).toBeInTheDocument();
+    expect(screen.queryByText("Local host, idle right now.")).not.toBeInTheDocument();
+    expect(select).toHaveAccessibleDescription("Which GPU host should run the job? Faster, but costs money.");
+  });
+
   it("ships elicitation styles through the chat stylesheet graph", () => {
     expect(stylesSource).toContain(".session-elicitation");
   });

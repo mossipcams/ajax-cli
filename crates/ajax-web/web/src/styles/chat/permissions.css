@@ -6,9 +6,14 @@
   border-radius: var(--radius-sm);
   background: var(--paper-tint);
   border: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .session-decision-title {
+  flex: none;
   margin: 0;
   font-size: var(--text-body);
   font-weight: 600;
@@ -22,13 +27,15 @@
   line-height: 1.45;
   color: var(--ink-soft);
   overflow-wrap: anywhere;
-  max-height: 40dvh;
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .session-decision-actions {
   display: flex;
+  flex: none;
   gap: 8px;
   margin-top: 12px;
 }
