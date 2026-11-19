@@ -43,12 +43,13 @@
 
 /* In-flow in that row — reuses `.pill` (compound selector: `.pill` ships later
    at equal specificity); never overlays answer text. Sized to the
-   send time beside it; the ::after keeps a finger-sized hit area. */
+   send time beside it; the ::after grows the hit area up and sideways only —
+   overflow below the last message would make a short thread scroll. */
 .pill.session-reply-copy {
   position: relative;
   display: block;
   width: fit-content;
-  min-height: 0;
+  min-height: 20px; /* whole px: a fractional row leaves the bottom-pinned thread 1px off */
   padding: 2px 8px;
   color: var(--ink-muted);
   font-size: var(--text-micro);
@@ -59,7 +60,7 @@
 .pill.session-reply-copy::after {
   content: "";
   position: absolute;
-  inset: -10px -6px;
+  inset: -10px -6px 0;
 }
 
 .session-reply-copy[data-copied="true"] {
