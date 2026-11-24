@@ -151,6 +151,7 @@ function ContentBlock({
 }
 
 function defaultExpanded(call: ToolCall): boolean {
+  if (call.content.some((content) => content.type === "image")) return true;
   if (call.status === "completed") return false;
   return call.content.length > 0;
 }

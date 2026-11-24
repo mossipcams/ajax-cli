@@ -89,6 +89,7 @@ fn map_tool_call(message: &Value, events: &mut Vec<AgentEvent>) {
                 id: id.to_string(),
                 status: if failed { "failed" } else { "completed" }.to_string(),
                 content: tool_update_content(result),
+                images: Vec::new(),
                 raw_input: message.get("args").cloned(),
             }));
         }

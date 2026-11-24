@@ -286,6 +286,7 @@ fn tool_update(id: &str, status: &str, raw_input: Option<Value>) -> AgentEvent {
         id: id.to_owned(),
         status: status.to_owned(),
         content: Some("tool output".to_owned()),
+        images: Vec::new(),
         raw_input,
     })
 }
