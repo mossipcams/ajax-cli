@@ -203,3 +203,32 @@
     padding-bottom: 0;
   }
 }
+
+@media (pointer: coarse) and (max-height: 500px) {
+  html:not(.keyboard-open) .task-detail > .detail-header,
+  html:not(.keyboard-open) .task-detail > .interact-panel,
+  html:not(.keyboard-open) .task-detail > .task-meta-chrome {
+    flex: none;
+  }
+
+  html:not(.keyboard-open) .task-detail > .detail-header {
+    margin-bottom: 4px;
+  }
+
+  html:not(.keyboard-open) .task-detail > .interact-panel {
+    margin-top: 0;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  html:not(.keyboard-open) .task-detail > .task-meta-chrome {
+    padding-top: 4px;
+    padding-bottom: 72px;
+  }
+
+  html:not(.keyboard-open) [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail > div:has([data-testid="task-terminal-panel"]) {
+    flex: 1 1 0%;
+    min-height: 116px;
+  }
+}
+

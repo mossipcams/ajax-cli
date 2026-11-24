@@ -1,5 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
-import { COCKPIT_FIXTURE, DETAIL_FIXTURE, mockFetch, mockTerminalWebSocket, sessionSnapshotJson } from "./fixtures";
+import {
+  COCKPIT_FIXTURE,
+  DETAIL_FIXTURE,
+  failLatestTerminalSocket,
+  mockFetch,
+  mockTerminalWebSocket,
+  sessionSnapshotJson,
+  waitForTerminalSocket,
+} from "./fixtures";
 
 const MAX_TASK_ROW_HEIGHT_PX = 96;
 
@@ -378,4 +386,179 @@ test("open mobile task meta keeps a usable terminal and route-scroll reaches the
   const { routeScrollCount, rogueOwners } = await probeNormalRouteScrollOwners(page);
   expect(routeScrollCount, "route-scroll elements").toBe(1);
   expect(rogueOwners, "unexpected extra scroll owners").toEqual([]);
+});
+
+const PHONE_LANDSCAPE_VIEWPORTS = [
+  { width: 734, height: 343 },
+  { width: 844, height: 390 },
+];
+
+const TERMINAL_KEY_LABELS = [
+  "Escape",
+  "Tab",
+  "Left arrow",
+  "Up arrow",
+  "Down arrow",
+  "Right arrow",
+  "Control modifier",
+  "Paste",
+  "Backspace",
+  "Start voice input",
+];
+
+async function openTaskTerminalAt(page: Page, width: number, height: number) {
+  await page.setViewportSize({ width, height });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(page.locator('[data-testid="task-terminal-panel"]')).toBeVisible({
+    timeout: 10_000,
+  });
+  await waitForTerminalSocket(page);
+  await expect(page.locator('[data-testid="terminal-status"]')).toHaveClass(/is-empty/);
+}
+
+async function terminalLandscapeGeometry(page: Page) {
+  return page.evaluate(() => {
+    const boxOf = (selector: string) => {
+      const el = document.querySelector(selector);
+      if (!el) return null;
+      const box = el.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, height: box.height };
+    };
+    const keys = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="terminal-bottom-controls"] .terminal-keys button',
+      ),
+    ).map((key) => {
+      const box = key.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        label: key.getAttribute("aria-label") ?? key.textContent ?? "",
+        hitsKey: !!hit && (hit === key || key.contains(hit)),
+        hitTag: hit ? (hit.getAttribute("aria-label") ?? hit.tagName) : "none",
+      };
+    });
+    const row = document.querySelector(".xterm-rows > div");
+    return {
+      rowHeight: row ? row.getBoundingClientRect().height : 0,
+      panel: boxOf('[data-testid="task-terminal-panel"]'),
+      wrap: boxOf(".terminal-interaction-wrap"),
+      toolbar: boxOf('[data-testid="terminal-bottom-controls"] .terminal-keys'),
+      nav: boxOf(".bottom-nav"),
+      keys,
+    };
+  });
+}
+
+for (const { width, height } of PHONE_LANDSCAPE_VIEWPORTS) {
+  test(`1623 phone landscape ${width}x${height} keeps terminal rows and every key reachable`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile-webkit", "phone landscape is mobile-webkit only");
+    await openTaskTerminalAt(page, width, height);
+
+    const geometry = await terminalLandscapeGeometry(page);
+    expect(geometry.panel, "terminal panel").not.toBeNull();
+    expect(geometry.wrap, "terminal interaction wrap").not.toBeNull();
+    expect(geometry.toolbar, "terminal key toolbar").not.toBeNull();
+    expect(geometry.nav, "bottom nav").not.toBeNull();
+    if (!geometry.panel || !geometry.wrap || !geometry.toolbar || !geometry.nav) return;
+
+    expect(geometry.rowHeight, "xterm row rendered").toBeGreaterThan(0);
+    expect(
+      Math.floor(geometry.wrap.height / geometry.rowHeight),
+      "visible terminal rows",
+    ).toBeGreaterThanOrEqual(4);
+    expect(geometry.toolbar.bottom, "toolbar stays inside terminal panel").toBeLessThanOrEqual(
+      geometry.panel.bottom + 1,
+    );
+    expect(geometry.toolbar.bottom, "toolbar stays above bottom nav").toBeLessThanOrEqual(
+      geometry.nav.top + 1,
+    );
+
+    const routeScroll = page.locator('[data-testid="route-scroll"]');
+    const scrollDims = await routeScroll.evaluate((el) => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }));
+    expect(scrollDims.scrollHeight, "route-scroll overflows for task details").toBeGreaterThan(
+      scrollDims.clientHeight + 1,
+    );
+    await routeScroll.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const detailsReachable = await page.getByTestId("task-meta-details-trigger").evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const nav = document.querySelector(".bottom-nav")?.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        hitsTrigger: !!hit && (hit === el || el.contains(hit)),
+        hitTag: hit ? (hit.getAttribute("data-testid") ?? hit.className) : "none",
+        clearOfNav: !nav || box.bottom <= nav.top + 1,
+      };
+    });
+    expect(detailsReachable.hitsTrigger, `Task details hit (${detailsReachable.hitTag})`).toBe(true);
+    expect(detailsReachable.clearOfNav, "Task details above bottom nav after scroll").toBe(true);
+
+    expect(geometry.keys.map((key) => key.label)).toEqual(TERMINAL_KEY_LABELS);
+    for (const key of geometry.keys) {
+      expect(key.hitsKey, `${key.label} hit-tests to itself (got ${key.hitTag})`).toBe(true);
+    }
+
+    await failLatestTerminalSocket(page, "tmux session missing");
+    const reconnect = page.getByRole("button", { name: "Reconnect" });
+    await expect(reconnect).toBeVisible();
+    const reconnectHit = await reconnect.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const nav = document.querySelector(".bottom-nav")?.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return {
+        inViewport: box.top >= 0 && box.bottom <= window.innerHeight,
+        clearOfNav: !nav || box.bottom <= nav.top + 1,
+        hits: !!hit && (hit === el || el.contains(hit)),
+      };
+    });
+    expect(reconnectHit.inViewport, "reconnect control inside viewport").toBe(true);
+    expect(reconnectHit.clearOfNav, "reconnect control above bottom nav").toBe(true);
+    expect(reconnectHit.hits, "reconnect control hit-tests to itself").toBe(true);
+  });
+}
+
+test("1623 Paste key is not clipped at 320px portrait", async ({ page }) => {
+  await openTaskTerminalAt(page, 320, 568);
+
+  const measured = await page.evaluate(() => {
+    const toolbar = document.querySelector('[data-testid="terminal-bottom-controls"] .terminal-keys');
+    if (!toolbar) return null;
+    const toolbarBox = toolbar.getBoundingClientRect();
+    return {
+      toolbar: { left: toolbarBox.left, right: toolbarBox.right, top: toolbarBox.top, bottom: toolbarBox.bottom },
+      keys: Array.from(toolbar.querySelectorAll<HTMLElement>("button")).map((key) => {
+        const box = key.getBoundingClientRect();
+        return {
+          label: key.getAttribute("aria-label") ?? key.textContent ?? "",
+          clipped: key.scrollWidth > key.clientWidth + 1,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          bottom: box.bottom,
+        };
+      }),
+    };
+  });
+  expect(measured).not.toBeNull();
+  if (!measured) return;
+
+  const paste = measured.keys.find((key) => key.label === "Paste");
+  expect(paste, "Paste key present").toBeDefined();
+  if (!paste) return;
+  expect(paste.clipped, "Paste label fits its key box").toBe(false);
+  expect(paste.left).toBeGreaterThanOrEqual(measured.toolbar.left);
+  expect(paste.right).toBeLessThanOrEqual(measured.toolbar.right);
+  expect(paste.left).toBeGreaterThanOrEqual(0);
+  expect(paste.right).toBeLessThanOrEqual(320);
+  for (const key of measured.keys) {
+    expect(key.clipped, `${key.label} label fits its key box`).toBe(false);
+  }
 });
