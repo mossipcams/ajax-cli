@@ -240,12 +240,27 @@ where
     spawn_push_tick(state);
 
     let directory = Arc::clone(&state.task_session_directory);
+    spawn_heartbeat_loop(crate::slices::web_session::HEARTBEAT_EVERY, move || {
+        directory.heartbeat_execution_ownership();
+    });
+}
+
+fn spawn_heartbeat_loop<H>(period: Duration, heartbeat: H)
+where
+    H: Fn() + Send + Sync + 'static,
+{
+    let heartbeat = Arc::new(heartbeat);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(crate::slices::web_session::HEARTBEAT_EVERY);
+        let mut interval = tokio::time::interval(period);
         interval.tick().await;
         loop {
             interval.tick().await;
-            directory.heartbeat_execution_ownership();
+            let heartbeat = Arc::clone(&heartbeat);
+            if let Err(error) = tokio::task::spawn_blocking(move || heartbeat()).await {
+                if error.is_panic() {
+                    std::panic::resume_unwind(error.into_panic());
+                }
+            }
         }
     });
 }
