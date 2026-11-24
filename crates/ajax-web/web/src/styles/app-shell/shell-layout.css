@@ -70,21 +70,24 @@ html[data-session-viewport="owned"]:not(.keyboard-open) .app-viewport {
   max-height: var(--app-band-height);
 }
 
-/* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
-.pull-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  margin-bottom: 0;
-  transition: height var(--dur-ui) var(--ease-spring);
+/* PULL-TO-REFRESH INDICATOR — the track translates by the gesture distance on the compositor. */
+.pull-track {
+  transition: transform var(--dur-ui) var(--ease-spring);
 }
 
-.pull-indicator.is-pulling {
+.pull-track.is-pulling {
   transition: none;
 }
 
+.pull-indicator {
+  position: relative;
+}
+
 .pull-spinner {
+  position: absolute;
+  top: -41px;
+  left: 50%;
+  margin-left: -9px;
   width: 18px;
   height: 18px;
   border-radius: 50%;

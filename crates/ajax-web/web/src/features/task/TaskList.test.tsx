@@ -340,6 +340,12 @@ describe("TaskList", () => {
     expect(screen.getByText("All quiet — start a new task below.")).toBeInTheDocument();
   });
 
+  it("says an unknown project does not exist instead of offering a new task", () => {
+    render(<TaskList cockpit={cockpit} selectedProject="does-not-exist" />);
+    expect(screen.getByText("Project does-not-exist doesn't exist.")).toBeInTheDocument();
+    expect(screen.queryByText(/start one below/)).not.toBeInTheDocument();
+  });
+
   it("opens a task when a row is tapped", () => {
     const onOpenTask = vi.fn();
     render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
@@ -633,5 +639,22 @@ describe("TaskList", () => {
       fireEvent.touchEnd(row, { changedTouches: [{ clientX: 300, clientY: 40 }] });
       expect(wrap).not.toHaveClass("is-dragging");
     });
+  });
+  it("closes a removed row's swipe reveal so the same handle reappears closed", () => {
+    const { rerender } = render(<TaskList cockpit={cockpit} />);
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    swipeRowLeft(row);
+    expect(screen.getByTestId("task-row-wrap-web/a")).toHaveClass("is-revealed-wrap");
+
+    const withoutA = {
+      ...cockpit,
+      cards: cockpit.cards.filter((card) => card.qualified_handle !== "web/a"),
+    };
+    rerender(<TaskList cockpit={withoutA} />);
+    expect(screen.queryByTestId("task-row-wrap-web/a")).not.toBeInTheDocument();
+
+    rerender(<TaskList cockpit={cockpit} />);
+    expect(screen.getByTestId("task-row-wrap-web/a")).not.toHaveClass("is-revealed-wrap");
+    expect(screen.getByRole("button", { name: /web\/a/ })).not.toHaveClass("is-revealed");
   });
 });

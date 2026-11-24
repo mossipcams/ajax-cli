@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef } from "react";
-import { pullStart, pullMove, pullEnd, type PullState } from "@/shared/gestures/pullToRefresh";
+import {
+  PULL_THRESHOLD,
+  pullStart,
+  pullMove,
+  pullEnd,
+  type PullState,
+} from "@/shared/gestures/pullToRefresh";
 
 export interface PullToRefreshOptions {
   onRefresh: () => void | Promise<void>;
-  onDistance?: (distance: number) => void;
+  onDistance?: (distance: number, dragging: boolean) => void;
   scrollTop?: () => number;
 }
 
@@ -51,17 +57,22 @@ export function usePullToRefresh(
       const y = readTouchY(event);
       if (y === null) return;
       state = pullMove(state, y - startY);
-      optsRef.current.onDistance?.(state.distance);
+      optsRef.current.onDistance?.(state.distance, true);
     };
 
     const onEnd = () => {
       const triggered = !!(state && pullEnd(state).triggered);
       state = null;
-      optsRef.current.onDistance?.(0);
-      if (!triggered || refreshing) return;
+      if (!triggered) {
+        optsRef.current.onDistance?.(0, false);
+        return;
+      }
+      optsRef.current.onDistance?.(PULL_THRESHOLD, false);
+      if (refreshing) return;
       refreshing = true;
       void Promise.resolve(optsRef.current.onRefresh()).finally(() => {
         refreshing = false;
+        optsRef.current.onDistance?.(0, false);
       });
     };
 

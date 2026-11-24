@@ -10,8 +10,12 @@ function touch(type: string, clientY: number): Event {
 }
 
 describe("usePullToRefresh", () => {
-  it("reports resisted distance and fires onRefresh when pull passes threshold", () => {
-    const onRefresh = vi.fn();
+  it("reports resisted distance and fires onRefresh when pull passes threshold", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onRefresh = vi.fn(() => pending);
     const onDistance = vi.fn();
     const { result } = renderHook(() =>
       usePullToRefresh({ onRefresh, onDistance, scrollTop: () => 0 }),
@@ -28,7 +32,28 @@ describe("usePullToRefresh", () => {
 
     node.dispatchEvent(new Event("touchend"));
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onDistance).toHaveBeenLastCalledWith(0);
+    expect(onDistance).toHaveBeenLastCalledWith(PULL_THRESHOLD, false);
+
+    release();
+    await pending;
+    expect(onDistance).toHaveBeenLastCalledWith(0, false);
+  });
+
+  it("closes immediately on a release below threshold", () => {
+    const onRefresh = vi.fn();
+    const onDistance = vi.fn();
+    const { result } = renderHook(() =>
+      usePullToRefresh({ onRefresh, onDistance, scrollTop: () => 0 }),
+    );
+
+    const node = document.createElement("div");
+    result.current(node);
+
+    node.dispatchEvent(touch("touchstart", 0));
+    node.dispatchEvent(touch("touchmove", 10));
+    node.dispatchEvent(new Event("touchend"));
+
+    expect(onDistance).toHaveBeenLastCalledWith(0, false);
   });
 
   it("does not fire onRefresh when the drag stays below threshold", () => {

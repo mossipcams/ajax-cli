@@ -3,7 +3,11 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import { act } from "react";
 import App from "./App";
 import * as telemetry from "@/shared/lib/telemetry";
-import { DROP_UNDO_MS } from "@/shared/lib/polling";
+import {
+  CONFIRM_TIMEOUT_MS,
+  DROP_UNDO_MS,
+  REFRESH_INTERVAL_TERMINAL_MS,
+} from "@/shared/lib/polling";
 import { writeOrchestrationChatEnabled } from "@/features/settings/public";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
@@ -453,6 +457,36 @@ describe("App drop shell confirm", () => {
     });
 
     expect(screen.getByTestId("result-panel")).toHaveTextContent("Action failed — network error");
+  });
+
+  it("cancels Drop confirm when a cockpit refresh removes its task", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let cockpitBody: unknown = cockpit;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpitBody));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    setHash("#/t/web%2Ffix-login");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL_TERMINAL_MS - CONFIRM_TIMEOUT_MS / 2);
+    });
+    fireEvent.click(await screen.findByText("Drop"));
+    expect(await screen.findByTestId("result-panel-confirm")).toBeInTheDocument();
+
+    cockpitBody = { ...cockpit, cards: [] };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONFIRM_TIMEOUT_MS / 2 + 500);
+    });
+    expect(screen.queryByTestId("result-panel-confirm")).not.toBeInTheDocument();
   });
 });
 
