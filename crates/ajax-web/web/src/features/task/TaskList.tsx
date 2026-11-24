@@ -399,6 +399,14 @@ export default function TaskList({
     });
   }, [calm]);
 
+  useEffect(() => {
+    const rendered = new Set(calm.map((card) => card.qualified_handle));
+    setOffsets((prev) => {
+      const next = Object.fromEntries(Object.entries(prev).filter(([handle]) => rendered.has(handle)));
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+  }, [calm]);
+
   const { needsYou, otherTasks } = useMemo(() => {
     const needs: BrowserTaskCard[] = [];
     const others: BrowserTaskCard[] = [];
@@ -411,6 +419,10 @@ export default function TaskList({
     }
     return { needsYou: needs, otherTasks: others };
   }, [calm]);
+
+  const projectKnown = selectedProject
+    ? cockpit.repos.repos.some((repo) => repo.name === selectedProject)
+    : true;
 
   const rowProps = {
     nowSecs,
@@ -450,9 +462,11 @@ export default function TaskList({
 
       {calm.length === 0 ? (
         <p className="empty">
-          {selectedProject
-            ? `No tasks in ${selectedProject} yet — start one below.`
-            : "All quiet — start a new task below."}
+          {selectedProject && !projectKnown
+            ? `Project ${selectedProject} doesn't exist.`
+            : selectedProject
+              ? `No tasks in ${selectedProject} yet — start one below.`
+              : "All quiet — start a new task below."}
         </p>
       ) : null}
     </>

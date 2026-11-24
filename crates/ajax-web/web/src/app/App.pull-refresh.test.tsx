@@ -92,6 +92,34 @@ describe("App dashboard pull-to-refresh", () => {
     await waitFor(() => expect(cockpitLoads()).toBe(loadsBeforePull + 1));
   });
 
+  it("does not arm or refresh when the route scroll is scrolled mid-list (#1663)", async () => {
+    render(<App />);
+    await screen.findByText("Fix login");
+    const scroll = screen.getByTestId("route-scroll");
+    Object.defineProperty(scroll, "scrollTop", { configurable: true, writable: true, value: 300 });
+    const outlet = screen.getByTestId("outlet-dashboard");
+    const indicator = screen.getByTestId("pull-indicator");
+    const loadsBeforePull = cockpitLoads();
+
+    act(() => {
+      outlet.dispatchEvent(touch("touchstart", 100));
+    });
+    for (const clientY of [130, 160, 190, 220, 250, 280, 310, 340]) {
+      act(() => {
+        outlet.dispatchEvent(touch("touchmove", clientY));
+      });
+    }
+
+    expect(indicator.style.height).toBe("0px");
+    expect(indicator.classList.contains("armed")).toBe(false);
+
+    act(() => {
+      outlet.dispatchEvent(new Event("touchend"));
+    });
+
+    expect(cockpitLoads()).toBe(loadsBeforePull);
+  });
+
   it("animates the pull indicator closed on release instead of snapping (#1609)", async () => {
     render(<App />);
     await screen.findByText("Fix login");
