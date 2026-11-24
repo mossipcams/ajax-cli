@@ -25,7 +25,7 @@ portable-pty = "0.9"
 clap = "4.5"
 crossterm = "0.29"
 getrandom = "0.4"
-jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "11.0.0", features = ["rust_crypto"] }
 notify = "8"
 nix = { version = "0.32", features = ["fs", "poll", "process", "signal", "term"] }
 proptest = "1.11.0"
@@ -38,7 +38,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = "1"
-tokio-rustls = "0.26"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
 tower = "0.5"
 tower-http = "0.7"
 tracing = "0.1"
@@ -47,3 +47,8 @@ toml = "1.0"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
