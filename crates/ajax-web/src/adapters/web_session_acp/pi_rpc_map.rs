@@ -273,6 +273,7 @@ fn tool_call_progress(record: &Value) -> Option<NativeEvent> {
         id: id.to_string(),
         status: "in_progress".to_string(),
         content: Some(joined),
+        images: Vec::new(),
         raw_input: None,
     })
 }
@@ -301,6 +302,7 @@ fn tool_call_finished(record: &Value) -> NativeEvent {
         id: id.to_string(),
         status,
         content: Some(texts.join("")),
+        images: Vec::new(),
         raw_input: None,
     }
 }

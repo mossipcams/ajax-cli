@@ -170,6 +170,7 @@ fn completed_tool_call_update_carries_value_content() {
             id,
             status,
             content,
+            images: _,
             raw_input,
         } => {
             assert_eq!(id, "c1");

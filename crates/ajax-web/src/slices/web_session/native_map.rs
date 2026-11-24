@@ -26,10 +26,16 @@ pub fn map_native_event(event: &NativeEvent) -> Vec<SessionServerEvent> {
             id,
             status,
             content,
+            images,
             raw_input,
         } => {
             let mut blocks = edit_diffs(raw_input.as_ref());
             blocks.extend(native_tool_content(content));
+            blocks.extend(images.iter().map(|image| ToolContent::Image {
+                mime_type: image.mime_type.clone(),
+                uri: None,
+                data: Some(image.data.clone()),
+            }));
             vec![native_tool_event(
                 id,
                 "",

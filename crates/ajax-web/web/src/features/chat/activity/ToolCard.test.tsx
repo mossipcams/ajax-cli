@@ -126,6 +126,26 @@ describe("ToolCard", () => {
     expect(screen.getByTestId("session-output-resource-link")).toHaveTextContent("README.md");
   });
 
+  it("auto-expands a completed call that returned an image", () => {
+    render(
+      <ToolCard
+        call={call({
+          kind: "other",
+          title: "Screenshot",
+          status: "completed",
+          locations: [],
+          content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }],
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Screenshot/i })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByTestId("session-output-image")).toBeInTheDocument();
+  });
+
   it("previews the head for non-failed output and expands on demand", () => {
     const lines = Array.from({ length: CONTENT_PREVIEW_LINES + 3 }, (_, i) => `line ${i + 1}`).join(
       "\n",
