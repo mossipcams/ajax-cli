@@ -492,6 +492,7 @@ fn tool_result_status_and_content() {
             id,
             status,
             content,
+            images: _,
             raw_input,
         } => {
             assert_eq!(*id, "t1");

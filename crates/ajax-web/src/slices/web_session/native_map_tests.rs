@@ -7,7 +7,7 @@ use agent_client_protocol::schema::v1::{
 
 use super::acp_map::map_acp_session_notification;
 use super::native_map::map_native_event;
-use crate::adapters::web_session_acp::NativeEvent;
+use crate::adapters::web_session_acp::{NativeEvent, NativeImage};
 
 fn acp_events(update: &SessionUpdate) -> Vec<super::SessionServerEvent> {
     let notification = SessionNotification::new("s1".to_string(), update.clone());
@@ -90,6 +90,7 @@ fn tool_call_update_with_content_matches_acp_tool_call_update() {
             id: "t1".to_string(),
             status: "completed".to_string(),
             content: Some("done".to_string()),
+            images: Vec::new(),
             raw_input: None,
         }),
         acp_events(&SessionUpdate::ToolCallUpdate(
@@ -114,6 +115,7 @@ fn tool_call_update_without_content_matches_acp_tool_call_update() {
             id: "t1".to_string(),
             status: "failed".to_string(),
             content: None,
+            images: Vec::new(),
             raw_input: None,
         }),
         acp_events(&SessionUpdate::ToolCallUpdate(
@@ -134,6 +136,7 @@ fn tool_call_update_with_raw_input_matches_acp_tool_call_update() {
             id: "t3".to_string(),
             status: "in_progress".to_string(),
             content: None,
+            images: Vec::new(),
             raw_input: Some(raw_input.clone()),
         }),
         acp_events(&SessionUpdate::ToolCallUpdate(
@@ -326,6 +329,7 @@ fn tool_call_update_with_edit_raw_input_lists_diff_before_text() {
         id: "e1".to_string(),
         status: "completed".to_string(),
         content: Some("done".to_string()),
+        images: Vec::new(),
         raw_input: Some(raw_input),
     }));
     assert_eq!(
@@ -344,11 +348,39 @@ fn tool_call_update_with_edit_raw_input_lists_diff_before_text() {
 }
 
 #[test]
+fn tool_call_update_images_follow_text_as_image_blocks() {
+    let content = tool_call_content(map_native_event(&NativeEvent::ToolCallUpdate {
+        id: "e1".to_string(),
+        status: "completed".to_string(),
+        content: Some("shot".to_string()),
+        images: vec![NativeImage {
+            mime_type: "image/png".to_string(),
+            data: "aGVsbG8=".to_string(),
+        }],
+        raw_input: None,
+    }));
+    assert_eq!(
+        content,
+        vec![
+            super::ToolContent::Text {
+                text: "shot".to_string()
+            },
+            super::ToolContent::Image {
+                mime_type: "image/png".to_string(),
+                uri: None,
+                data: Some("aGVsbG8=".to_string()),
+            }
+        ]
+    );
+}
+
+#[test]
 fn tool_call_update_without_raw_input_produces_only_text() {
     let content = tool_call_content(map_native_event(&NativeEvent::ToolCallUpdate {
         id: "e1".to_string(),
         status: "completed".to_string(),
         content: Some("done".to_string()),
+        images: Vec::new(),
         raw_input: None,
     }));
     assert_eq!(

@@ -49,6 +49,7 @@ fn tool_call_variants_carry_fields() {
         id: "t1".to_string(),
         status: "completed".to_string(),
         content: Some("done".to_string()),
+        images: Vec::new(),
         raw_input: None,
     };
     match &update {

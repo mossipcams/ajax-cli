@@ -17,6 +17,7 @@ pub enum NativeEvent {
         id: String,
         status: String,
         content: Option<String>,
+        images: Vec<NativeImage>,
         raw_input: Option<Value>,
     },
     Plan(Vec<(String, String)>),

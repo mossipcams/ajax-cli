@@ -343,6 +343,10 @@ Agents see:
   each container over a `127.0.0.1`-only TCP port, and the container wrapper sets
   `SSH_AUTH_SOCK` to it. The socket file is not mounted, because OrbStack does not
   pass bind-mounted Unix sockets through.
+- The host Docker socket, only for worktrees that contain a `.devcontainer/`
+  directory, so agents can run devcontainers. Those worktrees get full host Docker
+  access (`--group-add 0`), and the setting is opt-in per repo. Other worktrees never
+  get it.
 - `GH_TOKEN`, only when it is set in Ajax's own environment.
 - HTTPS git: the image sets `credential.https://github.com.helper` to
   `gh auth git-credential`, so `git push` over HTTPS uses the `gh` sign-in.

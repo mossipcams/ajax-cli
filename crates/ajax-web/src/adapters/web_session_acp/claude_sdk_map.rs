@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::agent_event::{AgentEvent, NativeEvent};
+use super::agent_event::{AgentEvent, NativeEvent, NativeImage};
 use super::rpc_session::RpcMapping;
 
 pub fn map_sdk_message(message: &Value, _session_id: &str) -> RpcMapping {
@@ -274,6 +274,7 @@ fn map_user_tool_results(message: &Value, events: &mut Vec<AgentEvent>) {
             id: id.to_string(),
             status,
             content: Some(tool_result_text(block)),
+            images: tool_result_images(block),
             raw_input: None,
         }));
     }
@@ -294,6 +295,34 @@ fn tool_result_text(block: &Value) -> String {
             .unwrap_or_default(),
         _ => String::new(),
     }
+}
+
+fn tool_result_images(block: &Value) -> Vec<NativeImage> {
+    block
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|blocks| blocks.iter().filter_map(tool_result_image).collect())
+        .unwrap_or_default()
+}
+
+fn tool_result_image(block: &Value) -> Option<NativeImage> {
+    if block.get("type").and_then(Value::as_str) != Some("image") {
+        return None;
+    }
+    let (mime_type, data) = match block.get("source") {
+        Some(source) => (
+            source.get("media_type").and_then(Value::as_str)?,
+            source.get("data").and_then(Value::as_str)?,
+        ),
+        None => (
+            block.get("mimeType").and_then(Value::as_str)?,
+            block.get("data").and_then(Value::as_str)?,
+        ),
+    };
+    (!mime_type.is_empty() && !data.is_empty()).then(|| NativeImage {
+        data: data.to_string(),
+        mime_type: mime_type.to_string(),
+    })
 }
 
 const USAGE_LIMIT_ERROR_PREFIXES: [&str; 12] = [
