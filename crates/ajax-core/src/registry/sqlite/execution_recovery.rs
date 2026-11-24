@@ -1,7 +1,7 @@
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::execution_store::parse_state;
-use super::{database_error, migrations, NewRun, SqliteRegistryStore};
+use super::{database_error, NewRun, SqliteRegistryStore};
 use crate::execution::{
     ExecutionState, Operation, ReplayPolicy, UnfinishedCheckpoint, CHECKPOINT_SCHEMA_VERSION,
 };
@@ -99,7 +99,6 @@ fn run_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RunRecord> {
 impl SqliteRegistryStore {
     pub fn list_run_task_ids(&self) -> Result<Vec<String>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let mut statement = connection
             .prepare("SELECT DISTINCT task_id FROM agent_runs ORDER BY task_id")
             .map_err(database_error)?;
@@ -110,7 +109,6 @@ impl SqliteRegistryStore {
     }
     pub fn prompts_for_run(&self, run_id: &str) -> Result<Vec<RunPrompt>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT p.idempotency_key, p.task_exec_id, p.content_json, t.state \
@@ -138,7 +136,6 @@ impl SqliteRegistryStore {
         task_id: &str,
     ) -> Result<Option<RunRecord>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         connection
             .query_row(
                 "SELECT run_id, task_id, harness, model, native_session_id, capabilities_json, \
@@ -154,7 +151,6 @@ impl SqliteRegistryStore {
 
     pub fn runs_with_children(&self) -> Result<Vec<RunRecord>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT run_id, task_id, harness, model, native_session_id, capabilities_json, \
@@ -187,7 +183,6 @@ impl SqliteRegistryStore {
             .ok_or_else(|| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
         let unreadable_history_rows = i64::try_from(unreadable_history_rows).unwrap_or(i64::MAX);
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let transaction = connection.transaction().map_err(database_error)?;
         transaction
             .execute(
@@ -220,7 +215,6 @@ impl SqliteRegistryStore {
 
     pub fn unfinished_executions(&self) -> Result<Vec<UnfinishedExecution>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let mut statement = connection.prepare(
             "SELECT t.task_exec_id, t.run_id, t.parent_id, t.kind, t.state, t.cancel_requested, \
              p.idempotency_key, p.content_json, c.operation, c.replay_policy, c.schema_version, \
@@ -274,7 +268,6 @@ impl SqliteRegistryStore {
         keep_last: u64,
     ) -> Result<u64, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let keep_last = i64::try_from(keep_last).unwrap_or(i64::MAX);
         connection.execute(
             "DELETE FROM execution_events WHERE run_id = ?1 AND seq IN ( \
@@ -285,7 +278,6 @@ impl SqliteRegistryStore {
 
     pub fn delete_runs_for_task(&self, task_id: &str) -> Result<u64, RegistrySnapshotError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;
@@ -302,7 +294,6 @@ impl SqliteRegistryStore {
         stale_after_ms: i64,
     ) -> Result<OwnerClaim, RegistrySnapshotError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;
@@ -358,7 +349,6 @@ impl SqliteRegistryStore {
         now_unix_ms: i64,
     ) -> Result<bool, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         connection
             .execute(
                 "UPDATE execution_owner SET heartbeat_unix_ms = ?2 WHERE id = 1 AND boot_id = ?1",
@@ -370,7 +360,6 @@ impl SqliteRegistryStore {
 
     pub fn release_execution_owner(&self, boot_id: &str) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         connection
             .execute(
                 "DELETE FROM execution_owner WHERE id = 1 AND boot_id = ?1",

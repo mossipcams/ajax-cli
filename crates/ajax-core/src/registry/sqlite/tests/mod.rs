@@ -15,6 +15,7 @@ pub(super) use rstest::rstest;
 pub(super) use std::time::{Duration, SystemTime};
 
 mod activity;
+mod connection_reuse;
 pub(super) fn task(id: &str, repo: &str, handle: &str) -> Task {
     Task::new(
         TaskId::new(id),

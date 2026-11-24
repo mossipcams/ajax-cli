@@ -1,10 +1,10 @@
 # Backend lightweight pass (Batch 3)
 
-Approval: **approved** by Matt on 2026-11-24. S1 in progress; S2-S4 not started.
-Open questions below still need answers before S2 and S3.
+Approval: **approved** by Matt on 2026-11-24. S1 merged (#1676). S2 implemented
+and verified on `perf/core/sqlite-connection-reuse`. S3 waits for a day of dev use
+of S1+S2. S4 not started.
 
-Related: Batch 1 (release profile + aws-lc-rs removal, config only) shipped as
-its own PR (`perf/deps/lighter-release-binary`). Batch 2 (cap `gh` work per refresh tick so `refresh_flight` is not
+Related: Batch 1 (release profile + aws-lc-rs removal, config only) merged as #1673. Batch 2 (cap `gh` work per refresh tick so `refresh_flight` is not
 held for 5-15 s, `ajax-core/src/runtime_refresh/ci_monitor.rs:93`) is proposed
 but not part of this plan.
 
@@ -45,20 +45,21 @@ with what changed:
 ## Slices (each ≤ 4 files, builds and verifies alone, in this order)
 
 ### S1. Heartbeat off the async worker — low risk
-- [ ] Run `directory.heartbeat_execution_ownership()` inside
+- [x] Run `directory.heartbeat_execution_ownership()` inside
       `tokio::task::spawn_blocking` in `ajax-web/src/runtime/mod.rs:242-249`.
 - Verify: existing execution-ownership tests; workspace gate.
 
 ### S2. Reuse one SQLite connection per store — high risk (persistence)
-- [ ] `SqliteRegistryStore` keeps a lazily opened connection behind a mutex,
-      runs `migrate()` and the 0600 permission check once per connection, and
-      sets `busy_timeout` (proposed 5 s).
-- [ ] Reopen when the file is replaced: compare `(dev, inode)` of the path with
+- [x] A process-wide idle-connection pool keyed by path
+      (`registry/sqlite/connection_pool.rs`) replaces a new connection per
+      call. Fresh connections set `secure_delete` and a 5 s busy handler, then
+      migrate; only autocommit connections go back to the pool.
+- [x] Reopen when the file is replaced: compare `(dev, inode)` of the path with
       the open connection's before each use (one `stat`), so `state reset`,
       restores, or test fixtures that swap the file never write to an unlinked
       inode.
-- [ ] `SessionStorage` holds one shared store instead of building one per call.
-- [ ] Keep `secure_delete=ON` on every connection.
+- [x] `SessionStorage` needs no change: the pool lives below every store.
+- [x] Keep `secure_delete=ON` on every connection.
 - Acceptance: a regression test proves N consecutive calls on one store open
   one connection and migrate once; a test proves replacing the DB file makes
   the next call reopen; existing durable-execution, crash-scenario, and
@@ -98,10 +99,26 @@ pkill -f '[v]ite'; CI=1 npm run web:smoke      # S3 only
 
 ## Open questions
 
-- Is a 5 s `busy_timeout` acceptable, or should CLI verbs fail faster?
-- S3 touches the live chat path. Ship S3 behind the normal PR flow only after
-  S1 and S2 have run on the dev profile for a day?
+- Resolved 2026-11-24: 5 s busy budget accepted; S3 waits for a day of dev use
+  of S1 and S2.
 
 ## Deviations
 
-None yet.
+- S2 pools connections process-wide instead of per store, because callers
+  build a new store per call; nested opens get a second connection, so the
+  pool never deadlocks.
+- S2 runs `migrate()` on every checkout, not once per connection, so an
+  existing schema-10 repair test (`execution_child.rs:136`) keeps passing.
+- S2 switches `save` and `save_if_revision` to `IMMEDIATE` transactions. A
+  deferred read-to-write upgrade returned `SQLITE_BUSY` at once under the
+  rollback journal; this was a latent CLI/web-server conflict.
+- S2 uses a 1 ms-retry busy handler with a 5 s budget instead of
+  `busy_timeout`: SQLite's growing backoff starved writers in the 8-thread
+  test (1 failure in 31 runs; 30/30 and 40/40 with the handler).
+
+## Validation results
+
+- S1: workspace nextest 3628 passed; mutation check (heartbeat inline) fails
+  the new test.
+- S2: fmt, workspace clippy clean; workspace nextest 3631 passed; connection
+  reuse tests 30/30 under `--stress-count 30`.

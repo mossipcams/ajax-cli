@@ -1,11 +1,16 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::{refresh_task_annotations, InMemoryRegistry, RegistrySnapshotError};
 use crate::ghost_task::is_registry_ghost_task;
 
 mod activity;
+mod connection_pool;
 mod enums;
 mod execution_recovery;
 mod execution_store;
@@ -14,9 +19,15 @@ mod migrations;
 mod row_codec;
 mod save;
 
+#[cfg(test)]
+use connection_pool::record_fresh_open;
+use connection_pool::{discard, file_identity, take_idle, PooledConnection};
 use load::{load_events, load_step_receipts, load_tasks};
 use row_codec::database_error;
 use save::save_registry;
+
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(1);
 
 pub use execution_recovery::{OwnerClaim, RunPrompt, RunRecord, UnfinishedExecution};
 pub use execution_store::{
@@ -51,7 +62,6 @@ impl SqliteRegistryStore {
 
     pub fn load_tasks_only(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
 
         let mut tasks = load_tasks(&connection)?;
         for task in &mut tasks {
@@ -68,7 +78,7 @@ impl SqliteRegistryStore {
         })
     }
 
-    fn open(&self) -> Result<Connection, RegistrySnapshotError> {
+    fn open(&self) -> Result<PooledConnection, RegistrySnapshotError> {
         if let Some(parent) = self
             .path
             .parent()
@@ -77,6 +87,28 @@ impl SqliteRegistryStore {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
         }
+        let Some(identity) = file_identity(&self.path) else {
+            discard(&self.path);
+            return self.open_fresh();
+        };
+        if let Some(connection) = take_idle(&self.path, identity) {
+            if let Err(error) = migrations::migrate(&connection) {
+                discard(&self.path);
+                return Err(error);
+            }
+            tighten_permissions(&self.path)?;
+            return Ok(PooledConnection::new(
+                self.path.clone(),
+                identity,
+                connection,
+            ));
+        }
+        self.open_fresh()
+    }
+
+    fn open_fresh(&self) -> Result<PooledConnection, RegistrySnapshotError> {
+        #[cfg(test)]
+        record_fresh_open(&self.path);
         #[cfg(unix)]
         if !self.path.exists() {
             use std::os::unix::fs::OpenOptionsExt;
@@ -91,27 +123,27 @@ impl SqliteRegistryStore {
                 Err(error) => return Err(RegistrySnapshotError::Io(error.to_string())),
             }
         }
-        let connection = Connection::open(&self.path).map_err(database_error)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&self.path)
-                .map(|meta| meta.permissions().mode())
-                .unwrap_or(0);
-            if mode & 0o777 != 0o600 {
-                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
-            }
-        }
+        let mut connection = Connection::open(&self.path).map_err(database_error)?;
+        tighten_permissions(&self.path)?;
         connection
             .pragma_update(None, "secure_delete", "ON")
             .map_err(database_error)?;
-        Ok(connection)
+        connection
+            .busy_handler(Some(busy_retry()))
+            .map_err(database_error)?;
+        migrations::migrate(&connection)?;
+        let identity = file_identity(&self.path).ok_or_else(|| {
+            RegistrySnapshotError::Io("registry database disappeared after open".to_string())
+        })?;
+        Ok(PooledConnection::new(
+            self.path.clone(),
+            identity,
+            connection,
+        ))
     }
 
     pub fn current_revision(&self) -> Result<u64, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         revision(&connection)
     }
 
@@ -142,8 +174,9 @@ impl SqliteRegistryStore {
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
         }
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
-        let transaction = connection.transaction().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
         let actual = revision(&transaction)?;
         if actual != expected_revision {
             return Err(RegistrySnapshotError::RevisionConflict {
@@ -168,7 +201,6 @@ impl SqliteRegistryStore {
 impl SqliteRegistryStore {
     pub fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
 
         let mut tasks = load_tasks(&connection)?;
         for task in &mut tasks {
@@ -197,8 +229,9 @@ impl SqliteRegistryStore {
         }
 
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
-        let transaction = connection.transaction().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
         prevent_accidental_empty_rewrite(&transaction, registry, false)?;
         save_registry(&transaction, registry)?;
         transaction
@@ -209,6 +242,38 @@ impl SqliteRegistryStore {
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)
     }
+}
+
+fn busy_retry() -> impl FnMut(i32) -> bool + Send + 'static {
+    let mut started = Instant::now();
+    move |attempts| {
+        if attempts == 0 {
+            started = Instant::now();
+        }
+        if started.elapsed() >= BUSY_TIMEOUT {
+            return false;
+        }
+        std::thread::sleep(BUSY_RETRY_INTERVAL);
+        true
+    }
+}
+
+#[cfg(unix)]
+fn tighten_permissions(path: &Path) -> Result<(), RegistrySnapshotError> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .map(|meta| meta.permissions().mode())
+        .unwrap_or(0);
+    if mode & 0o777 != 0o600 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn tighten_permissions(_path: &Path) -> Result<(), RegistrySnapshotError> {
+    Ok(())
 }
 
 fn prevent_accidental_empty_rewrite(
