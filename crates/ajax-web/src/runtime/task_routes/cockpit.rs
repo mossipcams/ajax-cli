@@ -25,6 +25,7 @@ use axum::{
 use std::{sync::Arc, time::Instant};
 
 use super::live::{axum_task_session, axum_task_stt, axum_task_terminal, origin_authority};
+use super::sandbox::axum_task_sandbox_get;
 
 pub(crate) const AJAX_FOREGROUND_HEADER: &str = "x-ajax-foreground";
 
@@ -399,6 +400,15 @@ where
             );
         };
         return axum_task_stt(State(state), task_handle.to_string(), req).await;
+    }
+    if req.uri().path().ends_with("/sandbox") {
+        let Some(task_handle) = handle.strip_suffix("/sandbox") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
+        return axum_task_sandbox_get(State(state), task_handle.to_string()).await;
     }
     if req.uri().path().ends_with("/session/transcript") {
         let Some(task_handle) = handle.strip_suffix("/session/transcript") else {

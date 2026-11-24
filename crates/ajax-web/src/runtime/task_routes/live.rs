@@ -33,6 +33,8 @@ use axum::{
 };
 use std::sync::Arc;
 
+use super::sandbox::axum_task_sandbox_post;
+
 pub(crate) async fn axum_task_terminal<C, B>(
     State(state): State<WebAppState<C, B>>,
     handle: String,
@@ -328,6 +330,10 @@ where
     C: CommandRunner + Clone + Send + Sync + 'static,
     B: RuntimeBridge<C> + Clone + Send + Sync + 'static,
 {
+    if let Some(task_handle) = handle.strip_suffix("/sandbox") {
+        return axum_task_sandbox_post(State(state), percent_decode_model(task_handle), body).await;
+    }
+
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct SwapAgentRequest {

@@ -239,9 +239,12 @@ PTY paste. The ACP child negotiates stable ACP protocol v1; the browser
   explicitly changed.
 - Agent processes launched by Ajax run in a `docker run` container on OrbStack.
   Launch fails closed when docker is unreachable or the `ajax-agent` image is not
-  built; `AJAX_SANDBOX=off` is the only opt-out. Policy lives in `ajax-core`
-  `adapters::sandbox` and `adapters::docker_sandbox`; spawn sites must route through
-  it rather than spawning agents directly. Host-side git on a task worktree must be
+  built. `AJAX_SANDBOX=off` turns it off for every task; a per-task marker under
+  `~/.config/ajax/unsandboxed/` (Web Chat launches only) turns it off for one task.
+  Policy lives in `ajax-core` `adapters::sandbox`, `adapters::task_sandbox`, and
+  `adapters::docker_sandbox`; spawn sites must route through it rather than spawning
+  agents directly. Task launch sites call `task_sandbox::sandbox_enabled_for(worktree)`;
+  task-less probes keep the global decision. Host-side git on a task worktree must be
   pinned to the trusted record in `ajax-core` `adapters::trusted_git` (the
   process runner does this for direct `git` commands); never trust a worktree's
   `.git` file. Every Ajax-run git also gets `core.hooksPath=/dev/null` and

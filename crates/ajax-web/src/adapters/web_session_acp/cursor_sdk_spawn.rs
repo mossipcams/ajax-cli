@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use ajax_core::adapters::sandbox::sandbox_enabled;
+use crate::adapters::program::sandbox_enabled_for;
 
 use super::client::{AcpSpawnError, RestoreFailure, RestoreMethod, SpawnReport};
 use super::cursor_sdk_client::CursorSdkClient;
@@ -74,7 +74,17 @@ fn resolve_node_and_sdk() -> Result<(PathBuf, PathBuf), AcpSpawnError> {
     })?;
     Ok((program, module))
 }
-pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+pub(super) fn cursor_launch(worktree: &Path) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    cursor_launch_for(sandbox_enabled_for(worktree))
+}
+
+fn cursor_launch_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    if sandboxed {
+        return Ok((
+            PathBuf::from("node"),
+            super::cursor_sdk_client::sidecar_launch_args(Some(CONTAINER_SDK_MODULE)),
+        ));
+    }
     #[cfg(test)]
     if let Some(module) = cursor_sdk_module_override() {
         return Ok((
@@ -87,16 +97,6 @@ pub(super) fn cursor_launch() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
                 "--sdk-module".to_string(),
                 module.to_string_lossy().into_owned(),
             ],
-        ));
-    }
-    cursor_launch_for(sandbox_enabled())
-}
-
-fn cursor_launch_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
-    if sandboxed {
-        return Ok((
-            PathBuf::from("node"),
-            super::cursor_sdk_client::sidecar_launch_args(Some(CONTAINER_SDK_MODULE)),
         ));
     }
     let (program, module) = resolve_node_and_sdk()?;
@@ -166,7 +166,7 @@ pub(super) fn spawn_cursor_sdk(
     operator_pin: &str,
     resume_session_id: Option<&str>,
 ) -> Result<(CursorSdkClient, SpawnReport<super::NeutralConfigOption>), AcpSpawnError> {
-    let (program, args) = cursor_launch()?;
+    let (program, args) = cursor_launch(worktree_path)?;
     let client = CursorSdkClient::spawn(
         &program,
         &args,
@@ -258,5 +258,34 @@ mod tests {
             "--sdk-module".to_string(),
             CONTAINER_SDK_MODULE.to_string(),
         ]));
+    }
+
+    #[test]
+    fn an_unsandboxed_task_launches_the_host_sdk_and_skips_the_docker_wrap() {
+        use crate::adapters::program::{
+            sandboxed_program, with_test_sandbox, with_test_unsandboxed, TEST_DOCKER,
+        };
+
+        let host_module = Path::new("/ajax-test-sdk/index.js");
+        let unsandboxed = Path::new("/ajax-test-worktrees/unsandboxed");
+        let sandboxed = Path::new("/ajax-test-worktrees/sandboxed");
+        with_test_sandbox(true, || {
+            with_test_unsandboxed(unsandboxed, || {
+                with_test_cursor_sdk_module(host_module, || {
+                    let (program, args) = cursor_launch(unsandboxed).expect("native launch");
+                    assert!(args.contains(&host_module.to_string_lossy().into_owned()));
+                    assert!(!args.contains(&CONTAINER_SDK_MODULE.to_string()));
+                    let (launched, _) = sandboxed_program(&program, &args, unsandboxed, &[])
+                        .expect("native launch needs no wrap");
+                    assert_eq!(launched, program);
+
+                    let (program, args) = cursor_launch(sandboxed).expect("sandboxed launch");
+                    assert!(args.contains(&CONTAINER_SDK_MODULE.to_string()));
+                    let (launched, _) = sandboxed_program(&program, &args, sandboxed, &[])
+                        .expect("sandboxed launch is wrapped");
+                    assert_eq!(launched, PathBuf::from(TEST_DOCKER));
+                })
+            })
+        });
     }
 }
