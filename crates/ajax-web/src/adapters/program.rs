@@ -8,7 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ajax_core::adapters::sandbox::{docker_command, sandbox_enabled, DockerHost};
+use ajax_core::adapters::{
+    sandbox::{docker_command, sandbox_enabled, DockerHost},
+    task_sandbox,
+};
 
 static SANDBOX_BOOT_ID: OnceLock<String> = OnceLock::new();
 static SANDBOX_SERVER_ID: OnceLock<String> = OnceLock::new();
@@ -128,12 +131,12 @@ pub(crate) fn sandboxed_harness_command(
     cwd: &Path,
     env: &[(String, String)],
 ) -> io::Result<Command> {
-    let (enabled, host) = sandbox_context();
+    let (enabled, host) = sandbox_context(Some(cwd));
     harness_launch(enabled, &host, program, args, cwd, env)
 }
 
 pub(crate) fn probe_command(program: &str, args: &[&str]) -> io::Result<Command> {
-    let (enabled, host) = sandbox_context();
+    let (enabled, host) = sandbox_context(None);
     let cwd = if enabled {
         probe_dir()?
     } else {
@@ -150,20 +153,32 @@ pub(crate) fn probe_dir() -> io::Result<PathBuf> {
 }
 
 pub(crate) fn sandbox_on() -> bool {
-    sandbox_context().0
+    sandbox_context(None).0
+}
+
+pub(crate) fn sandbox_enabled_for(worktree: &Path) -> bool {
+    sandbox_context(Some(worktree)).0
 }
 
 pub(crate) fn sandbox_docker_server() -> Option<String> {
+    docker_server(None)
+}
+
+pub(crate) fn sandbox_docker_server_for(worktree: &Path) -> Option<String> {
+    docker_server(Some(worktree))
+}
+
+fn docker_server(worktree: Option<&Path>) -> Option<String> {
     #[cfg(test)]
     if TEST_SANDBOX.with(|slot| slot.borrow().is_none()) {
         return None;
     }
-    let (enabled, host) = sandbox_context();
+    let (enabled, host) = sandbox_context(worktree);
     enabled.then_some(host.server)
 }
 
 pub(crate) fn sandbox_docker_run(args: &[&str]) -> io::Result<Output> {
-    let (_, host) = sandbox_context();
+    let (_, host) = sandbox_context(None);
     let docker = (host.resolve)().map_err(io::Error::other)?;
     (host.run)(&docker, args)
 }
@@ -211,17 +226,17 @@ pub(crate) fn sandbox_docker_probe(args: &[&str]) -> io::Result<Output> {
         let docker = (host.resolve)().map_err(io::Error::other)?;
         return (host.run)(&docker, args);
     }
-    let (_, host) = sandbox_context();
+    let (_, host) = sandbox_context(None);
     let docker = (host.resolve)().map_err(io::Error::other)?;
     let mut command = Command::new(docker);
     command.args(args);
     output_with_timeout(command, SANDBOX_PROBE_TIMEOUT)
 }
 
-fn sandbox_context() -> (bool, DockerHost) {
+fn sandbox_context(worktree: Option<&Path>) -> (bool, DockerHost) {
     #[cfg(test)]
-    if let Some(context) = TEST_SANDBOX.with(|slot| slot.borrow().clone()) {
-        return context;
+    if let Some((enabled, host)) = TEST_SANDBOX.with(|slot| slot.borrow().clone()) {
+        return (enabled && !test_unsandboxed(worktree), host);
     }
     let boot_id = SANDBOX_BOOT_ID
         .get()
@@ -231,7 +246,11 @@ fn sandbox_context() -> (bool, DockerHost) {
         .get()
         .cloned()
         .unwrap_or_else(|| "unset".to_string());
-    (sandbox_enabled(), DockerHost::process(boot_id, server))
+    let enabled = match worktree {
+        Some(worktree) => task_sandbox::sandbox_enabled_for(worktree),
+        None => sandbox_enabled(),
+    };
+    (enabled, DockerHost::process(boot_id, server))
 }
 
 fn harness_launch(
@@ -268,7 +287,7 @@ pub(crate) fn sandboxed_program(
     cwd: &Path,
     env: &[(String, String)],
 ) -> io::Result<(PathBuf, Vec<String>)> {
-    let (enabled, host) = sandbox_context();
+    let (enabled, host) = sandbox_context(Some(cwd));
     sandbox_launch(enabled, &host, program, args, cwd, env).map_err(io::Error::other)
 }
 
@@ -318,6 +337,8 @@ pub(crate) const TEST_DOCKER: &str = "/ajax-test-docker";
 thread_local! {
     static TEST_SANDBOX: std::cell::RefCell<Option<(bool, DockerHost)>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_UNSANDBOXED: std::cell::RefCell<Vec<PathBuf>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -343,6 +364,21 @@ pub(crate) fn with_test_sandbox<R>(enabled: bool, run: impl FnOnce() -> R) -> R 
     let result = run();
     TEST_SANDBOX.with(|slot| *slot.borrow_mut() = None);
     result
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_unsandboxed<R>(worktree: &Path, run: impl FnOnce() -> R) -> R {
+    TEST_UNSANDBOXED.with(|slot| slot.borrow_mut().push(worktree.to_path_buf()));
+    let result = run();
+    TEST_UNSANDBOXED.with(|slot| slot.borrow_mut().pop());
+    result
+}
+
+#[cfg(test)]
+fn test_unsandboxed(worktree: Option<&Path>) -> bool {
+    worktree.is_some_and(|worktree| {
+        TEST_UNSANDBOXED.with(|slot| slot.borrow().iter().any(|opted_out| opted_out == worktree))
+    })
 }
 
 #[cfg(test)]
@@ -855,6 +891,29 @@ mod tests {
             .expect_err("a slow command must time out");
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn an_unsandboxed_task_skips_the_docker_wrap_while_other_tasks_keep_it() {
+        let unsandboxed = Path::new("/ajax-test-worktrees/unsandboxed");
+        let sandboxed = Path::new("/ajax-test-worktrees/sandboxed");
+        let args = vec!["--mode".to_string(), "rpc".to_string()];
+        with_test_sandbox(true, || {
+            with_test_unsandboxed(unsandboxed, || {
+                assert!(!sandbox_enabled_for(unsandboxed));
+                assert!(sandbox_enabled_for(sandboxed));
+                let (program, launched_args) =
+                    sandboxed_program(Path::new("pi"), &args, unsandboxed, &[])
+                        .expect("an unsandboxed task has no wrap");
+                assert_eq!(
+                    (program, launched_args),
+                    (PathBuf::from("pi"), args.clone())
+                );
+                let (program, _) = sandboxed_program(Path::new("pi"), &args, sandboxed, &[])
+                    .expect("a sandboxed task is wrapped");
+                assert_eq!(program, PathBuf::from(TEST_DOCKER));
+            })
+        });
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use crate::{
     adapters::{
-        docker_sandbox, trusted_git, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
-        GitAdapter, TmuxAdapter,
+        docker_sandbox, task_sandbox, trusted_git, CommandOutput, CommandRunError, CommandRunner,
+        CommandSpec, GitAdapter, TmuxAdapter,
     },
     commands::{
         self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
@@ -293,6 +293,7 @@ fn remove_sandbox_task_resources<R: Registry>(context: &CommandContext<R>, quali
         #[cfg(test)]
         TEST_SANDBOX_REMOVALS.with(|recorded| recorded.borrow_mut().push(key.clone()));
         docker_sandbox::remove_task_resources(&key);
+        task_sandbox::remove_task_sandbox_marker(&task.worktree_path);
     }
 }
 

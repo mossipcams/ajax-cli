@@ -574,6 +574,33 @@ request/notification I/O remain in `web_session_acp`; the slice maps
 agent/thought text to full-content updates with stable host `itemId` values
 before persistence.
 
+### Per-task Docker sandbox
+
+`GET /api/tasks/{handle}/sandbox` returns `{ "ok": true, "enabled", "lockedByEnv" }`
+for the task's worktree. `POST /api/tasks/{handle}/sandbox` with `{ "enabled" }`
+stores the per-task opt-out and returns the same shape. Both use the browser-session
+cookie like other protected `/api` routes, and core resolves the handle to its
+worktree. When `AJAX_SANDBOX=off` locks the setting, POST returns `409` with
+`ok: false` and an error that names `AJAX_SANDBOX`, and writes nothing. Storage
+failures, such as an unset `HOME`, return `500`.
+
+The opt-out is a marker file at `~/.config/ajax/unsandboxed/<task key>` holding the
+worktree path. Launch sites for Web Chat (ACP, Claude SDK, Cursor SDK, and Pi RPC)
+resolve `task_sandbox::sandbox_enabled_for(worktree)`, so a marker launches that
+task's agent natively. Task-less probes and tmux task agents keep the global
+decision. Dropping the task removes its marker. The marker is host-only and is not
+mounted into containers.
+
+The chat task's details sheet shows a **Docker sandbox** switch that reads and writes
+this route. A change applies on the next agent launch, so the sheet shows
+`Restart agent to apply` until the operator uses the existing **Restart agent**
+action. When the env locks the setting, the switch is disabled and the sheet says
+the sandbox is off for every task.
+
+Accepted risk: a sandboxed agent can reach this route over loopback with full
+control ([#1413](https://github.com/mossipcams/ajax-cli/issues/1413)). It could
+therefore switch off its own task's sandbox and restart itself.
+
 ### Task-session module ownership
 
 Production sources under `slices::web_session` split orchestration-chat by

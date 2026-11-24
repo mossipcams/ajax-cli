@@ -6,6 +6,7 @@ pub mod git;
 pub mod github;
 pub mod process;
 pub mod sandbox;
+pub mod task_sandbox;
 pub mod tmux;
 pub mod trusted_git;
 

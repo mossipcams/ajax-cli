@@ -91,7 +91,7 @@ pub fn read_agent_model_catalog(agent: AgentClient, cwd: &Path) -> AgentModelCat
 }
 
 pub fn read_cursor_sdk_catalog(cwd: &Path) -> Vec<super::cursor_sdk_client::CursorCatalogModel> {
-    let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch() else {
+    let Ok((program, extra_args)) = super::cursor_sdk_spawn::cursor_launch(cwd) else {
         return Vec::new();
     };
     let Ok(client) = super::cursor_sdk_client::CursorSdkClient::spawn(
@@ -122,7 +122,7 @@ pub fn read_cursor_catalog_if_sdk(
 }
 
 pub fn read_pi_rpc_catalog(cwd: &Path) -> AgentModelCatalog {
-    let Ok((program, extra_args)) = super::session_client::pi_program_and_args() else {
+    let Ok((program, extra_args)) = super::session_client::pi_program_and_args(cwd) else {
         return AgentModelCatalog::empty();
     };
     let Ok(client) = super::pi_rpc_client::PiRpcClient::spawn(
@@ -197,7 +197,7 @@ fn neutral_option_group(option: &super::NeutralConfigOption) -> Option<AgentOpti
 }
 
 pub fn read_claude_sdk_catalog(cwd: &Path) -> AgentModelCatalog {
-    let Ok((program, extra_args)) = super::claude_sdk_spawn::claude_launch() else {
+    let Ok((program, extra_args)) = super::claude_sdk_spawn::claude_launch(cwd) else {
         return AgentModelCatalog::empty();
     };
     let Ok(client) = super::claude_sdk_client::ClaudeSdkClient::spawn(

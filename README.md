@@ -289,14 +289,31 @@ before creating the task worktree so new branches base on current remote `main`
 
 ### Agent sandbox (Docker)
 
-Every Ajax-launched agent runs in a `docker run` container on OrbStack: tmux task
-agents (through `__agent-runtime`), Web Cockpit ACP, Claude SDK, Cursor SDK, and
-Pi RPC sessions, the sign-in and model-listing probes, and `ajax-cli supervise`.
+Every Ajax-launched agent runs in a `docker run` container on OrbStack unless one
+of the opt-outs below turns it off: tmux task agents (through `__agent-runtime`),
+Web Cockpit ACP, Claude SDK, Cursor SDK, and Pi RPC sessions, the sign-in and
+model-listing probes, and `ajax-cli supervise`.
 Launches fail closed. If docker is missing, the daemon is unreachable, or the
 image is not built yet, the launch is refused with a message that names the fix.
-Ajax never falls back to running unsandboxed. `AJAX_SANDBOX=off` is the only
-opt-out. Repo `cargo test`/`cargo run` set it via `.cargo/config.toml`; installed
-binaries are sandboxed.
+Ajax never falls back to running unsandboxed after a failed launch.
+
+There are two opt-outs:
+
+- `AJAX_SANDBOX=off` turns the sandbox off for every task. Repo `cargo test`/`cargo run`
+  set it via `.cargo/config.toml`; installed binaries are sandboxed.
+- The **Docker sandbox** switch in a chat task's details sheet turns it off for
+  that one task. It writes a marker file at `~/.config/ajax/unsandboxed/<task key>`
+  holding the worktree path. The marker lives under `~/.config/ajax`, which is not
+  mounted into containers. The change applies on the agent's next launch, so use
+  **Restart agent** after flipping it. The switch covers Web Chat launches (ACP,
+  Claude SDK, Cursor SDK, and Pi RPC) only; tmux task agents and `ajax-cli supervise`
+  stay on the global setting. Dropping the task removes its marker, so a re-created
+  worktree starts sandboxed. When `AJAX_SANDBOX=off` is set, the switch shows as off
+  and is locked.
+
+Accepted risk: sandboxed agents can reach the web API over loopback with full
+control ([#1413](https://github.com/mossipcams/ajax-cli/issues/1413)). A sandboxed
+agent could therefore switch off its own task's sandbox and restart itself.
 
 The web server builds the image `ajax-agent:<hash>` in the background at startup,
 from the Dockerfile embedded in the binary. The tag is a hash of that Dockerfile,

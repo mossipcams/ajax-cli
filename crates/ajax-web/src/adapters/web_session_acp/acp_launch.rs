@@ -1,7 +1,7 @@
 #[cfg(test)]
 use ajax_core::adapters::acp_spawn_model_for_argv;
 use ajax_core::{
-    adapters::{acp_launch_for_agent, sandbox::sandbox_enabled, AcpLaunch},
+    adapters::{acp_launch_for_agent, AcpLaunch},
     models::AgentClient,
 };
 use std::{
@@ -158,7 +158,7 @@ pub(super) fn spawn_acp_process(
     let Some(launch) = acp_launch_for_agent(agent) else {
         return Err(format!("no ACP mapping for agent {agent:?}"));
     };
-    let sandboxed = sandbox_enabled();
+    let sandboxed = crate::adapters::program::sandbox_enabled_for(worktree_path);
     let mut candidates = acp_candidates(launch, sandboxed, native_acp_advertised);
     if sandboxed {
         candidates.truncate(1);

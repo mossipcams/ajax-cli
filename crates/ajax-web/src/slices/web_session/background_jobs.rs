@@ -116,7 +116,11 @@ pub(super) fn read_background(
     if pid.is_none() {
         return Some(false);
     }
-    match (program::sandbox_docker_server(), worktree.map(task_key)) {
+    let server = worktree.map_or_else(
+        program::sandbox_docker_server,
+        program::sandbox_docker_server_for,
+    );
+    match (server, worktree.map(task_key)) {
         (None, _) => probe(pid, max_age),
         (Some(server), Some(key)) => probe_containers(&server, &key),
         (Some(_), None) => None,

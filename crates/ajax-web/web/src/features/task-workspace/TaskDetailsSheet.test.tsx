@@ -554,3 +554,105 @@ describe("TaskDetailsSheet polish", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });
 });
+
+describe("TaskDetailsSheet docker sandbox switch", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function renderChat(onResult: (...args: unknown[]) => void = vi.fn()) {
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+        onResult={onResult}
+      />,
+    );
+  }
+
+  it("renders the switch checked from the sandbox GET", async () => {
+    const getSpy = vi
+      .spyOn(api, "fetchTaskSandbox")
+      .mockResolvedValue({ enabled: true, lockedByEnv: false });
+
+    renderChat();
+
+    const toggle = await screen.findByTestId("task-sandbox-toggle");
+    expect(getSpy).toHaveBeenCalledWith(detail().qualified_handle);
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+    expect(screen.getByLabelText("Docker sandbox")).toBe(toggle);
+    expect(screen.queryByTestId("task-sandbox-restart-hint")).not.toBeInTheDocument();
+  });
+
+  it("does not render the switch while the sandbox GET is pending or has failed", async () => {
+    vi.spyOn(api, "fetchTaskSandbox").mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={vi.fn()}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+      />,
+    );
+    expect(screen.queryByTestId("task-sandbox-toggle")).not.toBeInTheDocument();
+    unmount();
+
+    vi.spyOn(api, "fetchTaskSandbox").mockRejectedValue(new Error("HTTP 500"));
+    renderChat();
+    await waitFor(() => expect(api.fetchTaskSandbox).toHaveBeenCalled());
+    expect(screen.queryByTestId("task-sandbox-toggle")).not.toBeInTheDocument();
+  });
+
+  it("posts the new value on toggle and shows the restart hint", async () => {
+    vi.spyOn(api, "fetchTaskSandbox").mockResolvedValue({ enabled: true, lockedByEnv: false });
+    const setSpy = vi
+      .spyOn(api, "setTaskSandbox")
+      .mockResolvedValue({ enabled: false, lockedByEnv: false });
+
+    renderChat();
+
+    const toggle = await screen.findByTestId("task-sandbox-toggle");
+    fireEvent.click(toggle);
+
+    expect(await screen.findByTestId("task-sandbox-restart-hint")).toHaveTextContent(
+      "Restart agent to apply",
+    );
+    expect(setSpy).toHaveBeenCalledWith(detail().qualified_handle, false);
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("disables the switch and explains the AJAX_SANDBOX override when the env locks it", async () => {
+    vi.spyOn(api, "fetchTaskSandbox").mockResolvedValue({ enabled: false, lockedByEnv: true });
+
+    renderChat();
+
+    const toggle = await screen.findByTestId("task-sandbox-toggle");
+    expect(toggle).toBeDisabled();
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByTestId("task-sandbox-env-note")).toHaveTextContent(
+      "Sandbox is off for every task (AJAX_SANDBOX=off)",
+    );
+  });
+
+  it("reverts the switch and reports the error when the POST fails", async () => {
+    vi.spyOn(api, "fetchTaskSandbox").mockResolvedValue({ enabled: true, lockedByEnv: false });
+    vi.spyOn(api, "setTaskSandbox").mockRejectedValue(new Error("sandbox settings are locked"));
+
+    const onResult = vi.fn();
+    renderChat(onResult);
+
+    const toggle = await screen.findByTestId("task-sandbox-toggle");
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(onResult).toHaveBeenCalledWith("sandbox settings are locked", null, true),
+    );
+    expect(toggle).toBeChecked();
+    expect(screen.queryByTestId("task-sandbox-restart-hint")).not.toBeInTheDocument();
+  });
+});

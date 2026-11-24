@@ -28,6 +28,8 @@ use super::{
 
 use ajax_core::models::AgentClient;
 
+use crate::adapters::program::sandbox_enabled_for;
+
 pub type SessionSpawnReport = SpawnReport<NeutralConfigOption>;
 
 pub type SessionConfigOutcome = ApplyModelOutcome<NeutralConfigOption>;
@@ -279,7 +281,7 @@ impl SessionClient {
         operator_pin: &str,
         resume_session_id: Option<&str>,
     ) -> Result<(SessionClient, SessionSpawnReport), AcpSpawnError> {
-        let (program, extra_args) = pi_program_and_args()?;
+        let (program, extra_args) = pi_program_and_args(worktree_path)?;
         let client = PiRpcClient::spawn(
             &program,
             &extra_args,
@@ -739,17 +741,19 @@ fn apply_pin_to_pi(client: &PiRpcClient, pin: &str) -> Option<String> {
     first_error
 }
 
-pub(super) fn pi_program_and_args() -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
-    #[cfg(test)]
-    if let Some(pair) = pi_program_override() {
-        return Ok(pair);
-    }
-    pi_program_for(ajax_core::adapters::sandbox::sandbox_enabled())
+pub(super) fn pi_program_and_args(
+    worktree: &Path,
+) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
+    pi_program_for(sandbox_enabled_for(worktree))
 }
 
 fn pi_program_for(sandboxed: bool) -> Result<(PathBuf, Vec<String>), AcpSpawnError> {
     if sandboxed {
         return Ok((PathBuf::from("pi"), Vec::new()));
+    }
+    #[cfg(test)]
+    if let Some(pair) = pi_program_override() {
+        return Ok(pair);
     }
     let program = crate::adapters::program::resolve_program("pi").ok_or_else(|| {
         AcpSpawnError::Message(
@@ -828,5 +832,35 @@ mod tests {
 
         assert_eq!(program, PathBuf::from("pi"));
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn an_unsandboxed_pi_task_launches_the_host_pi_and_skips_the_docker_wrap() {
+        use crate::adapters::program::{
+            sandboxed_program, with_test_sandbox, with_test_unsandboxed, TEST_DOCKER,
+        };
+
+        let host_pi = Path::new("/ajax-test-bin/pi");
+        let unsandboxed = Path::new("/ajax-test-worktrees/unsandboxed");
+        let sandboxed = Path::new("/ajax-test-worktrees/sandboxed");
+        with_test_sandbox(true, || {
+            with_test_unsandboxed(unsandboxed, || {
+                with_test_pi_program(host_pi, &[], || {
+                    let (program, args) =
+                        pi_program_and_args(unsandboxed).expect("native pi launch");
+                    assert_eq!(program, host_pi);
+                    let (launched, _) = sandboxed_program(&program, &args, unsandboxed, &[])
+                        .expect("native pi launch needs no wrap");
+                    assert_eq!(launched, host_pi);
+
+                    let (program, args) =
+                        pi_program_and_args(sandboxed).expect("sandboxed pi launch");
+                    assert_eq!(program, PathBuf::from("pi"));
+                    let (launched, _) = sandboxed_program(&program, &args, sandboxed, &[])
+                        .expect("sandboxed pi launch is wrapped");
+                    assert_eq!(launched, PathBuf::from(TEST_DOCKER));
+                })
+            })
+        });
     }
 }

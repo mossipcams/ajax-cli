@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
+import { fetchTaskSandbox, setTaskSandbox, type TaskSandboxState } from "@/shared/lib/api";
 import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -66,6 +67,8 @@ export default function TaskDetailsSheet({
 }: TaskDetailsSheetProps) {
   const [freshSessionArmed, setFreshSessionArmed] = useState(false);
   const [restartAgentArmed, setRestartAgentArmed] = useState(false);
+  const [sandbox, setSandbox] = useState<TaskSandboxState | null>(null);
+  const [sandboxRestartPending, setSandboxRestartPending] = useState(false);
   const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
 
   useEffect(() => {
@@ -74,6 +77,23 @@ export default function TaskDetailsSheet({
       setRestartAgentArmed(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || mode !== "chat") return;
+    let current = true;
+    setSandbox(null);
+    setSandboxRestartPending(false);
+    fetchTaskSandbox(detail.qualified_handle)
+      .then((state) => {
+        if (current) setSandbox(state);
+      })
+      .catch(() => {
+        if (current) setSandbox(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [open, mode, detail.qualified_handle]);
 
   if (!open) return null;
 
@@ -85,6 +105,19 @@ export default function TaskDetailsSheet({
     taskOffersOrchestrationChat(detail) &&
     Boolean(onOpenChat);
   const showAjaxTerminal = mode === "chat" && Boolean(onOpenTerminal);
+
+  async function changeSandbox(enabled: boolean) {
+    if (!sandbox) return;
+    const previous = sandbox;
+    setSandbox({ ...sandbox, enabled });
+    try {
+      setSandbox(await setTaskSandbox(detail.qualified_handle, enabled));
+      setSandboxRestartPending(true);
+    } catch (error) {
+      setSandbox(previous);
+      onResult?.(error instanceof Error ? error.message : "Could not change sandbox", null, true);
+    }
+  }
 
   function requestFreshSession() {
     if (!freshSessionArmed) {
@@ -192,6 +225,30 @@ export default function TaskDetailsSheet({
                   >
                     {freshSessionArmed ? "Confirm fresh session" : "Fresh session"}
                   </Button>
+                  {sandbox ? (
+                    <div>
+                      <label className="settings-toggle" htmlFor="task-sandbox-toggle">
+                        <input
+                          id="task-sandbox-toggle"
+                          data-testid="task-sandbox-toggle"
+                          type="checkbox"
+                          checked={sandbox.enabled}
+                          disabled={sandbox.lockedByEnv}
+                          onChange={(event) => void changeSandbox(event.target.checked)}
+                        />
+                        Docker sandbox
+                      </label>
+                      {sandbox.lockedByEnv ? (
+                        <p className="sheet-note" data-testid="task-sandbox-env-note">
+                          Sandbox is off for every task (AJAX_SANDBOX=off)
+                        </p>
+                      ) : sandboxRestartPending ? (
+                        <p className="sheet-note" data-testid="task-sandbox-restart-hint">
+                          Restart agent to apply
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

@@ -13,6 +13,8 @@ import {
   taskTerminalWebSocketUrl,
   createTerminalClientId,
   waitForServerRestart,
+  fetchTaskSandbox,
+  setTaskSandbox,
 } from "./api";
 
 type FetchMock = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response;
@@ -808,4 +810,48 @@ describe("task terminal socket helpers", () => {
     expect(taskTerminalWebSocketUrl("web/fix-login")).not.toContain("client=");
   });
 
+});
+
+describe("task sandbox", () => {
+  it("fetches the per-task sandbox state from the encoded handle path", async () => {
+    mockFetch(() => json({ ok: true, enabled: true, lockedByEnv: false }));
+    await expect(fetchTaskSandbox("web/x")).resolves.toEqual({
+      enabled: true,
+      lockedByEnv: false,
+    });
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe("/api/tasks/web%2Fx/sandbox");
+    expect(init?.method).toBeUndefined();
+  });
+
+  it("surfaces the server error string when the sandbox GET fails", async () => {
+    mockFetch(() => json({ ok: false, error: "task not found" }, 404));
+    await expect(fetchTaskSandbox("web/x")).rejects.toMatchObject({
+      message: "task not found",
+      status: 404,
+    });
+  });
+
+  it("posts the enabled flag to the encoded handle path and returns the new state", async () => {
+    mockFetch(() => json({ ok: true, enabled: false, lockedByEnv: false }));
+    await expect(setTaskSandbox("web/x", false)).resolves.toEqual({
+      enabled: false,
+      lockedByEnv: false,
+    });
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe("/api/tasks/web%2Fx/sandbox");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ enabled: false });
+  });
+
+  it("surfaces the server error string when the env locks the sandbox (409)", async () => {
+    mockFetch(() =>
+      json({ ok: false, error: "AJAX_SANDBOX=off locks the sandbox for every task" }, 409),
+    );
+    await expect(setTaskSandbox("web/x", true)).rejects.toMatchObject({
+      kind: "conflict",
+      message: "AJAX_SANDBOX=off locks the sandbox for every task",
+      status: 409,
+    });
+  });
 });

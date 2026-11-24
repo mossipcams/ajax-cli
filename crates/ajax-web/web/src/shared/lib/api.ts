@@ -453,6 +453,46 @@ export async function swapTaskAgent(
   });
 }
 
+export interface TaskSandboxState {
+  enabled: boolean;
+  lockedByEnv: boolean;
+}
+
+function parseTaskSandbox(value: unknown): TaskSandboxState {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as TaskSandboxState).enabled !== "boolean" ||
+    typeof (value as TaskSandboxState).lockedByEnv !== "boolean"
+  ) {
+    throw new ApiError("incompatible", "invalid sandbox payload");
+  }
+  const { enabled, lockedByEnv } = value as TaskSandboxState;
+  return { enabled, lockedByEnv };
+}
+
+export async function fetchTaskSandbox(handle: string): Promise<TaskSandboxState> {
+  const value = await getJsonPreferringErrorBody(
+    `/api/tasks/${encodeURIComponent(handle)}/sandbox`,
+    GET_REQUEST_TIMEOUT_MS,
+  );
+  return parseTaskSandbox(value);
+}
+
+export async function setTaskSandbox(handle: string, enabled: boolean): Promise<TaskSandboxState> {
+  const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/sandbox`, {
+    enabled,
+  });
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
+  return parseTaskSandbox(payload);
+}
+
 export async function checkHealth(): Promise<boolean> {
   try {
     const response = await fetch("/api/health", getOptions());
