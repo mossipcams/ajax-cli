@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use super::agent_event::{AgentEvent, NativeEvent};
 use super::cursor_sdk_client::{sidecar_launch_args, CursorSdkClient};
+use super::cursor_sdk_spawn::apply_pin_to_cursor;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -12,8 +13,9 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-fn spawn_in(
+fn spawn_with_sdk(
     cwd: &Path,
+    sdk_module: &Path,
     model: Option<&str>,
     resume: Option<&str>,
 ) -> Result<CursorSdkClient, String> {
@@ -23,11 +25,112 @@ fn spawn_in(
             .to_string_lossy()
             .into_owned(),
         "--sdk-module".to_string(),
-        dir.join("tests/fixtures/fake_cursor_sdk.mjs")
-            .to_string_lossy()
-            .into_owned(),
+        sdk_module.to_string_lossy().into_owned(),
     ];
     CursorSdkClient::spawn(Path::new("node"), &args, cwd, model, resume, TIMEOUT)
+}
+
+fn spawn_in(
+    cwd: &Path,
+    model: Option<&str>,
+    resume: Option<&str>,
+) -> Result<CursorSdkClient, String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_cursor_sdk.mjs");
+    spawn_with_sdk(cwd, &fixture, model, resume)
+}
+
+const GROK_4_7_SDK_MODULE: &str = r#"const MODELS = [
+  { id: "default", displayName: "Auto", variants: [{ params: [], isDefault: true }] },
+  {
+    id: "grok-4.7",
+    displayName: "Grok 4.7",
+    parameters: [
+      { id: "context", displayName: "Context", values: [{ value: "256k" }, { value: "500k" }] },
+      {
+        id: "reasoning_effort",
+        displayName: "Reasoning",
+        values: [{ value: "low" }, { value: "medium" }, { value: "high" }, { value: "xhigh" }],
+      },
+      { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+    ],
+    variants: [
+      {
+        params: [
+          { id: "context", value: "256k" },
+          { id: "reasoning_effort", value: "low" },
+          { id: "fast", value: "false" },
+        ],
+        isDefault: true,
+      },
+    ],
+  },
+  {
+    id: "grok-4.6",
+    displayName: "Grok 4.6",
+    parameters: [
+      { id: "effort", displayName: "Effort", values: [{ value: "low" }, { value: "high" }] },
+      { id: "fast", displayName: "Fast", values: [{ value: "false" }, { value: "true" }] },
+    ],
+    variants: [
+      {
+        params: [
+          { id: "effort", value: "high" },
+          { id: "fast", value: "false" },
+        ],
+        isDefault: true,
+      },
+    ],
+  },
+];
+
+function agent(agentId) {
+  return {
+    agentId,
+    close() {},
+    async send(_input, { model } = {}) {
+      const params = (model?.params ?? []).map((p) => `${p.id}=${p.value}`).join(" ");
+      const messages = [
+        { type: "status", status: "RUNNING" },
+        { type: "assistant", message: { content: [{ type: "text", text: `sent[${model?.id}]: ${params}` }] } },
+        { type: "status", status: "FINISHED" },
+      ];
+      return {
+        async *stream() {
+          for (const message of messages) yield { agent_id: agentId, run_id: `run-${agentId}`, ...message };
+        },
+        async wait() {
+          return { status: "finished" };
+        },
+        async cancel() {},
+      };
+    },
+  };
+}
+
+export const Agent = {
+  create() {
+    return Promise.resolve(agent("agent-fake-1"));
+  },
+  resume(agentId) {
+    return Promise.resolve(agent(agentId));
+  },
+};
+
+export const Cursor = {
+  models: {
+    async list() {
+      return MODELS;
+    },
+  },
+};
+"#;
+
+fn spawn_grok_4_7(name: &str) -> CursorSdkClient {
+    let cwd = scratch(name);
+    let module_dir = scratch(&format!("{name}-sdk"));
+    let module = module_dir.join("fake_cursor_sdk_grok_4_7.mjs");
+    std::fs::write(&module, GROK_4_7_SDK_MODULE).expect("write grok 4.7 sdk module");
+    spawn_with_sdk(&cwd, &module, None, None).expect("spawn grok 4.7 catalog")
 }
 
 fn drain_turn(client: &CursorSdkClient) -> Vec<NativeEvent> {
@@ -327,5 +430,113 @@ fn model_catalog_maps_default_to_auto_and_exposes_axes() {
     assert_eq!(grok.efforts, ["low".to_string(), "high".to_string()]);
     assert!(!grok.has_fast);
 
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_carried_over_effort_reaches_grok_4_7_reasoning_effort() {
+    let client = spawn_grok_4_7("issue-1683-set-model");
+    client
+        .set_model("grok-4.7|effort=high|fast=false")
+        .expect("set grok 4.7 with carried-over effort");
+    assert_eq!(
+        client.applied_model(),
+        "grok-4.7|context=256k|reasoning_effort=high|fast=false"
+    );
+    client.core().begin_prompt("hi").expect("begin prompt");
+    let events = drain_turn(&client);
+    let joined = format!("{events:?}");
+    assert!(
+        joined.contains("sent[grok-4.7]: context=256k reasoning_effort=high fast=false"),
+        "events: {joined}"
+    );
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_grok_4_7_exposes_reasoning_effort_as_the_thought_level() {
+    let client = spawn_grok_4_7("issue-1683-config");
+    client.set_model("grok-4.7").expect("set grok 4.7");
+    let options = client.config_options();
+    let effort = options
+        .iter()
+        .find(|option| option.id == "reasoning_effort")
+        .expect("reasoning_effort option");
+    assert_eq!(
+        effort.category,
+        Some(super::NeutralConfigCategory::ThoughtLevel)
+    );
+    assert!(!options.iter().any(|option| option.id == "effort"));
+    let (current, _) = select_view(&client, "reasoning_effort").expect("reasoning select");
+    assert_eq!(current, "low");
+
+    let catalog = client.model_catalog();
+    let grok = catalog
+        .iter()
+        .find(|model| model.id == "grok-4.7")
+        .expect("grok 4.7 entry");
+    assert_eq!(
+        grok.efforts,
+        ["low", "medium", "high", "xhigh"].map(String::from)
+    );
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_effort_option_applies_to_reasoning_effort() {
+    let client = spawn_grok_4_7("issue-1683-set-option");
+    client.set_model("grok-4.7").expect("set grok 4.7");
+    client
+        .set_option("effort", "xhigh")
+        .expect("effort maps to reasoning_effort");
+    assert_eq!(
+        client.applied_model(),
+        "grok-4.7|context=256k|reasoning_effort=xhigh|fast=false"
+    );
+    let err = client
+        .set_option("effort", "bogus")
+        .expect_err("bogus value must fail");
+    assert!(err.contains("unknown effort value"), "error: {err}");
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_unadvertised_or_invalid_params_are_dropped_and_defaults_fill_the_rest() {
+    let client = spawn_grok_4_7("issue-1683-normalize");
+    client
+        .set_model("grok-4.7|context=999k|bogus=1|fast=true")
+        .expect("set grok 4.7 with stray params");
+    assert_eq!(
+        client.applied_model(),
+        "grok-4.7|context=256k|reasoning_effort=low|fast=true"
+    );
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_reasoning_effort_carries_to_an_effort_model() {
+    let cwd = scratch("issue-1683-carry");
+    let module_dir = scratch("issue-1683-carry-sdk");
+    let module = module_dir.join("fake_cursor_sdk_grok_4_7.mjs");
+    std::fs::write(&module, GROK_4_7_SDK_MODULE).expect("write grok 4.6 sdk module");
+    let client = spawn_with_sdk(&cwd, &module, None, None).expect("spawn grok catalog");
+    client
+        .set_model("grok-4.6|reasoning_effort=low|fast=false")
+        .expect("set grok 4.6 with carried reasoning_effort");
+    assert_eq!(client.applied_model(), "grok-4.6|effort=low|fast=false");
+    client.core().shutdown();
+}
+
+#[test]
+fn issue_1683_pinned_effort_reaches_grok_4_7_reasoning_effort() {
+    let client = spawn_grok_4_7("issue-1683-pin");
+    assert_eq!(
+        apply_pin_to_cursor(&client, "grok-4.7|effort=high|fast=false"),
+        None
+    );
+    assert_eq!(
+        client.applied_model(),
+        "grok-4.7|context=256k|reasoning_effort=high|fast=false"
+    );
     client.core().shutdown();
 }
