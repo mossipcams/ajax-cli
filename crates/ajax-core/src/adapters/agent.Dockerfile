@@ -38,7 +38,7 @@ RUN npm install -g \
       @openai/codex@0.163.0 \
       acpx@0.21.1 \
       @earendil-works/pi-coding-agent@1.3.0 \
-      @cursor/sdk@1.0.37 \
+      @cursor/sdk@1.4.2 \
       opencode-ai@1.19.5 \
       @devcontainers/cli@0.91.0
 RUN mkdir -p /opt/ajax && ln -s "$(npm root -g)/@anthropic-ai/claude-agent-sdk" /opt/ajax/claude-agent-sdk \
