@@ -195,7 +195,7 @@ function AppContent() {
   const dropHandles: DropUndoHandles = { dropTimerRef };
   const dropLeaveLatchRef = useRef<{ handle: string; left: boolean } | null>(null);
   const reloadLatchRef = useRef(false);
-  const [pullDistance, setPullDistance] = useState(0);
+  const [pull, setPull] = useState({ distance: 0, dragging: false });
   const [documentVisibility, setDocumentVisibility] = useState<DocumentVisibilityState>(
     typeof document !== "undefined" ? document.visibilityState : "visible",
   );
@@ -389,7 +389,7 @@ function AppContent() {
 
   const pullToRefreshRef = usePullToRefresh({
     onRefresh: () => loadCockpit(),
-    onDistance: setPullDistance,
+    onDistance: (distance, dragging) => setPull({ distance, dragging }),
     scrollTop: () =>
       document.querySelector<HTMLElement>('[data-testid="route-scroll"]')?.scrollTop ?? 0,
   });
@@ -763,29 +763,34 @@ function AppContent() {
         data-testid={activeRoute.kind === "project" ? "outlet-project" : "outlet-dashboard"}
       >
         <div
-          className={`pull-indicator${pullDistance > 0 ? " is-pulling" : ""}${pullDistance >= PULL_THRESHOLD ? " armed" : ""}`}
-          data-testid="pull-indicator"
-          style={{ height: `${pullDistance}px` }}
-          aria-hidden="true"
+          className={`pull-track${pull.dragging ? " is-pulling" : ""}`}
+          data-testid="pull-track"
+          style={{ transform: pull.distance > 0 ? `translate3d(0px, ${pull.distance}px, 0px)` : undefined }}
         >
-          <span className="pull-spinner" />
+          <div
+            className={`pull-indicator${pull.dragging ? " is-pulling" : ""}${pull.distance >= PULL_THRESHOLD ? " armed" : ""}`}
+            data-testid="pull-indicator"
+            aria-hidden="true"
+          >
+            <span className="pull-spinner" />
+          </div>
+          {cockpit.data ? (
+            <TaskList
+              cockpit={cockpit.data}
+              selectedProject={selectedProject}
+              onOpenTask={openTask}
+              onCockpit={applyCockpit}
+              onResult={showResult}
+              onMutated={() => loadCockpit()}
+              pendingConfirmAction={pendingConfirm?.action.action ?? null}
+              onCancelPendingConfirm={cancelPendingConfirm}
+            />
+          ) : cockpit.status === "error" ? (
+            <p className="empty">Could not load tasks — {cockpit.error.message}</p>
+          ) : (
+            <Skeleton testid="dashboard-skeleton" rows={4} />
+          )}
         </div>
-        {cockpit.data ? (
-          <TaskList
-            cockpit={cockpit.data}
-            selectedProject={selectedProject}
-            onOpenTask={openTask}
-            onCockpit={applyCockpit}
-            onResult={showResult}
-            onMutated={() => loadCockpit()}
-            pendingConfirmAction={pendingConfirm?.action.action ?? null}
-            onCancelPendingConfirm={cancelPendingConfirm}
-          />
-        ) : cockpit.status === "error" ? (
-          <p className="empty">Could not load tasks — {cockpit.error.message}</p>
-        ) : (
-          <Skeleton testid="dashboard-skeleton" rows={4} />
-        )}
       </section>
     );
   }
