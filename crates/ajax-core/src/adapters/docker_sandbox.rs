@@ -238,6 +238,10 @@ pub fn docker_argv(launch: &DockerLaunch<'_>, exists: impl Fn(&Path) -> bool) ->
             argv.extend(pair("-v", format!("{0}:{0}{mode}", text(&path))));
         }
     }
+    if launch.cwd.join(".devcontainer").is_dir() {
+        argv.extend(strings(&["--group-add", "0"]));
+        argv.extend(pair("-v", "/var/run/docker.sock:/var/run/docker.sock"));
+    }
     let file_name = Path::new(launch.program).file_name();
     argv.push(launch.image.to_string());
     argv.push(file_name.map_or_else(String::new, |name| name.to_string_lossy().into_owned()));
