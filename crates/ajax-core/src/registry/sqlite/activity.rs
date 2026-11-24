@@ -2,7 +2,6 @@ use rusqlite::{params, TransactionBehavior};
 
 use super::enums::{agent_client_name, agent_runtime_status_name, live_status_kind_name};
 use super::load::load_task;
-use super::migrations;
 use super::row_codec::{database_error, system_time_to_unix_parts};
 use super::save::{save_agent_attempts, save_live_status, save_side_flags};
 use super::{revision, SqliteRegistryStore};
@@ -72,7 +71,6 @@ impl SqliteRegistryStore {
         expected: &Task,
     ) -> Result<u64, RegistrySnapshotError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database_error)?;

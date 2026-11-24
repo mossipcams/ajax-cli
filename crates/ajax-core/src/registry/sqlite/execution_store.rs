@@ -3,7 +3,7 @@ use std::{collections::HashSet, error::Error, fmt};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use super::row_codec::database_error;
-use super::{migrations, SqliteRegistryStore};
+use super::SqliteRegistryStore;
 use crate::execution::{
     children_allow_completion, transition, ExecutionState, Operation, ReplayPolicy,
     CHECKPOINT_SCHEMA_VERSION,
@@ -229,7 +229,6 @@ fn delete_events_after(
 impl SqliteRegistryStore {
     pub fn create_run(&self, run: &NewRun) -> Result<(), RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         connection.execute(
             "INSERT INTO agent_runs (run_id, task_id, harness, model, capabilities_json, schema_version, created_unix_ms) \
              VALUES (?1, ?2, ?3, ?4, '{}', ?5, ?6)",
@@ -250,7 +249,6 @@ impl SqliteRegistryStore {
         commit: &ExecutionCommit,
     ) -> Result<CommitReceipt, ExecutionCommitError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         let fence = commit.owner_fence.as_ref().or(self.owner_fence.as_ref());
@@ -532,7 +530,6 @@ impl SqliteRegistryStore {
         after_seq: u64,
     ) -> Result<Vec<(u64, String)>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let Ok(after_seq) = i64::try_from(after_seq) else {
             return Ok(Vec::new());
         };
@@ -559,7 +556,6 @@ impl SqliteRegistryStore {
         seq: u64,
     ) -> Result<u64, RegistrySnapshotError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let Ok(keep_through) = i64::try_from(seq) else {
             return Ok(0);
         };
@@ -587,7 +583,6 @@ impl SqliteRegistryStore {
         payloads: &[String],
     ) -> Result<(), RegistrySnapshotError> {
         let mut connection = self.open()?;
-        migrations::migrate(&connection)?;
         let keep_through = i64::try_from(seq)
             .map_err(|_| RegistrySnapshotError::Encode("event sequence overflow".into()))?;
         let transaction = connection
@@ -623,7 +618,6 @@ impl SqliteRegistryStore {
         task_exec_id: &str,
     ) -> Result<Option<ExecutionState>, RegistrySnapshotError> {
         let connection = self.open()?;
-        migrations::migrate(&connection)?;
         let text: Option<String> = connection
             .query_row(
                 "SELECT state FROM execution_tasks WHERE task_exec_id = ?1",

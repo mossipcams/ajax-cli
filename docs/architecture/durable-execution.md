@@ -39,6 +39,24 @@ All durable chat state lives in the registry SQLite database, implemented by
 | `execution_events` | The durable chat event stream (transcript events). |
 | `execution_owner` | The single-host execution lease (see Ownership). |
 
+Connections are reused within the process. `SqliteRegistryStore` checks out a
+connection from a small process-wide idle pool keyed by database path (at most 4
+idle connections per path and 16 paths; extra connections are closed). A
+connection is returned only when it is in autocommit mode, so one left inside an
+open transaction is closed instead. Before reusing a pooled connection the store
+stats the database path: if the file is missing or its device/inode differs from
+the file the connection was opened against (for example after the file was
+deleted or replaced by rename), the pooled connections for that path are
+discarded and the file is opened fresh. Migrations run on every checkout, so a
+pooled connection re-checks the schema and an incompatible or legacy schema still
+surfaces as an error; a failed check discards the pool for that path. A fresh
+connection sets `secure_delete`, installs a busy handler, then migrates. The busy
+handler keeps retrying `SQLITE_BUSY` for up to 5 seconds, sleeping 1 ms between
+attempts; SQLite's default growing backoff starved writers under contention.
+Registry saves (`save` and `save_if_revision`) run in `IMMEDIATE` transactions, so
+the write lock is taken up front and the busy handler applies instead of failing at
+the read-to-write upgrade.
+
 Key invariants:
 
 - **One run per qualified handle**, with run id `web-chat:<handle>`. A handle
