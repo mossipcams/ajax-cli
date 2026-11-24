@@ -624,6 +624,36 @@ mod tests {
         assert!(err.contains("AJAX_SANDBOX=off"), "{err}");
     }
 
+    #[test]
+    fn devcontainer_worktree_alone_gets_docker_socket_and_group() {
+        let root = scratch("devcontainer-socket");
+        let with = root.join("with");
+        let without = root.join("without");
+        fs::create_dir_all(with.join(".devcontainer")).unwrap();
+        fs::create_dir_all(&without).unwrap();
+        let host = fake_docker_host(Some(PathBuf::from("/ajax-test-home")));
+        let image = image_tag();
+        let socket = "/var/run/docker.sock:/var/run/docker.sock";
+
+        let (_, mounted) =
+            docker_command(&host, "claude", &[], &with, &[], &[], false).expect("launch wraps");
+        let (_, plain) =
+            docker_command(&host, "claude", &[], &without, &[], &[], false).expect("launch wraps");
+
+        let image_at = mounted.iter().position(|arg| *arg == image).unwrap();
+        let group_at = mounted.iter().position(|arg| arg == "--group-add").unwrap();
+        assert!(group_at < image_at);
+        assert!(mounted
+            .windows(2)
+            .any(|pair| pair[0] == "--group-add" && pair[1] == "0"));
+        assert!(mounted
+            .windows(2)
+            .any(|pair| pair[0] == "-v" && pair[1] == socket));
+        assert!(!plain
+            .iter()
+            .any(|arg| arg == "--group-add" || arg == socket));
+    }
+
     const REPAIR_SCRIPT: &str = "home=\"$1\"; shift; for dir in \"$@\"; do mkdir -p \"$dir\" || exit 1; done && find \"$home\" -xdev -user 0 -exec chown 501:20 {} +";
 
     #[test]
