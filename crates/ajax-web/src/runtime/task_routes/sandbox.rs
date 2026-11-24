@@ -17,12 +17,6 @@ use std::{
 const LOCKED_BY_ENV: &str =
     "Docker sandbox is turned off for every task by AJAX_SANDBOX=off; unset AJAX_SANDBOX to change this task";
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SandboxRequest {
-    enabled: bool,
-}
-
 #[derive(Debug)]
 struct SandboxReply {
     status: u16,
@@ -73,9 +67,19 @@ fn write_reply(
 }
 
 fn parse_request(body: &[u8]) -> Result<bool, SandboxReply> {
-    serde_json::from_slice::<SandboxRequest>(body)
-        .map(|request| request.enabled)
-        .map_err(|error| SandboxReply::error(400, format!("invalid sandbox request: {error}")))
+    let compact: Vec<u8> = body
+        .iter()
+        .copied()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect();
+    match compact.as_slice() {
+        br#"{"enabled":true}"# => Ok(true),
+        br#"{"enabled":false}"# => Ok(false),
+        _ => Err(SandboxReply::error(
+            400,
+            r#"invalid sandbox request: expected {"enabled": true|false}"#,
+        )),
+    }
 }
 
 fn find_task_worktree(registry: &InMemoryRegistry, handle: &str) -> Result<PathBuf, SandboxReply> {
@@ -254,6 +258,7 @@ mod tests {
             400
         );
         assert!(parse_request(br#"{"enabled": false}"#).is_ok_and(|enabled| !enabled));
+        assert!(parse_request(b"{ \"enabled\" : true }\n").is_ok_and(|enabled| enabled));
     }
 
     #[test]
