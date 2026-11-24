@@ -117,6 +117,70 @@ fn selection_json(selection: &ModelSelection) -> Value {
         .collect();
     json!({ "id": selection.model, "params": params })
 }
+
+const EFFORT_PARAM_IDS: [&str; 3] = ["effort", "reasoning_effort", "reasoning"];
+
+fn is_effort_param(id: &str) -> bool {
+    EFFORT_PARAM_IDS.contains(&id)
+}
+
+fn effort_param(model: &CursorModel) -> Option<&CursorParam> {
+    model.parameters.iter().find(|p| is_effort_param(&p.id))
+}
+
+fn find_param<'a>(model: &'a CursorModel, id: &str) -> Option<&'a CursorParam> {
+    let id = if id == "effort" {
+        effort_param(model)?.id.as_str()
+    } else {
+        id
+    };
+    model.parameters.iter().find(|p| p.id == id)
+}
+
+fn option_value<'a>(options: &'a [(String, String)], id: &str) -> Option<&'a str> {
+    options
+        .iter()
+        .find(|(k, _)| k == id)
+        .map(|(_, v)| v.as_str())
+}
+
+fn requested_value<'a>(selection: &'a ModelSelection, param: &CursorParam) -> Option<&'a str> {
+    option_value(&selection.options, &param.id).or_else(|| {
+        if is_effort_param(&param.id) {
+            EFFORT_PARAM_IDS
+                .iter()
+                .find_map(|id| option_value(&selection.options, id))
+        } else {
+            None
+        }
+    })
+}
+
+fn param_accepts(param: &CursorParam, value: &str) -> bool {
+    param.values.iter().any(|(v, _)| v == value)
+}
+
+fn conform_selection(model: &CursorModel, selection: &ModelSelection) -> ModelSelection {
+    let options: Vec<(String, String)> = model
+        .parameters
+        .iter()
+        .filter_map(|param| {
+            let accepted = |value: Option<&str>| {
+                value
+                    .filter(|value| param_accepts(param, value))
+                    .map(str::to_string)
+            };
+            let value = accepted(requested_value(selection, param))
+                .or_else(|| accepted(option_value(&model.defaults, &param.id)))?;
+            Some((param.id.clone(), value))
+        })
+        .collect();
+    ModelSelection {
+        model: selection.model.clone(),
+        options,
+    }
+}
+
 pub struct CursorSdkClient {
     core: RpcClientCore,
     state: Box<Mutex<CursorState>>,
@@ -249,19 +313,16 @@ impl CursorSdkClient {
     }
 
     pub fn set_model(&self, value: &str) -> Result<(), String> {
-        let mut selection =
+        let selection =
             parse_model_selection(value).ok_or_else(|| format!("invalid model: {value}"))?;
-        {
+        let selection = {
             let state = self.lock();
             match state.models.iter().find(|m| m.id == selection.model) {
-                Some(model) if selection.options.is_empty() => {
-                    selection.options = model.defaults.clone();
-                }
-                Some(_) => {}
-                None if state.models.is_empty() => {}
+                Some(model) => conform_selection(model, &selection),
+                None if state.models.is_empty() => selection,
                 None => return Err(format!("unknown model: {}", selection.model)),
             }
-        }
+        };
         self.send_selection(selection)
     }
 
@@ -273,20 +334,19 @@ impl CursorSdkClient {
                 .iter()
                 .find(|m| m.id == state.selection.model)
                 .ok_or_else(|| format!("unsupported Cursor option {id}"))?;
-            let param = model
-                .parameters
-                .iter()
-                .find(|p| p.id == id)
-                .ok_or_else(|| format!("unsupported Cursor option {id}"))?;
-            if !param.values.iter().any(|(v, _)| v == value) {
+            let param =
+                find_param(model, id).ok_or_else(|| format!("unsupported Cursor option {id}"))?;
+            if !param_accepts(param, value) {
                 return Err(format!("unknown {id} value: {value}"));
             }
             let mut selection = state.selection.clone();
-            match selection.options.iter_mut().find(|(k, _)| k == id) {
+            match selection.options.iter_mut().find(|(k, _)| k == &param.id) {
                 Some(entry) => entry.1 = value.to_string(),
-                None => selection.options.push((id.to_string(), value.to_string())),
+                None => selection
+                    .options
+                    .push((param.id.clone(), value.to_string())),
             }
-            selection
+            conform_selection(model, &selection)
         };
         self.send_selection(selection)
     }
@@ -336,9 +396,11 @@ impl CursorSdkClient {
         if let Some(model) = models.iter().find(|m| m.id == selection.model) {
             for param in &model.parameters {
                 let first: Option<String> = param.values.first().map(|(v, _)| v.clone());
-                let sel = selection.options.iter().find(|(k, _)| k == &param.id);
-                let current = sel.map(|(_, v)| v.clone()).or(first).unwrap_or_default();
-                let category = if param.id == "effort" {
+                let current = requested_value(selection, param)
+                    .map(str::to_string)
+                    .or(first)
+                    .unwrap_or_default();
+                let category = if is_effort_param(&param.id) {
                     super::NeutralConfigCategory::ThoughtLevel
                 } else {
                     super::NeutralConfigCategory::Other("model_config".to_string())
@@ -373,10 +435,7 @@ impl CursorSdkClient {
                     model.id.clone()
                 },
                 label: model.name.clone(),
-                efforts: model
-                    .parameters
-                    .iter()
-                    .find(|p| p.id == "effort")
+                efforts: effort_param(model)
                     .map(|p| p.values.iter().map(|(v, _)| v.clone()).collect())
                     .unwrap_or_default(),
                 has_fast: model.parameters.iter().any(|p| p.id == "fast"),

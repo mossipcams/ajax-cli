@@ -415,7 +415,9 @@ function AppContent() {
     pendingPwaResumeRef.current = null;
   });
   const onShellResume = useEffectEvent(async () => {
-    void checkVersion();
+    void checkVersion().then((available) => {
+      if (available) reloadUpdateBanner();
+    });
     await loadCockpit({ trailing: true });
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
