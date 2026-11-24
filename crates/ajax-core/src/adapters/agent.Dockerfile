@@ -32,14 +32,14 @@ ENV GIT_CONFIG_GLOBAL=/etc/ajax-gitconfig
 
 RUN npm install -g \
       @anthropic-ai/claude-code \
-      @anthropic-ai/claude-agent-sdk@0.3.302 \
-      @agentclientprotocol/claude-agent-acp@0.93.0 \
-      @agentclientprotocol/codex-acp@2.2.2 \
-      @openai/codex@0.163.0 \
-      acpx@0.21.1 \
-      @earendil-works/pi-coding-agent@1.3.0 \
-      @cursor/sdk@1.0.37 \
-      opencode-ai@1.19.5 \
+      @anthropic-ai/claude-agent-sdk@0.3.331 \
+      @agentclientprotocol/claude-agent-acp@0.112.0 \
+      @agentclientprotocol/codex-acp@2.12.0 \
+      @openai/codex@0.172.0 \
+      acpx@0.22.0 \
+      @earendil-works/pi-coding-agent@1.6.0 \
+      @cursor/sdk@1.4.2 \
+      opencode-ai@1.19.6 \
       @devcontainers/cli@0.91.0
 RUN mkdir -p /opt/ajax && ln -s "$(npm root -g)/@anthropic-ai/claude-agent-sdk" /opt/ajax/claude-agent-sdk \
  && ln -s "$(npm root -g)/@cursor/sdk" /opt/ajax/cursor-sdk
