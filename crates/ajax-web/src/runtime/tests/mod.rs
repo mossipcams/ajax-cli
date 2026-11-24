@@ -633,6 +633,7 @@ pub(super) fn state_with_bridge_and_task(bridge: TestBridge) -> WebAppState<OkRu
     )
 }
 
+mod heartbeat_loop;
 mod session_transcript_route;
 mod suite_1;
 mod suite_2;
