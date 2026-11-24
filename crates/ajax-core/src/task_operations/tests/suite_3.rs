@@ -205,6 +205,42 @@ fn failed_worktree_removal_keeps_task_and_live_session() {
 }
 
 #[test]
+fn drop_step_failure_with_empty_stderr_reports_step_and_stdout_1554() {
+    let mut context = context_with_cleanable_task();
+    let mut outputs = present_drop_observation_outputs();
+    outputs.push(output(
+        2,
+        "error: failed to remove worktree: permission denied\n",
+        "",
+    ));
+    outputs.extend([
+        output(0, "ajax-web-fix-login\n", ""),
+        output(
+            0,
+            "worktree /repo/web__worktrees/ajax-fix-login\nbranch refs/heads/ajax/fix-login\n\n",
+            "",
+        ),
+        output(0, "ajax/fix-login\n", ""),
+    ]);
+    let mut runner = RecordingQueuedRunner::new(outputs);
+    let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+    let error =
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap_err();
+
+    let CommandError::CommandRun(run_error) = error else {
+        panic!("expected command run error, got {error:?}");
+    };
+    let message = run_error.to_string();
+    assert!(message.contains("remove worktree"), "{message}");
+    assert!(
+        message.contains("error: failed to remove worktree: permission denied"),
+        "{message}"
+    );
+}
+
+#[test]
 fn failed_branch_removal_keeps_task_for_retry() {
     let mut context = context_with_cleanable_task();
     let mut outputs = present_drop_observation_outputs();

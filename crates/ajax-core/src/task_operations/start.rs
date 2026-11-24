@@ -77,7 +77,10 @@ pub fn execute_start_task_operation_with_checkpoint<R: Registry>(
     mut checkpoint: impl FnMut(&CommandContext<R>) -> Result<(), CommandError>,
 ) -> Result<(Vec<CommandOutput>, Task), CommandError> {
     let task = commands::record_new_task(context, request)?;
-    checkpoint(context)?;
+    if let Err(error) = checkpoint(context) {
+        let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
+        return Err(error);
+    }
     let external_outputs =
         match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
             if let Some(step) = commands::start_provisioning_step_for_command(

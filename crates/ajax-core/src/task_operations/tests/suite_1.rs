@@ -229,6 +229,49 @@ fn interrupted_start_preserves_completed_steps_for_recovery() {
 }
 
 #[test]
+fn start_checkpoint_failure_after_record_marks_task_provisioning_failed_1550() {
+    let mut context = context();
+    let request = NewTaskRequest {
+        repo: "web".to_string(),
+        title: "Fix login".to_string(),
+        agent: "codex".to_string(),
+        skip_interactive_agent: false,
+        model: None,
+    };
+    let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
+    let mut runner = RecordingQueuedRunner::new(vec![]);
+    let mut checkpoint_calls = 0;
+
+    let error = execute_start_task_operation_with_checkpoint(
+        &mut context,
+        &mut runner,
+        &request,
+        &plan,
+        true,
+        OpenMode::Attach,
+        |_| {
+            checkpoint_calls += 1;
+            if checkpoint_calls == 1 {
+                Err(CommandError::TaskNotFound("checkpoint".to_string()))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+
+    assert_eq!(error, CommandError::TaskNotFound("checkpoint".to_string()));
+    assert!(runner.commands.is_empty());
+    let task = context.registry.get_task(&intent.id).unwrap();
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+    assert!(task.has_side_flag(SideFlag::NeedsInput));
+    assert_eq!(
+        task.metadata.get("start_failed_step").map(String::as_str),
+        Some("worktree_created")
+    );
+}
+
+#[test]
 fn successful_start_creates_active_task_with_provisioning_receipts() {
     let mut context = context();
     let request = NewTaskRequest {
