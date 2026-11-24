@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
+import taskDetail from "@/fixtures/task-detail.json";
 import { COCKPIT_RELOAD_PARAM, COCKPIT_RELOAD_WATCH_MS } from "@/shared/lib/reloadCockpitDocument";
 
 class StubWebSocket {
@@ -21,6 +22,8 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe("App update banner", () => {
+  let loadedMeta: HTMLMetaElement | null = null;
+
   beforeEach(() => {
     window.location.hash = "";
     document.title = "";
@@ -50,7 +53,16 @@ describe("App update banner", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    loadedMeta?.remove();
+    loadedMeta = null;
   });
+
+  function loadedAppVersion(content: string) {
+    loadedMeta = document.createElement("meta");
+    loadedMeta.name = "ajax-app-version";
+    loadedMeta.content = content;
+    document.head.append(loadedMeta);
+  }
 
   it("surfaces an update banner when the API version changes", async () => {
     vi.useFakeTimers();
@@ -266,6 +278,81 @@ describe("App update banner", () => {
     await vi.waitFor(() => expect(replace).toHaveBeenCalledTimes(2));
     expect(replace).toHaveBeenLastCalledWith(
       `https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=41#/`,
+    );
+    vi.restoreAllMocks();
+  });
+
+  it("shows the update banner when the server is newer than the loaded page (#1679)", async () => {
+    vi.useFakeTimers();
+    loadedAppVersion("v1");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v2" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const banner = screen.getByTestId("update-banner");
+    await vi.advanceTimersByTimeAsync(1);
+
+    await vi.waitFor(() => expect(banner).toBeVisible());
+    expect(banner).toHaveTextContent("Update ready — tap to reload");
+  });
+
+  it("reloads a stale chat page on resume when the server is newer (#1679)", async () => {
+    vi.useFakeTimers();
+    loadedAppVersion("v1");
+    let serverVersion = "v1";
+    const replace = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    vi.stubGlobal("location", {
+      ...window.location,
+      pathname: "/",
+      hash: "#/session/web%2Ffix-login",
+      href: "https://ajax.local:8787/#/session/web%2Ffix-login",
+      origin: "https://ajax.local:8787",
+      replace,
+      reload: vi.fn(),
+    });
+    const chatCockpit = {
+      ...cockpit,
+      cards: cockpit.cards.map((card) =>
+        card.qualified_handle === "web/fix-login" ? { ...card, session_capable: true } : card,
+      ),
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(chatCockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: serverVersion }));
+      if (path.startsWith("/api/tasks/web%2Ffix-login"))
+        return Promise.resolve(jsonResponse({ ...taskDetail, session_capable: true }));
+      if (path.startsWith("/api/session/models"))
+        return Promise.resolve(jsonResponse({ models: [], default: "" }));
+      if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(screen.getByTestId("session-chat")).toBeInTheDocument());
+
+    serverVersion = "v2";
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
+    expect(replace).toHaveBeenCalledWith(
+      `https://ajax.local:8787/?${COCKPIT_RELOAD_PARAM}=1700000000000#/session/web%2Ffix-login`,
     );
     vi.restoreAllMocks();
   });
