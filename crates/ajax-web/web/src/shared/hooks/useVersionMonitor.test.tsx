@@ -117,7 +117,7 @@ describe("useVersionMonitor", () => {
     const { result } = renderHook(() => useVersionMonitor());
 
     await act(async () => {
-      await expect(result.current.checkVersion()).resolves.toBeUndefined();
+      await expect(result.current.checkVersion()).resolves.toBe(false);
     });
     expect(result.current.updateAvailable).toBe(false);
   });
