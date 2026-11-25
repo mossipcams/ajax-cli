@@ -435,3 +435,34 @@
     top: calc(6px + env(safe-area-inset-top));
   }
 }
+
+@media (pointer: coarse) and (max-height: 500px) {
+  html:not(.keyboard-open) .terminal-panel:not(.is-expanded) {
+    margin-top: 0;
+    min-height: 116px;
+  }
+
+  html:not(.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-keys {
+    padding-top: 2px;
+    padding-bottom: 0;
+  }
+
+  html:not(.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+    flex: 1 1 0%;
+    height: auto;
+    min-height: 68px;
+  }
+
+  html:not(.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-host {
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+@media (max-width: 359px) {
+  .terminal-keys .terminal-key {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}
+

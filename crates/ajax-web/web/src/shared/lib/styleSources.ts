@@ -4,11 +4,11 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export const BASELINE = {
-  sourceStylesCssBytes: 143_339,
-  builtAppCssBytes: 119_111,
-  builtAppCssGzipBytes: 19_726,
-  classSelectorLines: 836,
-  hasSelectors: 20,
+  sourceStylesCssBytes: 144_787,
+  builtAppCssBytes: 120_284,
+  builtAppCssGzipBytes: 19_865,
+  classSelectorLines: 837,
+  hasSelectors: 21,
 } as const;
 
 export const STYLES_MANIFEST_REL = "styles.css";
