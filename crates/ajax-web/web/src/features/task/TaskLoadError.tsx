@@ -3,9 +3,11 @@ import { Button } from "@/shared/ui/button";
 
 export default function TaskLoadError({
   message,
+  onBack,
   onRetry,
 }: {
   message: string;
+  onBack: () => void;
   onRetry: () => void;
 }) {
   const retryLatchRef = useRef(false);
@@ -17,6 +19,9 @@ export default function TaskLoadError({
   return (
     <div data-testid="task-load-error">
       <p className="empty">Could not load this task — {message}</p>
+      <Button type="button" variant="secondary" onClick={onBack}>
+        ← Back
+      </Button>
       <Button
         type="button"
         variant="secondary"

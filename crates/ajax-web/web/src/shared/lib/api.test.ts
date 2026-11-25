@@ -78,6 +78,24 @@ describe("fetchCockpit", () => {
   });
 });
 
+describe("fetchDetail #1627", () => {
+  it("surfaces the server error message from a non-ok JSON body", async () => {
+    mockFetch(() => json({ ok: false, error: "task not found: web/fix-login" }, 404));
+    await expect(fetchDetail("web/fix-login")).rejects.toMatchObject({
+      message: "task not found: web/fix-login",
+      status: 404,
+    });
+  });
+
+  it("falls back to HTTP status when the error body is empty", async () => {
+    mockFetch(() => new Response("", { status: 500 }));
+    await expect(fetchDetail("web/x")).rejects.toMatchObject({
+      message: "HTTP 500",
+      status: 500,
+    });
+  });
+});
+
 describe("GET transport options", () => {
   it("sends same-origin credentials for protected Access routes", async () => {
     mockFetch((input) => {

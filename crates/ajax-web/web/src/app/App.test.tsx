@@ -902,7 +902,7 @@ describe("App shell", () => {
     render(<App />);
     setHash("#/t/web%2Ffix-login");
 
-    expect(await screen.findByText("disconnected: HTTP 500")).toBeInTheDocument();
+    expect(await screen.findByText("disconnected: detail unavailable")).toBeInTheDocument();
   });
 
   it("clears detail failure text after a later successful detail load", async () => {
@@ -940,7 +940,7 @@ describe("App shell", () => {
 
     render(<App />);
     setHash("#/t/web%2Ffix-login");
-    expect(await screen.findByText("disconnected: HTTP 500")).toBeInTheDocument();
+    expect(await screen.findByText("disconnected: detail unavailable")).toBeInTheDocument();
     releaseResume(jsonResponse({ ok: true }));
     releaseCockpit(jsonResponse(cockpit));
     await waitFor(() => expect(true).toBe(true));
@@ -950,7 +950,7 @@ describe("App shell", () => {
     setHash("#/t/web%2Ffix-login");
 
     expect(await screen.findByText("connected")).toBeInTheDocument();
-    expect(screen.queryByText("disconnected: HTTP 500")).toBeNull();
+    expect(screen.queryByText("disconnected: detail unavailable")).toBeNull();
   });
 
   it("renders task-load-error when detail fetch rejects and Retry refetches", async () => {
