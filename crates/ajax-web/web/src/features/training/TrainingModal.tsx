@@ -162,13 +162,18 @@ export default function TrainingModal({ open, onOpenChange }: Props) {
           </div>
 
           {error && !status ? (
-            <p
-              role="alert"
-              className="training-banner"
-              data-testid="training-status-error"
-            >
-              {error}
-            </p>
+            <>
+              <p
+                role="alert"
+                className="training-banner"
+                data-testid="training-status-error"
+              >
+                {error}
+              </p>
+              <Button type="button" variant="secondary" onClick={() => void refresh()}>
+                Retry
+              </Button>
+            </>
           ) : null}
 
           {!status && !error ? (

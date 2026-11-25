@@ -279,7 +279,10 @@ export async function fetchCockpit(): Promise<BrowserCockpitView> {
 }
 
 export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {
-  const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}`);
+  const value = await getJsonPreferringErrorBody(
+    `/api/tasks/${encodeURIComponent(handle)}`,
+    GET_REQUEST_TIMEOUT_MS,
+  );
   return assertDetail(value);
 }
 

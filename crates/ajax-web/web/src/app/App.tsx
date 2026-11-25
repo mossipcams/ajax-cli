@@ -679,6 +679,18 @@ function AppContent() {
               ) : (
                 <TaskLoadError
                   message={detail.error?.message ?? "Request failed"}
+                  onBack={() => {
+                    goBack(
+                      resolveTaskWorkspaceHash(handle, {
+                        orchestrationChat,
+                        sessionCapable: detailSessionCapable(
+                          detail.data,
+                          handle,
+                          cockpitRef.current.data,
+                        ),
+                      }),
+                    );
+                  }}
                   onRetry={reload}
                 />
               )}

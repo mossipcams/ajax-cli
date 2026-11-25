@@ -455,6 +455,25 @@ describe("TrainingModal", () => {
     );
   });
 
+  it("offers Retry after the first status fetch fails and renders status once Retry succeeds (#1627)", async () => {
+    statusRoute.body = { ok: false, error: "training host command failed" };
+    statusRoute.status = 500;
+    openModal();
+
+    expect(await screen.findByTestId("training-status-error")).toHaveTextContent(
+      "training host command failed",
+    );
+    const retry = screen.getByRole("button", { name: "Retry" });
+
+    statusRoute.body = idleStatus;
+    statusRoute.status = undefined;
+    fireEvent.click(retry);
+
+    expect(await screen.findByRole("heading", { name: "llama.cpp & profiles" })).toBeTruthy();
+    expect(screen.queryByTestId("training-status-error")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("shows the status fetch error in the model list banner after a later poll fails, then clears it", async () => {
     openModal();
     await screen.findByRole("heading", { name: "llama.cpp & profiles" });
