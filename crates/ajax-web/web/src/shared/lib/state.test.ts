@@ -90,6 +90,16 @@ describe("status ordering (presentation only)", () => {
     ]);
   });
 
+  it("1634 freeze keeps known cards in previous order and places new cards at their normal slot", () => {
+    const prev = ["web/a", "web/b"];
+    const a = card("web/a", "idle");
+    const b = card("web/b", "running");
+    const fresh = card("web/n", "running");
+    expect(
+      sortCards([a, b, fresh], prev, { freeze: true }).map((c) => c.qualified_handle),
+    ).toEqual(["web/a", "web/n", "web/b"]);
+  });
+
   it("moves a card to the idle band when status becomes idle despite previous order", () => {
     const prev = ["web/b", "web/a"];
     const wasActive = card("web/b", "running");

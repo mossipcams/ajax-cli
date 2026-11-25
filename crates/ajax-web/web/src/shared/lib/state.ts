@@ -64,9 +64,10 @@ function sectionRank(status: string): number {
 export function sortCards(
   cards: BrowserTaskCard[],
   previousOrder: readonly string[] = [],
+  { freeze = false }: { freeze?: boolean } = {},
 ): BrowserTaskCard[] {
   const prevIndex = new Map(previousOrder.map((handle, index) => [handle, index]));
-  return cards
+  const sorted = cards
     .slice()
     .sort((a, b) => {
       const bySection = sectionRank(a.status) - sectionRank(b.status);
@@ -88,6 +89,12 @@ export function sortCards(
         a.qualified_handle.localeCompare(b.qualified_handle)
       );
     });
+  if (!freeze) return sorted;
+  const known = sorted
+    .filter((card) => prevIndex.has(card.qualified_handle))
+    .sort((a, b) => (prevIndex.get(a.qualified_handle) ?? 0) - (prevIndex.get(b.qualified_handle) ?? 0));
+  let next = 0;
+  return sorted.map((card) => (prevIndex.has(card.qualified_handle) ? known[next++] : card));
 }
 
 export function isConfirmExpired(entry: { expiresAt: number }, now: number): boolean {

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
   LONG_SESSION_MODELS,
@@ -318,4 +318,41 @@ test("connection Retry recovers when cockpit becomes reachable", async ({ page }
   await banner.getByRole("button", { name: "Retry" }).click();
   await expect(banner).toHaveAttribute("data-state", "connected", { timeout: 10_000 });
   await expect(banner).not.toContainText("unreachable");
+});
+
+async function holdPress(page: Page, target: Locator) {
+  const box = await target.boundingBox();
+  if (!box) throw new Error("press target has no box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+}
+
+test("1612 pressing an inline row action does not press the whole row", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  const row = page.locator('.task-row[data-handle="web/fix-login"]');
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  const rowBackground = () =>
+    row.evaluate(async (el) => {
+      await Promise.all(el.getAnimations().map((animation) => animation.finished));
+      return getComputedStyle(el).backgroundColor;
+    });
+  const pressedBackground = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.background = "var(--paper-high)";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return color;
+  });
+
+  await holdPress(page, row.locator(".task-row-title"));
+  expect(await rowBackground()).toBe(pressedBackground);
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
+
+  await holdPress(page, row.locator(".task-row-actions .action", { hasText: "Review" }));
+  expect(await rowBackground()).not.toBe(pressedBackground);
+  await page.mouse.move(1, 1);
+  await page.mouse.up();
 });

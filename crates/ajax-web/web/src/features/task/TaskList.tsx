@@ -64,6 +64,8 @@ interface TaskRowProps extends ActionProps {
   offset: number;
   onOffset: (handle: string, offset: number) => void;
   onRevealSettled: (handle: string, open: boolean) => void;
+  revealedElsewhere: boolean;
+  onDismissReveals: () => void;
   onOpenTask?: (handle: string) => void;
 }
 
@@ -73,6 +75,8 @@ const TaskRow = memo(function TaskRow({
   offset,
   onOffset,
   onRevealSettled,
+  revealedElsewhere,
+  onDismissReveals,
   onOpenTask,
   onCockpit,
   onResult,
@@ -109,6 +113,10 @@ const TaskRow = memo(function TaskRow({
   const handleTap = () => {
     if (offset > 0) {
       onOffset(card.qualified_handle, 0);
+      return;
+    }
+    if (revealedElsewhere) {
+      onDismissReveals();
       return;
     }
     onOpenTask?.(card.qualified_handle);
@@ -254,6 +262,7 @@ export default function TaskList({
   const [pendingConfirmHandle, setPendingConfirmHandle] = useState<string | null>(null);
   const [nowSecs, setNowSecs] = useState(() => Math.floor(Date.now() / 1000));
   const [stableOrder, setStableOrder] = useState<string[]>([]);
+  const [pointerHeld, setPointerHeld] = useState(false);
   const autoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revealedHandleRef = useRef<string | null>(null);
 
@@ -330,6 +339,11 @@ export default function TaskList({
     scheduleAutoHide(handle);
   }, [pendingConfirmHandle, offsets, scheduleAutoHide]);
 
+  const revealedHandle = useMemo(
+    () => Object.keys(offsets).find((handle) => offsets[handle] > 0) ?? null,
+    [offsets],
+  );
+
   const setOffset = useCallback(
     (handle: string, offset: number) => {
       if (offset <= 0) {
@@ -362,6 +376,45 @@ export default function TaskList({
     [clearAutoHide, scheduleAutoHide],
   );
 
+  const dismissReveals = useCallback(() => {
+    clearAutoHide();
+    revealedHandleRef.current = null;
+    setOffsets((prev) => {
+      if (!Object.values(prev).some((offset) => offset > 0)) return prev;
+      return Object.fromEntries(Object.keys(prev).map((handle) => [handle, 0]));
+    });
+  }, [clearAutoHide]);
+
+  useEffect(() => {
+    if (revealedHandle === null) return;
+    const dismissOnOutsideTap = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element) {
+        if (target.closest(".task-row") && !target.closest(".task-row-actions")) return;
+        if (target.closest(".task-row-wrap")?.getAttribute("data-handle") === revealedHandle) return;
+      }
+      dismissReveals();
+    };
+    document.addEventListener("pointerdown", dismissOnOutsideTap);
+    document.addEventListener("click", dismissOnOutsideTap);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOnOutsideTap);
+      document.removeEventListener("click", dismissOnOutsideTap);
+    };
+  }, [revealedHandle, dismissReveals]);
+
+  const pendingConfirmWasSetRef = useRef(false);
+
+  useEffect(() => {
+    if (pendingConfirmAction !== null) {
+      pendingConfirmWasSetRef.current = true;
+      return;
+    }
+    if (!pendingConfirmWasSetRef.current) return;
+    pendingConfirmWasSetRef.current = false;
+    if (pendingConfirmHandle !== null) setOffset(pendingConfirmHandle, 0);
+  }, [pendingConfirmAction, pendingConfirmHandle, setOffset]);
+
   const handleResult = useCallback(
     (
       message: string,
@@ -384,9 +437,32 @@ export default function TaskList({
   );
 
 
+  const interacting = pointerHeld || revealedHandle !== null || pendingConfirmHandle !== null;
+
+  useEffect(() => {
+    if (!pointerHeld) return;
+    const release = () => setPointerHeld(false);
+    const releaseOnCancel = (event: PointerEvent) => {
+      if (event.pointerType !== "touch") release();
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", releaseOnCancel);
+    window.addEventListener("touchend", release);
+    window.addEventListener("touchcancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", releaseOnCancel);
+      window.removeEventListener("touchend", release);
+      window.removeEventListener("touchcancel", release);
+    };
+  }, [pointerHeld]);
+
   const calm = useMemo(
-    () => sortCards(filterByProject(cockpit.cards, selectedProject), stableOrder),
-    [cockpit.cards, selectedProject, stableOrder],
+    () =>
+      sortCards(filterByProject(cockpit.cards, selectedProject), stableOrder, {
+        freeze: interacting,
+      }),
+    [cockpit.cards, selectedProject, stableOrder, interacting],
   );
 
   useEffect(() => {
@@ -428,6 +504,7 @@ export default function TaskList({
     nowSecs,
     onOffset: setOffset,
     onRevealSettled,
+    onDismissReveals: dismissReveals,
     onOpenTask,
     onCockpit,
     onResult: handleResult,
@@ -441,6 +518,7 @@ export default function TaskList({
       key={card.qualified_handle}
       card={card}
       offset={offsets[card.qualified_handle] ?? 0}
+      revealedElsewhere={revealedHandle !== null && revealedHandle !== card.qualified_handle}
       {...rowProps}
     />
   );
@@ -448,7 +526,11 @@ export default function TaskList({
   return (
     <>
       {calm.length > 0 ? (
-        <section className="tasks" aria-label="Tasks">
+        <section
+          className="tasks"
+          aria-label="Tasks"
+          onPointerDown={() => setPointerHeld(true)}
+        >
           <div className="task-list">
             {needsYou.length > 0 ? <h2 className="task-group-heading">Needs you</h2> : null}
             {needsYou.map(renderRow)}
