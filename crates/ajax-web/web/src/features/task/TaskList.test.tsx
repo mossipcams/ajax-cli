@@ -6,7 +6,7 @@ import { act, render, fireEvent, screen, within, waitFor } from "@testing-librar
 import * as api from "@/shared/lib/api";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
 import TaskList from "./TaskList";
-import type { BrowserCockpitView } from "@/shared/lib/types";
+import type { BrowserCockpitView, BrowserTaskCard } from "@/shared/lib/types";
 
 const stylesSource = readOrderedStylesSource(
   join(dirname(fileURLToPath(import.meta.url)), "../.."),
@@ -82,6 +82,38 @@ const cockpit: BrowserCockpitView = {
     },
   ],
 };
+
+function rowCard(
+  handle: string,
+  status: BrowserTaskCard["status"],
+  lastActivity: number,
+  actions: BrowserTaskCard["actions"] = [],
+): BrowserTaskCard {
+  return {
+    id: handle,
+    qualified_handle: handle,
+    repo: "web",
+    title: handle,
+    status,
+    last_activity_unix_secs: lastActivity,
+    actions,
+  };
+}
+
+function cockpitWith(cards: BrowserTaskCard[]): BrowserCockpitView {
+  return { ...cockpit, cards };
+}
+
+function rowOrder() {
+  return screen
+    .getAllByRole("button")
+    .filter((element) => element.classList.contains("task-row"))
+    .map((row) => row.getAttribute("data-handle"));
+}
+
+const dropAction: BrowserTaskCard["actions"] = [
+  { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
+];
 
 describe("TaskList", () => {
   afterEach(() => {
@@ -209,6 +241,82 @@ describe("TaskList", () => {
     swipeRowLeft(rowB);
     expect(wrapA).not.toHaveClass("is-revealed-wrap");
     expect(wrapB).toHaveClass("is-revealed-wrap");
+  });
+
+  it("1630 closes a revealed row when a pointer goes down outside the row", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    swipeRowLeft(row);
+    expect(wrap).toHaveClass("is-revealed-wrap");
+
+    fireEvent.pointerDown(document.body);
+    expect(wrap).not.toHaveClass("is-revealed-wrap");
+    expect(row).not.toHaveClass("is-revealed");
+    expect(row.style.transform).toBe("translateX(0px)");
+  });
+
+  it("1630 closes a revealed row on a tap outside the row", () => {
+    render(<TaskList cockpit={cockpit} />);
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    swipeRowLeft(row);
+    expect(wrap).toHaveClass("is-revealed-wrap");
+
+    fireEvent.click(screen.getByRole("region", { name: "Tasks" }));
+    expect(wrap).not.toHaveClass("is-revealed-wrap");
+    expect(row).not.toHaveClass("is-revealed");
+  });
+
+  it("1612 tapping another row closes the revealed row instead of opening the tapped task", () => {
+    const onOpenTask = vi.fn();
+    render(<TaskList cockpit={cockpit} onOpenTask={onOpenTask} />);
+    const wrapA = screen.getByTestId("task-row-wrap-web/a");
+    const rowA = screen.getByRole("button", { name: /web\/a/ });
+    const rowB = screen.getByRole("button", { name: /web\/b/ });
+    swipeRowLeft(rowA);
+    expect(wrapA).toHaveClass("is-revealed-wrap");
+
+    fireEvent.click(rowB);
+    expect(wrapA).not.toHaveClass("is-revealed-wrap");
+    expect(rowA).not.toHaveClass("is-revealed");
+    expect(onOpenTask).not.toHaveBeenCalled();
+
+    fireEvent.click(rowB);
+    expect(onOpenTask).toHaveBeenCalledWith("web/b");
+  });
+
+  it("1630 cancelling the inline Drop confirmation closes the revealed row", () => {
+    const dropOnly: BrowserCockpitView = {
+      ...cockpit,
+      cards: [cockpit.cards[0]],
+    };
+    const onResult = vi.fn();
+    const view = (pendingConfirmAction: string | null) => (
+      <TaskList
+        cockpit={dropOnly}
+        onResult={onResult}
+        pendingConfirmAction={pendingConfirmAction}
+      />
+    );
+    const { rerender } = render(view(null));
+    const wrap = screen.getByTestId("task-row-wrap-web/a");
+    const row = screen.getByRole("button", { name: /web\/a/ });
+    swipeRowLeft(row);
+    fireEvent.click(within(wrap).getByRole("button", { name: "Drop" }));
+    expect(onResult).toHaveBeenCalledWith(
+      "Confirm Drop for web/a?",
+      null,
+      false,
+      expect.objectContaining({ pendingConfirm: expect.anything() }),
+    );
+
+    rerender(view("drop"));
+    expect(wrap).toHaveClass("is-revealed-wrap");
+
+    rerender(view(null));
+    expect(wrap).not.toHaveClass("is-revealed-wrap");
+    expect(row).not.toHaveClass("is-revealed");
   });
 
   it("auto-hides a settled reveal after ten seconds", () => {
@@ -656,5 +764,146 @@ describe("TaskList", () => {
     rerender(<TaskList cockpit={cockpit} />);
     expect(screen.getByTestId("task-row-wrap-web/a")).not.toHaveClass("is-revealed-wrap");
     expect(screen.getByRole("button", { name: /web\/a/ })).not.toHaveClass("is-revealed");
+  });
+
+  it("1634 keeps on-screen order while a pointer is held on the list, then re-sorts on release", () => {
+    const { rerender } = render(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "running", NOW_SECS - 60),
+          rowCard("web/y", "idle", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+    const list = screen.getByRole("region", { name: "Tasks" });
+
+    fireEvent.pointerDown(list);
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+
+    fireEvent.pointerUp(list);
+    expect(rowOrder()).toEqual(["web/z", "web/y", "web/x"]);
+  });
+
+  it("1634 keeps a touch scroll frozen through its pointercancel, then re-sorts on touchend", () => {
+    const { rerender } = render(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "running", NOW_SECS - 60),
+          rowCard("web/y", "idle", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+    const list = screen.getByRole("region", { name: "Tasks" });
+
+    fireEvent.pointerDown(list, { pointerType: "touch" });
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+
+    fireEvent.pointerCancel(list, { pointerType: "touch" });
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+
+    fireEvent.touchEnd(list);
+    expect(rowOrder()).toEqual(["web/z", "web/y", "web/x"]);
+  });
+
+  it("1634 keeps on-screen order while a row is swipe-revealed, then re-sorts once it closes", () => {
+    const { rerender } = render(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "running", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "idle", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    swipeRowLeft(screen.getByRole("button", { name: /web\/x/ }));
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+
+    fireEvent.click(screen.getByTestId("task-row-wrap-web/x"));
+    expect(rowOrder()).toEqual(["web/z", "web/y", "web/x"]);
+  });
+
+  it("1634 keeps on-screen order while a Drop confirmation is pending, then re-sorts after it clears", () => {
+    const onResult = vi.fn();
+    const { rerender } = render(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "running", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "idle", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+        onResult={onResult}
+      />,
+    );
+    swipeRowLeft(screen.getByRole("button", { name: /web\/x/ }));
+    fireEvent.click(within(screen.getByTestId("task-row-wrap-web/x")).getByRole("button", { name: "Drop" }));
+    expect(onResult).toHaveBeenCalled();
+    fireEvent.pointerDown(document.body);
+
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+        onResult={onResult}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/x", "web/z", "web/y"]);
+
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+        onResult={onResult}
+        pendingConfirmAction="drop"
+      />,
+    );
+    rerender(
+      <TaskList
+        cockpit={cockpitWith([
+          rowCard("web/x", "idle", NOW_SECS - 60, dropAction),
+          rowCard("web/y", "running", NOW_SECS - 30),
+          rowCard("web/z", "running", NOW_SECS - 120),
+        ])}
+        onResult={onResult}
+        pendingConfirmAction={null}
+      />,
+    );
+    expect(rowOrder()).toEqual(["web/z", "web/y", "web/x"]);
   });
 });
