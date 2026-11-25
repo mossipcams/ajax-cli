@@ -9,6 +9,13 @@
   text-transform: uppercase;
 }
 
+[data-testid="task-load-error"] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
 /* STATUS DOT (TaskList + TaskCard) ---------------------------------------- */
 .status-dot {
   flex: none;

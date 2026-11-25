@@ -174,6 +174,7 @@ export default function TaskWorkspace({
       return (
         <TaskLoadError
           message={detail.error?.message ?? "Task not found"}
+          onBack={onBack}
           onRetry={() => onRetry?.()}
         />
       );
@@ -241,6 +242,7 @@ export default function TaskWorkspace({
   return (
     <TaskLoadError
       message={detail.error?.message ?? "Request failed"}
+      onBack={onBack}
       onRetry={() => onRetry?.()}
     />
   );
