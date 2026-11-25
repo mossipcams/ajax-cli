@@ -208,4 +208,31 @@ describe("ResultPanel", () => {
     expect(onConfirmTimeout).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
   });
+
+  it("moves focus to Cancel when confirm mode starts (1630)", () => {
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  });
+
+  it("calls onCancelConfirm and never onConfirm on Escape in confirm mode (1630)", () => {
+    const onConfirm = vi.fn();
+    const onCancelConfirm = vi.fn();
+    render(
+      <ResultPanel
+        message="Confirm Drop for web/x?"
+        onConfirm={onConfirm}
+        onCancelConfirm={onCancelConfirm}
+        onDismiss={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(screen.getByText("Confirm Drop for web/x?"), { key: "Escape" });
+    expect(onCancelConfirm).toHaveBeenCalledOnce();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });

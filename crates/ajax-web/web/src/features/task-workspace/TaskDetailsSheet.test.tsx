@@ -527,6 +527,43 @@ describe("TaskDetailsSheet polish", () => {
     expect(screen.queryByTestId("task-details-sheet")).not.toBeInTheDocument();
   });
 
+  it("returns focus to the trigger on close (#1630)", () => {
+    const onOpenChange = vi.fn();
+    const sheet = (open: boolean) => (
+      <TaskDetailsSheet
+        open={open}
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+      />
+    );
+    const { rerender } = render(
+      <>
+        <button data-testid="trigger">Task details</button>
+        {sheet(false)}
+      </>,
+    );
+    const button = screen.getByTestId("trigger");
+    button.focus();
+
+    rerender(
+      <>
+        <button data-testid="trigger">Task details</button>
+        {sheet(true)}
+      </>,
+    );
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+
+    rerender(
+      <>
+        <button data-testid="trigger">Task details</button>
+        {sheet(false)}
+      </>,
+    );
+    expect(button).toHaveFocus();
+  });
+
   it("closes when Drop confirm arms via parent onOpenChange", () => {
     const onOpenChange = vi.fn();
     const { rerender } = render(

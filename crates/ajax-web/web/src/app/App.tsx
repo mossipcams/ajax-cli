@@ -44,6 +44,7 @@ import PageStackBelow from "./routes/PageStackBelow";
 import TaskWorkspaceRoute from "./routes/TaskWorkspaceRoute";
 import { PULL_THRESHOLD } from "@/shared/gestures/pullToRefresh";
 import { useHashRoute } from "@/shared/hooks/useHashRoute";
+import { useRouteFocus } from "@/shared/hooks/useRouteFocus";
 import { usePullToRefresh } from "@/shared/hooks/usePullToRefresh";
 import { useVersionMonitor } from "@/shared/hooks/useVersionMonitor";
 import { useCockpitResource } from "@/shared/hooks/useCockpitResource";
@@ -149,6 +150,7 @@ function AppContent() {
   if (route.kind === "dashboard") listRouteRef.current = dashboardHash();
   if (selectedProject) listRouteRef.current = projectHash(selectedProject);
   const crossSlide = usePageCrossSlide();
+  useRouteFocus(route, crossSlide?.active ?? false);
   const crossSlideActive = crossSlide?.active ?? false;
   const leavingRoute = crossSlide?.leavingRoute ?? null;
   const leavingStackHandle =

@@ -175,6 +175,13 @@ describe("ChatScroller integration", () => {
     expect(innerRule).toMatch(/flex-direction:\s*column/);
     expect(innerRule).toMatch(/flex:\s*0 0 auto/);
   });
+
+  it("renders the transcript as a Conversation log (#1632)", () => {
+    mountChat();
+    send({ type: "message", role: "user", text: "Hello transcript", itemId: "u1" });
+    const log = screen.getByRole("log", { name: "Conversation" });
+    expect(log).toContainElement(screen.getByText("Hello transcript"));
+  });
 });
 
 describe("Jump to latest", () => {
