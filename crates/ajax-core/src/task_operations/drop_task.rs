@@ -184,25 +184,24 @@ pub fn execute_drop_task_operation<R: Registry>(
                 let already_missing = output.status_code != 0
                     && drop_cleanup_resource_is_already_missing(&command, &output);
                 if output.status_code != 0 && !already_missing {
-                    let failure_detail =
+                    let failure_text =
                         if output.stderr.trim().is_empty() && !output.stdout.trim().is_empty() {
-                            format!(
-                                "{} exited with status {}: {} (stdout; stderr was empty)",
-                                command.program,
-                                output.status_code,
-                                output.stdout.trim_end()
-                            )
+                            format!("{} (stdout; stderr was empty)", output.stdout.trim_end())
                         } else {
-                            format!(
-                                "{} exited with status {}: {}",
-                                command.program, output.status_code, output.stderr
-                            )
+                            output.stderr.clone()
                         };
+                    let failure_detail = format!(
+                        "{} exited with status {}: {failure_text}",
+                        command.program, output.status_code
+                    );
                     record_drop_step_failed_event(context, qualified_handle, op, &failure_detail)?;
                     let drop_error = CommandError::CommandRun(CommandRunError::NonZeroExit {
                         program: command.program.clone(),
                         status_code: output.status_code,
-                        stderr: output.stderr.clone(),
+                        stderr: format!(
+                            "drop step failed: {}: {failure_text}",
+                            commands::drop_op_label(op)
+                        ),
                         cwd: command.cwd.clone(),
                     });
                     mark_observed_drop_failure(
