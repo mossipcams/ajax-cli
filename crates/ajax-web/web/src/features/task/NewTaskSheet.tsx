@@ -23,6 +23,12 @@ const LAST_AGENT_KEY = "ajax.newTask.agent";
 const LAST_REPO_KEY = "ajax.newTask.repo";
 const LAST_MODEL_KEY_PREFIX = "ajax.newTask.model.";
 
+let draftTitle = "";
+
+export function resetNewTaskDraftTitle() {
+  draftTitle = "";
+}
+
 function readPref(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -62,7 +68,7 @@ export default function NewTaskSheet({
   onOpenTask,
 }: Props) {
   const [repo, setRepo] = useState(() => initialRepo(repos, selectedProject));
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(() => draftTitle);
   const [agent, setAgent] = useState(initialAgent);
   const [step, setStep] = useState<"task" | "model">("task");
   const [model, setModel] = useState("");
@@ -131,6 +137,7 @@ export default function NewTaskSheet({
         ...(model ? { model } : {}),
         ...(orchestrationChat ? { orchestration_chat: true } : {}),
       });
+      if (result.ok) draftTitle = "";
       if (!mountedRef.current) {
         if (result.ok && result.response.cockpit) onCockpit?.(result.response.cockpit);
         return;
@@ -255,6 +262,7 @@ export default function NewTaskSheet({
             placeholder="Short title"
             value={title}
             onChange={(e) => {
+              draftTitle = e.target.value;
               setTitle(e.target.value);
               setError(null);
             }}
@@ -302,7 +310,7 @@ export default function NewTaskSheet({
               {step === "model" ? "Back" : "Cancel"}
             </Button>
             <Button type="submit" variant="default" disabled={submitting}>
-              {step === "model" ? "Start" : "Next"}
+              {submitting ? "Starting…" : step === "model" ? "Start" : "Next"}
             </Button>
             </div>
           </form>

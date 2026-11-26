@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
 import { fetchTaskSandbox, setTaskSandbox, type TaskSandboxState } from "@/shared/lib/api";
 import { useSheetExit } from "@/shared/hooks/useSheetExit";
@@ -69,13 +69,21 @@ export default function TaskDetailsSheet({
   const [restartAgentArmed, setRestartAgentArmed] = useState(false);
   const [sandbox, setSandbox] = useState<TaskSandboxState | null>(null);
   const [sandboxRestartPending, setSandboxRestartPending] = useState(false);
+  const triggerRef = useRef<Element | null>(null);
   const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
 
   useEffect(() => {
-    if (!open) {
-      setFreshSessionArmed(false);
-      setRestartAgentArmed(false);
+    if (open) {
+      triggerRef.current = document.activeElement;
+      return;
     }
+    const trigger = triggerRef.current;
+    triggerRef.current = null;
+    if (trigger && trigger.isConnected) {
+      (trigger as HTMLElement).focus();
+    }
+    setFreshSessionArmed(false);
+    setRestartAgentArmed(false);
   }, [open]);
 
   useEffect(() => {

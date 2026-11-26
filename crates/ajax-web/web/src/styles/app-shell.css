@@ -47,6 +47,7 @@ header .bar h1 {
 
 .settings-link {
   flex: none;
+  position: relative;
   border: none;
   background: rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-sm);
@@ -57,6 +58,12 @@ header .bar h1 {
   text-transform: none;
   color: #c9c9cc;
   transition: background var(--dur-hover) ease, color var(--dur-hover) ease;
+}
+
+.settings-link::after {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -4,7 +4,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
-import NewTaskSheet from "./NewTaskSheet";
+import NewTaskSheet, { resetNewTaskDraftTitle } from "./NewTaskSheet";
 import newTaskSheetSource from "./NewTaskSheet.tsx?raw";
 import * as api from "@/shared/lib/api";
 
@@ -52,7 +52,10 @@ async function goToModelStep() {
   return screen.findByTestId("new-task-model-page");
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+   localStorage.clear();
+   resetNewTaskDraftTitle();
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskSheet", () => {
@@ -576,6 +579,44 @@ describe("NewTaskSheet", () => {
 
     expect(opener).toHaveFocus();
     opener.remove();
+  });
+
+  it("#1630 keeps a typed title when the sheet is dismissed, and clears it after a successful start", async () => {
+    vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const { unmount } = render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Draft me" } });
+    unmount();
+
+    const view = render(<NewTaskSheet repos={repos} />);
+    expect(screen.getByLabelText("Title")).toHaveValue("Draft me");
+
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+    await waitFor(() => expect(api.startTask).toHaveBeenCalled());
+    view.unmount();
+
+    render(<NewTaskSheet repos={repos} />);
+    expect(screen.getByLabelText("Title")).toHaveValue("");
+  });
+
+  it("#1630 reads Starting… and stays disabled while the start request is pending", async () => {
+    let resolveStart!: (value: Awaited<ReturnType<typeof api.startTask>>) => void;
+    const pending = new Promise<Awaited<ReturnType<typeof api.startTask>>>((resolve) => {
+      resolveStart = resolve;
+    });
+    vi.spyOn(api, "startTask").mockReturnValue(pending as never);
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Draft me" } });
+    await goToModelStep();
+    fireEvent.submit(taskForm());
+
+    const button = await screen.findByRole("button", { name: "Starting…" });
+    expect(button).toBeDisabled();
+
+    resolveStart({ ok: true, response: {} });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Starting…" })).not.toBeInTheDocument(),
+    );
   });
 });
 

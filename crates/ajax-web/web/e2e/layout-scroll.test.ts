@@ -562,3 +562,58 @@ test("1623 Paste key is not clipped at 320px portrait", async ({ page }) => {
     expect(key.clipped, `${key.label} label fits its key box`).toBe(false);
   }
 });
+
+test("1630 settings link has a 44px tall tap area on the mobile dashboard", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+   const hitTest = await page
+     .locator(".settings-link")
+     .first()
+     .evaluate((button) => {
+       const box = button.getBoundingClientRect();
+       const centerX = box.left + box.width / 2;
+       const centerY = box.top + box.height / 2;
+       const inside = (el: Element | null) => !!el && (el === button || button.contains(el));
+       const topHit = document.elementFromPoint(centerX, centerY - 22);
+       const bottomHit = document.elementFromPoint(centerX, centerY + 21);
+       return {
+         topHitsButton: inside(topHit),
+         bottomHitsButton: inside(bottomHit),
+         topHit: topHit ? (topHit.getAttribute("data-testid") ?? topHit.tagName) : "none",
+         bottomHit: bottomHit ? (bottomHit.getAttribute("data-testid") ?? bottomHit.tagName) : "none",
+       };
+     });
+
+   expect(hitTest.topHitsButton, `top point hit ${hitTest.topHit}`).toBe(true);
+   expect(hitTest.bottomHitsButton, `bottom point hit ${hitTest.bottomHit}`).toBe(true);
+});
+
+test("inline row Review button keeps a 44px vertical tap area on the mobile dashboard", async ({ page }) => {
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  const hitTest = await page
+    .locator(".task-row-actions .action", { hasText: "Review" })
+    .first()
+    .evaluate((button) => {
+      const box = button.getBoundingClientRect();
+      const centerX = box.left + box.width / 2;
+      const topHit = document.elementFromPoint(centerX, box.top - 8);
+      const bottomHit = document.elementFromPoint(centerX, box.bottom + 8);
+      const inside = (el: Element | null) => !!el && (el === button || button.contains(el));
+      return {
+        width: box.width,
+        height: box.height,
+        topHitsButton: inside(topHit),
+        bottomHitsButton: inside(bottomHit),
+        topHit: topHit ? (topHit.getAttribute("data-testid") ?? topHit.tagName) : "none",
+        bottomHit: bottomHit ? (bottomHit.getAttribute("data-testid") ?? bottomHit.tagName) : "none",
+      };
+    });
+
+  expect(hitTest.topHitsButton, `top point hit ${hitTest.topHit}`).toBe(true);
+  expect(hitTest.bottomHitsButton, `bottom point hit ${hitTest.bottomHit}`).toBe(true);
+});

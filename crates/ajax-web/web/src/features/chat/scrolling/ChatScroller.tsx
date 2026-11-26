@@ -97,7 +97,7 @@ export function ChatScrollThread({ children }: { children: ReactNode }) {
       data-testid="session-thread"
       onScroll={onThreadScroll}
     >
-      <div className="session-thread-inner" data-testid="session-thread-inner">
+      <div className="session-thread-inner" data-testid="session-thread-inner" role="log" aria-label="Conversation">
         {hasEarlier ? (
           <button
             type="button"

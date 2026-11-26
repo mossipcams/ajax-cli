@@ -34,6 +34,9 @@ export default function ResultPanel({
 }: Props) {
   const trimmedOutput = output?.trim() || null;
   const confirmMode = !!onConfirm;
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const cancelConfirmRef = useRef(cancelConfirm);
+  cancelConfirmRef.current = cancelConfirm;
   const undoArmed = !confirmMode && (!!onUndo || !!onCommit);
   const onDismissRef = useRef(onDismiss);
   const onUndoRef = useRef(onUndo);
@@ -52,6 +55,19 @@ export default function ResultPanel({
   useEffect(() => {
     confirmLatchRef.current = false;
   }, [message, confirmMode]);
+
+  useEffect(() => {
+    if (confirmMode) cancelButtonRef.current?.focus();
+  }, [confirmMode]);
+
+  useEffect(() => {
+    if (!confirmMode) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelConfirmRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirmMode]);
 
   useEffect(() => {
     const dismissMs = confirmMode
@@ -112,7 +128,7 @@ export default function ResultPanel({
             <Button type="button" variant="default" onClick={confirm}>
               Confirm
             </Button>
-            <Button type="button" variant="secondary" onClick={cancelConfirm}>
+            <Button type="button" variant="secondary" ref={cancelButtonRef} onClick={cancelConfirm}>
               Cancel
             </Button>
           </>
