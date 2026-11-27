@@ -872,6 +872,7 @@ function AppContent() {
         </div>
         <ConnectionStatus
           state={connection}
+          holdErrors={cockpit.status === "stale"}
           detail={connectionDetail}
           onRetry={() => void loadCockpit({ trailing: true })}
           onReload={reloadConnectionOnce}
