@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, afterEach, type UIEvent } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import * as sessionViewport from "@/shared/lib/sessionViewport";
-import { useChatScroll, PIN_THRESHOLD_PX } from "./useChatScroll";
+import {
+  useChatScroll,
+  PIN_THRESHOLD_PX,
+  resetReadingPositionsForTests,
+} from "./useChatScroll";
 import { stubScrollMetrics } from "./transcriptLayout.testHelpers";
-import { transcriptAtLiveEdge } from "@/shared/lib/sessionViewport";
+import { transcriptAtLiveEdge, transcriptScrollBottom } from "@/shared/lib/sessionViewport";
 import { AUTO_LOAD_COOLDOWN_MS } from "./historyScroll";
 
 describe("useChatScroll", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    resetReadingPositionsForTests();
   });
 
   function mountScroll(
@@ -326,5 +331,79 @@ describe("useChatScroll", () => {
     });
     expect(revealEarlier).toHaveBeenCalledOnce();
     expect(thread.scrollTop).toBe(0);
+  });
+
+  it("restores the reading position after Chat → Diff → Back for the same session (#1629)", () => {
+    const thread = document.createElement("div");
+    thread.className = "session-thread";
+    stubScrollMetrics(thread, 1200, 400, 0);
+    const threadRef = { current: thread };
+    const mountChat = (key: string) =>
+      renderHook(() => useChatScroll({ threadRef, revision: 0, sessionKey: key }));
+
+    const first = mountChat("s1");
+    stubScrollMetrics(thread, 1200, 400, -120);
+    act(() => {
+      first.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    expect(first.result.current.behind).toBe(true);
+    first.unmount();
+
+    stubScrollMetrics(thread, 1400, 400, -120);
+    const second = mountChat("s1");
+
+    expect(
+      Math.abs(transcriptScrollBottom(thread.scrollTop, thread.scrollHeight, thread.clientHeight) - 120),
+    ).toBeLessThanOrEqual(4);
+    expect(second.result.current.behind).toBe(true);
+  });
+
+  it("keeps the live edge on remount when the chat was pinned at unmount (#1629)", () => {
+    const thread = document.createElement("div");
+    thread.className = "session-thread";
+    stubScrollMetrics(thread, 1200, 400, 0);
+    const threadRef = { current: thread };
+    const mountChat = (key: string) =>
+      renderHook(() => useChatScroll({ threadRef, revision: 0, sessionKey: key }));
+
+    const first = mountChat("s1");
+    stubScrollMetrics(thread, 1200, 400, -120);
+    act(() => {
+      first.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    stubScrollMetrics(thread, 1200, 400, 0);
+    act(() => {
+      first.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    first.unmount();
+
+    const second = mountChat("s1");
+
+    expect(thread.scrollTop).toBe(0);
+    expect(second.result.current.behind).toBe(false);
+  });
+
+  it("starts a different session at the live edge after a scrolled-up unmount (#1629)", () => {
+    const thread = document.createElement("div");
+    thread.className = "session-thread";
+    stubScrollMetrics(thread, 1200, 400, 0);
+    const threadRef = { current: thread };
+    const mountChat = (key: string) =>
+      renderHook(({ sessionKey }) => useChatScroll({ threadRef, revision: 0, sessionKey }), {
+        initialProps: { sessionKey: key },
+      });
+
+    const first = mountChat("s1");
+    stubScrollMetrics(thread, 1200, 400, -120);
+    act(() => {
+      first.result.current.onThreadScroll({ currentTarget: thread } as UIEvent<HTMLDivElement>);
+    });
+    first.unmount();
+
+    stubScrollMetrics(thread, 1200, 400, -120);
+    const second = mountChat("s2");
+
+    expect(thread.scrollTop).toBe(0);
+    expect(second.result.current.behind).toBe(false);
   });
 });

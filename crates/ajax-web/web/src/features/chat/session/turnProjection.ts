@@ -305,6 +305,16 @@ export function applyOptimisticPrompt(
   text: string,
   clientMessageId?: string,
 ): ChatSessionReducerState {
+  if (
+    clientMessageId &&
+    state.view.conversation.some(
+      (item) =>
+        item.kind === "prose" &&
+        (item.clientMessageId === clientMessageId || item.id === `u:${clientMessageId}`),
+    )
+  ) {
+    return state;
+  }
   const next = push(state, {
     kind: "prose",
     role: "user",

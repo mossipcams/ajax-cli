@@ -167,6 +167,13 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef.current?.withdrawQueuedPrompt(clientMessageId);
   }, [connected]);
 
+  const showQueuedPrompt = useCallback((text: string, clientMessageId: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !clientMessageId) return;
+    markActivity();
+    dispatch({ type: "prompt", text: trimmed, clientMessageId });
+  }, [markActivity]);
+
   const sendCancel = useCallback((keepQueue = false) => {
     transportRef.current?.sendCancel(keepQueue);
   }, []);
@@ -235,6 +242,7 @@ export function useChatSession({ handle, detail, onMutated, onConfigError }: Opt
     transportRef: transportRef as MutableRefObject<WebSessionTransport | undefined>,
     sendPrompt,
     withdrawQueuedPrompt,
+    showQueuedPrompt,
     sendCancel,
     sendClear,
     retryRestore,

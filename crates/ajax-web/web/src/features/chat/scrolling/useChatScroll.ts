@@ -11,6 +11,7 @@ import {
   SESSION_PIN_THRESHOLD_PX,
   pinTranscriptToLiveEdge,
   transcriptAtLiveEdge,
+  transcriptScrollBottom,
 } from "@/shared/lib/sessionViewport";
 import {
   anchorIsStale,
@@ -19,6 +20,12 @@ import {
 } from "./historyScroll";
 
 export const PIN_THRESHOLD_PX = SESSION_PIN_THRESHOLD_PX;
+
+const readingPositions = new Map<string, number>();
+
+export function resetReadingPositionsForTests(): void {
+  readingPositions.clear();
+}
 
 export interface HistoryScrollControl {
   hasEarlier: boolean;
@@ -49,6 +56,8 @@ export function useChatScroll({
   const contentScrollHeightRef = useRef(0);
   const autoLoadRef = useRef({ armed: true, lastLoadAt: 0 });
   const prevWindowGenerationRef = useRef(0);
+  const pendingReadingRef = useRef<number | null>(null);
+  const settlingAfterRestoreRef = useRef(false);
   const pendingTopRestoreRef = useRef<{
     scrollTop: number;
     scrollHeight: number;
@@ -61,11 +70,34 @@ export function useChatScroll({
   revisionRef.current = revision;
   pinnedRef.current = pinned;
 
+  const applyPendingReadingRestore = useCallback((node: HTMLDivElement) => {
+    const distance = pendingReadingRef.current;
+    if (distance === null) return;
+    const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (maxScroll < distance) return;
+    pendingReadingRef.current = null;
+    ignoreScrollIntentRef.current = true;
+    node.scrollTop = -distance;
+    ignoreScrollIntentRef.current = false;
+    settlingAfterRestoreRef.current = true;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        settlingAfterRestoreRef.current = false;
+      }),
+    );
+    const atLive = transcriptAtLiveEdge(node, PIN_THRESHOLD_PX);
+    pinnedRef.current = atLive;
+    setPinned(atLive);
+    setBehind(!atLive);
+  }, []);
+
   const restoreLiveEdge = useCallback(() => {
+    readingPositions.delete(sessionKey);
+    pendingReadingRef.current = null;
     setPinned(true);
     setBehind(false);
     pinnedRef.current = true;
-  }, []);
+  }, [sessionKey]);
 
   const scrollToLiveEdge = useCallback((node: HTMLDivElement) => {
     ignoreScrollIntentRef.current = true;
@@ -76,11 +108,13 @@ export function useChatScroll({
   const scrollToLatest = useCallback(() => {
     const node = threadRef.current;
     if (!node) return;
+    readingPositions.delete(sessionKey);
+    pendingReadingRef.current = null;
     scrollToLiveEdge(node);
     setPinned(true);
     setBehind(false);
     pinnedRef.current = true;
-  }, [scrollToLiveEdge, threadRef]);
+  }, [scrollToLiveEdge, sessionKey, threadRef]);
 
   const loadEarlier = useCallback(() => {
     const node = threadRef.current;
@@ -143,17 +177,30 @@ export function useChatScroll({
     const node = threadRef.current;
     if (!node || prevSessionKeyRef.current === sessionKey) return;
 
+    const isMount = prevSessionKeyRef.current === null;
+    const savedDistance = isMount ? readingPositions.get(sessionKey) : undefined;
     prevSessionKeyRef.current = sessionKey;
-    setPinned(true);
-    setBehind(false);
-    pinnedRef.current = true;
     seenRevisionRef.current = revisionRef.current;
     contentScrollHeightRef.current = node.scrollHeight;
     autoLoadRef.current = { armed: true, lastLoadAt: 0 };
     prevWindowGenerationRef.current = historyScroll?.windowGeneration ?? 0;
     pendingTopRestoreRef.current = null;
-    scrollToLiveEdge(node);
-  }, [sessionKey, scrollToLiveEdge, threadRef]);
+    pendingReadingRef.current = null;
+
+    if (savedDistance === undefined || node.clientHeight <= 0) {
+      setPinned(true);
+      setBehind(false);
+      pinnedRef.current = true;
+      scrollToLiveEdge(node);
+      return;
+    }
+
+    pendingReadingRef.current = savedDistance;
+    pinnedRef.current = false;
+    setPinned(false);
+    setBehind(true);
+    applyPendingReadingRestore(node);
+  }, [sessionKey, scrollToLiveEdge, applyPendingReadingRestore, threadRef]);
 
   useLayoutEffect(() => {
     const node = threadRef.current;
@@ -177,6 +224,10 @@ export function useChatScroll({
     const observer = new MutationObserver(() => {
       if (layoutTransitionRef?.current) return;
       if (pendingTopRestoreRef.current) return;
+      if (pendingReadingRef.current !== null) {
+        applyPendingReadingRestore(node);
+        return;
+      }
       if (pinnedRef.current) {
         pinTranscriptToLiveEdge(node);
         contentScrollHeightRef.current = node.scrollHeight;
@@ -185,7 +236,7 @@ export function useChatScroll({
     });
     observer.observe(node, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
-  }, [sessionKey, threadRef, layoutTransitionRef]);
+  }, [sessionKey, threadRef, layoutTransitionRef, applyPendingReadingRestore]);
 
   useEffect(() => {
     const node = threadRef.current;
@@ -199,6 +250,11 @@ export function useChatScroll({
       lastTop = top;
       if (layoutTransitionRef?.current) return;
       if (pendingTopRestoreRef.current) return;
+      if (pendingReadingRef.current !== null) {
+        applyPendingReadingRestore(node);
+        return;
+      }
+      if (settlingAfterRestoreRef.current) return;
       if (pinnedRef.current) {
         pinTranscriptToLiveEdge(node);
         contentScrollHeightRef.current = node.scrollHeight;
@@ -208,12 +264,24 @@ export function useChatScroll({
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [sessionKey, threadRef, layoutTransitionRef]);
+  }, [sessionKey, threadRef, layoutTransitionRef, applyPendingReadingRestore]);
 
   function onThreadScroll(event: UIEvent<HTMLDivElement>) {
     if (ignoreScrollIntentRef.current || layoutTransitionRef?.current) return;
     const node = event.currentTarget;
     const atLive = transcriptAtLiveEdge(node, PIN_THRESHOLD_PX);
+    if (pendingReadingRef.current !== null) {
+      if (atLive) return;
+      pendingReadingRef.current = null;
+    }
+    if (atLive) {
+      readingPositions.delete(sessionKey);
+    } else {
+      readingPositions.set(
+        sessionKey,
+        transcriptScrollBottom(node.scrollTop, node.scrollHeight, node.clientHeight),
+      );
+    }
     pinnedRef.current = atLive;
     setPinned(atLive);
     setBehind(!atLive);

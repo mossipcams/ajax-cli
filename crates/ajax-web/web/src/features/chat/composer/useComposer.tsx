@@ -67,6 +67,7 @@ export type ComposerCommands = {
     clientMessageId?: string,
   ) => string;
   withdrawQueuedPrompt: (clientMessageId: string) => void;
+  showQueuedPrompt: (text: string, clientMessageId: string) => void;
   sendCancel: (keepQueue?: boolean) => void;
   sendClear: () => void;
   markStopped: () => void;
@@ -154,6 +155,7 @@ export function ComposerProvider({
   scrollToLatest,
   sendPrompt,
   withdrawQueuedPrompt,
+  showQueuedPrompt,
   sendCancel,
   sendClear,
   markStopped,
@@ -491,8 +493,13 @@ export function ComposerProvider({
     for (const intent of intents) {
       if (intent.type === "mark_stopped") markStopped();
     }
+    const queuedText = composerQueuedText(composerStateRef.current);
+    const queuedId = composerQueuedClientMessageId(composerStateRef.current);
+    if (queuedText !== null && composerQueuedText(state) === null && queuedId !== undefined) {
+      showQueuedPrompt(queuedText, queuedId);
+    }
     setComposerState(state);
-  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, turnEndRevision]);
+  }, [busy, connected, everOpened, markStopped, restoreIdleCheck, showQueuedPrompt, turnEndRevision]);
 
   const editQueued = useCallback(() => {
     const priorId = composerQueuedClientMessageId(composerState);
