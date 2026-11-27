@@ -57,11 +57,13 @@ export default function TurnActivity({
   const { preference: sessionPreference, setPreference: setSessionPreference } =
     useActivityDisclosurePreference();
   const [turnOverride, setTurnOverride] = useState<boolean | null>(null);
+  const [heldOpen, setHeldOpen] = useState(false);
+  if (attention && !heldOpen) setHeldOpen(true);
   if (items.length === 0) return null;
 
   const failed = items.some((item) => item.kind === "tool" && item.call.status === "failed");
   const expanded =
-    turnOverride ?? (failed || attention || (sessionPreference ?? false));
+    turnOverride ?? (failed || attention || heldOpen || (sessionPreference ?? false));
   const visibleItems = expanded ? items : [];
 
   return (

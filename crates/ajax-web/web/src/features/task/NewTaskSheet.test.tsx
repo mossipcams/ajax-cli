@@ -165,6 +165,20 @@ describe("NewTaskSheet", () => {
     vi.unstubAllGlobals();
   });
 
+  it("#1612 keeps the sheet at least as tall as the task step on the model step", async () => {
+    stubCatalog();
+    render(<NewTaskSheet repos={repos} />);
+    fireEvent.input(screen.getByLabelText("Title"), { target: { value: "Fix login" } });
+    Object.defineProperty(taskForm(), "offsetHeight", { configurable: true, value: 412 });
+
+    await goToModelStep();
+
+    expect(taskForm().style.minHeight).toBe("412px");
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(taskForm().style.minHeight).toBe("");
+    vi.unstubAllGlobals();
+  });
+
   it("starts on the harness default and submits the picked model", async () => {
     stubCatalog();
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
