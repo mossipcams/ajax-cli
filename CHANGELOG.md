@@ -2,6 +2,28 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.61.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.61.0...ajax-cli-v0.61.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **cli:** lifecycle merge guard ([#1694](https://github.com/mossipcams/ajax-cli/issues/1694)) ([c19daa5](https://github.com/mossipcams/ajax-cli/commit/c19daa5ba542e3c677650c344b0cafb647c701ca))
+* **core:** mark failed start checkpoints and name failed drop steps ([#1686](https://github.com/mossipcams/ajax-cli/issues/1686)) ([b3654fd](https://github.com/mossipcams/ajax-cli/commit/b3654fdb39ee4968cc78d9a3b7209794533abd80))
+* **deps:** update agent sdks ([#1681](https://github.com/mossipcams/ajax-cli/issues/1681)) ([a84aa20](https://github.com/mossipcams/ajax-cli/commit/a84aa2035a4f8128b2406e276d937c09b74c31b9))
+* **web:** banner button labels ([#1697](https://github.com/mossipcams/ajax-cli/issues/1697)) ([cdfce80](https://github.com/mossipcams/ajax-cli/commit/cdfce80f246644992e31bc1d94f3144f47efe951))
+* **web:** chat scroll jumps ([#1691](https://github.com/mossipcams/ajax-cli/issues/1691)) ([92afb4c](https://github.com/mossipcams/ajax-cli/commit/92afb4cb533b7df206ca0923e8a40fb1aaf3129d))
+* **web:** connection banner hold ([#1693](https://github.com/mossipcams/ajax-cli/issues/1693)) ([b284624](https://github.com/mossipcams/ajax-cli/commit/b2846248a4da70c0934e2cfa99be3b727d9d9358))
+* **web:** dashboard defects ([#1685](https://github.com/mossipcams/ajax-cli/issues/1685)) ([776d6cc](https://github.com/mossipcams/ajax-cli/commit/776d6cc9f3e52be29f4ce82968bf2b0acb1d4b9a))
+* **web:** give load errors a way forward ([#1688](https://github.com/mossipcams/ajax-cli/issues/1688)) ([9ce4989](https://github.com/mossipcams/ajax-cli/commit/9ce4989034f823bb72d40cd7c6b1223fd9a190f6))
+* **web:** keep dashboard rows still under the finger ([#1689](https://github.com/mossipcams/ajax-cli/issues/1689)) ([61a2240](https://github.com/mossipcams/ajax-cli/commit/61a2240a59b13ac38c24666070d4650862151d76))
+* **web:** keep focus and keyboard paths intact ([#1690](https://github.com/mossipcams/ajax-cli/issues/1690)) ([76a8cdf](https://github.com/mossipcams/ajax-cli/commit/76a8cdf4b5b1ff8d86bafbaaf0396f649be5fed1))
+* **web:** keep landscape terminal keys reachable ([#1687](https://github.com/mossipcams/ajax-cli/issues/1687)) ([14047cb](https://github.com/mossipcams/ajax-cli/commit/14047cbf3761179a420649504890439c3b8b79eb))
+* **web:** map Cursor effort params per model ([#1684](https://github.com/mossipcams/ajax-cli/issues/1684)) ([7825666](https://github.com/mossipcams/ajax-cli/commit/78256664cd7b723517084a0ccac8b5ae41eaf017))
+* **web:** pi handshake flake ([#1695](https://github.com/mossipcams/ajax-cli/issues/1695)) ([256da96](https://github.com/mossipcams/ajax-cli/commit/256da961994390e10eced9737245a8ea9434fb32))
+* **web:** reload stale pwa on resume ([#1680](https://github.com/mossipcams/ajax-cli/issues/1680)) ([1525617](https://github.com/mossipcams/ajax-cli/commit/1525617e4247f2ff90562949ff9a1639205e2f55))
+* **web:** sheet motion ([#1692](https://github.com/mossipcams/ajax-cli/issues/1692)) ([2f7e480](https://github.com/mossipcams/ajax-cli/commit/2f7e48098bc53d0da4800e6e899db5700303305e))
+* **web:** toast motion ([#1696](https://github.com/mossipcams/ajax-cli/issues/1696)) ([9461563](https://github.com/mossipcams/ajax-cli/commit/9461563e713122afc0d023d0ae94416a0c15a2a5))
+
 ## [0.61.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.60.0...ajax-cli-v0.61.0) (2026-11-24)
 
 
