@@ -103,4 +103,33 @@ describe("ChatSurface interruption", () => {
     expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
     expect(transport.sendPrompt).not.toHaveBeenCalled();
   });
+
+  it("shows a released queued follow-up as a pending turn without re-sending or duplicating the echo (#1612)", () => {
+    mountChat();
+    typeComposer("first");
+    send(tool("t1"));
+    typeComposer("next");
+    expect(screen.getByTestId("session-queued")).toHaveTextContent("next");
+    const clientMessageId = transport.sendPrompt.mock.results[1]?.value;
+    expect(clientMessageId).toBe("cmid-1");
+
+    act(() => {
+      chatH.emit?.({ type: "turn_end", stopReason: "end_turn" });
+    });
+    flushRaf();
+
+    expect(screen.queryByTestId("session-queued")).not.toBeInTheDocument();
+    const nextTurns = () =>
+      screen
+        .getAllByTestId("session-message-user")
+        .filter((turn) => turn.textContent?.includes("next"));
+    expect(nextTurns()).toHaveLength(1);
+    expect(nextTurns()[0]).toHaveTextContent("Sending…");
+    expect(transport.sendPrompt).toHaveBeenCalledTimes(2);
+
+    send({ type: "user_message", itemId: `u:${clientMessageId}`, text: "next" });
+
+    expect(nextTurns()).toHaveLength(1);
+    expect(transport.sendPrompt).toHaveBeenCalledTimes(2);
+  });
 });

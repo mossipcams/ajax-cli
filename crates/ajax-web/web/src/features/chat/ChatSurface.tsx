@@ -76,6 +76,7 @@ function ChatSessionBody({
   activityAgeMs,
   sendPrompt,
   withdrawQueuedPrompt,
+  showQueuedPrompt,
   sendCancel,
   sendClear,
   retryRestore,
@@ -106,6 +107,7 @@ function ChatSessionBody({
   activityAgeMs: number;
   sendPrompt: ReturnType<typeof useChatSession>["sendPrompt"];
   withdrawQueuedPrompt: ReturnType<typeof useChatSession>["withdrawQueuedPrompt"];
+  showQueuedPrompt: ReturnType<typeof useChatSession>["showQueuedPrompt"];
   sendCancel: ReturnType<typeof useChatSession>["sendCancel"];
   sendClear: ReturnType<typeof useChatSession>["sendClear"];
   retryRestore: ReturnType<typeof useChatSession>["retryRestore"];
@@ -192,6 +194,7 @@ function ChatSessionBody({
           scrollToLatest={scrollToLatest}
           sendPrompt={sendPrompt}
           withdrawQueuedPrompt={withdrawQueuedPrompt}
+          showQueuedPrompt={showQueuedPrompt}
           sendCancel={sendCancel}
           sendClear={sendClear}
           markStopped={markStopped}
@@ -305,6 +308,7 @@ export default function ChatSurface({
     sessionConfigOptions,
     sendPrompt,
     withdrawQueuedPrompt,
+    showQueuedPrompt,
     sendCancel,
     sendClear,
     retryRestore,
@@ -357,6 +361,7 @@ export default function ChatSurface({
         activityAgeMs={activityAgeMs}
         sendPrompt={sendPrompt}
         withdrawQueuedPrompt={withdrawQueuedPrompt}
+        showQueuedPrompt={showQueuedPrompt}
         sendCancel={sendCancel}
         sendClear={sendClear}
         retryRestore={retryRestore}

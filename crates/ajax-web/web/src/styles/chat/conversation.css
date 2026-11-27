@@ -80,6 +80,20 @@
   margin-left: auto;
 }
 
+.session-said[data-pending="true"] {
+  position: relative;
+}
+
+.session-said[data-pending="true"] > .session-time {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+}
+
+.session-said[data-pending="true"] + .session-message-actions .session-time {
+  visibility: hidden;
+}
+
 /* Live tail caret: status only — withheld prose stays hidden. Reuses the head's
    session-live-pulse; reduced-motion keeps a static ring (see status.css). */
 .session-reply-pending {
