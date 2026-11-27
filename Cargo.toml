@@ -31,7 +31,7 @@ nix = { version = "0.32", features = ["fs", "poll", "process", "signal", "term"]
 proptest = "1.11.0"
 ratatui = { version = "0.30", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
-rstest = "0.28.0"
+rstest = "0.29.0"
 shuttle = "0.9"
 rusqlite = "0.43"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
