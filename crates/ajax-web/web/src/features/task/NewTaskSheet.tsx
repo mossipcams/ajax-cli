@@ -123,6 +123,8 @@ export default function NewTaskSheet({
     }
     setError(null);
     if (step === "task") {
+      const card = cardRef.current;
+      if (card) card.style.minHeight = `${card.offsetHeight}px`;
       setModel("");
       setStep("model");
       return;
@@ -305,7 +307,12 @@ export default function NewTaskSheet({
             <Button
               type="button"
               variant="secondary"
-              onClick={() => (step === "model" ? setStep("task") : requestClose())}
+              onClick={() => {
+                if (step === "model") {
+                  if (cardRef.current) cardRef.current.style.minHeight = "";
+                  setStep("task");
+                } else requestClose();
+              }}
             >
               {step === "model" ? "Back" : "Cancel"}
             </Button>

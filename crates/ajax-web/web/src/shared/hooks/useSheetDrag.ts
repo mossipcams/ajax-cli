@@ -10,6 +10,7 @@ import {
 export interface SheetDragOptions {
   onDismiss: () => void;
   target: RefObject<HTMLElement | null>;
+  enabled?: boolean;
 }
 
 function readTouchY(event: Event): number | null {
@@ -28,10 +29,11 @@ export function useSheetDrag(
 ): void {
   const optsRef = useRef(options);
   optsRef.current = options;
+  const enabled = options.enabled ?? true;
 
   useEffect(() => {
     const node = ref.current;
-    if (!node) return;
+    if (!enabled || !node) return;
 
     let active = false;
     let startY = 0;
@@ -105,5 +107,5 @@ export function useSheetDrag(
       node.removeEventListener("touchend", onEnd);
       node.removeEventListener("touchcancel", onEnd);
     };
-  }, [ref]);
+  }, [ref, enabled]);
 }

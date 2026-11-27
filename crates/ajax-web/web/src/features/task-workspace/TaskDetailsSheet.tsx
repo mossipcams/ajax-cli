@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BrowserCockpitView, BrowserTaskDetail, WebAction } from "@/shared/lib/types";
 import { fetchTaskSandbox, setTaskSandbox, type TaskSandboxState } from "@/shared/lib/api";
+import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
 import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -71,6 +72,8 @@ export default function TaskDetailsSheet({
   const [sandboxRestartPending, setSandboxRestartPending] = useState(false);
   const triggerRef = useRef<Element | null>(null);
   const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
+  const headerRef = useRef<HTMLDivElement>(null);
+  useSheetDrag(headerRef, { onDismiss: close, target: cardRef, enabled: open });
 
   useEffect(() => {
     if (open) {
@@ -178,7 +181,7 @@ export default function TaskDetailsSheet({
               aria-modal="true"
               aria-label="Task details"
             >
-              <div className="session-sheet-header">
+              <div className="session-sheet-header" ref={headerRef}>
                 <SheetTitle asChild>
                   <h2>Task details</h2>
                 </SheetTitle>

@@ -693,3 +693,71 @@ describe("TaskDetailsSheet docker sandbox switch", () => {
     expect(screen.queryByTestId("task-sandbox-restart-hint")).not.toBeInTheDocument();
   });
 });
+
+describe("TaskDetailsSheet drag dismiss (#1616)", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ models: [] }),
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const touch = (type: string, clientY: number, timeStamp = 0) => {
+    const event = new Event(type, { bubbles: true });
+    Object.defineProperty(event, "touches", { value: [{ clientY }] });
+    Object.defineProperty(event, "timeStamp", { value: timeStamp });
+    return event;
+  };
+
+  function header(): HTMLElement {
+    return screen.getByRole("heading", { name: "Task details" });
+  }
+
+  it("dismisses when the header is dragged down past the threshold (#1616)", () => {
+    const onOpenChange = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+      />,
+    );
+    const grab = header();
+
+    grab.dispatchEvent(touch("touchstart", 0));
+    grab.dispatchEvent(touch("touchmove", 300));
+    grab.dispatchEvent(touch("touchend", 0));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("does not dismiss on a short drag that releases below the threshold (#1616)", () => {
+    const onOpenChange = vi.fn();
+    render(
+      <TaskDetailsSheet
+        open
+        onOpenChange={onOpenChange}
+        panelId="task-panel"
+        mode="chat"
+        detail={detail()}
+      />,
+    );
+    const grab = header();
+
+    grab.dispatchEvent(touch("touchstart", 0, 0));
+    grab.dispatchEvent(touch("touchmove", 20, 400));
+    grab.dispatchEvent(touch("touchend", 20, 800));
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("task-details-sheet")).toBeInTheDocument();
+  });
+});

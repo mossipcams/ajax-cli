@@ -544,6 +544,8 @@ function AppContent() {
     const kind = route.kind;
     if (kind === "task" && route.handle) {
       document.title = `${route.handle} — Ajax`;
+    } else if (kind === "diff" && route.handle) {
+      document.title = `${route.handle} diff — Ajax`;
     } else if (kind === "session" && route.handle) {
       document.title = `${route.handle} — Ajax`;
     } else if (kind === "session") {

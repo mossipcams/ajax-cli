@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useSheetDrag } from "@/shared/hooks/useSheetDrag";
 import { useSheetExit } from "@/shared/hooks/useSheetExit";
 import FullscreenLayer from "@/shared/ui/FullscreenLayer";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
@@ -233,6 +235,8 @@ export default function SessionModelControls({
   onApply,
 }: SessionModelSheetProps) {
   const { scrimRef, cardRef, requestClose: close } = useSheetExit(() => onOpenChange(false));
+  const headerRef = useRef<HTMLDivElement>(null);
+  useSheetDrag(headerRef, { onDismiss: close, target: cardRef, enabled: open });
 
   if (!open) return null;
 
@@ -262,7 +266,7 @@ export default function SessionModelControls({
               aria-modal="true"
               aria-label="Choose model"
             >
-              <div className="session-sheet-header">
+              <div className="session-sheet-header" ref={headerRef}>
                 <SheetTitle asChild>
                   <h2>Model</h2>
                 </SheetTitle>

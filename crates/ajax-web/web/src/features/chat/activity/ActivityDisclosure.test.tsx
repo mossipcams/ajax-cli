@@ -201,6 +201,24 @@ describe("ActivityDisclosure", () => {
     expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
   });
 
+  it("#1612 stays open after the approval is answered", () => {
+    const pending: ConversationItem[] = [
+      userProse("u1", "Ship it"),
+      tool("e1"),
+      { kind: "permission", id: "q1", requestId: "7", title: "Run tests?", resolved: false },
+    ];
+    const view = render(<Conversation items={pending} busy />);
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+
+    const answered: ConversationItem[] = pending.map((item) =>
+      item.kind === "permission" ? { ...item, resolved: true } : item,
+    );
+    view.rerender(<Conversation items={answered} busy />);
+
+    expect(screen.getByTestId("session-turn-work")).toHaveAttribute("data-expanded", "true");
+  });
+
   it("keeps tool bodies collapsed until the row is opened", () => {
     const items: ConversationItem[] = [
       userProse("u1", "Change the port"),

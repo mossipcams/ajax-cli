@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { SessionModelPickers, hasSessionModelControls } from "./SessionModelControls";
+import SessionModelControls, { SessionModelPickers, hasSessionModelControls } from "./SessionModelControls";
 
 const BRIDGE_OPTIONS = [
   {
@@ -186,5 +186,61 @@ describe("SessionModelControls", () => {
     expect(fastOn.getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
     fireEvent.click(fastOn.getByRole("radio", { name: "Off" }));
     expect(onApply).toHaveBeenCalledWith("fast", "false");
+  });
+});
+
+describe("SessionModelControls drag dismiss (#1616)", () => {
+  const touch = (type: string, clientY: number, timeStamp = 0) => {
+    const event = new Event(type, { bubbles: true });
+    Object.defineProperty(event, "touches", { value: [{ clientY }] });
+    Object.defineProperty(event, "timeStamp", { value: timeStamp });
+    return event;
+  };
+
+  function header(): HTMLElement {
+    return screen.getByRole("heading", { name: "Model" });
+  }
+
+  it("dismisses when the header is dragged down past the threshold (#1616)", () => {
+    const onOpenChange = vi.fn();
+    render(
+      <SessionModelControls
+        open
+        onOpenChange={onOpenChange}
+        panelId="model-panel"
+        confirmedModel="grok-4.6"
+        options={BRIDGE_OPTIONS}
+        onApply={vi.fn()}
+      />,
+    );
+    const grab = header();
+
+    grab.dispatchEvent(touch("touchstart", 0));
+    grab.dispatchEvent(touch("touchmove", 300));
+    grab.dispatchEvent(touch("touchend", 0));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("does not dismiss on a short drag that releases below the threshold (#1616)", () => {
+    const onOpenChange = vi.fn();
+    render(
+      <SessionModelControls
+        open
+        onOpenChange={onOpenChange}
+        panelId="model-panel"
+        confirmedModel="grok-4.6"
+        options={BRIDGE_OPTIONS}
+        onApply={vi.fn()}
+      />,
+    );
+    const grab = header();
+
+    grab.dispatchEvent(touch("touchstart", 0, 0));
+    grab.dispatchEvent(touch("touchmove", 20, 400));
+    grab.dispatchEvent(touch("touchend", 20, 800));
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByTestId("model-switch-sheet")).toBeInTheDocument();
   });
 });
