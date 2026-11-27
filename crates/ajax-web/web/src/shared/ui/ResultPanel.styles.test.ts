@@ -15,4 +15,13 @@ describe("ResultPanel error toast styles (#1602)", () => {
     expect(background).toContain("var(--paper-raised)");
     expect(background).toContain(ERROR_TINT);
   });
+
+  it("#1612 enters with a centred rise", () => {
+    const block = css.match(/\.result-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(block).toContain("animation: toast-rise");
+
+    const keyframes = css.match(/@keyframes toast-rise\s*\{([\s\S]*?)\}\s*\}/)?.[1] ?? "";
+    expect(keyframes).toContain("translate(-50%, 8px)");
+    expect(keyframes).toContain("translate(-50%, 0)");
+  });
 });
