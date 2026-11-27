@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { join } from "node:path";
-import { render, fireEvent, screen } from "@testing-library/react";
+import { render, fireEvent, screen, act } from "@testing-library/react";
 import { readOrderedStylesSource } from "@/shared/lib/styleSources";
-import ConnectionStatus from "./ConnectionStatus";
+import ConnectionStatus, { ERROR_HOLD_MS } from "./ConnectionStatus";
 import connectionStatusSource from "./ConnectionStatus.tsx?raw";
 
 function loadStylesSource(): string {
@@ -138,4 +138,75 @@ describe("ConnectionStatus", () => {
       expect(rule).not.toMatch(/display:\s*none/);
     }
   });
+
+describe("ConnectionStatus #1612 error hold", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#1612 holds a background error as reconnecting until the hold elapses", () => {
+    vi.useFakeTimers();
+    render(<ConnectionStatus state="backend unreachable" holdErrors />);
+    const el = screen.getByTestId("connection-status");
+    expect(el).toHaveAttribute("data-state", "reconnecting");
+    act(() => {
+      vi.advanceTimersByTime(ERROR_HOLD_MS - 1);
+    });
+    expect(el).toHaveAttribute("data-state", "reconnecting");
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(el).toHaveAttribute("data-state", "backend unreachable");
+  });
+
+  it("#1612 recovers before the hold ends without ever showing the error", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<ConnectionStatus state="backend unreachable" holdErrors />);
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "reconnecting");
+    rerender(<ConnectionStatus state="connected" holdErrors />);
+    act(() => {
+      vi.advanceTimersByTime(ERROR_HOLD_MS + 100);
+    });
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "connected");
+  });
+
+  it("#1612 shows sign-in expired immediately even when holding errors", () => {
+    vi.useFakeTimers();
+    render(<ConnectionStatus state="sign-in expired" holdErrors />);
+    expect(screen.getByTestId("connection-status")).toHaveAttribute(
+      "data-state",
+      "sign-in expired",
+    );
+    expect(
+      screen.getByRole("button", { name: "Sign-in expired. Tap to sign in." }),
+    ).toBeInTheDocument();
+  });
+
+  it("#1612 shows the error immediately when not holding errors", () => {
+    vi.useFakeTimers();
+    render(<ConnectionStatus state="backend unreachable" />);
+    expect(screen.getByTestId("connection-status")).toHaveAttribute(
+      "data-state",
+      "backend unreachable",
+    );
+  });
+  it("#1612 hides a held error on the first render", () => {
+    vi.useFakeTimers();
+    render(<ConnectionStatus state="backend unreachable" holdErrors />);
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "reconnecting");
+    expect(document.body.textContent).not.toContain("backend unreachable");
+  });
+
+  it("#1612 starts a fresh hold when the error recurs after release and recovery", () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<ConnectionStatus state="backend unreachable" holdErrors />);
+    act(() => {
+      vi.advanceTimersByTime(ERROR_HOLD_MS);
+    });
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "backend unreachable");
+    rerender(<ConnectionStatus state="connected" holdErrors />);
+    rerender(<ConnectionStatus state="backend unreachable" holdErrors />);
+    expect(screen.getByTestId("connection-status")).toHaveAttribute("data-state", "reconnecting");
+  });
+});
 });

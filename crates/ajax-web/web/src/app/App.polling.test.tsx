@@ -4,6 +4,7 @@ import App from "./App";
 import cockpit from "@/fixtures/cockpit.json";
 import taskDetail from "@/fixtures/task-detail.json";
 import { taskHash } from "@/shared/lib/routes";
+import { ERROR_HOLD_MS } from "@/shared/ui/ConnectionStatus";
 
 class StubWebSocket {
   readyState = 1;
@@ -84,6 +85,91 @@ describe("App polling cadence", () => {
 
     await vi.advanceTimersByTimeAsync(9000);
     await vi.waitFor(() => expect(cockpitCalls()).toBe(4));
+  });
+
+  it("#1612 holds the banner when a background poll fails once and recovers", async () => {
+    vi.useFakeTimers();
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          if (cockpitCalls === 2) return Promise.reject(new Error("network error"));
+          return Promise.resolve(jsonResponse(cockpit));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(2));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute(
+        "data-state",
+        "reconnecting",
+      ),
+    );
+    expect(screen.getByTestId("connection-status")).not.toHaveAttribute(
+      "data-state",
+      "backend unreachable",
+    );
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(3));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute(
+        "data-state",
+        "connected",
+      ),
+    );
+  });
+
+  it("#1612 shows the banner after the hold when every background poll keeps failing", async () => {
+    vi.useFakeTimers();
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          if (cockpitCalls === 1) return Promise.resolve(jsonResponse(cockpit));
+          return Promise.reject(new Error("network error"));
+        }
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "v1" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({}));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(<App />);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(1));
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.waitFor(() => expect(cockpitCalls).toBe(2));
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute(
+        "data-state",
+        "reconnecting",
+      ),
+    );
+
+    await vi.advanceTimersByTimeAsync(ERROR_HOLD_MS);
+    await vi.waitFor(() =>
+      expect(screen.getByTestId("connection-status")).toHaveAttribute(
+        "data-state",
+        "backend unreachable",
+      ),
+    );
   });
 
   it("polls the cockpit on the idle cadence when every card is idle", async () => {
