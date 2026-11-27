@@ -88,10 +88,15 @@ rl.on('line', (raw) => {
         let seq = 0;
         const chatter = () => {
           if (Date.now() > chatterUntil) process.exit(0);
-          for (let i = 0; i < 200; i++) {
-            emit({ type: 'extension_ui_request', action: 'notify', payload: { seq: seq++ } });
+          let stopped = false;
+          for (let i = 0; i < 200 && !stopped; i++) {
+            const record = { type: 'extension_ui_request', action: 'notify', payload: { seq: seq++ } };
+            if (!process.stdout.write(`${JSON.stringify(record)}\n`)) {
+              stopped = true;
+              process.stdout.once('drain', chatter);
+            }
           }
-          setImmediate(chatter);
+          if (!stopped) setImmediate(chatter);
         };
         chatter();
         break;
