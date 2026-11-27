@@ -38,11 +38,11 @@ describe("ConnectionStatus", () => {
     expect(retry).toHaveTextContent("Retry");
     expect(retry).toHaveClass("is-primary");
     expect(screen.getByRole("button", { name: "Reload" })).not.toHaveClass("is-primary");
-    expect(screen.getByRole("button", { name: "Copy Diagnostics" })).not.toHaveClass("is-primary");
+    expect(screen.getByRole("button", { name: "Copy diagnostics" })).not.toHaveClass("is-primary");
     expect(connectionStatusSource).toMatch(/Retry[\s\S]*className="is-primary"/);
     expect(connectionStatusSource).toMatch(/Reload/);
-    expect(connectionStatusSource).toMatch(/Copy Diagnostics/);
-    expect(connectionStatusSource).toMatch(/Open Health URL/);
+    expect(connectionStatusSource).toMatch(/Copy diagnostics/);
+    expect(connectionStatusSource).toMatch(/Open health URL/);
   });
 
   it("fires recovery callbacks", async () => {
@@ -59,7 +59,7 @@ describe("ConnectionStatus", () => {
     );
     fireEvent.click(screen.getByText("Retry"));
     fireEvent.click(screen.getByText("Reload"));
-    fireEvent.click(screen.getByText("Copy Diagnostics"));
+    fireEvent.click(screen.getByText("Copy diagnostics"));
     expect(onRetry).toHaveBeenCalledOnce();
     expect(onReload).toHaveBeenCalledOnce();
     expect(onCopyDiagnostics).toHaveBeenCalledOnce();
@@ -115,7 +115,7 @@ describe("ConnectionStatus", () => {
 
   it("links to the health URL", () => {
     render(<ConnectionStatus state="checking" />);
-    expect(screen.getByRole("link", { name: "Open Health URL" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Open health URL" })).toHaveAttribute(
       "href",
       "/api/health",
     );

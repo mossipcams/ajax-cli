@@ -94,10 +94,10 @@ export default function ConnectionStatus({
           Reload
         </button>
         <button type="button" onClick={() => onCopyDiagnostics?.()}>
-          Copy Diagnostics
+          Copy diagnostics
         </button>
         <a href={healthHref} target="_blank" rel="noreferrer">
-          Open Health URL
+          Open health URL
         </a>
       </div>
     </div>
