@@ -306,6 +306,9 @@ fn merge_registries(
                 && !baseline_task.is_some_and(|baseline_task| {
                     baseline_task.lifecycle_status == disk_task.lifecycle_status
                 })
+                && !baseline_task.is_some_and(|baseline_task| {
+                    baseline_task.lifecycle_status == memory_task.lifecycle_status
+                })
         }) {
             return Err(CliError::ContextSave(format!(
                 "state conflict for {}: disk and in-memory lifecycle diverged",
