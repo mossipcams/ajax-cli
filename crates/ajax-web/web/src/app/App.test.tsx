@@ -405,6 +405,9 @@ describe("App shell", () => {
 
     setHash("#/t/web%2Ffix-login");
     await waitFor(() => expect(document.title).toBe("web/fix-login — Ajax"));
+
+    setHash("#/t/web%2Ffix-login/diff");
+    await waitFor(() => expect(document.title).toBe("web/fix-login diff — Ajax"));
   });
 
   it("never marks bottom-nav action buttons as the current page", async () => {

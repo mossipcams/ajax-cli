@@ -35,6 +35,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  touch-action: none;
+}
+
+.session-details-sheet:not(.is-dragging),
+.session-model-switch-sheet:not(.is-dragging) {
+  transition: transform var(--dur-sheet) var(--ease-spring);
 }
 
 .session-sheet-header h2 {

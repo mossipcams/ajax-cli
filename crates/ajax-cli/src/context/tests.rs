@@ -805,6 +805,12 @@ fn save_context_surfaces_conflict_when_same_task_diverges() {
         .unwrap();
 
     let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("memory task")
+        .lifecycle_status = LifecycleStatus::Cleanable;
     let mut web_registry = baseline.clone();
     let web_task = web_registry
         .get_task_mut(&TaskId::new("web/fix-login"))
@@ -818,6 +824,61 @@ fn save_context_surfaces_conflict_when_same_task_diverges() {
     let error = save_tracked_context(&paths, &mut tracked).unwrap_err();
     assert!(error.to_string().contains("state conflict"));
     assert!(error.to_string().contains("web/fix-login"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn save_context_keeps_disk_lifecycle_when_memory_only_changes_metadata_issue_1553() {
+    let root = std::env::temp_dir().join(format!(
+        "ajax-context-1553-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+    let mut baseline = InMemoryRegistry::default();
+    let mut native_task = sample_task("web/fix-login", "fix-login", "Fix login");
+    native_task.lifecycle_status = LifecycleStatus::Reviewable;
+    baseline.create_task(native_task).unwrap();
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&baseline)
+        .unwrap();
+
+    let mut tracked = load_tracked_context(&paths).unwrap();
+    tracked
+        .context
+        .registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("memory task")
+        .metadata
+        .insert("ajax_notified".to_string(), "1".to_string());
+    let mut web_registry = baseline.clone();
+    let web_task = web_registry
+        .get_task_mut(&TaskId::new("web/fix-login"))
+        .expect("web task");
+    web_task.lifecycle_status = LifecycleStatus::Merged;
+    SqliteRegistryStore::new(&paths.state_file)
+        .save(&web_registry)
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+
+    save_tracked_context(&paths, &mut tracked).expect("metadata-only save merges");
+
+    let reloaded = load_context(&paths).expect("reload");
+    let task = reloaded
+        .registry
+        .get_task(&TaskId::new("web/fix-login"))
+        .expect("task");
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Merged);
+    assert_eq!(
+        task.metadata
+            .get("ajax_notified")
+            .map(|value| value.as_str()),
+        Some("1")
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }
